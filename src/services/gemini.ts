@@ -63,25 +63,32 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   const ai = getAI();
   if (!ai) return null;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [{ text: `Professional marketing image: ${prompt}. High quality, vibrant, cinematic lighting.` }]
-      },
-      config: { imageConfig: { aspectRatio: "1:1" } }
-    });
+  const models = ['gemini-2.5-flash-image', 'gemini-2.0-flash-exp-image-generation'];
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: `Professional marketing image: ${prompt}. High quality, vibrant, cinematic lighting, no text or watermarks.`,
+        config: {
+          responseModalities: ['IMAGE', 'TEXT'],
+        } as any,
+      });
 
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
+      const parts = (response as any)?.candidates?.[0]?.content?.parts;
+      if (parts) {
+        for (const part of parts) {
+          if (part.inlineData?.data) {
+            const mimeType = part.inlineData.mimeType || 'image/png';
+            return `data:${mimeType};base64,${part.inlineData.data}`;
+          }
+        }
       }
+    } catch (error) {
+      console.warn(`Gemini Image (${model}):`, error);
+      continue;
     }
-    return null;
-  } catch (error) {
-    console.error("Gemini Image Error:", error);
-    return null;
   }
+  return null;
 };
 
 export const analyzePostTimes = async (businessType: string, location: string) => {
