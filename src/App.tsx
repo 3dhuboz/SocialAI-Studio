@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats } from './types';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
@@ -9,11 +10,11 @@ import {
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
-  name: 'My Business',
-  type: 'small business',
-  description: '',
-  tone: 'Friendly and professional',
-  location: 'Australia',
+  name: CLIENT.defaultBusinessName,
+  type: CLIENT.defaultBusinessType,
+  description: CLIENT.defaultDescription,
+  tone: CLIENT.defaultTone,
+  location: CLIENT.defaultLocation,
   logoUrl: '',
   facebookAppId: '',
   facebookPageId: '',
@@ -34,6 +35,8 @@ const DEFAULT_STATS: ContentCalendarStats = {
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings'>('create');
+
+  useEffect(() => { document.title = CLIENT.appName; }, []);
 
   // Profile & Posts
   const [profile, setProfile] = useState<BusinessProfile>(() => {
@@ -184,7 +187,7 @@ const Dashboard: React.FC = () => {
           <div className="flex items-center gap-3">
             <Sparkles className="text-amber-400" size={28} />
             <div>
-              <h1 className="text-xl font-bold text-white">SocialAI Studio</h1>
+              <h1 className="text-xl font-bold text-white">{CLIENT.appName}</h1>
               <p className="text-xs text-gray-400">{profile.name}</p>
             </div>
           </div>
@@ -535,6 +538,19 @@ const Dashboard: React.FC = () => {
           </div>
         )}
       </main>
+
+      {CLIENT.poweredBy && (
+        <footer className="text-center py-4 border-t border-white/10">
+          <a
+            href={CLIENT.poweredByUrl || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-gray-600 hover:text-gray-400 transition"
+          >
+            {CLIENT.poweredBy}
+          </a>
+        </footer>
+      )}
     </div>
   );
 };
