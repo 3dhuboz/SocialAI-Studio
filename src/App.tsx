@@ -32,7 +32,12 @@ const DEFAULT_PROFILE: BusinessProfile = {
   facebookPageAccessToken: '',
   facebookConnected: false,
   instagramBusinessAccountId: '',
-  geminiApiKey: ''
+  geminiApiKey: '',
+  targetAudience: '',
+  uniqueValue: '',
+  productsServices: '',
+  socialGoal: '',
+  contentTopics: '',
 };
 
 const DEFAULT_STATS: ContentCalendarStats = {
@@ -323,7 +328,7 @@ const Dashboard: React.FC = () => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return; }
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsGenerating(true);
-    const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone);
+    const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile);
     setGeneratedContent(result.content);
     setGeneratedHashtags(result.hashtags || []);
     setIsGenerating(false);
@@ -414,7 +419,8 @@ const Dashboard: React.FC = () => {
         profile.name, profile.type, profile.tone, stats, smartCount,
         profile.location || 'Australia',
         { facebook: true, instagram: true },
-        saturationMode
+        saturationMode,
+        profile
       );
       setSmartPosts(result.posts);
       setSmartStrategy(result.strategy);
@@ -1168,12 +1174,12 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Business Profile */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+            {/* Business Profile — Guided Questionnaire */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="font-bold text-white">Business Profile</h3>
-                  <p className="text-xs text-white/30 mt-0.5">The AI uses this to write in your brand voice and schedule for your market.</p>
+                  <h3 className="font-bold text-white flex items-center gap-2"><Brain size={16} className="text-amber-400" /> AI Business Profile</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Your answers train the AI to write in your voice, for your audience, about what matters to your business.</p>
                 </div>
                 <button
                   onClick={handleSaveProfile}
@@ -1184,27 +1190,170 @@ const Dashboard: React.FC = () => {
                   {isSavingProfile ? 'Saving…' : 'Save Profile'}
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Business Name</label>
-                  <input value={profile.name} onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))} className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
+
+              <div className="space-y-5">
+                {/* Q1 + Q2 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">1. What's your business name?</label>
+                    <input
+                      value={profile.name}
+                      onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="e.g. Bella's Bakery"
+                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">2. What type of business do you run?</label>
+                    <input
+                      value={profile.type}
+                      onChange={e => setProfile(prev => ({ ...prev, type: e.target.value }))}
+                      placeholder="e.g. Artisan bakery & café"
+                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    />
+                  </div>
                 </div>
+
+                {/* Q3 */}
                 <div>
-                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Business Type</label>
-                  <input value={profile.type} onChange={e => setProfile(prev => ({ ...prev, type: e.target.value }))} placeholder="e.g., cafe, gym, retail store" className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">3. Where are you based?</label>
+                  <input
+                    value={profile.location}
+                    onChange={e => setProfile(prev => ({ ...prev, location: e.target.value }))}
+                    placeholder="e.g. Bondi Beach, Sydney NSW"
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
                 </div>
+
+                {/* Q4 */}
                 <div>
-                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Location</label>
-                  <input value={profile.location} onChange={e => setProfile(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">4. Describe what you do and who you help <span className="text-white/20 font-normal normal-case">(2–3 sentences)</span></label>
+                  <textarea
+                    value={profile.description}
+                    onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="We're a family-run bakery specialising in sourdough and pastries made fresh every morning. We serve locals, office workers, and weekend visitors looking for something a bit special with their coffee."
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
                 </div>
+
+                {/* Q5 */}
                 <div>
-                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Tone / Voice</label>
-                  <input value={profile.tone} onChange={e => setProfile(prev => ({ ...prev, tone: e.target.value }))} placeholder="e.g., Casual and fun, Professional, Edgy" className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">5. Who is your ideal customer?</label>
+                  <textarea
+                    value={profile.targetAudience}
+                    onChange={e => setProfile(prev => ({ ...prev, targetAudience: e.target.value }))}
+                    placeholder="Local professionals aged 25–45 who appreciate quality food and are willing to pay a premium. Also young families on weekends and coffee enthusiasts."
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
                 </div>
-              </div>
-              <div>
-                <label className="text-xs text-white/40 font-semibold block mb-1.5">Business Description <span className="font-normal text-white/20">(optional)</span></label>
-                <textarea value={profile.description} onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))} placeholder="We're a family-run coffee shop specializing in single-origin pour-overs..." className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20" />
+
+                {/* Q6 */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">6. What makes you stand out from competitors?</label>
+                  <textarea
+                    value={profile.uniqueValue}
+                    onChange={e => setProfile(prev => ({ ...prev, uniqueValue: e.target.value }))}
+                    placeholder="We use only locally sourced ingredients, our sourdough ferments for 48 hours, and every item is made on-site. We've won the local 'Best Café' award 3 years running."
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
+                </div>
+
+                {/* Q7 */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">7. What are your main products or services?</label>
+                  <textarea
+                    value={profile.productsServices}
+                    onChange={e => setProfile(prev => ({ ...prev, productsServices: e.target.value }))}
+                    placeholder="Sourdough loaves, croissants, seasonal pastries, specialty coffee, breakfast plates, and custom celebration cakes by order."
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
+                </div>
+
+                {/* Q8 — Social Goal pill selector */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-2">8. What's your #1 goal for social media?</label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      'Grow brand awareness',
+                      'Drive more foot traffic & sales',
+                      'Build a loyal community',
+                      'Educate & inform customers',
+                      'Promote specific products & offers',
+                      'All of the above',
+                    ].map(goal => (
+                      <button
+                        key={goal}
+                        type="button"
+                        onClick={() => setProfile(prev => ({ ...prev, socialGoal: prev.socialGoal === goal ? '' : goal }))}
+                        className={`text-xs px-3 py-1.5 rounded-full border transition font-medium ${
+                          profile.socialGoal === goal
+                            ? 'bg-amber-500 border-amber-500 text-black'
+                            : 'bg-white/5 border-white/10 text-white/50 hover:border-amber-500/40 hover:text-white/80'
+                        }`}
+                      >
+                        {goal}
+                      </button>
+                    ))}
+                  </div>
+                  {profile.socialGoal === '' && (
+                    <input
+                      value={profile.socialGoal}
+                      onChange={e => setProfile(prev => ({ ...prev, socialGoal: e.target.value }))}
+                      placeholder="Or type a custom goal…"
+                      className="mt-2 w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    />
+                  )}
+                </div>
+
+                {/* Q9 — Tone pill selector */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-2">9. How would you describe your brand's personality?</label>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {[
+                      'Friendly & warm',
+                      'Professional & polished',
+                      'Casual & laid-back',
+                      'Fun & humorous',
+                      'Bold & edgy',
+                      'Inspiring & motivational',
+                      'Educational & informative',
+                      'Luxurious & premium',
+                    ].map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setProfile(prev => ({
+                          ...prev,
+                          tone: prev.tone === t ? '' : t
+                        }))}
+                        className={`text-xs px-3 py-1.5 rounded-full border transition font-medium ${
+                          profile.tone === t
+                            ? 'bg-amber-500 border-amber-500 text-black'
+                            : 'bg-white/5 border-white/10 text-white/50 hover:border-amber-500/40 hover:text-white/80'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    value={profile.tone}
+                    onChange={e => setProfile(prev => ({ ...prev, tone: e.target.value }))}
+                    placeholder="Or describe your tone in your own words…"
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
+                </div>
+
+                {/* Q10 */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">10. What topics or themes should your posts focus on?</label>
+                  <textarea
+                    value={profile.contentTopics}
+                    onChange={e => setProfile(prev => ({ ...prev, contentTopics: e.target.value }))}
+                    placeholder="Behind the scenes of our baking process, seasonal specials, coffee tips, local community events, new menu items, customer shoutouts, and health benefits of sourdough."
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
+                </div>
               </div>
             </div>
 

@@ -25,6 +25,11 @@ export interface BusinessProfile {
   facebookConnected: boolean;
   instagramBusinessAccountId: string;
   geminiApiKey: string;
+  targetAudience: string;
+  uniqueValue: string;
+  productsServices: string;
+  socialGoal: string;
+  contentTopics: string;
 }
 
 export interface ContentCalendarStats {

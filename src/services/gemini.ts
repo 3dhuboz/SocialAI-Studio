@@ -45,15 +45,33 @@ export const generateSocialPost = async (
   platform: 'Facebook' | 'Instagram',
   businessName: string,
   businessType: string,
-  tone: string
+  tone: string,
+  profile?: {
+    description?: string;
+    targetAudience?: string;
+    uniqueValue?: string;
+    productsServices?: string;
+    socialGoal?: string;
+    location?: string;
+  }
 ) => {
   const ai = getAI();
   if (!ai) return { content: "API Key missing. Go to Settings to configure.", hashtags: [] };
+
+  const profileContext = profile ? [
+    profile.description && `About the business: ${profile.description}`,
+    profile.targetAudience && `Target audience: ${profile.targetAudience}`,
+    profile.uniqueValue && `What makes them unique: ${profile.uniqueValue}`,
+    profile.productsServices && `Main products/services: ${profile.productsServices}`,
+    profile.socialGoal && `Social media goal: ${profile.socialGoal}`,
+    profile.location && `Location: ${profile.location}`,
+  ].filter(Boolean).join('\n') : '';
 
   try {
     const prompt = `
       You are an expert social media manager for "${businessName}", a ${businessType}.
       Tone: ${tone}.
+      ${profileContext ? `\nBusiness context:\n${profileContext}` : ''}
       Write a catchy, engaging ${platform} post about: "${topic}".
       Include relevant emojis and 5-10 relevant hashtags.
       Return JSON with "content" (the post text) and "hashtags" (array of strings).
@@ -220,7 +238,15 @@ export const generateSmartSchedule = async (
   postsToGenerate: number = 7,
   location: string = 'Australia',
   platforms: { facebook: boolean; instagram: boolean } = { facebook: true, instagram: true },
-  saturationMode: boolean = false
+  saturationMode: boolean = false,
+  richProfile?: {
+    description?: string;
+    targetAudience?: string;
+    uniqueValue?: string;
+    productsServices?: string;
+    socialGoal?: string;
+    contentTopics?: string;
+  }
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   const ai = getAI();
   if (!ai) return { posts: [], strategy: "API Key missing." };
@@ -236,7 +262,7 @@ Research the optimal saturation posting plan for:
 - Business: "${businessName}" — ${businessType}
 - Location: ${location}
 - Goal: Maximum algorithmic reach and traction through sheer posting volume
-- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement
+- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement${richProfile?.targetAudience ? `\n- Target audience: ${richProfile.targetAudience}` : ''}${richProfile?.productsServices ? `\n- Products/services: ${richProfile.productsServices}` : ''}
 
 Saturation posting means 3-5 posts per day across platforms. Research how to do this without audience fatigue.
 
@@ -254,8 +280,8 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
 You are an expert social media researcher. Research the optimal social media strategy for:
 - Business: "${businessName}" — ${businessType}
 - Location: ${location}
-- Audience: local customers and online shoppers
-- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement
+- Audience: ${richProfile?.targetAudience || 'local customers and online shoppers'}
+- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement${richProfile?.uniqueValue ? `\n- What makes them unique: ${richProfile.uniqueValue}` : ''}${richProfile?.productsServices ? `\n- Products/services: ${richProfile.productsServices}` : ''}${richProfile?.socialGoal ? `\n- Social media goal: ${richProfile.socialGoal}` : ''}${richProfile?.contentTopics ? `\n- Preferred content topics: ${richProfile.contentTopics}` : ''}
 
 Respond with ONLY a raw JSON object — no markdown, no code fences:
 {
