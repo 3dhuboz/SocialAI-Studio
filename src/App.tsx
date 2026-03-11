@@ -478,6 +478,9 @@ const Dashboard: React.FC = () => {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingFacebook, setIsSavingFacebook] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [fbPages, setFbPages] = useState<import('./services/facebookService').FacebookPage[]>([]);
+  const [isFindingPages, setIsFindingPages] = useState(false);
+  const [fbLookupError, setFbLookupError] = useState('');
 
   const handleSaveApiKey = async () => {
     if (!profile.geminiApiKey.trim()) { toast('Enter an API key first.', 'warning'); return; }
@@ -498,6 +501,21 @@ const Dashboard: React.FC = () => {
       toast('Business profile saved!', 'success');
     } catch { toast('Failed to save profile.', 'error'); }
     setIsSavingProfile(false);
+  };
+
+  const handleFindPages = async () => {
+    const token = profile.facebookPageAccessToken.trim();
+    if (!token) { toast('Paste your Access Token first, then click Find My Pages.', 'warning'); return; }
+    setIsFindingPages(true);
+    setFbLookupError('');
+    setFbPages([]);
+    try {
+      const pages = await FacebookService.getPagesByToken(token);
+      setFbPages(pages);
+    } catch (e: any) {
+      setFbLookupError(e?.message || 'Could not fetch pages.');
+    }
+    setIsFindingPages(false);
   };
 
   const handleSaveFacebook = async () => {
@@ -1357,7 +1375,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Facebook Page — Step-by-step wizard */}
+            {/* Facebook Connection */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
@@ -1367,83 +1385,148 @@ const Dashboard: React.FC = () => {
                   <h3 className="font-bold text-white">Facebook Connection</h3>
                   {fbConnected
                     ? <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5"><CheckCircle size={11} /> Page connected — publishing is active</p>
-                    : <p className="text-xs text-white/30 mt-0.5">This is configured by Penny Wise I.T during your setup</p>
+                    : <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page to enable auto-publishing</p>
                   }
                 </div>
+                {fbConnected && (
+                  <button
+                    onClick={() => setProfile(prev => ({ ...prev, facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false }))}
+                    className="ml-auto text-xs text-red-400/60 hover:text-red-400 transition flex items-center gap-1"
+                  >
+                    <X size={12} /> Disconnect
+                  </button>
+                )}
               </div>
 
-              {!fbConnected && (
-                <div className="bg-amber-500/8 border border-amber-500/15 rounded-xl p-4 space-y-2">
-                  <p className="text-xs font-semibold text-amber-300 flex items-center gap-1.5"><Clock size={11} /> Awaiting your setup</p>
-                  <p className="text-xs text-white/40 leading-relaxed">
-                    Your Facebook page will be connected by our team within 1–3 business days of receiving your setup form.
-                    You don't need to do anything here — we handle this step for you.
-                  </p>
-                  <a
-                    href={`mailto:${CLIENT.supportEmail}?subject=Facebook Setup Query`}
-                    className="text-xs text-amber-400/70 hover:text-amber-400 underline transition"
+              {/* Step 1 — Get token */}
+              <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-bold text-blue-300 mb-2">Step 1 — Get a Page Access Token</p>
+                <ol className="text-xs text-white/40 space-y-1.5 list-decimal list-inside leading-relaxed">
+                  <li>Go to <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">Facebook Graph Explorer</a></li>
+                  <li>Top-right: click <strong className="text-white/60">Generate Access Token</strong> — choose your <strong className="text-white/60">Page</strong> (not your personal profile)</li>
+                  <li>Tick these permissions: <code className="bg-white/10 px-1 rounded text-blue-300">pages_show_list</code> <code className="bg-white/10 px-1 rounded text-blue-300">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded text-blue-300">pages_read_engagement</code></li>
+                  <li>Click <strong className="text-white/60">Generate Token</strong> → copy the long token string</li>
+                </ol>
+              </div>
+
+              {/* Step 2 — Paste token + Find Pages */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-white/50 uppercase tracking-wider block">Step 2 — Paste your Access Token</label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={profile.facebookPageAccessToken}
+                    onChange={e => { setProfile(prev => ({ ...prev, facebookPageAccessToken: e.target.value })); setFbPages([]); setFbLookupError(''); }}
+                    placeholder="EAAxxxxxxxx… (paste your Page Access Token)"
+                    className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs placeholder:text-white/20 focus:outline-none focus:border-blue-500/40"
+                  />
+                  <button
+                    onClick={handleFindPages}
+                    disabled={isFindingPages || !profile.facebookPageAccessToken.trim()}
+                    className="flex-shrink-0 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition flex items-center gap-2"
                   >
-                    Questions? Email {CLIENT.supportEmail}
-                  </a>
+                    {isFindingPages ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                    {isFindingPages ? 'Searching…' : 'Find My Pages'}
+                  </button>
+                </div>
+                <p className="text-[11px] text-white/25">⚠️ Make sure you selected a <strong className="text-white/40">Page token</strong>, not a personal User token — they look the same but work differently.</p>
+              </div>
+
+              {/* Error */}
+              {fbLookupError && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4">
+                  <p className="text-xs font-bold text-red-400 mb-1">Couldn't find pages</p>
+                  <p className="text-xs text-red-300/70 leading-relaxed">{fbLookupError}</p>
+                  <p className="text-xs text-white/30 mt-2">Common fixes: make sure you selected a <strong className="text-white/50">Page</strong> (not personal profile) when generating the token, and that <code className="bg-white/10 px-1 rounded">pages_show_list</code> permission is ticked.</p>
                 </div>
               )}
 
-              {/* Token fields — collapsible admin section */}
+              {/* Step 3 — Select a page */}
+              {fbPages.length > 0 && (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-white/50 uppercase tracking-wider block">Step 3 — Select your Page</label>
+                  <div className="space-y-2">
+                    {fbPages.map(page => (
+                      <button
+                        key={page.id}
+                        type="button"
+                        onClick={() => {
+                          setProfile(prev => ({
+                            ...prev,
+                            facebookPageId: page.id,
+                            facebookPageAccessToken: page.access_token || prev.facebookPageAccessToken,
+                            facebookConnected: true,
+                          }));
+                          setFbPages([]);
+                          toast(`Page "${page.name}" selected! Click Save Credentials to confirm.`, 'success');
+                        }}
+                        className={`w-full flex items-center gap-3 p-3 rounded-xl border transition text-left ${
+                          profile.facebookPageId === page.id
+                            ? 'bg-blue-500/15 border-blue-500/40'
+                            : 'bg-white/3 border-white/8 hover:bg-white/5 hover:border-blue-500/20'
+                        }`}
+                      >
+                        {page.picture?.data?.url
+                          ? <img src={page.picture.data.url} alt="" className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />
+                          : <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0"><Facebook size={14} className="text-blue-400" /></div>
+                        }
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">{page.name}</p>
+                          <p className="text-xs text-white/30">{page.category} · ID: {page.id}</p>
+                        </div>
+                        {profile.facebookPageId === page.id && <CheckCircle size={15} className="ml-auto text-blue-400 flex-shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Connected summary + manual override */}
+              {fbConnected && (
+                <div className="bg-green-500/8 border border-green-500/15 rounded-xl p-3 flex items-center gap-3">
+                  <CheckCircle size={15} className="text-green-400 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-green-300">Page connected</p>
+                    <p className="text-xs text-white/30 font-mono truncate">ID: {profile.facebookPageId}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Manual ID override (advanced) */}
               <details className="group">
                 <summary className="text-xs text-white/20 hover:text-white/40 cursor-pointer list-none flex items-center gap-1.5 transition">
                   <ChevronDown size={12} className="group-open:rotate-180 transition-transform" />
-                  Admin: manually enter Facebook credentials
+                  Manually enter Page ID (advanced)
                 </summary>
-                <div className="mt-4 space-y-3">
-                  <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 space-y-1 mb-3">
-                    <p className="text-xs font-semibold text-blue-300">How to get your Page Access Token:</p>
-                    <ol className="text-xs text-white/35 space-y-1 list-decimal list-inside leading-relaxed">
-                      <li>Go to <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-400/70 hover:text-blue-400">Facebook Graph Explorer</a></li>
-                      <li>Click <strong className="text-white/50">Generate Access Token</strong> → select your page</li>
-                      <li>Add permissions: <code className="bg-white/10 px-1 rounded">pages_manage_posts</code>, <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
-                      <li>Copy the token and paste below</li>
-                      <li>Find your Page ID under <strong className="text-white/50">Page Settings → About</strong></li>
-                    </ol>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-white/40 block mb-1.5">Page ID</label>
-                      <input
-                        value={profile.facebookPageId}
-                        onChange={e => setProfile(prev => ({ ...prev, facebookPageId: e.target.value }))}
-                        placeholder="e.g. 123456789012345"
-                        className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-white/40 block mb-1.5">Page Access Token</label>
-                      <input
-                        type="password"
-                        value={profile.facebookPageAccessToken}
-                        onChange={e => setProfile(prev => ({ ...prev, facebookPageAccessToken: e.target.value }))}
-                        placeholder="Paste token here"
-                        className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs"
-                      />
-                    </div>
-                  </div>
-                    <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={handleSaveFacebook}
-                      disabled={isSavingFacebook}
-                      className="text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 transition"
-                    >
-                      {isSavingFacebook ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                      {isSavingFacebook ? 'Saving…' : 'Save Credentials'}
-                    </button>
-                    {fbConnected && (
-                      <button onClick={handlePullStats} disabled={isPullingStats} className="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-4 py-2 rounded-xl flex items-center gap-1.5 transition disabled:opacity-50">
-                        <RefreshCw size={12} className={isPullingStats ? 'animate-spin' : ''} />
-                        {isPullingStats ? 'Pulling stats...' : 'Test Connection & Pull Stats'}
-                      </button>
-                    )}
-                  </div>
+                <div className="mt-3">
+                  <label className="text-xs text-white/40 block mb-1.5">Page ID</label>
+                  <input
+                    value={profile.facebookPageId}
+                    onChange={e => setProfile(prev => ({ ...prev, facebookPageId: e.target.value }))}
+                    placeholder="e.g. 123456789012345"
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs focus:outline-none focus:border-blue-500/40"
+                  />
+                  <p className="text-[11px] text-white/20 mt-1">Find it at facebook.com/your-page → About → Page transparency → Page ID</p>
                 </div>
               </details>
+
+              {/* Save + Test buttons */}
+              <div className="flex gap-2 flex-wrap pt-1">
+                <button
+                  onClick={handleSaveFacebook}
+                  disabled={isSavingFacebook}
+                  className="bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
+                >
+                  {isSavingFacebook ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {isSavingFacebook ? 'Saving…' : 'Save Credentials'}
+                </button>
+                {fbConnected && (
+                  <button onClick={handlePullStats} disabled={isPullingStats} className="text-sm bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-5 py-2.5 rounded-xl flex items-center gap-2 transition disabled:opacity-50">
+                    <RefreshCw size={14} className={isPullingStats ? 'animate-spin' : ''} />
+                    {isPullingStats ? 'Testing…' : 'Test Connection & Pull Stats'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Your Plan */}

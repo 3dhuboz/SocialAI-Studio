@@ -45,6 +45,19 @@ export const FacebookService = {
     });
   },
 
+  getPagesByToken: async (accessToken: string): Promise<FacebookPage[]> => {
+    const base = 'https://graph.facebook.com/v21.0';
+    const res = await fetch(`${base}/me/accounts?fields=id,name,access_token,category,picture&access_token=${accessToken}`);
+    const data = await res.json();
+    if (data.error) {
+      const msg = data.error.message || 'Unknown error';
+      if (msg.includes('Invalid OAuth') || msg.includes('token')) throw new Error('Invalid or expired access token. Generate a fresh token from Facebook Graph Explorer.');
+      throw new Error(msg);
+    }
+    if (!data.data || data.data.length === 0) throw new Error('No Pages found for this token. Make sure you are an admin of the Facebook Page and generated the token with pages_show_list permission.');
+    return data.data as FacebookPage[];
+  },
+
   getPageStats: async (pageId: string, pageAccessToken: string): Promise<{
     fanCount: number;
     followersCount: number;
