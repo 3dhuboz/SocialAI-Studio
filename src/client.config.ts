@@ -41,8 +41,8 @@ export const CLIENT = {
    * 5. Copy the Pricing Table ID from the embed code (starts with prctbl_)
    * Leave these as empty strings to fall back to the static pricing cards.
    */
-  stripePublishableKey: '',
-  stripePricingTableId: '',
+  stripePublishableKey: 'pk_live_51P8FoQ00ETA4f7VOQn6UauJebPB5aU4TX5qyMpHgvwgy7OUnGKZllHAFAKwAShNRNcfEOlfeLVjNBm345oSyN0S100Oq8F8l3W',
+  stripePricingTableId: 'prctbl_1T9d6K00ETA4f7VOScFSprrm',
 
   plans: [
     {
