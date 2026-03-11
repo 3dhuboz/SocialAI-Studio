@@ -20,6 +20,17 @@ export const CLIENT = {
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',
 
+  /**
+   * FACEBOOK APP SETUP:
+   * 1. Go to developers.facebook.com → Create App → "Business" type
+   * 2. Add "Facebook Login" product to the app
+   * 3. Under Facebook Login → Settings, add your domain to Valid OAuth Redirect URIs
+   * 4. App Review: request permissions: pages_show_list, pages_manage_posts, pages_read_engagement
+   * 5. Go Live (toggle in top bar) once approved
+   * 6. Copy your App ID from the app dashboard and paste below
+   */
+  facebookAppId: '',
+
   /** Admin emails — these accounts auto-get Pro plan + admin mode on login */
   adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],
 
