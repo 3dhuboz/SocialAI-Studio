@@ -5,6 +5,7 @@ import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatu
 import { LandingPage } from './components/LandingPage';
 import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
+import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { db } from './firebase';
 import { doc, getDoc, updateDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
@@ -484,9 +485,7 @@ const Dashboard: React.FC = () => {
       <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <Sparkles size={16} className="text-white" />
-            </div>
+            <AppLogo size={38} />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold text-white">{CLIENT.appName}</h1>
