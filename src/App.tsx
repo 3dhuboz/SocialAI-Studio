@@ -79,13 +79,20 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
+      const isAdmin = !!user.email && CLIENT.adminEmails.some(e => e === user.email);
+      if (isAdmin) {
+        localStorage.setItem('sai_admin', '1');
+        setActivePlan('pro');
+        setSetupStatus('live');
+        await updateDoc(doc(db, 'users', user.uid), { plan: 'pro', setupStatus: 'live', isAdmin: true }).catch(() => {});
+      }
       const snap = await getDoc(doc(db, 'users', user.uid));
       if (snap.exists()) {
         const d = snap.data();
         if (d.profile) setProfile(p => ({ ...p, ...d.profile }));
         if (d.stats) setStats(s => ({ ...s, ...d.stats }));
-        if (d.plan) setActivePlan(d.plan);
-        if (d.setupStatus) setSetupStatus(d.setupStatus);
+        if (!isAdmin && d.plan) setActivePlan(d.plan);
+        if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
         if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
         if (d.isAdmin) localStorage.setItem('sai_admin', '1');
       }

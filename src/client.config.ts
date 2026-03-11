@@ -20,6 +20,9 @@ export const CLIENT = {
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',
 
+  /** Admin emails — these accounts auto-get Pro plan + admin mode on login */
+  adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],
+
   /** Where clients purchase plans */
   salesUrl: 'https://pennywiseit.com.au',
 
