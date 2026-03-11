@@ -246,7 +246,8 @@ export const generateSmartSchedule = async (
     productsServices?: string;
     socialGoal?: string;
     contentTopics?: string;
-  }
+  },
+  includeVideos: boolean = false
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   const ai = getAI();
   if (!ai) return { posts: [], strategy: "API Key missing." };
@@ -256,42 +257,99 @@ export const generateSmartSchedule = async (
     const windowDays = saturationMode ? 7 : 14;
     const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
-    const researchPrompt = saturationMode ? `
-You are an expert social media growth hacker specialising in HIGH-FREQUENCY SATURATION posting strategies.
-Research the optimal saturation posting plan for:
-- Business: "${businessName}" — ${businessType}
-- Location: ${location}
-- Goal: Maximum algorithmic reach and traction through sheer posting volume
-- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement${richProfile?.targetAudience ? `\n- Target audience: ${richProfile.targetAudience}` : ''}${richProfile?.productsServices ? `\n- Products/services: ${richProfile.productsServices}` : ''}
+    const profileBlock = [
+      richProfile?.description && `Business description: ${richProfile.description}`,
+      richProfile?.targetAudience && `Target audience: ${richProfile.targetAudience}`,
+      richProfile?.uniqueValue && `Unique value proposition: ${richProfile.uniqueValue}`,
+      richProfile?.productsServices && `Products/services: ${richProfile.productsServices}`,
+      richProfile?.socialGoal && `Social media goal: ${richProfile.socialGoal}`,
+      richProfile?.contentTopics && `Preferred content topics: ${richProfile.contentTopics}`,
+    ].filter(Boolean).join('\n');
 
-Saturation posting means 3-5 posts per day across platforms. Research how to do this without audience fatigue.
+    const researchPrompt = saturationMode ? `
+You are a world-class social media growth strategist and data analyst specialising in HIGH-FREQUENCY SATURATION posting for small businesses.
+
+BUSINESS PROFILE:
+- Name: "${businessName}" — ${businessType}
+- Location: ${location} (use the correct local timezone for scheduling)
+- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement rate, ${stats.reach} monthly reach
+${profileBlock ? profileBlock : ''}
+
+YOUR RESEARCH TASK: Analyse this exact business type and location to determine the absolute best saturation campaign strategy. Consider:
+1. INDUSTRY-SPECIFIC peak engagement windows for ${businessType} businesses — when are their customers most active on Facebook vs Instagram?
+2. LOCAL TIMING: Adjust all times for the ${location} timezone and local lifestyle patterns (work commute, lunch, evening routines)
+3. CONTENT FATIGUE PREVENTION: How to post 3-5x/day without alienating followers — what variety rules prevent unfollows?
+4. ALGORITHM MAXIMISATION: What content mix (Reels vs static vs Stories vs carousels) performs best for rapid reach growth for this business type?
+5. HASHTAG STRATEGY: Research the top-performing hashtag tiers (mega 1M+, large 100k-1M, medium 10k-100k, niche <10k) specifically for ${businessType} businesses in ${location}. Mix all four tiers per post.
+6. ENGAGEMENT BAIT TACTICS: What question formats, CTAs and content hooks generate the most comments/shares for this industry?
 
 Respond with ONLY a raw JSON object — no markdown, no code fences:
 {
   "dailyPostingWindows": ["07:00", "10:00", "12:30", "16:00", "19:30"],
-  "contentVarietyStrategy": "how to vary content across 5 daily posts to avoid fatigue",
-  "contentPillars": ["pillar1", "pillar2", "pillar3", "pillar4", "pillar5", "pillar6", "pillar7"],
-  "hashtagThemes": ["theme1", "theme2", "theme3", "theme4"],
-  "imageStyle": "description of ideal image aesthetic",
+  "contentVarietyStrategy": "detailed strategy for varying content across 5 daily posts to prevent fatigue",
+  "contentPillars": ["Pillar 1 (with description)", "Pillar 2", "Pillar 3", "Pillar 4", "Pillar 5", "Pillar 6", "Pillar 7"],
+  "hashtagTiers": {
+    "mega": ["#tag1", "#tag2"],
+    "large": ["#tag1", "#tag2", "#tag3"],
+    "medium": ["#tag1", "#tag2", "#tag3", "#tag4"],
+    "niche": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
+  },
+  "imageStyle": "specific description of ideal image aesthetic for this business type and audience",
+  "videoStyle": "description of ideal Reel/short video style if applicable",
   "platformSplit": { "facebook": 40, "instagram": 60 },
-  "saturationTactics": "2-sentence tactical description",
-  "bestContentMix": "ratio/description of promo vs value vs entertainment vs story posts"
+  "saturationTactics": "2-3 sentence tactical description specific to this business type",
+  "bestContentMix": "exact ratio e.g. 30% promotional, 25% educational, 25% entertainment, 20% behind-the-scenes — with reasoning",
+  "engagementHooks": ["hook1", "hook2", "hook3"],
+  "localHashtags": ["#localTag1", "#localTag2", "#localTag3"]
 }` : `
-You are an expert social media researcher. Research the optimal social media strategy for:
-- Business: "${businessName}" — ${businessType}
-- Location: ${location}
-- Audience: ${richProfile?.targetAudience || 'local customers and online shoppers'}
-- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement${richProfile?.uniqueValue ? `\n- What makes them unique: ${richProfile.uniqueValue}` : ''}${richProfile?.productsServices ? `\n- Products/services: ${richProfile.productsServices}` : ''}${richProfile?.socialGoal ? `\n- Social media goal: ${richProfile.socialGoal}` : ''}${richProfile?.contentTopics ? `\n- Preferred content topics: ${richProfile.contentTopics}` : ''}
+You are a world-class social media strategist, data analyst and content researcher for small businesses.
+
+BUSINESS PROFILE:
+- Name: "${businessName}" — ${businessType}
+- Location: ${location} (use the correct local timezone for ALL scheduled times)
+- Current stats: ${stats.followers} followers, ${stats.engagement}% engagement rate, ${stats.reach} monthly reach, ${stats.postsLast30Days} posts last 30 days
+${profileBlock ? profileBlock : ''}
+
+YOUR RESEARCH TASK: Using your knowledge of social media algorithms, industry benchmarks, and audience behaviour data, produce a precise strategy for this business. Research:
+
+1. OPTIMAL POSTING TIMES: Based on data for ${businessType} businesses in ${location} — when are their specific customers (${richProfile?.targetAudience || 'local consumers'}) most active? Consider work schedules, commute times, lunch breaks, and evening patterns for this location.
+
+2. BEST DAYS: Which days of the week consistently produce highest engagement for ${businessType} businesses? Factor in local events, pay cycles, and industry patterns.
+
+3. CONTENT PILLARS: What are the 5 most effective content categories for ${businessType} businesses to build authority, trust and sales? Be specific to this industry.
+
+4. HASHTAG RESEARCH: Produce a 4-tier hashtag strategy (mega/large/medium/niche) tailored to ${businessType} in ${location}. Include local area hashtags. Research which hashtags are actively used by the target audience.
+
+5. POST FORMAT MIX: What ratio of image posts vs video/Reels vs text posts performs best for this business type on Facebook and Instagram currently?
+
+6. CAPTION STYLE: What caption length, structure, and call-to-action format produces highest engagement for this industry? (e.g. question at end, story format, list format, etc.)
+
+7. PLATFORM SPLIT: Based on where ${richProfile?.targetAudience || 'this audience'} is most active, what % of posts should go to Facebook vs Instagram?
 
 Respond with ONLY a raw JSON object — no markdown, no code fences:
 {
-  "bestPostingTimes": ["HH:MM", "HH:MM", "HH:MM"],
-  "bestDays": ["Monday", "Wednesday", "Friday"],
-  "contentPillars": ["pillar1", "pillar2", "pillar3", "pillar4", "pillar5"],
-  "hashtagThemes": ["theme1", "theme2", "theme3"],
-  "imageStyle": "description of ideal image aesthetic for this business type",
+  "bestPostingTimes": ["HH:MM", "HH:MM", "HH:MM", "HH:MM"],
+  "bestDays": ["Day1", "Day2", "Day3", "Day4"],
+  "worstDays": ["Day1", "Day2"],
+  "contentPillars": [
+    {"name": "Pillar Name", "description": "why this pillar works for this business", "postFrequency": "2x/week"},
+    {"name": "Pillar Name", "description": "...", "postFrequency": "1x/week"}
+  ],
+  "hashtagTiers": {
+    "mega": ["#tag1", "#tag2"],
+    "large": ["#tag1", "#tag2", "#tag3"],
+    "medium": ["#tag1", "#tag2", "#tag3", "#tag4"],
+    "niche": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],
+    "local": ["#locationTag1", "#locationTag2", "#locationTag3"]
+  },
+  "imageStyle": "specific description of the ideal image aesthetic, lighting, composition for this business type",
+  "videoStyle": "ideal Reel format, length, style, and hooks for this business type",
+  "captionStyle": "optimal caption length, structure, CTA format for this industry",
   "platformSplit": { "facebook": 40, "instagram": 60 },
-  "engagementTips": "one sentence of the most impactful tactic for this business type"
+  "postFormatMix": { "image": 50, "video": 30, "text": 20 },
+  "engagementTips": "the single most impactful engagement tactic proven for this business type",
+  "localHashtags": ["#localTag1", "#localTag2", "#localTag3"],
+  "contentTopicsToAvoid": ["topic1", "topic2"]
 }`;
 
     const saturationFallback = {
@@ -343,79 +401,119 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       ? (research.dailyPostingWindows || saturationFallback.dailyPostingWindows)
       : (research.bestPostingTimes || normalFallback.bestPostingTimes);
 
-    const prompt = saturationMode ? `
-You are an aggressive social media growth strategist running a SATURATION CAMPAIGN for "${businessName}", a ${businessType}. Tone: ${tone}.
-Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
-Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
-Stats: Followers ${stats.followers}, Engagement ${stats.engagement}%, Reach ${stats.reach}.
+    const buildHashtagPool = (r: any) => {
+      const tiers = r.hashtagTiers;
+      if (!tiers) return (r.hashtagThemes || []).join(', ');
+      return [
+        tiers.mega?.join(' ') || '',
+        tiers.large?.join(' ') || '',
+        tiers.medium?.join(' ') || '',
+        tiers.niche?.join(' ') || '',
+        tiers.local?.join(' ') || '',
+        (r.localHashtags || []).join(' '),
+      ].filter(Boolean).join(' | ');
+    };
 
-SATURATION RESEARCH INSIGHTS:
-- Daily posting windows: ${postingWindows.join(', ')}
+    const hashtagPool = buildHashtagPool(research);
+    const pillarsForPrompt = saturationMode
+      ? (research.contentPillars || saturationFallback.contentPillars)
+      : (research.contentPillars?.map((p: any) => typeof p === 'object' ? p.name : p) || normalFallback.contentPillars);
+
+    const videoCount = includeVideos ? Math.max(1, Math.round(postsToGenerate * 0.3)) : 0;
+    const videoInstructions = includeVideos ? `
+VIDEO POST RULES (${videoCount} posts should be "video" type Reels):
+- Set "postType": "video" for these posts
+- Provide "videoScript": a punchy 30-60 second spoken script with hook, body, CTA
+- Provide "videoShots": numbered shot list (e.g. "1. Close-up of product being used, 3 seconds...")
+- Provide "videoMood": music mood/genre recommendation (e.g. "Upbeat pop, 120BPM, energetic")
+- Ideal Reel style: ${research.videoStyle || 'fast-paced, trending audio, product/service in action'}
+- "imagePrompt" should describe the thumbnail/cover frame for the Reel
+For image posts, set "postType": "image". For pure text posts, set "postType": "text".` : '';
+
+    const prompt = saturationMode ? `
+You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${businessType}.
+Tone: ${tone}. Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
+Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
+Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
+SATURATION RESEARCH (apply precisely):
+- Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
-- Content pillars (rotate ALL of them): ${(research.contentPillars || saturationFallback.contentPillars).join(', ')}
-- Hashtag themes: ${(research.hashtagThemes || saturationFallback.hashtagThemes).join(', ')}
+- Content pillars — ROTATE ALL: ${pillarsForPrompt.join(' | ')}
+- Hashtag pool (mix ALL tiers per post, 10-15 per post): ${hashtagPool || (saturationFallback as any).hashtagThemes?.join(', ')}
+- Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Image aesthetic: ${research.imageStyle || saturationFallback.imageStyle}
 - Saturation tactics: ${research.saturationTactics || saturationFallback.saturationTactics}
 - Content mix: ${research.bestContentMix || saturationFallback.bestContentMix}
+- Engagement hooks to use: ${(research.engagementHooks || []).join(' | ')}
 - Platform split: ${fbCount} Facebook posts, ${igCount} Instagram posts
+${videoInstructions}
+ABSOLUTE RULES:
+1. Exactly ${postsToGenerate} posts total (${fbCount} Facebook, ${igCount} Instagram${videoCount > 0 ? `, ${videoCount} Reels/Videos` : ''}).
+2. Spread ~${postsPerDay} posts per day. Distribute evenly across all ${windowDays} days.
+3. NEVER schedule two posts at the same time on the same day.
+4. Each day: different pillars, different formats (1-liner, storytelling, question, list, testimonial, CTA).
+5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat).
+6. Hashtags: 10-15 per post, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
+7. imagePrompt: specific, vivid, production-quality description of the visual for this exact post.
 
-SATURATION RULES:
-1. Generate exactly ${postsToGenerate} posts (${fbCount} facebook, ${igCount} instagram).
-2. Spread ~${postsPerDay} posts per day across the ${windowDays}-day window.
-3. Use ALL ${postingWindows.length} daily time windows — never schedule two posts at the same time on the same day.
-4. Each day must have DIFFERENT content pillars — NO two consecutive posts from the same pillar.
-5. Vary the format: some posts are punchy 1-liners, some are storytelling, some are questions/polls.
-6. Hashtags must be highly relevant and varied per post (8-12 per post, mix broad and niche).
-7. Every post needs a unique, specific imagePrompt for AI image generation.
-
-Respond with ONLY a valid JSON object — no markdown, no code fences, no explanation:
+Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
-  "strategy": "2-sentence saturation strategy summary",
+  "strategy": "3-sentence saturation strategy summary citing specific research findings",
   "posts": [
     {
       "platform": "Facebook",
+      "postType": "image",
       "scheduledFor": "${now.toISOString().split('T')[0]}T07:00:00",
       "topic": "short topic label",
-      "content": "full post caption with emojis",
-      "hashtags": ["#tag1", "#tag2"],
-      "imagePrompt": "detailed image description",
-      "reasoning": "which content pillar + time window this uses and why",
-      "pillar": "content pillar name"
+      "content": "full post caption with hook, body, CTA, emojis",
+      "hashtags": ["#mega", "#large", "#medium", "#niche", "#local"],
+      "imagePrompt": "vivid, specific image description matching the aesthetic",
+      "reasoning": "content pillar used + time window chosen + why this format at this time",
+      "pillar": "exact content pillar name"
     }
   ]
 }` : `
-You are a social media strategist for "${businessName}", a ${businessType}. Tone: ${tone}.
-Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
-Window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
-Stats: Followers ${stats.followers}, Engagement ${stats.engagement}%, Reach ${stats.reach}.
+You are an elite social media strategist writing a data-driven content calendar for "${businessName}", a ${businessType}.
+Tone: ${tone}. Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
+Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
+Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
+RESEARCH INSIGHTS — apply every finding precisely:
+- Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
+- Best days: ${(research.bestDays || normalFallback.bestDays).join(', ')} | Avoid: ${(research.worstDays || []).join(', ')}
+- Content pillars: ${pillarsForPrompt.join(' | ')}
+- Caption style: ${research.captionStyle || 'conversational, question at end, 3-4 sentences max'}
+- Image aesthetic: ${research.imageStyle || 'vibrant, natural lighting, authentic'} 
+- Hashtag pool (mix ALL tiers, 8-12 per post): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
+- Local hashtags to include: ${(research.localHashtags || []).join(', ')}
+- Platform split: ${fbCount} Facebook, ${igCount} Instagram
+- Post format mix: ${JSON.stringify(research.postFormatMix || { image: 60, video: 25, text: 15 })}
+- Key engagement tactic: ${research.engagementTips || 'Ask a question every post'}
+${videoInstructions}
+RULES:
+1. Exactly ${postsToGenerate} posts (${fbCount} Facebook, ${igCount} Instagram${videoCount > 0 ? `, ${videoCount} Reels` : ''}).
+2. Schedule ONLY on the best days listed above, at the researched peak times.
+3. Rotate through ALL content pillars — no pillar used more than twice in a row.
+4. Each caption: strong hook first line, body matching the caption style, specific CTA last line.
+5. Hashtags: 8-12 per post, mix all 4 tiers + local. Vary the set per post — no identical hashtag lists.
+6. imagePrompt: ultra-specific, production-quality visual description tailored to this exact post topic.
+7. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 
-RESEARCH INSIGHTS (use these to inform every decision):
-- Best posting times: ${postingWindows.join(', ')}
-- Best days: ${(research.bestDays || normalFallback.bestDays).join(', ')}
-- Content pillars to use: ${(research.contentPillars || normalFallback.contentPillars).join(', ')}
-- Hashtag themes: ${(research.hashtagThemes || normalFallback.hashtagThemes).join(', ')}
-- Image aesthetic: ${research.imageStyle || 'vibrant and engaging'}
-- Platform split: ${fbCount} Facebook posts, ${igCount} Instagram posts
-- Key engagement tip: ${research.engagementTips || ''}
-
-Generate exactly ${postsToGenerate} posts (${fbCount} facebook, ${igCount} instagram).
-Spread them across the 2-week window. Use the researched best times and days.
-Rotate through ALL content pillars. Each post needs a specific imagePrompt matching the image aesthetic above.
-Hashtags must be relevant to the hashtag themes researched above (8-12 per post).
-
-Respond with ONLY a valid JSON object — no markdown, no code fences, no explanation:
+Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
-  "strategy": "2-sentence strategy summary referencing the research insights",
+  "strategy": "3-sentence strategy summary citing the key research findings (times, pillars, hashtag approach)",
   "posts": [
     {
       "platform": "Facebook",
+      "postType": "image",
       "scheduledFor": "${now.toISOString().split('T')[0]}T09:00:00",
       "topic": "short topic label",
-      "content": "full post caption with emojis",
-      "hashtags": ["#tag1", "#tag2"],
-      "imagePrompt": "detailed image description",
-      "reasoning": "why this content pillar + time was chosen based on research",
-      "pillar": "content pillar name from the researched list"
+      "content": "full post caption with hook, body, CTA, relevant emojis",
+      "hashtags": ["#mega", "#large", "#medium", "#niche", "#local"],
+      "imagePrompt": "vivid, specific, production-quality image description",
+      "reasoning": "exact research insight that drove this: pillar + time + day + format choice",
+      "pillar": "content pillar name from researched list"
     }
   ]
 }`;

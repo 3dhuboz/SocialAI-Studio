@@ -10,6 +10,10 @@ export interface SocialPost {
   reasoning?: string;
   pillar?: string;
   topic?: string;
+  postType?: 'image' | 'video' | 'text';
+  videoScript?: string;
+  videoShots?: string;
+  videoMood?: string;
 }
 
 export interface BusinessProfile {
@@ -30,6 +34,7 @@ export interface BusinessProfile {
   productsServices: string;
   socialGoal: string;
   contentTopics: string;
+  videoEnabled: boolean;
 }
 
 export interface ContentCalendarStats {

@@ -40,6 +40,7 @@ const DEFAULT_PROFILE: BusinessProfile = {
   productsServices: '',
   socialGoal: '',
   contentTopics: '',
+  videoEnabled: false,
 };
 
 const DEFAULT_STATS: ContentCalendarStats = {
@@ -53,7 +54,7 @@ const DEFAULT_STATS: ContentCalendarStats = {
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, logOut, refreshUserDoc } = useAuth();
-  const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings'>('smart');
   const [showLanding, setShowLanding] = useState(false);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
@@ -228,6 +229,7 @@ const Dashboard: React.FC = () => {
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
   const [saturationMode, setSaturationMode] = useState(false);
   const [smartCount, setSmartCount] = useState(7);
+  const [includeVideos, setIncludeVideos] = useState(false);
 
   // Smart post image generation
   const [smartPostImages, setSmartPostImages] = useState<Record<number, string>>({});
@@ -438,7 +440,8 @@ const Dashboard: React.FC = () => {
         profile.location || 'Australia',
         { facebook: true, instagram: true },
         saturationMode,
-        profile
+        profile,
+        includeVideos
       );
       setSmartPosts(result.posts);
       setSmartStrategy(result.strategy);
@@ -447,6 +450,18 @@ const Dashboard: React.FC = () => {
       toast(`Smart schedule failed: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error');
     }
     setIsSmartGenerating(false);
+  };
+
+  const handleRegenImage = async (idx: number) => {
+    const prompt = smartPosts[idx]?.imagePrompt || smartPosts[idx]?.topic;
+    if (!prompt) return;
+    setAutoGenSet(prev => new Set(prev).add(idx));
+    try {
+      const img = await generateMarketingImage(prompt);
+      if (img) setSmartPostImages(prev => ({ ...prev, [idx]: img }));
+      else toast('Image generation unavailable — try uploading one instead.', 'warning');
+    } catch { toast('Image generation failed.', 'error'); }
+    setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
   };
 
   const handleAcceptSmartPosts = async () => {
@@ -470,12 +485,13 @@ const Dashboard: React.FC = () => {
       saved.push({ id: ref.id, ...postData });
     }
     setPosts(prev => [...saved, ...prev]);
-    toast(`${saved.length} posts added to calendar!`);
+    toast(`${saved.length} posts added to your calendar! 🎉`, 'success');
     setSmartPosts([]);
     setSmartStrategy('');
     setSmartPostImages({});
     setAutoGenSet(new Set());
     setCurrentGenIdx(null);
+    setActiveTab('calendar');
   };
 
   // ── Insights ──
@@ -985,168 +1001,320 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* ═══ SMART AI TAB ═══ */}
-        {activeTab === 'smart' && (
-          <div className="space-y-6">
-            {/* Hidden file input for image upload */}
+        {activeTab === 'smart' && (() => {
+          const now = new Date();
+          const upcomingPosts = posts.filter(p => new Date(p.scheduledFor) > now).sort((a,b) => new Date(a.scheduledFor).getTime() - new Date(b.scheduledFor).getTime());
+          const nextPost = upcomingPosts[0];
+          const canUseVideos = activePlan === 'pro' || activePlan === 'agency';
+          return (
+          <div className="space-y-5">
             <input ref={uploadFileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
 
-            {/* Hero Banner */}
-            <div className="bg-gradient-to-br from-black via-gray-900 to-black rounded-2xl p-7 relative overflow-hidden border border-white/10">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(245,158,11,0.12),transparent_60%)]" />
-              <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/20">
-                    <Zap size={20} className="text-white" />
+            {/* ── Dashboard Overview Strip ── */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
+                <p className="text-xs text-white/30 mb-1">Scheduled Posts</p>
+                <p className="text-3xl font-black text-white">{upcomingPosts.length}</p>
+                <p className="text-xs text-white/25 mt-1">{posts.filter(p => p.status === 'Posted').length} published all-time</p>
+              </div>
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
+                <p className="text-xs text-white/30 mb-1">Next Post</p>
+                {nextPost ? (
+                  <>
+                    <p className="text-sm font-bold text-amber-400">{new Date(nextPost.scheduledFor).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
+                    <p className="text-xs text-white/30 mt-1">{new Date(nextPost.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {nextPost.platform}</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-white/20 mt-1">Nothing scheduled yet</p>
+                )}
+              </div>
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
+                <p className="text-xs text-white/30 mb-1">Engagement Rate</p>
+                <p className="text-3xl font-black text-white">{stats.engagement}<span className="text-lg text-white/40">%</span></p>
+                <p className="text-xs text-white/25 mt-1">{stats.followers.toLocaleString()} followers</p>
+              </div>
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
+                <p className="text-xs text-white/30 mb-1">Status</p>
+                <div className="space-y-1.5 mt-1">
+                  <div className={`flex items-center gap-1.5 text-xs font-semibold ${hasApiKey ? 'text-green-400' : 'text-red-400/70'}`}>
+                    <div className={`w-1.5 h-1.5 rounded-full ${hasApiKey ? 'bg-green-400' : 'bg-red-400/70'}`} />
+                    {hasApiKey ? 'AI Active' : 'No API Key'}
                   </div>
-                  <div>
-                    <h2 className="text-2xl font-bold text-white">AI Autopilot</h2>
-                    <p className="text-white/40 text-xs">Powered by Gemini — researches & writes your entire content calendar</p>
+                  <div className={`flex items-center gap-1.5 text-xs font-semibold ${fbConnected ? 'text-blue-400' : 'text-white/25'}`}>
+                    <div className={`w-1.5 h-1.5 rounded-full ${fbConnected ? 'bg-blue-400' : 'bg-white/15'}`} />
+                    {fbConnected ? 'Facebook Connected' : 'Facebook Not Connected'}
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Hero Generator ── */}
+            <div className="bg-gradient-to-br from-[#0d0d14] via-[#111118] to-[#0d0d14] rounded-3xl p-7 relative overflow-hidden border border-white/10">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_20%_50%,rgba(245,158,11,0.10),transparent_55%)]" />
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_20%,rgba(139,92,246,0.06),transparent_55%)]" />
+              <div className="relative z-10 space-y-5">
+                <div>
+                  <h2 className="text-2xl font-black text-white flex items-center gap-2">
+                    <Sparkles size={22} className="text-amber-400" /> AI Content Autopilot
+                  </h2>
+                  <p className="text-white/35 text-sm mt-1">Researches your industry, audience & platform algorithms — then writes your entire content calendar in one click.</p>
                 </div>
 
-                {/* Saturation Mode Toggle */}
-                <div
-                  onClick={() => {
-                    if (!canUseSaturation) { toast('Saturation Mode is a Pro plan feature. Upgrade to unlock.', 'warning'); return; }
-                    const next = !saturationMode; setSaturationMode(next); setSmartCount(next ? 21 : 7);
-                  }}
-                  className={`rounded-xl border px-4 py-3 flex items-start gap-3 transition mb-4 max-w-lg ${
-                    !canUseSaturation ? 'opacity-40 cursor-not-allowed border-white/8 bg-white/3' :
-                    saturationMode ? 'cursor-pointer bg-red-500/10 border-red-500/30' : 'cursor-pointer bg-white/5 border-white/15 hover:bg-white/10'
-                  }`}
-                >
-                  <div className={`mt-0.5 w-9 h-5 rounded-full flex items-center transition-all flex-shrink-0 ${saturationMode ? 'bg-red-500 justify-end' : 'bg-white/20 justify-start'}`}>
-                    <div className="w-4 h-4 rounded-full bg-white mx-0.5 shadow" />
-                  </div>
-                  <div>
-                    <p className={`text-sm font-bold ${saturationMode ? 'text-red-300' : 'text-white/80'}`}>
-                      {saturationMode ? '🔥 Saturation Mode ON' : 'Saturation Mode'}
-                      {!canUseSaturation && <span className="ml-2 text-[10px] font-normal text-white/25 bg-white/8 px-2 py-0.5 rounded-full">Pro only</span>}
-                    </p>
-                    <p className="text-xs text-white/40 mt-0.5">
-                      {saturationMode ? '3-5 posts/day over 7 days — maximum algorithmic reach' : 'Enable for a high-frequency blitz campaign (3-5 posts/day)'}
-                    </p>
-                  </div>
+                {/* Mode row */}
+                <div className="flex flex-wrap gap-2">
+                  {/* Normal mode */}
+                  <button
+                    onClick={() => { setSaturationMode(false); setSmartCount(7); }}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
+                      !saturationMode ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
+                    }`}
+                  >
+                    <Calendar size={14} /> Smart Schedule
+                  </button>
+                  {/* Saturation mode */}
+                  <button
+                    onClick={() => {
+                      if (!canUseSaturation) { toast('Saturation Mode is a Pro plan feature.', 'warning'); return; }
+                      setSaturationMode(true); setSmartCount(21);
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
+                      saturationMode ? 'bg-red-500/15 border-red-500/40 text-red-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
+                    } ${!canUseSaturation ? 'opacity-50' : ''}`}
+                  >
+                    🔥 Saturation Campaign
+                    {!canUseSaturation && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Pro</span>}
+                  </button>
+                  {/* Short Videos */}
+                  <button
+                    onClick={() => {
+                      if (!canUseVideos) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
+                      setIncludeVideos(v => !v);
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
+                      includeVideos ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
+                    } ${!canUseVideos ? 'opacity-50' : ''}`}
+                  >
+                    🎬 Include Reels/Videos
+                    {!canUseVideos && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Pro</span>}
+                  </button>
                 </div>
+
+                {saturationMode && (
+                  <div className="bg-red-500/8 border border-red-500/15 rounded-xl px-4 py-3">
+                    <p className="text-xs text-red-300 font-semibold">🔥 Saturation Mode: 3–5 posts per day over 7 days — maximum algorithmic reach through sheer posting volume and content variety.</p>
+                  </div>
+                )}
+                {includeVideos && (
+                  <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
+                    <p className="text-xs text-purple-300 font-semibold">🎬 Reels/Videos included: the AI will generate detailed video scripts, shot-by-shot briefs and music mood for short-form video posts alongside your regular content.</p>
+                  </div>
+                )}
 
                 <div className="flex flex-wrap gap-3 items-end">
                   <div>
-                    <label className="text-xs text-white/40 block mb-1">Posts to Generate</label>
+                    <label className="text-xs text-white/40 block mb-1.5">Posts to Generate</label>
                     <select
                       value={smartCount}
                       onChange={e => setSmartCount(Number(e.target.value))}
-                      className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                      title="Post count"
+                      className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none"
                     >
                       {saturationMode
-                        ? [<option key={14} value={14}>14 posts (2/day)</option>, <option key={21} value={21}>21 posts (3/day)</option>, <option key={28} value={28}>28 posts (4/day)</option>, <option key={35} value={35}>35 posts (5/day)</option>]
-                        : [<option key={5} value={5}>5 posts</option>, <option key={7} value={7}>7 posts</option>, <option key={10} value={10}>10 posts</option>, <option key={14} value={14}>14 posts</option>]
+                        ? [<option key={14} value={14}>14 posts (2/day)</option>, <option key={21} value={21}>21 posts (3/day)</option>, <option key={28} value={28}>28 posts (4/day)</option>]
+                        : [<option key={5} value={5}>5 posts (1 week)</option>, <option key={7} value={7}>7 posts (1 week)</option>, <option key={10} value={10}>10 posts (2 weeks)</option>, <option key={14} value={14}>14 posts (2 weeks)</option>]
                       }
                     </select>
                   </div>
                   <button
                     onClick={handleSmartSchedule}
-                    disabled={isSmartGenerating}
-                    className={`font-bold px-6 py-2.5 rounded-xl transition flex items-center gap-2 text-sm shadow-lg disabled:opacity-60 ${
+                    disabled={isSmartGenerating || !hasApiKey}
+                    className={`font-black px-8 py-3 rounded-2xl transition flex items-center gap-2 text-base shadow-xl disabled:opacity-60 ${
                       saturationMode
-                        ? 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white'
-                        : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black'
+                        ? 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white shadow-red-900/30'
+                        : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black shadow-amber-900/30'
                     }`}
                   >
-                    {isSmartGenerating ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} />}
-                    {saturationMode ? 'Launch Saturation Campaign' : 'Generate Schedule'}
+                    {isSmartGenerating ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
+                    {isSmartGenerating ? 'Researching & Writing…' : saturationMode ? 'Launch Saturation Campaign' : 'Generate My Content Calendar'}
                   </button>
+                  {!hasApiKey && <p className="text-xs text-red-400/70 self-center">Set your Gemini API key in Settings first</p>}
                 </div>
               </div>
             </div>
 
             {/* Generation Ticker */}
             {isSmartGenerating && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Loader2 size={16} className="animate-spin text-amber-400" />
-                  <span className="text-sm text-amber-300 font-medium">{TICKER_STEPS[tickerIdx]?.label}</span>
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-amber-500/15 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Loader2 size={16} className="animate-spin text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-300">{TICKER_STEPS[tickerIdx]?.label}</p>
+                    <p className="text-xs text-white/25 mt-0.5">Using two AI calls for research + content quality</p>
+                  </div>
                 </div>
-                <div className="w-full bg-white/10 rounded-full h-1.5">
+                <div className="w-full bg-white/8 rounded-full h-2">
                   <div
-                    className="bg-gradient-to-r from-amber-400 to-orange-500 h-1.5 rounded-full transition-all duration-700"
+                    className="bg-gradient-to-r from-amber-400 to-orange-500 h-2 rounded-full transition-all duration-700"
                     style={{ width: `${TICKER_STEPS[tickerIdx]?.pct ?? 0}%` }}
                   />
                 </div>
-                <p className="text-xs text-gray-500">This uses two AI calls for better results — usually 20-40s</p>
+                <p className="text-xs text-white/20 text-right">{TICKER_STEPS[tickerIdx]?.pct ?? 0}% complete</p>
               </div>
             )}
 
             {/* Strategy */}
             {smartStrategy && !isSmartGenerating && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
-                <h4 className="font-bold text-amber-300 text-sm mb-1">Strategy</h4>
-                <p className="text-sm text-gray-300">{smartStrategy}</p>
+              <div className="bg-gradient-to-r from-amber-500/8 to-orange-500/5 border border-amber-500/20 rounded-2xl p-5">
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">AI Research Strategy</p>
+                <p className="text-sm text-white/70 leading-relaxed">{smartStrategy}</p>
               </div>
             )}
 
             {/* Generated Posts */}
             {smartPosts.length > 0 && !isSmartGenerating && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-3">
+              <div className="space-y-4">
+                {/* Accept All bar */}
+                <div className="sticky top-[72px] z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl">
                   <div>
-                    <h3 className="font-bold text-white">{smartPosts.length} Posts Generated</h3>
-                    {autoGenSet.size > 0 && (
-                      <p className="text-xs text-amber-400 mt-0.5 flex items-center gap-1">
-                        <Loader2 size={11} className="animate-spin" />
-                        Auto-generating images… {imgGenDone}/{smartPosts.length}
+                    <p className="text-sm font-bold text-white">{smartPosts.length} posts ready</p>
+                    {autoGenSet.size > 0 ? (
+                      <p className="text-xs text-amber-400 flex items-center gap-1">
+                        <Loader2 size={10} className="animate-spin" /> Generating images… {imgGenDone}/{smartPosts.length}
                       </p>
+                    ) : (
+                      <p className="text-xs text-white/30">Review below, then add all to your calendar</p>
                     )}
                   </div>
-                  <button onClick={handleAcceptSmartPosts} className="bg-green-600 hover:bg-green-700 text-white font-bold px-4 py-2 rounded-lg flex items-center gap-2 text-sm">
+                  <button
+                    onClick={handleAcceptSmartPosts}
+                    className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition"
+                  >
                     <CheckCircle size={16} /> Accept All & Add to Calendar
                   </button>
                 </div>
-                {smartPosts.map((sp, i) => (
-                  <div key={i} className="bg-white/5 border border-white/10 rounded-xl p-4 flex gap-4">
-                    {/* Image area */}
-                    <div className="w-20 h-20 rounded-lg shrink-0 overflow-hidden bg-black/30 border border-white/10 flex items-center justify-center relative">
-                      {smartPostImages[i] ? (
-                        <img src={smartPostImages[i]} alt="" className="w-full h-full object-cover" />
-                      ) : autoGenSet.has(i) ? (
-                        <div className="flex flex-col items-center gap-1">
-                          <Loader2 size={18} className="animate-spin text-amber-400" />
-                          <span className="text-[9px] text-white/40">Generating</span>
+
+                {/* Post cards */}
+                {smartPosts.map((sp, i) => {
+                  const isVideo = (sp as any).postType === 'video';
+                  const hasImage = !!smartPostImages[i];
+                  const isGenning = autoGenSet.has(i);
+                  return (
+                  <div key={i} className={`border rounded-2xl overflow-hidden transition ${
+                    isVideo ? 'bg-purple-950/20 border-purple-500/20' : 'bg-white/3 border-white/8 hover:border-white/15'
+                  }`}>
+                    <div className="p-4 flex gap-4">
+                      {/* Image / Video area */}
+                      {isVideo ? (
+                        <div className="w-24 h-24 rounded-xl bg-purple-900/30 border border-purple-500/20 flex flex-col items-center justify-center flex-shrink-0 gap-1">
+                          <span className="text-2xl">🎬</span>
+                          <span className="text-[10px] text-purple-300 font-bold">VIDEO</span>
                         </div>
                       ) : (
-                        <ImageIcon size={20} className="text-white/20" />
+                        <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group">
+                          {hasImage ? (
+                            <>
+                              <img src={smartPostImages[i]} alt="" className="w-full h-full object-cover" />
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1">
+                                <button onClick={() => handleRegenImage(i)} title="Regenerate" className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"><RefreshCw size={12} className="text-white" /></button>
+                                <button onClick={() => handleUploadImage(i)} title="Upload" className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"><Upload size={12} className="text-white" /></button>
+                              </div>
+                            </>
+                          ) : isGenning ? (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-1.5">
+                              <Loader2 size={20} className="animate-spin text-amber-400" />
+                              <span className="text-[9px] text-white/40">Generating…</span>
+                            </div>
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-1.5">
+                              <ImageIcon size={18} className="text-white/20" />
+                              <div className="flex flex-col gap-1 items-center">
+                                <button onClick={() => handleRegenImage(i)} className="text-[9px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full hover:bg-amber-500/30 transition font-semibold">Generate</button>
+                                <button onClick={() => handleUploadImage(i)} className="text-[9px] text-white/25 hover:text-white/50 transition">Upload</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
-                      <button
-                        onClick={() => handleUploadImage(i)}
-                        className="absolute bottom-0 right-0 bg-black/70 hover:bg-black p-1 rounded-tl"
-                        title="Upload image"
-                      >
-                        <Upload size={11} className="text-white/60" />
-                      </button>
-                    </div>
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        {(sp.platform === 'Instagram' || sp.platform?.toLowerCase() === 'instagram')
-                          ? <Instagram size={13} className="text-pink-400" />
-                          : <Facebook size={13} className="text-blue-400" />}
-                        <span className="text-xs text-gray-400">
-                          {new Date(sp.scheduledFor).toLocaleDateString()} {new Date(sp.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        {sp.pillar && <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded">{sp.pillar}</span>}
+                      {/* Content */}
+                      <div className="flex-1 min-w-0 space-y-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {sp.platform === 'Instagram' ? <Instagram size={13} className="text-pink-400 flex-shrink-0" /> : <Facebook size={13} className="text-blue-400 flex-shrink-0" />}
+                          <span className="text-xs font-semibold text-white/50">
+                            {new Date(sp.scheduledFor).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {new Date(sp.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {sp.pillar && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">{sp.pillar}</span>}
+                          {isVideo && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">🎬 Reel</span>}
+                        </div>
+                        <p className="text-sm text-white/80 leading-relaxed">{sp.content}</p>
+                        <div className="flex flex-wrap gap-1">
+                          {sp.hashtags.map((t, j) => (
+                            <span key={j} className="text-[11px] text-amber-400/70 font-medium">{t.startsWith('#') ? t : `#${t}`}</span>
+                          ))}
+                        </div>
+                        {sp.reasoning && <p className="text-[11px] text-white/25 italic border-t border-white/5 pt-2">{sp.reasoning}</p>}
                       </div>
-                      <p className="text-sm text-gray-200 mb-2 leading-relaxed">{sp.content}</p>
-                      <div className="flex flex-wrap gap-1">
-                        {sp.hashtags.map((t, j) => <span key={j} className="text-[10px] text-amber-400">{t.startsWith('#') ? t : `#${t}`}</span>)}
-                      </div>
-                      {sp.reasoning && <p className="text-xs text-gray-600 mt-2 italic">{sp.reasoning}</p>}
                     </div>
+                    {/* Video script section */}
+                    {isVideo && (sp as any).videoScript && (
+                      <details className="border-t border-purple-500/15">
+                        <summary className="text-xs text-purple-400/70 hover:text-purple-300 cursor-pointer px-4 py-2.5 flex items-center gap-1.5 font-semibold transition">
+                          <ChevronDown size={12} /> View Video Script & Shot Brief
+                        </summary>
+                        <div className="px-4 pb-4 space-y-3">
+                          <div className="bg-purple-900/20 rounded-xl p-4 space-y-2">
+                            <p className="text-xs font-bold text-purple-300">Script:</p>
+                            <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{(sp as any).videoScript}</p>
+                          </div>
+                          {(sp as any).videoShots && (
+                            <div className="bg-purple-900/20 rounded-xl p-4 space-y-2">
+                              <p className="text-xs font-bold text-purple-300">Shot-by-Shot:</p>
+                              <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{(sp as any).videoShots}</p>
+                            </div>
+                          )}
+                          {(sp as any).videoMood && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-purple-300">Music Mood:</span>
+                              <span className="text-xs text-white/50">{(sp as any).videoMood}</span>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
+
+                {/* Accept All bottom */}
+                <button
+                  onClick={handleAcceptSmartPosts}
+                  className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-base shadow-xl shadow-green-900/20 transition"
+                >
+                  <CheckCircle size={18} /> Accept All {smartPosts.length} Posts & Add to Calendar
+                </button>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {smartPosts.length === 0 && !isSmartGenerating && (
+              <div className="text-center py-16 space-y-4">
+                <div className="w-16 h-16 mx-auto bg-amber-500/10 rounded-3xl flex items-center justify-center">
+                  <Sparkles size={28} className="text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-white/50 font-semibold">Your AI content calendar is waiting</p>
+                  <p className="text-white/20 text-sm mt-1">Click "Generate My Content Calendar" above to let the AI research your industry and write a full schedule</p>
+                </div>
+                {upcomingPosts.length > 0 && (
+                  <button onClick={() => setActiveTab('calendar')} className="text-sm text-amber-400 hover:text-amber-300 underline transition">
+                    View {upcomingPosts.length} scheduled posts in Calendar →
+                  </button>
+                )}
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* ═══ INSIGHTS TAB ═══ */}
         {activeTab === 'insights' && (
@@ -1420,6 +1588,47 @@ const Dashboard: React.FC = () => {
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Short Video Toggle — Pro+ */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
+                    <span className="text-base">🎬</span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white flex items-center gap-2">
+                      Short Video / Reels
+                      {!(activePlan === 'pro' || activePlan === 'agency') && (
+                        <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">Pro</span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-white/30 mt-0.5">AI generates full video scripts, shot briefs & music mood for Reels alongside regular posts</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!(activePlan === 'pro' || activePlan === 'agency')) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
+                    setProfile(prev => ({ ...prev, videoEnabled: !prev.videoEnabled }));
+                    setIncludeVideos(prev => !prev);
+                  }}
+                  className={`relative w-12 h-6 rounded-full transition flex-shrink-0 ${
+                    profile.videoEnabled && (activePlan === 'pro' || activePlan === 'agency')
+                      ? 'bg-purple-500'
+                      : 'bg-white/15'
+                  } ${!(activePlan === 'pro' || activePlan === 'agency') ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${
+                    profile.videoEnabled && (activePlan === 'pro' || activePlan === 'agency') ? 'left-7' : 'left-1'
+                  }`} />
+                </button>
+              </div>
+              {profile.videoEnabled && (activePlan === 'pro' || activePlan === 'agency') && (
+                <div className="mt-4 bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
+                  <p className="text-xs text-purple-300">🎬 Short videos are now included in your AI content calendar. Each Reel post includes a full script, shot-by-shot brief, and music recommendation that you can film with your phone.</p>
+                </div>
+              )}
             </div>
 
             {/* Facebook Connection */}
