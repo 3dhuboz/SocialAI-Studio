@@ -150,7 +150,11 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding }) => {
                     </button>
                     <p className="text-xs text-white/25">
                       Don't have an account?{' '}
-                      <button onClick={onShowLanding} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
+                      <button onClick={() => { setMode('signup'); setError(''); }} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
+                        Sign Up
+                      </button>
+                      {' · '}
+                      <button onClick={onShowLanding} className="text-white/20 hover:text-white/40 transition">
                         View plans
                       </button>
                     </p>
