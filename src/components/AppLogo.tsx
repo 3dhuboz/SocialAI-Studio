@@ -7,24 +7,18 @@ interface Props {
   variant?: 'badge' | 'raw';
 }
 
-export const AppLogo: React.FC<Props> = ({ size = 36, className = '', variant = 'badge' }) => {
-  const img = (
-    <img
-      src="/logo-brand.png"
-      alt="SocialAI Studio"
-      style={{ height: size, width: 'auto', display: 'block' }}
-      className={variant === 'raw' ? className : ''}
-    />
-  );
-
-  if (variant === 'raw') return img;
-
-  return (
-    <div
-      className={`bg-white rounded-2xl flex items-center justify-center overflow-hidden ${className}`}
-      style={{ padding: Math.round(size * 0.1), display: 'inline-flex' }}
-    >
-      {img}
-    </div>
-  );
-};
+export const AppLogo: React.FC<Props> = ({ size = 36, className = '', variant = 'raw' }) => (
+  <img
+    src="/logo-brand.png"
+    alt="SocialAI Studio"
+    style={{
+      height: size,
+      width: 'auto',
+      display: 'block',
+      filter: variant === 'raw'
+        ? 'drop-shadow(0 0 8px rgba(245,158,11,0.55)) drop-shadow(0 0 18px rgba(245,158,11,0.25))'
+        : undefined,
+    }}
+    className={className}
+  />
+);
