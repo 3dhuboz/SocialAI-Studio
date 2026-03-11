@@ -183,21 +183,37 @@ const Dashboard: React.FC = () => {
   // Add a new client workspace
   const addClient = async (name: string, businessType: string) => {
     if (!user) return;
+    if (activePlan !== 'agency') { toast('Client workspaces require an Agency plan.', 'warning'); return; }
+    if (clients.length >= CLIENT.agencyClientLimit) {
+      toast(`You have reached the ${CLIENT.agencyClientLimit}-client limit on the Agency plan.`, 'warning'); return;
+    }
     const newClient: Omit<ClientWorkspace, 'id'> = { name, businessType, createdAt: new Date().toISOString() };
     const ref = await addDoc(collection(db, 'users', user.uid, 'clients'), newClient);
     const created: ClientWorkspace = { id: ref.id, ...newClient };
     setClients(prev => [...prev, created]);
     setActiveClientId(ref.id);
-    toast(`Client "${name}" added!`);
+    toast(`Client "${name}" added!`, 'success');
   };
 
-  // Delete a client workspace
+  // Rename a client workspace
+  const renameClient = async (clientId: string, name: string, businessType: string) => {
+    if (!user) return;
+    await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { name, businessType });
+    setClients(prev => prev.map(c => c.id === clientId ? { ...c, name, businessType } : c));
+    toast('Client updated.', 'success');
+  };
+
+  // Delete a client workspace (including all posts)
   const deleteClient = async (clientId: string) => {
     if (!user) return;
-    await deleteDoc(doc(db, 'users', user.uid, 'clients', clientId));
-    setClients(prev => prev.filter(c => c.id !== clientId));
-    if (activeClientId === clientId) setActiveClientId(null);
-    toast('Client removed.');
+    try {
+      const postsSnap = await getDocs(collection(db, 'users', user.uid, 'clients', clientId, 'posts'));
+      await Promise.all(postsSnap.docs.map(d => deleteDoc(d.ref)));
+      await deleteDoc(doc(db, 'users', user.uid, 'clients', clientId));
+      setClients(prev => prev.filter(c => c.id !== clientId));
+      if (activeClientId === clientId) { setActiveClientId(null); setPosts([]); }
+      toast('Client and all their data removed.', 'success');
+    } catch (e) { toast('Failed to delete client.', 'error'); }
   };
 
   // Persist profile to Firestore (debounced)
@@ -698,6 +714,7 @@ const Dashboard: React.FC = () => {
                   activeClientId={activeClientId}
                   onSwitch={setActiveClientId}
                   onAdd={addClient}
+                  onRename={renameClient}
                   onDelete={deleteClient}
                   agencyName={profile.name}
                 />

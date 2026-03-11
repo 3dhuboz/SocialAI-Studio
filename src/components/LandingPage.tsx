@@ -256,11 +256,11 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
                   <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">from one dashboard</span>
                 </h2>
                 <p className="text-white/50 mb-6 leading-relaxed">
-                  The Agency plan lets you add up to 10 client workspaces — each with their own profile, posts, Facebook page, and AI settings. Switch between clients instantly, no logging out required.
+                  The Agency plan lets you add up to 5 client workspaces — each with their own profile, posts, Facebook page, and AI settings. Switch between clients instantly, no logging out required.
                 </p>
                 <div className="space-y-3 mb-8">
                   {[
-                    'Up to 10 separate client workspaces',
+                    'Up to 5 separate client workspaces',
                     'Instant client switching from the dashboard header',
                     'Per-client Facebook & Instagram connection',
                     'Per-client AI content, schedule & analytics',

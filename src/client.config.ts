@@ -72,7 +72,7 @@ export const CLIENT = {
   },
 
   /** Max client workspaces per agency account */
-  agencyClientLimit: 10,
+  agencyClientLimit: 5,
 
   plans: [
     {
@@ -134,7 +134,7 @@ export const CLIENT = {
       price: 149,
       postsPerWeek: 21,
       features: [
-        'Up to 10 client workspaces',
+        'Up to 5 client workspaces',
         'Switch between clients instantly',
         'Per-client AI content & scheduling',
         'Per-client Facebook & Instagram connection',
