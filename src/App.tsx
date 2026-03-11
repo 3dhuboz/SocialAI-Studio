@@ -1237,22 +1237,72 @@ const Dashboard: React.FC = () => {
   );
 };
 
+// ── Splash Screen ──
+const SplashScreen: React.FC = () => {
+  const LINES = [
+    'Crafting your content strategy…',
+    'Powering up the AI engine…',
+    'Loading your social command centre…',
+    'Syncing your business profile…',
+    'Almost ready to grow your audience…',
+  ];
+  const [lineIdx, setLineIdx] = useState(0);
+  const [dotCount, setDotCount] = useState(1);
+
+  useEffect(() => {
+    const t1 = setInterval(() => setLineIdx(i => (i + 1) % LINES.length), 1800);
+    const t2 = setInterval(() => setDotCount(d => d < 3 ? d + 1 : 1), 500);
+    return () => { clearInterval(t1); clearInterval(t2); };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0f] flex flex-col items-center justify-center relative overflow-hidden">
+      {/* Ambient glow */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(245,158,11,0.12),transparent_65%)] pointer-events-none" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_80%,rgba(234,88,12,0.06),transparent_50%)] pointer-events-none" />
+
+      {/* Pulsing ring behind logo */}
+      <div className="relative mb-8">
+        <div className="absolute inset-0 rounded-3xl bg-amber-400/10 animate-ping" style={{ animationDuration: '2s' }} />
+        <div className="absolute inset-[-8px] rounded-[32px] border border-amber-400/10 animate-pulse" />
+        <AppLogo size={80} />
+      </div>
+
+      {/* App name */}
+      <h1 className="text-3xl font-black text-white mb-1 tracking-tight">{CLIENT.appName}</h1>
+      <p className="text-sm text-amber-400/70 font-medium mb-10">{CLIENT.tagline}</p>
+
+      {/* Cycling status line */}
+      <div className="h-6 flex items-center justify-center">
+        <p className="text-sm text-white/30 transition-all duration-500">
+          {LINES[lineIdx].replace('…', '.'.repeat(dotCount))}
+        </p>
+      </div>
+
+      {/* Progress dots */}
+      <div className="flex gap-2 mt-6">
+        {[0, 1, 2, 3, 4].map(i => (
+          <div
+            key={i}
+            className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
+              i === lineIdx % 5 ? 'bg-amber-400 scale-125' : 'bg-white/10'
+            }`}
+          />
+        ))}
+      </div>
+
+      {/* Footer */}
+      <p className="absolute bottom-8 text-xs text-white/15">
+        {CLIENT.poweredBy}
+      </p>
+    </div>
+  );
+};
+
 // ── Auth Loading Gate ──
 const AuthGate: React.FC = () => {
   const { loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <AppLogo size={48} />
-          <div className="flex items-center gap-2 text-white/25 text-sm">
-            <Loader2 size={14} className="animate-spin text-amber-400" />
-            <span>Loading…</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <SplashScreen />;
   return <Dashboard />;
 };
 
