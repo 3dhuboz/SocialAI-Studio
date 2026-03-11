@@ -4,6 +4,10 @@ import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus } from './types';
 import { LandingPage } from './components/LandingPage';
 import { SetupBanner } from './components/SetupBanner';
+import { AuthScreen } from './components/AuthScreen';
+import { useAuth } from './contexts/AuthContext';
+import { db } from './firebase';
+import { doc, getDoc, updateDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
@@ -11,7 +15,7 @@ import {
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
-  Lightbulb, ArrowRight, MessageSquare, Info
+  Lightbulb, ArrowRight, MessageSquare, Info, LogOut
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -39,46 +43,72 @@ const DEFAULT_STATS: ContentCalendarStats = {
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
+  const { user, userDoc, logOut, refreshUserDoc } = useAuth();
   const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings'>('create');
+  const [showLanding, setShowLanding] = useState(false);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
   // Handle Stripe post-payment redirect
   const [showPlanPicker, setShowPlanPicker] = useState(false);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('checkout') === 'success') {
-      const planParam = params.get('plan') as PlanTier | null;
-      if (planParam && ['starter', 'growth', 'pro'].includes(planParam)) {
-        setActivePlan(planParam);
-        localStorage.setItem('sai_plan', planParam);
-        setSetupStatus('ordered');
-      } else {
-        // No plan in URL — show picker
-        setShowPlanPicker(true);
+    const handle = async () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('checkout') === 'success') {
+        const planParam = params.get('plan') as PlanTier | null;
+        if (planParam && ['starter', 'growth', 'pro'].includes(planParam)) {
+          setActivePlan(planParam);
+          setSetupStatus('ordered');
+          if (user) await updateDoc(doc(db, 'users', user.uid), { plan: planParam, setupStatus: 'ordered' });
+        } else {
+          setShowPlanPicker(true);
+        }
+        window.history.replaceState({}, '', window.location.pathname);
       }
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, []);
+    };
+    handle();
+  }, [user]);
 
   // Profile & Posts
-  const [profile, setProfile] = useState<BusinessProfile>(() => {
-    const saved = localStorage.getItem('sai_profile');
-    return saved ? { ...DEFAULT_PROFILE, ...JSON.parse(saved) } : DEFAULT_PROFILE;
-  });
-  const [posts, setPosts] = useState<SocialPost[]>(() => {
-    const saved = localStorage.getItem('sai_posts');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const [stats, setStats] = useState<ContentCalendarStats>(() => {
-    const saved = localStorage.getItem('sai_stats');
-    return saved ? { ...DEFAULT_STATS, ...JSON.parse(saved) } : DEFAULT_STATS;
-  });
+  const [profile, setProfile] = useState<BusinessProfile>(DEFAULT_PROFILE);
+  const [posts, setPosts] = useState<SocialPost[]>([]);
+  const [stats, setStats] = useState<ContentCalendarStats>(DEFAULT_STATS);
+  const [firestoreLoaded, setFirestoreLoaded] = useState(false);
 
-  // Persist
-  useEffect(() => { localStorage.setItem('sai_posts', JSON.stringify(posts)); }, [posts]);
-  useEffect(() => { localStorage.setItem('sai_profile', JSON.stringify(profile)); }, [profile]);
-  useEffect(() => { localStorage.setItem('sai_stats', JSON.stringify(stats)); }, [stats]);
+  // Load data from Firestore on auth
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.profile) setProfile(p => ({ ...p, ...d.profile }));
+        if (d.stats) setStats(s => ({ ...s, ...d.stats }));
+        if (d.plan) setActivePlan(d.plan);
+        if (d.setupStatus) setSetupStatus(d.setupStatus);
+        if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
+        if (d.isAdmin) localStorage.setItem('sai_admin', '1');
+      }
+      const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
+      const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
+      setPosts(loaded);
+      setFirestoreLoaded(true);
+    };
+    load();
+  }, [user]);
+
+  // Persist profile to Firestore (debounced)
+  useEffect(() => {
+    if (!user || !firestoreLoaded) return;
+    const t = setTimeout(() => updateDoc(doc(db, 'users', user.uid), { profile }), 1000);
+    return () => clearTimeout(t);
+  }, [profile, user, firestoreLoaded]);
+
+  // Persist stats to Firestore
+  useEffect(() => {
+    if (!user || !firestoreLoaded) return;
+    updateDoc(doc(db, 'users', user.uid), { stats });
+  }, [stats, user, firestoreLoaded]);
 
   // Content Generator State
   const [topic, setTopic] = useState('');
@@ -150,21 +180,20 @@ const Dashboard: React.FC = () => {
   const hasApiKey = !!localStorage.getItem('sai_gemini_key');
   const fbConnected = !!(profile.facebookPageId && profile.facebookPageAccessToken);
 
-  // Plan & setup state
-  const [activePlan, setActivePlan] = useState<PlanTier | null>(() =>
-    localStorage.getItem('sai_plan') as PlanTier | null
-  );
-  const [setupStatus, setSetupStatus] = useState<SetupStatus>(() =>
-    (localStorage.getItem('sai_setup_status') as SetupStatus) || 'ordered'
-  );
+  // Plan & setup state (sourced from Firestore via userDoc)
+  const [activePlan, setActivePlan] = useState<PlanTier | null>(null);
+  const [setupStatus, setSetupStatus] = useState<SetupStatus>('ordered');
   const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
 
+  // Persist plan/setupStatus to Firestore
   useEffect(() => {
-    if (activePlan) localStorage.setItem('sai_plan', activePlan);
-  }, [activePlan]);
+    if (!user || !activePlan) return;
+    updateDoc(doc(db, 'users', user.uid), { plan: activePlan });
+  }, [activePlan, user]);
   useEffect(() => {
-    localStorage.setItem('sai_setup_status', setupStatus);
-  }, [setupStatus]);
+    if (!user) return;
+    updateDoc(doc(db, 'users', user.uid), { setupStatus });
+  }, [setupStatus, user]);
 
   const planCfg = CLIENT.plans.find(p => p.id === activePlan);
   const canUseImages  = activePlan === 'growth' || activePlan === 'pro';
@@ -231,19 +260,20 @@ const Dashboard: React.FC = () => {
     setIsGeneratingImage(false);
   };
 
-  const handleSavePost = () => {
+  const handleSavePost = async () => {
     if (!generatedContent) { toast('Generate content first.', 'warning'); return; }
-    const post: SocialPost = {
-      id: `sp_${Date.now()}`,
+    if (!user) return;
+    const postData = {
       platform,
       content: generatedContent,
       hashtags: generatedHashtags,
       scheduledFor: scheduleDate || new Date().toISOString(),
-      status: scheduleDate ? 'Scheduled' : 'Draft',
+      status: (scheduleDate ? 'Scheduled' : 'Draft') as SocialPost['status'],
       image: generatedImage || undefined,
       topic
     };
-    setPosts(prev => [post, ...prev]);
+    const ref = await addDoc(collection(db, 'users', user.uid, 'posts'), postData);
+    setPosts(prev => [{ id: ref.id, ...postData } as SocialPost, ...prev]);
     toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!`);
     setGeneratedContent('');
     setGeneratedHashtags([]);
@@ -316,22 +346,28 @@ const Dashboard: React.FC = () => {
     setIsSmartGenerating(false);
   };
 
-  const handleAcceptSmartPosts = () => {
-    const newPosts: SocialPost[] = smartPosts.map((sp, i) => ({
-      id: `sp_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
-      platform: sp.platform,
-      content: sp.content,
-      hashtags: sp.hashtags,
-      scheduledFor: sp.scheduledFor,
-      status: 'Scheduled' as const,
-      image: smartPostImages[i] || undefined,
-      imagePrompt: sp.imagePrompt,
-      reasoning: sp.reasoning,
-      pillar: sp.pillar,
-      topic: sp.topic
-    }));
-    setPosts(prev => [...newPosts, ...prev]);
-    toast(`${newPosts.length} posts added to calendar!`);
+  const handleAcceptSmartPosts = async () => {
+    if (!user) return;
+    const saved: SocialPost[] = [];
+    for (let i = 0; i < smartPosts.length; i++) {
+      const sp = smartPosts[i];
+      const postData = {
+        platform: sp.platform,
+        content: sp.content,
+        hashtags: sp.hashtags,
+        scheduledFor: sp.scheduledFor,
+        status: 'Scheduled' as const,
+        image: smartPostImages[i] || undefined,
+        imagePrompt: sp.imagePrompt || undefined,
+        reasoning: sp.reasoning || undefined,
+        pillar: sp.pillar || undefined,
+        topic: sp.topic
+      };
+      const ref = await addDoc(collection(db, 'users', user.uid, 'posts'), postData);
+      saved.push({ id: ref.id, ...postData });
+    }
+    setPosts(prev => [...saved, ...prev]);
+    toast(`${saved.length} posts added to calendar!`);
     setSmartPosts([]);
     setSmartStrategy('');
     setSmartPostImages({});
@@ -353,7 +389,9 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Delete Post ──
-  const deletePost = (id: string) => {
+  const deletePost = async (id: string) => {
+    if (!user) return;
+    await deleteDoc(doc(db, 'users', user.uid, 'posts', id));
     setPosts(prev => prev.filter(p => p.id !== id));
     toast('Post deleted.');
   };
@@ -367,9 +405,30 @@ const Dashboard: React.FC = () => {
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
-  // Show landing page if no plan selected
-  if (!activePlan && !showPlanPicker) {
-    return <LandingPage onActivate={plan => { setActivePlan(plan); localStorage.setItem('sai_plan', plan); }} />;
+  // Auth gate
+  if (!user) {
+    return <AuthScreen onShowLanding={() => setShowLanding(true)} />;
+  }
+
+  // Show landing page
+  if (showLanding || (!activePlan && !showPlanPicker && firestoreLoaded)) {
+    return <LandingPage onActivate={async plan => {
+      setActivePlan(plan);
+      setShowLanding(false);
+      if (user) await updateDoc(doc(db, 'users', user.uid), { plan, setupStatus: 'ordered' });
+    }} />;
+  }
+
+  // Still loading Firestore data
+  if (!firestoreLoaded) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-white/30">
+          <Loader2 size={28} className="animate-spin text-amber-400" />
+          <p className="text-sm">Loading your dashboard…</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -387,11 +446,11 @@ const Dashboard: React.FC = () => {
               {CLIENT.plans.map(plan => (
                 <button
                   key={plan.id}
-                  onClick={() => {
+                  onClick={async () => {
                     setActivePlan(plan.id);
-                    localStorage.setItem('sai_plan', plan.id);
                     setSetupStatus('ordered');
                     setShowPlanPicker(false);
+                    if (user) await updateDoc(doc(db, 'users', user.uid), { plan: plan.id, setupStatus: 'ordered' });
                     toast(`Welcome! Your ${plan.name} plan is now active. We\'ll be in touch within 1–3 days to connect your Facebook page.`);
                   }}
                   className={`w-full bg-gradient-to-r ${plan.color} text-white font-bold py-4 rounded-xl flex items-center justify-between px-5 hover:opacity-90 transition`}
@@ -452,6 +511,13 @@ const Dashboard: React.FC = () => {
                 {isPullingStats ? 'Pulling...' : 'Refresh Stats'}
               </button>
             )}
+            <button
+              onClick={() => logOut()}
+              title="Sign out"
+              className="text-white/20 hover:text-red-400 p-1.5 rounded-lg transition ml-1"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </div>
         {/* Live Stats Bar */}
@@ -570,9 +636,7 @@ const Dashboard: React.FC = () => {
             {/* Generated Output */}
             {generatedContent && (
               <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-                <div className="flex items-center gap-2 mb-1">
-                  {platform === 'Instagram' ? <Instagram size={16} className="text-pink-400" /> : <Facebook size={16} className="text-blue-400" />}
-                  <span className="font-bold text-sm text-white">Generated Post</span>
+                <div className="flex items-center gap-2 ml-auto">
                   <span className="ml-auto text-[10px] text-white/25">{generatedContent.length} chars</span>
                 </div>
                 <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{generatedContent}</div>
@@ -952,8 +1016,9 @@ const Dashboard: React.FC = () => {
                   className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20"
                 />
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
+                    if (user) await updateDoc(doc(db, 'users', user.uid), { geminiApiKey: profile.geminiApiKey });
                     toast('API Key saved! AI features are now active.');
                   }}
                   className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition"
