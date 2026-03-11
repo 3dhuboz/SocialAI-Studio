@@ -11,6 +11,7 @@ import { db } from './firebase';
 import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
+import { OnboardingWizard } from './components/OnboardingWizard';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
@@ -18,7 +19,7 @@ import {
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
-  Lightbulb, ArrowRight, MessageSquare, Info, LogOut
+  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -89,6 +90,15 @@ const Dashboard: React.FC = () => {
   });
   const [firestoreLoaded, setFirestoreLoaded] = useState(true);
 
+  // Onboarding wizard — auto-show for new users who haven't set up their profile
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const isProfileBlank = (
+    (profile.name === CLIENT.defaultBusinessName || !profile.name) &&
+    !profile.description &&
+    !localStorage.getItem('sai_gemini_key') &&
+    !localStorage.getItem('sai_onboarding_done')
+  );
+
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
@@ -122,6 +132,7 @@ const Dashboard: React.FC = () => {
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
+          if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
         }
         // Load agency clients
         const clientsSnap = await getDocs(collection(db, 'users', user.uid, 'clients'));
@@ -134,6 +145,12 @@ const Dashboard: React.FC = () => {
         localStorage.setItem('sai_posts', JSON.stringify(loaded));
       } catch (e) {
         console.warn('Firestore sync error:', e);
+      } finally {
+        // Auto-show onboarding for brand-new users after sync completes
+        const done = !!localStorage.getItem('sai_onboarding_done');
+        const hasProfile = !!localStorage.getItem('sai_profile');
+        const hasKey = !!localStorage.getItem('sai_gemini_key');
+        if (!done && !hasKey && !hasProfile) setShowOnboarding(true);
       }
     };
     sync();
@@ -483,6 +500,17 @@ const Dashboard: React.FC = () => {
   const [isFindingPages, setIsFindingPages] = useState(false);
   const [fbLookupError, setFbLookupError] = useState('');
 
+  const handleDismissOnboarding = async () => {
+    setShowOnboarding(false);
+    localStorage.setItem('sai_onboarding_done', '1');
+    if (user) {
+      await updateDoc(doc(db, 'users', user.uid), { onboardingDone: true }).catch(() =>
+        setDoc(doc(db, 'users', user.uid), { onboardingDone: true }, { merge: true })
+      );
+    }
+    await handleSaveProfile().catch(() => {});
+  };
+
   const handleSaveApiKey = async () => {
     if (!profile.geminiApiKey.trim()) { toast('Enter an API key first.', 'warning'); return; }
     setIsSavingKey(true);
@@ -593,6 +621,16 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
+      {/* Onboarding Wizard */}
+      {showOnboarding && (
+        <OnboardingWizard
+          profile={profile}
+          onUpdateProfile={updates => setProfile(prev => ({ ...prev, ...updates }))}
+          onSave={handleSaveProfile}
+          onDismiss={handleDismissOnboarding}
+          userEmail={user?.email ?? undefined}
+        />
+      )}
       {/* Post-payment plan picker */}
       {showPlanPicker && (
         <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
@@ -676,6 +714,14 @@ const Dashboard: React.FC = () => {
               >
                 <RefreshCw size={11} className={isPullingStats ? 'animate-spin' : ''} />
                 {isPullingStats ? 'Pulling...' : 'Refresh Stats'}
+              </button>
+            )}
+            {isProfileBlank && !showOnboarding && (
+              <button
+                onClick={() => setShowOnboarding(true)}
+                className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full transition text-xs font-semibold"
+              >
+                <ClipboardList size={11} /> Complete Setup
               </button>
             )}
             <button
