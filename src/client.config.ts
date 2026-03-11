@@ -31,6 +31,19 @@ export const CLIENT = {
 
   setupFee: 99,
 
+  /**
+   * STRIPE SETUP:
+   * 1. Go to dashboard.stripe.com → Products → Pricing tables → Create pricing table
+   * 2. Add your 3 plans (Starter $29, Growth $49, Pro $79) + $99 setup fee as an add-on
+   * 3. Set the success URL to: https://YOUR_APP_URL/?checkout=success&plan={plan_id}
+   *    where {plan_id} is one of: starter | growth | pro
+   * 4. Copy your Publishable Key from Stripe dashboard → Developers → API keys
+   * 5. Copy the Pricing Table ID from the embed code (starts with prctbl_)
+   * Leave these as empty strings to fall back to the static pricing cards.
+   */
+  stripePublishableKey: '',
+  stripePricingTableId: '',
+
   plans: [
     {
       id: 'starter' as const,

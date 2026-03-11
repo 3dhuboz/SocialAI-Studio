@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CLIENT } from '../client.config';
+import { PricingTable } from './PricingTable';
 import {
   Sparkles, CheckCircle, Zap, Image as ImageIcon, Calendar,
   BarChart3, Facebook, Instagram, ArrowRight, Star, Clock,
@@ -46,9 +47,11 @@ const howItWorks = [
 
 export const LandingPage: React.FC<Props> = ({ onActivate }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [showPricing, setShowPricing] = useState(false);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+      {showPricing && <PricingTable onClose={() => setShowPricing(false)} />}
 
       {/* NAV */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl">
@@ -59,14 +62,12 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
             </div>
             <span className="font-bold text-lg">{CLIENT.appName}</span>
           </div>
-          <a
-            href={CLIENT.salesUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => setShowPricing(true)}
             className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
           >
             Get Started
-          </a>
+          </button>
         </div>
       </nav>
 
@@ -88,15 +89,13 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
             We connect your Facebook business page to AI that writes, designs, and schedules posts automatically — every single week.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-            <a
-              href={CLIENT.salesUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              onClick={() => setShowPricing(true)}
               className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-lg hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/30"
             >
               Start Today — $99 Setup
               <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-            </a>
+            </button>
             <p className="text-sm text-white/30">Then from $29/month · Cancel anytime</p>
           </div>
         </div>
@@ -195,14 +194,12 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
                   ))}
                 </ul>
 
-                <a
-                  href={CLIENT.salesUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  onClick={() => setShowPricing(true)}
                   className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-xl text-center hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg`}
                 >
                   Get {plan.name} <ArrowRight size={16} />
-                </a>
+                </button>
               </div>
             ))}
           </div>
@@ -277,14 +274,12 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
         <div className="relative max-w-2xl mx-auto">
           <h2 className="text-3xl md:text-5xl font-black mb-4">Ready to put social media on autopilot?</h2>
           <p className="text-white/40 mb-10">Join Australian businesses already saving hours every week.</p>
-          <a
-            href={CLIENT.salesUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => setShowPricing(true)}
             className="group inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-5 rounded-2xl text-xl hover:opacity-90 transition shadow-2xl shadow-amber-500/30"
           >
             Get Started Today <ArrowRight size={22} className="group-hover:translate-x-1 transition-transform" />
-          </a>
+          </button>
           <p className="text-white/20 text-sm mt-6">$99 setup · then from $29/month · No lock-in contract</p>
         </div>
       </section>

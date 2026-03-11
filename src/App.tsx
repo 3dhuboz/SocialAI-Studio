@@ -43,6 +43,20 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
+  // Handle Stripe post-payment redirect: ?checkout=success&plan=starter|growth|pro
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const checkoutStatus = params.get('checkout');
+    const planParam = params.get('plan') as PlanTier | null;
+    if (checkoutStatus === 'success' && planParam && ['starter', 'growth', 'pro'].includes(planParam)) {
+      setActivePlan(planParam);
+      localStorage.setItem('sai_plan', planParam);
+      setSetupStatus('ordered');
+      // Clean the URL without reload
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   // Profile & Posts
   const [profile, setProfile] = useState<BusinessProfile>(() => {
     const saved = localStorage.getItem('sai_profile');
