@@ -70,48 +70,49 @@ const Dashboard: React.FC = () => {
     handle();
   }, [user]);
 
-  // Profile & Posts
-  const [profile, setProfile] = useState<BusinessProfile>(DEFAULT_PROFILE);
-  const [posts, setPosts] = useState<SocialPost[]>([]);
-  const [stats, setStats] = useState<ContentCalendarStats>(DEFAULT_STATS);
-  const [firestoreLoaded, setFirestoreLoaded] = useState(false);
+  // Profile & Posts — init from localStorage cache for instant render
+  const [profile, setProfile] = useState<BusinessProfile>(() => {
+    try { const s = localStorage.getItem('sai_profile'); return s ? { ...DEFAULT_PROFILE, ...JSON.parse(s) } : DEFAULT_PROFILE; } catch { return DEFAULT_PROFILE; }
+  });
+  const [posts, setPosts] = useState<SocialPost[]>(() => {
+    try { const s = localStorage.getItem('sai_posts'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const [stats, setStats] = useState<ContentCalendarStats>(() => {
+    try { const s = localStorage.getItem('sai_stats'); return s ? { ...DEFAULT_STATS, ...JSON.parse(s) } : DEFAULT_STATS; } catch { return DEFAULT_STATS; }
+  });
+  const [firestoreLoaded, setFirestoreLoaded] = useState(true); // render immediately from cache
 
-  // Load data from Firestore on auth
+  // Sync Firestore in background (non-blocking)
   useEffect(() => {
     if (!user) return;
-    const load = async () => {
+    const sync = async () => {
       try {
         const isAdmin = !!user.email && CLIENT.adminEmails.some(e => e === user.email);
         if (isAdmin) {
           localStorage.setItem('sai_admin', '1');
           setActivePlan('pro');
           setSetupStatus('live');
+          updateDoc(doc(db, 'users', user.uid), { plan: 'pro', setupStatus: 'live', isAdmin: true }).catch(() => {});
         }
-        try {
-          const snap = await getDoc(doc(db, 'users', user.uid));
-          if (snap.exists()) {
-            const d = snap.data();
-            if (d.profile) setProfile(p => ({ ...p, ...d.profile }));
-            if (d.stats) setStats(s => ({ ...s, ...d.stats }));
-            if (!isAdmin && d.plan) setActivePlan(d.plan);
-            if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
-            if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
-            if (d.isAdmin) localStorage.setItem('sai_admin', '1');
-            if (isAdmin) {
-              updateDoc(doc(db, 'users', user.uid), { plan: 'pro', setupStatus: 'live', isAdmin: true }).catch(() => {});
-            }
-          }
-          const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
-          const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
-          setPosts(loaded);
-        } catch (e) {
-          console.warn('Firestore not available yet:', e);
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.profile) { const p = { ...DEFAULT_PROFILE, ...d.profile }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
+          if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+          if (!isAdmin && d.plan) setActivePlan(d.plan);
+          if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
+          if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
+          if (d.isAdmin) localStorage.setItem('sai_admin', '1');
         }
-      } finally {
-        setFirestoreLoaded(true);
+        const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
+        const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
+        setPosts(loaded);
+        localStorage.setItem('sai_posts', JSON.stringify(loaded));
+      } catch (e) {
+        console.warn('Firestore sync error:', e);
       }
     };
-    load();
+    sync();
   }, [user]);
 
   // Persist profile to Firestore (debounced)
@@ -1236,10 +1237,29 @@ const Dashboard: React.FC = () => {
   );
 };
 
+// ── Auth Loading Gate ──
+const AuthGate: React.FC = () => {
+  const { loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AppLogo size={48} />
+          <div className="flex items-center gap-2 text-white/25 text-sm">
+            <Loader2 size={14} className="animate-spin text-amber-400" />
+            <span>Loading…</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return <Dashboard />;
+};
+
 // ── App Wrapper ──
 const App: React.FC = () => (
   <ToastProvider>
-    <Dashboard />
+    <AuthGate />
   </ToastProvider>
 );
 
