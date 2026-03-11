@@ -150,54 +150,59 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
             <p className="text-white/40">No lock-in contracts. Cancel anytime.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {CLIENT.plans.map((plan) => (
-              <div
-                key={plan.id}
-                className={`relative rounded-3xl border p-8 flex flex-col ${
-                  plan.badge === 'Most Popular'
-                    ? 'bg-gradient-to-b from-amber-500/10 to-orange-500/5 border-amber-500/30 scale-[1.02]'
-                    : 'bg-white/3 border-white/10 hover:bg-white/5'
-                } transition`}
-              >
-                {plan.badge && (
-                  <div className={`absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r ${plan.color} text-white text-[11px] font-black px-4 py-1 rounded-full whitespace-nowrap shadow-lg`}>
-                    {plan.badge}
-                  </div>
-                )}
-                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${plan.color} flex items-center justify-center mb-5 shadow-lg`}>
-                  <Zap size={18} className="text-white" />
-                </div>
-                <h3 className="text-2xl font-black mb-1">{plan.name}</h3>
-                <div className="flex items-baseline gap-1 mb-2">
-                  <span className="text-4xl font-black">${plan.price}</span>
-                  <span className="text-white/40 text-sm">/month</span>
-                </div>
-                <p className="text-xs text-white/30 mb-6">+ $99 one-time setup</p>
-
-                <ul className="space-y-2.5 mb-8 flex-1">
-                  {plan.features.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2.5 text-sm">
-                      <CheckCircle size={15} className="text-green-400 shrink-0 mt-0.5" />
-                      <span className="text-white/70">{f}</span>
-                    </li>
-                  ))}
-                  {plan.limitations.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2.5 text-sm">
-                      <span className="text-white/20 shrink-0 mt-0.5 w-[15px] text-center">—</span>
-                      <span className="text-white/25 line-through">{f}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                <button
-                  onClick={() => setShowPricing(true)}
-                  className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-xl text-center hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg`}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+            {CLIENT.plans.map((plan) => {
+              const checkColor = plan.id === 'starter' ? 'text-blue-400' : plan.id === 'growth' ? 'text-amber-400' : plan.id === 'pro' ? 'text-purple-400' : 'text-emerald-400';
+              const glowBg = plan.id === 'starter' ? 'rgba(59,130,246,0.1)' : plan.id === 'growth' ? 'rgba(245,158,11,0.1)' : plan.id === 'pro' ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)';
+              const borderColor = plan.id === 'starter' ? 'border-blue-500/30' : plan.id === 'growth' ? 'border-amber-500/30' : plan.id === 'pro' ? 'border-purple-500/30' : 'border-emerald-500/30';
+              return (
+                <div
+                  key={plan.id}
+                  className={`relative rounded-3xl border flex flex-col overflow-hidden hover:scale-[1.02] transition-transform ${borderColor}`}
+                  style={{ background: `linear-gradient(160deg, ${glowBg} 0%, #0d0d14 55%)` }}
                 >
-                  Get {plan.name} <ArrowRight size={16} />
-                </button>
-              </div>
-            ))}
+                  <div className={`h-1 w-full bg-gradient-to-r ${plan.color}`} />
+                  {plan.badge && (
+                    <div className={`absolute top-4 right-4 bg-gradient-to-r ${plan.color} text-white text-[10px] font-black px-3 py-1 rounded-full whitespace-nowrap shadow-lg`}>
+                      {plan.badge}
+                    </div>
+                  )}
+                  <div className="p-6 flex flex-col flex-1">
+                    <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${plan.color} flex items-center justify-center mb-4 shadow-lg`}>
+                      <Zap size={18} className="text-white" />
+                    </div>
+                    <h3 className="text-xl font-black mb-1 text-white">{plan.name}</h3>
+                    <div className="flex items-baseline gap-1 mb-1">
+                      <span className="text-3xl font-black text-white">${plan.price}</span>
+                      <span className="text-white/40 text-sm">/mo</span>
+                    </div>
+                    <p className="text-xs text-white/30 mb-5">+ $99 one-time setup</p>
+
+                    <ul className="space-y-2 mb-6 flex-1">
+                      {plan.features.map((f, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm">
+                          <CheckCircle size={13} className={`${checkColor} shrink-0 mt-0.5`} />
+                          <span className="text-white/65">{f}</span>
+                        </li>
+                      ))}
+                      {plan.limitations.map((f, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm opacity-40">
+                          <span className="text-white/20 shrink-0 mt-0.5 w-[13px] text-center">—</span>
+                          <span className="text-white/30 line-through">{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <button
+                      onClick={() => setShowPricing(true)}
+                      className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-2xl hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg text-sm`}
+                    >
+                      Get {plan.name} <ArrowRight size={15} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <p className="text-center text-sm text-white/25 mt-8">

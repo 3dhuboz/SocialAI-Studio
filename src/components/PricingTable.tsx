@@ -35,8 +35,6 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
     const link = (CLIENT.stripePaymentLinks as Record<string, string>)[planId];
     if (link) {
       window.open(link, '_blank');
-    } else if (CLIENT.stripePublishableKey && CLIENT.stripePricingTableId) {
-      setFallback(true);
     } else {
       window.open(CLIENT.salesUrl, '_blank');
     }
