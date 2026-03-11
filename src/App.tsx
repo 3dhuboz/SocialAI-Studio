@@ -467,6 +467,59 @@ const Dashboard: React.FC = () => {
     setIsAnalyzing(false);
   };
 
+  // ── Settings Save Handlers ──
+  const [isSavingKey, setIsSavingKey] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isSavingFacebook, setIsSavingFacebook] = useState(false);
+  const [isSavingAll, setIsSavingAll] = useState(false);
+
+  const handleSaveApiKey = async () => {
+    if (!profile.geminiApiKey.trim()) { toast('Enter an API key first.', 'warning'); return; }
+    setIsSavingKey(true);
+    try {
+      localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
+      if (user) await updateDoc(doc(db, 'users', user.uid), { geminiApiKey: profile.geminiApiKey });
+      toast('API key saved — AI features are now active!', 'success');
+    } catch { toast('Failed to save API key.', 'error'); }
+    setIsSavingKey(false);
+  };
+
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    try {
+      localStorage.setItem('sai_profile', JSON.stringify(profile));
+      await updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true }));
+      toast('Business profile saved!', 'success');
+    } catch { toast('Failed to save profile.', 'error'); }
+    setIsSavingProfile(false);
+  };
+
+  const handleSaveFacebook = async () => {
+    setIsSavingFacebook(true);
+    try {
+      localStorage.setItem('sai_profile', JSON.stringify(profile));
+      await updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true }));
+      toast('Facebook credentials saved!', 'success');
+    } catch { toast('Failed to save Facebook credentials.', 'error'); }
+    setIsSavingFacebook(false);
+  };
+
+  const handleSaveAll = async () => {
+    setIsSavingAll(true);
+    try {
+      localStorage.setItem('sai_profile', JSON.stringify(profile));
+      if (profile.geminiApiKey) localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
+      await updateDoc(dataRef(), { profile, ...(profile.geminiApiKey ? { geminiApiKey: profile.geminiApiKey } : {}) }).catch(() =>
+        setDoc(dataRef(), { profile, ...(profile.geminiApiKey ? { geminiApiKey: profile.geminiApiKey } : {}) }, { merge: true })
+      );
+      if (user && profile.geminiApiKey) {
+        await updateDoc(doc(db, 'users', user.uid), { geminiApiKey: profile.geminiApiKey }).catch(() => {});
+      }
+      toast('All settings saved!', 'success');
+    } catch { toast('Failed to save settings.', 'error'); }
+    setIsSavingAll(false);
+  };
+
   // ── Delete Post ──
   const deletePost = async (id: string) => {
     if (!user) return;
@@ -1105,23 +1158,31 @@ const Dashboard: React.FC = () => {
                   className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20"
                 />
                 <button
-                  onClick={async () => {
-                    localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
-                    if (user) await updateDoc(doc(db, 'users', user.uid), { geminiApiKey: profile.geminiApiKey });
-                    toast('API Key saved! AI features are now active.');
-                  }}
-                  className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition"
+                  onClick={handleSaveApiKey}
+                  disabled={isSavingKey}
+                  className="bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
                 >
-                  Save
+                  {isSavingKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {isSavingKey ? 'Saving…' : 'Save'}
                 </button>
               </div>
             </div>
 
             {/* Business Profile */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-              <div>
-                <h3 className="font-bold text-white">Business Profile</h3>
-                <p className="text-xs text-white/30 mt-0.5">The AI uses this to write in your brand voice and schedule for your market.</p>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-white">Business Profile</h3>
+                  <p className="text-xs text-white/30 mt-0.5">The AI uses this to write in your brand voice and schedule for your market.</p>
+                </div>
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={isSavingProfile}
+                  className="flex-shrink-0 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-4 py-2 rounded-xl text-sm transition flex items-center gap-2"
+                >
+                  {isSavingProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {isSavingProfile ? 'Saving…' : 'Save Profile'}
+                </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -1216,12 +1277,22 @@ const Dashboard: React.FC = () => {
                       />
                     </div>
                   </div>
-                  {fbConnected && (
-                    <button onClick={handlePullStats} disabled={isPullingStats} className="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-4 py-2 rounded-xl flex items-center gap-1.5 transition disabled:opacity-50">
-                      <RefreshCw size={12} className={isPullingStats ? 'animate-spin' : ''} />
-                      {isPullingStats ? 'Pulling stats...' : 'Test Connection & Pull Stats'}
+                    <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={handleSaveFacebook}
+                      disabled={isSavingFacebook}
+                      className="text-xs bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 transition"
+                    >
+                      {isSavingFacebook ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                      {isSavingFacebook ? 'Saving…' : 'Save Credentials'}
                     </button>
-                  )}
+                    {fbConnected && (
+                      <button onClick={handlePullStats} disabled={isPullingStats} className="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-4 py-2 rounded-xl flex items-center gap-1.5 transition disabled:opacity-50">
+                        <RefreshCw size={12} className={isPullingStats ? 'animate-spin' : ''} />
+                        {isPullingStats ? 'Pulling stats...' : 'Test Connection & Pull Stats'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </details>
             </div>
@@ -1253,6 +1324,18 @@ const Dashboard: React.FC = () => {
                   )}
                 </div>
               ) : null}
+            </div>
+
+            {/* Save All */}
+            <div className="flex justify-end">
+              <button
+                onClick={handleSaveAll}
+                disabled={isSavingAll}
+                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-90 disabled:opacity-60 text-black font-black px-8 py-3 rounded-2xl text-sm transition flex items-center gap-2 shadow-lg shadow-amber-500/20"
+              >
+                {isSavingAll ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                {isSavingAll ? 'Saving All…' : 'Save All Settings'}
+              </button>
             </div>
 
             {/* Data */}
