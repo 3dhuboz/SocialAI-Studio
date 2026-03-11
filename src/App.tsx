@@ -79,27 +79,36 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const isAdmin = !!user.email && CLIENT.adminEmails.some(e => e === user.email);
-      if (isAdmin) {
-        localStorage.setItem('sai_admin', '1');
-        setActivePlan('pro');
-        setSetupStatus('live');
-        await updateDoc(doc(db, 'users', user.uid), { plan: 'pro', setupStatus: 'live', isAdmin: true }).catch(() => {});
+      try {
+        const isAdmin = !!user.email && CLIENT.adminEmails.some(e => e === user.email);
+        if (isAdmin) {
+          localStorage.setItem('sai_admin', '1');
+          setActivePlan('pro');
+          setSetupStatus('live');
+        }
+        try {
+          const snap = await getDoc(doc(db, 'users', user.uid));
+          if (snap.exists()) {
+            const d = snap.data();
+            if (d.profile) setProfile(p => ({ ...p, ...d.profile }));
+            if (d.stats) setStats(s => ({ ...s, ...d.stats }));
+            if (!isAdmin && d.plan) setActivePlan(d.plan);
+            if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
+            if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
+            if (d.isAdmin) localStorage.setItem('sai_admin', '1');
+            if (isAdmin) {
+              updateDoc(doc(db, 'users', user.uid), { plan: 'pro', setupStatus: 'live', isAdmin: true }).catch(() => {});
+            }
+          }
+          const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
+          const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
+          setPosts(loaded);
+        } catch (e) {
+          console.warn('Firestore not available yet:', e);
+        }
+      } finally {
+        setFirestoreLoaded(true);
       }
-      const snap = await getDoc(doc(db, 'users', user.uid));
-      if (snap.exists()) {
-        const d = snap.data();
-        if (d.profile) setProfile(p => ({ ...p, ...d.profile }));
-        if (d.stats) setStats(s => ({ ...s, ...d.stats }));
-        if (!isAdmin && d.plan) setActivePlan(d.plan);
-        if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
-        if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
-        if (d.isAdmin) localStorage.setItem('sai_admin', '1');
-      }
-      const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
-      const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
-      setPosts(loaded);
-      setFirestoreLoaded(true);
     };
     load();
   }, [user]);
