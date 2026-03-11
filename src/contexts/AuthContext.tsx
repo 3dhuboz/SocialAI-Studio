@@ -55,14 +55,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
+      setLoading(false); // unblock immediately — don't wait for Firestore
       if (u) {
-        await fetchUserDoc(u.uid);
+        fetchUserDoc(u.uid).catch(() => {}); // sync in background
       } else {
         setUserDoc(null);
       }
-      setLoading(false);
     });
     return unsub;
   }, []);
