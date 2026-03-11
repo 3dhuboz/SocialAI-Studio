@@ -33,3 +33,6 @@ export interface ContentCalendarStats {
   engagement: number;
   postsLast30Days: number;
 }
+
+export type PlanTier = 'starter' | 'growth' | 'pro';
+export type SetupStatus = 'ordered' | 'form_sent' | 'in_progress' | 'live';

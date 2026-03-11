@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
-import { SocialPost, BusinessProfile, ContentCalendarStats } from './types';
+import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus } from './types';
+import { LandingPage } from './components/LandingPage';
+import { SetupBanner } from './components/SetupBanner';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
-  RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity
+  RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
+  Lightbulb, ArrowRight, MessageSquare, Info
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -128,6 +131,27 @@ const Dashboard: React.FC = () => {
 
   const hasApiKey = !!localStorage.getItem('sai_gemini_key');
   const fbConnected = !!(profile.facebookPageId && profile.facebookPageAccessToken);
+
+  // Plan & setup state
+  const [activePlan, setActivePlan] = useState<PlanTier | null>(() =>
+    localStorage.getItem('sai_plan') as PlanTier | null
+  );
+  const [setupStatus, setSetupStatus] = useState<SetupStatus>(() =>
+    (localStorage.getItem('sai_setup_status') as SetupStatus) || 'ordered'
+  );
+  const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
+
+  useEffect(() => {
+    if (activePlan) localStorage.setItem('sai_plan', activePlan);
+  }, [activePlan]);
+  useEffect(() => {
+    localStorage.setItem('sai_setup_status', setupStatus);
+  }, [setupStatus]);
+
+  const planCfg = CLIENT.plans.find(p => p.id === activePlan);
+  const canUseImages  = activePlan === 'growth' || activePlan === 'pro';
+  const canUseSaturation = activePlan === 'pro';
+  const maxPostsPerWeek = planCfg?.postsPerWeek ?? 7;
 
   // Live Facebook Stats
   interface LiveFbStats { fanCount: number; followersCount: number; reach28d: number; engagedUsers28d: number; engagementRate: number; }
@@ -325,16 +349,30 @@ const Dashboard: React.FC = () => {
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
+  // Show landing page if no plan selected
+  if (!activePlan) {
+    return <LandingPage onActivate={plan => { setActivePlan(plan); localStorage.setItem('sai_plan', plan); }} />;
+  }
+
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-[#0a0a0f]">
       {/* Header */}
-      <header className="border-b border-white/10 bg-black/20 backdrop-blur-md sticky top-0 z-40">
+      <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Sparkles className="text-amber-400" size={28} />
+            <div className="w-9 h-9 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/20">
+              <Sparkles size={16} className="text-white" />
+            </div>
             <div>
-              <h1 className="text-xl font-bold text-white">{CLIENT.appName}</h1>
-              <p className="text-xs text-gray-400">{profile.name}</p>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-white">{CLIENT.appName}</h1>
+                {planCfg && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
+                    {planCfg.name}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-white/30">{profile.name}</p>
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
@@ -402,77 +440,116 @@ const Dashboard: React.FC = () => {
 
       {/* Content */}
       <main className="max-w-6xl mx-auto px-4 py-8">
+        <SetupBanner
+          status={setupStatus}
+          onStatusChange={isAdminMode ? setSetupStatus : undefined}
+          isAdmin={isAdminMode}
+        />
 
         {/* ═══ CREATE TAB ═══ */}
         {activeTab === 'create' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold flex items-center gap-2"><Wand2 className="text-amber-400" /> AI Content Generator</h2>
-
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
+          <div className="space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
-                <label className="text-sm text-gray-400 block mb-1">Topic / Prompt</label>
+                <h2 className="text-2xl font-bold flex items-center gap-2.5"><Wand2 className="text-amber-400" size={22} /> AI Content Generator</h2>
+                <p className="text-sm text-white/40 mt-1">Write a topic, pick a platform, and let AI craft the perfect caption + hashtags.</p>
+              </div>
+            </div>
+
+            {/* Tip Card */}
+            <div className="bg-amber-500/8 border border-amber-500/20 rounded-2xl px-5 py-4 flex gap-3">
+              <Lightbulb size={16} className="text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-white/50 leading-relaxed">
+                <span className="text-amber-300 font-semibold">Pro tip: </span>
+                Be specific with your topic for better results. Instead of "sale", try "25% off all winter jackets this Saturday only". The more context you give, the stronger the caption.
+              </div>
+            </div>
+
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+              <div>
+                <label className="text-xs font-semibold text-white/50 uppercase tracking-widest block mb-2">Topic / Prompt</label>
                 <textarea
                   value={topic}
                   onChange={e => setTopic(e.target.value)}
-                  placeholder="e.g., Weekend sale, new product launch, behind the scenes..."
-                  className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-white resize-y min-h-[80px]"
+                  placeholder="e.g., 25% off all items this weekend only, come in and grab a bargain..."
+                  className="w-full bg-black/40 border border-white/8 rounded-xl p-4 text-white resize-none min-h-[90px] text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
                 />
               </div>
 
               <div className="flex flex-wrap gap-3 items-center">
-                <select
-                  value={platform}
-                  onChange={e => setPlatform(e.target.value as any)}
-                  className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white"
-                  title="Platform"
+                <div className="flex rounded-xl overflow-hidden border border-white/10">
+                  {(['Instagram', 'Facebook'] as const).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setPlatform(p)}
+                      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition ${
+                        platform === p
+                          ? p === 'Instagram' ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white' : 'bg-blue-600 text-white'
+                          : 'bg-transparent text-white/30 hover:text-white/60'
+                      }`}
+                    >
+                      {p === 'Instagram' ? <Instagram size={14} /> : <Facebook size={14} />}
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={handleGenerate}
+                  disabled={isGenerating || !topic.trim()}
+                  className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-6 py-2.5 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20"
                 >
-                  <option value="Instagram">Instagram</option>
-                  <option value="Facebook">Facebook</option>
-                </select>
-                <button onClick={handleGenerate} disabled={isGenerating} className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-6 py-2 rounded-lg transition flex items-center gap-2">
                   {isGenerating ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
-                  Generate Text
+                  Generate Caption
                 </button>
-                <button onClick={handleGenerateImage} disabled={isGeneratingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg transition flex items-center gap-2">
-                  {isGeneratingImage ? <Loader2 className="animate-spin" size={16} /> : <ImageIcon size={16} />}
-                  Image
-                </button>
+                {canUseImages ? (
+                  <button
+                    onClick={handleGenerateImage}
+                    disabled={isGeneratingImage || !topic.trim()}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {isGeneratingImage ? <Loader2 className="animate-spin" size={16} /> : <ImageIcon size={16} />}
+                    AI Image
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-white/25 bg-white/5 border border-white/8 px-4 py-2.5 rounded-xl">
+                    <ImageIcon size={14} /> AI Images — Growth plan+
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Generated Output */}
             {generatedContent && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-white flex items-center gap-2">
-                    {platform === 'Instagram' ? <Instagram size={18} className="text-pink-400" /> : <Facebook size={18} className="text-blue-400" />}
-                    Generated Post
-                  </h3>
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center gap-2 mb-1">
+                  {platform === 'Instagram' ? <Instagram size={16} className="text-pink-400" /> : <Facebook size={16} className="text-blue-400" />}
+                  <span className="font-bold text-sm text-white">Generated Post</span>
+                  <span className="ml-auto text-[10px] text-white/25">{generatedContent.length} chars</span>
                 </div>
-                <div className="bg-black/30 rounded-lg p-4 text-gray-200 whitespace-pre-wrap">{generatedContent}</div>
+                <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{generatedContent}</div>
                 {generatedHashtags.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {generatedHashtags.map((tag, i) => (
-                      <span key={i} className="text-xs bg-amber-500/20 text-amber-300 px-2 py-1 rounded-full">{tag.startsWith('#') ? tag : `#${tag}`}</span>
+                      <span key={i} className="text-xs bg-amber-500/15 text-amber-300 px-2.5 py-1 rounded-full border border-amber-500/20">{tag.startsWith('#') ? tag : `#${tag}`}</span>
                     ))}
                   </div>
                 )}
                 {generatedImage && (
-                  <img src={generatedImage} alt="Generated" className="w-full max-w-sm rounded-lg border border-white/10" />
+                  <img src={generatedImage} alt="Generated" className="w-full max-w-sm rounded-xl border border-white/10" />
                 )}
-                <div className="flex flex-wrap gap-3 items-end">
+                <div className="flex flex-wrap gap-3 items-end pt-2 border-t border-white/5">
                   <div>
-                    <label className="text-xs text-gray-400 block mb-1">Schedule (optional)</label>
-                    <input type="datetime-local" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} className="bg-black/40 border border-white/10 rounded px-3 py-2 text-white text-sm" />
+                    <label className="text-xs text-white/40 block mb-1.5">Schedule (optional)</label>
+                    <input type="datetime-local" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} className="bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm" />
                   </div>
-                  <button onClick={handleSavePost} className="bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-2 rounded-lg flex items-center gap-2">
-                    <Save size={16} /> {scheduleDate ? 'Schedule' : 'Save Draft'}
+                  <button onClick={handleSavePost} className="bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-2.5 rounded-xl flex items-center gap-2 transition">
+                    <Save size={16} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
                   </button>
                   {fbConnected && (
                     <button
                       onClick={handlePublishToFacebook}
                       disabled={isPublishing}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-lg flex items-center gap-2 disabled:opacity-60 transition"
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-60 transition"
                     >
                       {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                       Publish to Facebook
@@ -486,43 +563,94 @@ const Dashboard: React.FC = () => {
 
         {/* ═══ CALENDAR TAB ═══ */}
         {activeTab === 'calendar' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold flex items-center gap-2"><Calendar className="text-amber-400" /> Content Calendar</h2>
-              <span className="text-sm text-gray-400">{posts.length} posts</span>
+          <div className="space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-2xl font-bold flex items-center gap-2.5"><Calendar className="text-amber-400" size={22} /> Content Calendar</h2>
+                <p className="text-sm text-white/40 mt-1">{posts.length} post{posts.length !== 1 ? 's' : ''} scheduled</p>
+              </div>
+              {posts.length > 0 && (
+                <span className="text-xs text-white/25 bg-white/5 border border-white/8 px-3 py-1.5 rounded-xl">
+                  {posts.filter(p => p.status === 'Scheduled').length} scheduled · {posts.filter(p => p.status === 'Posted').length} posted
+                </span>
+              )}
+            </div>
+
+            {/* Tip */}
+            <div className="bg-blue-500/8 border border-blue-500/15 rounded-2xl px-5 py-3.5 flex gap-3">
+              <Info size={14} className="text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-white/40 leading-relaxed">
+                <span className="text-blue-300 font-semibold">How publishing works: </span>
+                Once your Facebook page is connected, click <strong className="text-white/60">Publish to Facebook</strong> on any post to go live instantly. Or use <strong className="text-white/60">Smart AI</strong> to auto-schedule an entire week.
+              </p>
             </div>
 
             {posts.length === 0 ? (
-              <div className="text-center py-16 text-gray-500">
-                <Calendar size={48} className="mx-auto mb-4 opacity-30" />
-                <p>No posts yet. Create one in the Create tab or use Smart AI.</p>
+              <div className="text-center py-20 border border-white/5 rounded-2xl bg-white/2">
+                <div className="w-16 h-16 mx-auto mb-5 bg-white/5 rounded-2xl flex items-center justify-center">
+                  <Calendar size={28} className="text-white/20" />
+                </div>
+                <p className="text-white/30 font-semibold mb-2">Your calendar is empty</p>
+                <p className="text-white/20 text-sm mb-6">Create a post manually, or use Smart AI to generate a full week at once.</p>
+                <div className="flex justify-center gap-3 flex-wrap">
+                  <button onClick={() => setActiveTab('create')} className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/20 text-amber-300 px-5 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-2">
+                    <Wand2 size={14} /> Create a Post
+                  </button>
+                  <button onClick={() => setActiveTab('smart')} className="bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 px-5 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-2">
+                    <Brain size={14} /> Smart AI Scheduler
+                  </button>
+                </div>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 {posts.map(post => (
-                  <div key={post.id} className="bg-white/5 border border-white/10 rounded-lg p-4 flex gap-4">
-                    {post.image && <img src={post.image} alt="" className="w-16 h-16 rounded object-cover shrink-0" />}
+                  <div key={post.id} className="bg-white/3 border border-white/8 rounded-2xl p-4 flex gap-4 hover:bg-white/5 transition group">
+                    <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/30 border border-white/8 flex items-center justify-center">
+                      {post.image
+                        ? <img src={post.image} alt="" className="w-full h-full object-cover" />
+                        : <MessageSquare size={18} className="text-white/15" />
+                      }
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        {post.platform === 'Instagram' ? <Instagram size={14} className="text-pink-400" /> : <Facebook size={14} className="text-blue-400" />}
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          post.status === 'Posted' ? 'bg-green-900/50 text-green-300' :
-                          post.status === 'Scheduled' ? 'bg-blue-900/50 text-blue-300' :
-                          'bg-gray-800 text-gray-400'
+                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                        {post.platform === 'Instagram' ? <Instagram size={13} className="text-pink-400" /> : <Facebook size={13} className="text-blue-400" />}
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          post.status === 'Posted' ? 'bg-green-500/15 text-green-300' :
+                          post.status === 'Scheduled' ? 'bg-blue-500/15 text-blue-300' :
+                          'bg-white/8 text-white/30'
                         }`}>{post.status}</span>
-                        <span className="text-xs text-gray-500">{new Date(post.scheduledFor).toLocaleDateString()} {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {post.pillar && <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 rounded">{post.pillar}</span>}
+                        <span className="text-xs text-white/25">{new Date(post.scheduledFor).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        {post.pillar && <span className="text-[10px] bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full">{post.pillar}</span>}
                       </div>
-                      <p className="text-sm text-gray-300 line-clamp-2">{post.content}</p>
+                      <p className="text-sm text-white/60 line-clamp-2 leading-relaxed">{post.content}</p>
                       {post.hashtags?.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {post.hashtags.slice(0, 5).map((t, i) => <span key={i} className="text-[10px] text-amber-400">{t}</span>)}
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {post.hashtags.slice(0, 4).map((t, i) => <span key={i} className="text-[10px] text-amber-400/60">{t.startsWith('#') ? t : `#${t}`}</span>)}
+                          {post.hashtags.length > 4 && <span className="text-[10px] text-white/20">+{post.hashtags.length - 4} more</span>}
                         </div>
                       )}
                     </div>
-                    <button onClick={() => deletePost(post.id)} className="text-red-500 hover:text-red-300 p-2 shrink-0" title="Delete">
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="flex flex-col gap-2 shrink-0">
+                      {fbConnected && post.status !== 'Posted' && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
+                              await FacebookService.postToPageDirect(profile.facebookPageId, profile.facebookPageAccessToken, text, post.image);
+                              setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+                              toast('Published to Facebook!');
+                            } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
+                          }}
+                          className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 p-2 rounded-lg transition"
+                          title="Publish to Facebook"
+                        >
+                          <Send size={13} />
+                        </button>
+                      )}
+                      <button onClick={() => deletePost(post.id)} className="text-white/15 hover:text-red-400 p-2 rounded-lg transition opacity-0 group-hover:opacity-100" title="Delete">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -552,9 +680,13 @@ const Dashboard: React.FC = () => {
 
                 {/* Saturation Mode Toggle */}
                 <div
-                  onClick={() => { const next = !saturationMode; setSaturationMode(next); setSmartCount(next ? 21 : 7); }}
-                  className={`cursor-pointer rounded-xl border px-4 py-3 flex items-start gap-3 transition mb-4 max-w-lg ${
-                    saturationMode ? 'bg-red-500/10 border-red-500/30' : 'bg-white/5 border-white/15 hover:bg-white/10'
+                  onClick={() => {
+                    if (!canUseSaturation) { toast('Saturation Mode is a Pro plan feature. Upgrade to unlock.', 'warning'); return; }
+                    const next = !saturationMode; setSaturationMode(next); setSmartCount(next ? 21 : 7);
+                  }}
+                  className={`rounded-xl border px-4 py-3 flex items-start gap-3 transition mb-4 max-w-lg ${
+                    !canUseSaturation ? 'opacity-40 cursor-not-allowed border-white/8 bg-white/3' :
+                    saturationMode ? 'cursor-pointer bg-red-500/10 border-red-500/30' : 'cursor-pointer bg-white/5 border-white/15 hover:bg-white/10'
                   }`}
                 >
                   <div className={`mt-0.5 w-9 h-5 rounded-full flex items-center transition-all flex-shrink-0 ${saturationMode ? 'bg-red-500 justify-end' : 'bg-white/20 justify-start'}`}>
@@ -563,6 +695,7 @@ const Dashboard: React.FC = () => {
                   <div>
                     <p className={`text-sm font-bold ${saturationMode ? 'text-red-300' : 'text-white/80'}`}>
                       {saturationMode ? '🔥 Saturation Mode ON' : 'Saturation Mode'}
+                      {!canUseSaturation && <span className="ml-2 text-[10px] font-normal text-white/25 bg-white/8 px-2 py-0.5 rounded-full">Pro only</span>}
                     </p>
                     <p className="text-xs text-white/40 mt-0.5">
                       {saturationMode ? '3-5 posts/day over 7 days — maximum algorithmic reach' : 'Enable for a high-frequency blitz campaign (3-5 posts/day)'}
@@ -738,102 +871,191 @@ const Dashboard: React.FC = () => {
 
         {/* ═══ SETTINGS TAB ═══ */}
         {activeTab === 'settings' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold flex items-center gap-2"><Settings className="text-amber-400" /> Settings</h2>
+          <div className="space-y-5">
+            <div>
+              <h2 className="text-2xl font-bold flex items-center gap-2.5"><Settings className="text-amber-400" size={22} /> Settings</h2>
+              <p className="text-sm text-white/40 mt-1">Configure your AI key, brand profile, and integrations.</p>
+            </div>
 
             {/* API Key */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-              <h3 className="font-bold text-white flex items-center gap-2"><Sparkles size={18} className="text-amber-400" /> Gemini API Key</h3>
-              <p className="text-xs text-gray-400">Powers all AI features. Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline">Google AI Studio</a>.</p>
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
+                  <Sparkles size={16} className="text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">Gemini AI Key</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Powers all AI content generation features</p>
+                </div>
+                {hasApiKey && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
+              </div>
+              <p className="text-xs text-white/30 leading-relaxed">
+                Get a free key from{' '}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400/70 hover:text-amber-400 underline transition">Google AI Studio</a>
+                {' '}— it takes 30 seconds and is free to use.
+              </p>
               <div className="flex gap-2 max-w-lg">
                 <input
                   type="password"
                   value={profile.geminiApiKey}
                   onChange={e => setProfile(prev => ({ ...prev, geminiApiKey: e.target.value }))}
-                  placeholder="Paste your API key..."
-                  className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-white font-mono text-sm"
+                  placeholder="AIza..."
+                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20"
                 />
                 <button
                   onClick={() => {
                     localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
                     toast('API Key saved! AI features are now active.');
                   }}
-                  className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-4 py-2 rounded text-sm"
+                  className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition"
                 >
                   Save
                 </button>
               </div>
-              {hasApiKey && <p className="text-xs text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Key configured</p>}
             </div>
 
             {/* Business Profile */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-              <h3 className="font-bold text-white">Business Profile</h3>
-              <p className="text-xs text-gray-400">AI uses this to tailor content to your brand.</p>
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div>
+                <h3 className="font-bold text-white">Business Profile</h3>
+                <p className="text-xs text-white/30 mt-0.5">The AI uses this to write in your brand voice and schedule for your market.</p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Business Name</label>
-                  <input value={profile.name} onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white" />
+                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Business Name</label>
+                  <input value={profile.name} onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))} className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Business Type</label>
-                  <input value={profile.type} onChange={e => setProfile(prev => ({ ...prev, type: e.target.value }))} placeholder="e.g., cafe, gym, retail store" className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white" />
+                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Business Type</label>
+                  <input value={profile.type} onChange={e => setProfile(prev => ({ ...prev, type: e.target.value }))} placeholder="e.g., cafe, gym, retail store" className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Location</label>
-                  <input value={profile.location} onChange={e => setProfile(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white" />
+                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Location</label>
+                  <input value={profile.location} onChange={e => setProfile(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Tone / Voice</label>
-                  <input value={profile.tone} onChange={e => setProfile(prev => ({ ...prev, tone: e.target.value }))} placeholder="e.g., Casual and fun, Professional, Edgy" className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white" />
+                  <label className="text-xs text-white/40 font-semibold block mb-1.5">Tone / Voice</label>
+                  <input value={profile.tone} onChange={e => setProfile(prev => ({ ...prev, tone: e.target.value }))} placeholder="e.g., Casual and fun, Professional, Edgy" className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm" />
                 </div>
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Business Description (optional — helps AI understand your brand)</label>
-                <textarea value={profile.description} onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))} placeholder="We're a family-run coffee shop specializing in..." className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white min-h-[60px]" />
+                <label className="text-xs text-white/40 font-semibold block mb-1.5">Business Description <span className="font-normal text-white/20">(optional)</span></label>
+                <textarea value={profile.description} onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))} placeholder="We're a family-run coffee shop specializing in single-origin pour-overs..." className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20" />
               </div>
             </div>
 
-            {/* Facebook Page */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-              <h3 className="font-bold text-white flex items-center gap-2"><Facebook size={18} className="text-blue-400" /> Facebook Page</h3>
-              <p className="text-xs text-gray-400">Connect your Facebook page to publish posts and pull live stats.</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-gray-400 block mb-1">Page ID</label>
-                  <input
-                    value={profile.facebookPageId}
-                    onChange={e => setProfile(prev => ({ ...prev, facebookPageId: e.target.value }))}
-                    placeholder="Your Facebook Page ID"
-                    className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white font-mono text-sm"
-                  />
+            {/* Facebook Page — Step-by-step wizard */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
+                  <Facebook size={16} className="text-blue-400" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-400 block mb-1">Page Access Token</label>
-                  <input
-                    type="password"
-                    value={profile.facebookPageAccessToken}
-                    onChange={e => setProfile(prev => ({ ...prev, facebookPageAccessToken: e.target.value }))}
-                    placeholder="Page access token"
-                    className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white font-mono text-sm"
-                  />
+                  <h3 className="font-bold text-white">Facebook Connection</h3>
+                  {fbConnected
+                    ? <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5"><CheckCircle size={11} /> Page connected — publishing is active</p>
+                    : <p className="text-xs text-white/30 mt-0.5">This is configured by Penny Wise I.T during your setup</p>
+                  }
                 </div>
               </div>
-              {fbConnected && (
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-green-400 flex items-center gap-1"><CheckCircle size={12} /> Connected</span>
-                  <button onClick={handlePullStats} disabled={isPullingStats} className="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-3 py-1.5 rounded flex items-center gap-1.5 transition disabled:opacity-50">
-                    <RefreshCw size={12} className={isPullingStats ? 'animate-spin' : ''} />
-                    {isPullingStats ? 'Pulling...' : 'Pull Live Stats'}
-                  </button>
+
+              {!fbConnected && (
+                <div className="bg-amber-500/8 border border-amber-500/15 rounded-xl p-4 space-y-2">
+                  <p className="text-xs font-semibold text-amber-300 flex items-center gap-1.5"><Clock size={11} /> Awaiting your setup</p>
+                  <p className="text-xs text-white/40 leading-relaxed">
+                    Your Facebook page will be connected by our team within 1–3 business days of receiving your setup form.
+                    You don't need to do anything here — we handle this step for you.
+                  </p>
+                  <a
+                    href={`mailto:${CLIENT.supportEmail}?subject=Facebook Setup Query`}
+                    className="text-xs text-amber-400/70 hover:text-amber-400 underline transition"
+                  >
+                    Questions? Email {CLIENT.supportEmail}
+                  </a>
                 </div>
               )}
+
+              {/* Token fields — collapsible admin section */}
+              <details className="group">
+                <summary className="text-xs text-white/20 hover:text-white/40 cursor-pointer list-none flex items-center gap-1.5 transition">
+                  <ChevronDown size={12} className="group-open:rotate-180 transition-transform" />
+                  Admin: manually enter Facebook credentials
+                </summary>
+                <div className="mt-4 space-y-3">
+                  <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 space-y-1 mb-3">
+                    <p className="text-xs font-semibold text-blue-300">How to get your Page Access Token:</p>
+                    <ol className="text-xs text-white/35 space-y-1 list-decimal list-inside leading-relaxed">
+                      <li>Go to <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-400/70 hover:text-blue-400">Facebook Graph Explorer</a></li>
+                      <li>Click <strong className="text-white/50">Generate Access Token</strong> → select your page</li>
+                      <li>Add permissions: <code className="bg-white/10 px-1 rounded">pages_manage_posts</code>, <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
+                      <li>Copy the token and paste below</li>
+                      <li>Find your Page ID under <strong className="text-white/50">Page Settings → About</strong></li>
+                    </ol>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1.5">Page ID</label>
+                      <input
+                        value={profile.facebookPageId}
+                        onChange={e => setProfile(prev => ({ ...prev, facebookPageId: e.target.value }))}
+                        placeholder="e.g. 123456789012345"
+                        className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-white/40 block mb-1.5">Page Access Token</label>
+                      <input
+                        type="password"
+                        value={profile.facebookPageAccessToken}
+                        onChange={e => setProfile(prev => ({ ...prev, facebookPageAccessToken: e.target.value }))}
+                        placeholder="Paste token here"
+                        className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                  {fbConnected && (
+                    <button onClick={handlePullStats} disabled={isPullingStats} className="text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-4 py-2 rounded-xl flex items-center gap-1.5 transition disabled:opacity-50">
+                      <RefreshCw size={12} className={isPullingStats ? 'animate-spin' : ''} />
+                      {isPullingStats ? 'Pulling stats...' : 'Test Connection & Pull Stats'}
+                    </button>
+                  )}
+                </div>
+              </details>
+            </div>
+
+            {/* Your Plan */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <h3 className="font-bold text-white flex items-center gap-2"><Zap size={16} className="text-amber-400" /> Your Plan</h3>
+              {planCfg ? (
+                <div className="flex items-start gap-4 flex-wrap">
+                  <div className={`px-4 py-3 rounded-xl bg-gradient-to-br ${planCfg.color} bg-opacity-10`}>
+                    <p className="text-xs text-white/50">Current plan</p>
+                    <p className="text-xl font-black text-white">{planCfg.name}</p>
+                    <p className="text-xs text-white/50">${planCfg.price}/month · {planCfg.postsPerWeek} posts/week</p>
+                  </div>
+                  <div className="flex-1 min-w-[200px] space-y-1.5">
+                    {planCfg.features.slice(0, 4).map((f, i) => (
+                      <p key={i} className="text-xs text-white/40 flex items-center gap-2"><CheckCircle size={11} className="text-green-400 shrink-0" /> {f}</p>
+                    ))}
+                  </div>
+                  {activePlan !== 'pro' && (
+                    <a
+                      href={CLIENT.salesUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/20 text-amber-300 px-4 py-2 rounded-xl transition flex items-center gap-1.5 self-start"
+                    >
+                      <ArrowRight size={12} /> Upgrade Plan
+                    </a>
+                  )}
+                </div>
+              ) : null}
             </div>
 
             {/* Data */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
               <h3 className="font-bold text-white">Data</h3>
-              <div className="flex gap-3">
+              <div className="flex gap-3 flex-wrap">
                 <button
                   onClick={() => {
                     const data = JSON.stringify({ posts, profile, stats }, null, 2);
@@ -844,7 +1066,7 @@ const Dashboard: React.FC = () => {
                     a.click(); URL.revokeObjectURL(url);
                     toast('Data exported!');
                   }}
-                  className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm"
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 px-4 py-2 rounded-xl text-sm transition"
                 >
                   Export All Data
                 </button>
@@ -855,7 +1077,7 @@ const Dashboard: React.FC = () => {
                       toast('All posts cleared.');
                     }
                   }}
-                  className="bg-red-900/50 hover:bg-red-800 text-red-300 px-4 py-2 rounded text-sm"
+                  className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 px-4 py-2 rounded-xl text-sm transition"
                 >
                   Clear All Posts
                 </button>
@@ -865,18 +1087,22 @@ const Dashboard: React.FC = () => {
         )}
       </main>
 
-      {CLIENT.poweredBy && (
-        <footer className="text-center py-4 border-t border-white/10">
-          <a
-            href={CLIENT.poweredByUrl || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-gray-600 hover:text-gray-400 transition"
-          >
-            {CLIENT.poweredBy}
-          </a>
-        </footer>
-      )}
+      <footer className="border-t border-white/5 mt-12">
+        <div className="max-w-6xl mx-auto px-4 py-5 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-5 h-5 bg-gradient-to-br from-amber-400 to-orange-500 rounded flex items-center justify-center">
+              <Sparkles size={10} className="text-white" />
+            </div>
+            <span className="text-xs text-white/20">{CLIENT.appName}</span>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-white/20">
+            <a href={`mailto:${CLIENT.supportEmail}`} className="hover:text-white/40 transition">{CLIENT.supportEmail}</a>
+            {CLIENT.poweredBy && (
+              <a href={CLIENT.poweredByUrl || '#'} target="_blank" rel="noopener noreferrer" className="hover:text-white/40 transition">{CLIENT.poweredBy}</a>
+            )}
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };
