@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
-import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus } from './types';
+import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace } from './types';
 import { LandingPage } from './components/LandingPage';
 import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { db } from './firebase';
-import { doc, getDoc, updateDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { ClientSwitcher } from './components/ClientSwitcher';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
@@ -80,7 +81,19 @@ const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<ContentCalendarStats>(() => {
     try { const s = localStorage.getItem('sai_stats'); return s ? { ...DEFAULT_STATS, ...JSON.parse(s) } : DEFAULT_STATS; } catch { return DEFAULT_STATS; }
   });
-  const [firestoreLoaded, setFirestoreLoaded] = useState(true); // render immediately from cache
+  const [firestoreLoaded, setFirestoreLoaded] = useState(true);
+
+  // Agency client workspaces
+  const [clients, setClients] = useState<ClientWorkspace[]>([]);
+  const [activeClientId, setActiveClientId] = useState<string | null>(null);
+
+  // Returns the Firestore doc ref for the active workspace (own or client)
+  const dataRef = () => activeClientId && user
+    ? doc(db, 'users', user.uid, 'clients', activeClientId)
+    : doc(db, 'users', user!.uid);
+  const postsCol = () => activeClientId && user
+    ? collection(db, 'users', user.uid, 'clients', activeClientId, 'posts')
+    : collection(db, 'users', user!.uid, 'posts');
 
   // Sync Firestore in background (non-blocking)
   useEffect(() => {
@@ -104,6 +117,11 @@ const Dashboard: React.FC = () => {
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
         }
+        // Load agency clients
+        const clientsSnap = await getDocs(collection(db, 'users', user.uid, 'clients'));
+        const loadedClients: ClientWorkspace[] = clientsSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClientWorkspace));
+        setClients(loadedClients);
+        // Load posts for own workspace
         const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
         const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
         setPosts(loaded);
@@ -115,18 +133,61 @@ const Dashboard: React.FC = () => {
     sync();
   }, [user]);
 
+  // Reload profile+posts when switching client workspace
+  useEffect(() => {
+    if (!user || activeClientId === null) return;
+    const loadClient = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid, 'clients', activeClientId));
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.profile) setProfile({ ...DEFAULT_PROFILE, ...d.profile });
+          else setProfile(DEFAULT_PROFILE);
+          if (d.stats) setStats({ ...DEFAULT_STATS, ...d.stats });
+          else setStats(DEFAULT_STATS);
+        } else {
+          setProfile(DEFAULT_PROFILE);
+          setStats(DEFAULT_STATS);
+        }
+        const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'clients', activeClientId, 'posts'), orderBy('scheduledFor', 'asc')));
+        setPosts(pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost)));
+      } catch (e) { console.warn('Client load error:', e); }
+    };
+    loadClient();
+  }, [activeClientId, user]);
+
+  // Add a new client workspace
+  const addClient = async (name: string, businessType: string) => {
+    if (!user) return;
+    const newClient: Omit<ClientWorkspace, 'id'> = { name, businessType, createdAt: new Date().toISOString() };
+    const ref = await addDoc(collection(db, 'users', user.uid, 'clients'), newClient);
+    const created: ClientWorkspace = { id: ref.id, ...newClient };
+    setClients(prev => [...prev, created]);
+    setActiveClientId(ref.id);
+    toast(`Client "${name}" added!`);
+  };
+
+  // Delete a client workspace
+  const deleteClient = async (clientId: string) => {
+    if (!user) return;
+    await deleteDoc(doc(db, 'users', user.uid, 'clients', clientId));
+    setClients(prev => prev.filter(c => c.id !== clientId));
+    if (activeClientId === clientId) setActiveClientId(null);
+    toast('Client removed.');
+  };
+
   // Persist profile to Firestore (debounced)
   useEffect(() => {
     if (!user || !firestoreLoaded) return;
-    const t = setTimeout(() => updateDoc(doc(db, 'users', user.uid), { profile }), 1000);
+    const t = setTimeout(() => updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true })), 1000);
     return () => clearTimeout(t);
-  }, [profile, user, firestoreLoaded]);
+  }, [profile, user, firestoreLoaded, activeClientId]);
 
   // Persist stats to Firestore
   useEffect(() => {
     if (!user || !firestoreLoaded) return;
-    updateDoc(doc(db, 'users', user.uid), { stats });
-  }, [stats, user, firestoreLoaded]);
+    updateDoc(dataRef(), { stats }).catch(() => setDoc(dataRef(), { stats }, { merge: true }));
+  }, [stats, user, firestoreLoaded, activeClientId]);
 
   // Content Generator State
   const [topic, setTopic] = useState('');
@@ -214,8 +275,8 @@ const Dashboard: React.FC = () => {
   }, [setupStatus, user]);
 
   const planCfg = CLIENT.plans.find(p => p.id === activePlan);
-  const canUseImages  = activePlan === 'growth' || activePlan === 'pro';
-  const canUseSaturation = activePlan === 'pro';
+  const canUseImages = activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency';
+  const canUseSaturation = activePlan === 'pro' || activePlan === 'agency';
   const maxPostsPerWeek = planCfg?.postsPerWeek ?? 7;
 
   // Live Facebook Stats
@@ -290,7 +351,7 @@ const Dashboard: React.FC = () => {
       image: generatedImage || undefined,
       topic
     };
-    const ref = await addDoc(collection(db, 'users', user.uid, 'posts'), postData);
+    const ref = await addDoc(postsCol(), postData);
     setPosts(prev => [{ id: ref.id, ...postData } as SocialPost, ...prev]);
     toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!`);
     setGeneratedContent('');
@@ -381,7 +442,7 @@ const Dashboard: React.FC = () => {
         pillar: sp.pillar || undefined,
         topic: sp.topic
       };
-      const ref = await addDoc(collection(db, 'users', user.uid, 'posts'), postData);
+      const ref = await addDoc(postsCol(), postData);
       saved.push({ id: ref.id, ...postData });
     }
     setPosts(prev => [...saved, ...prev]);
@@ -409,7 +470,10 @@ const Dashboard: React.FC = () => {
   // ── Delete Post ──
   const deletePost = async (id: string) => {
     if (!user) return;
-    await deleteDoc(doc(db, 'users', user.uid, 'posts', id));
+    const colPath = activeClientId
+      ? doc(db, 'users', user.uid, 'clients', activeClientId, 'posts', id)
+      : doc(db, 'users', user.uid, 'posts', id);
+    await deleteDoc(colPath);
     setPosts(prev => prev.filter(p => p.id !== id));
     toast('Post deleted.');
   };
@@ -487,13 +551,23 @@ const Dashboard: React.FC = () => {
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <AppLogo size={72} />
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {planCfg && (
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
                   {planCfg.name}
                 </span>
               )}
-              {profile.name && profile.name !== 'My Business' && (
+              {activePlan === 'agency' && (
+                <ClientSwitcher
+                  clients={clients}
+                  activeClientId={activeClientId}
+                  onSwitch={setActiveClientId}
+                  onAdd={addClient}
+                  onDelete={deleteClient}
+                  agencyName={profile.name}
+                />
+              )}
+              {activePlan !== 'agency' && profile.name && profile.name !== 'My Business' && (
                 <span className="text-xs text-white/30 hidden sm:inline">{profile.name}</span>
               )}
             </div>

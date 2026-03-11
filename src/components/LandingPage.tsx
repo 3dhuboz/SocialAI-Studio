@@ -4,7 +4,7 @@ import { PricingTable } from './PricingTable';
 import {
   CheckCircle, Zap, Image as ImageIcon, Calendar,
   BarChart3, Facebook, Instagram, ArrowRight, Star, Clock,
-  Shield, Headphones, ChevronDown, ChevronUp, Brain
+  Shield, Headphones, ChevronDown, ChevronUp, Brain, Users
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
 
@@ -233,6 +233,78 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
                 <p className="text-sm text-white/40 leading-relaxed">{f.desc}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* AGENCY SECTION */}
+      <section className="py-20 px-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-3xl p-8 md:p-12">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
+              <div>
+                <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-6">
+                  <Users size={12} /> For Social Media Managers & Agencies
+                </div>
+                <h2 className="text-3xl md:text-4xl font-black mb-4 leading-tight">
+                  Manage all your clients{' '}
+                  <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">from one dashboard</span>
+                </h2>
+                <p className="text-white/50 mb-6 leading-relaxed">
+                  The Agency plan lets you add up to 10 client workspaces — each with their own profile, posts, Facebook page, and AI settings. Switch between clients instantly, no logging out required.
+                </p>
+                <div className="space-y-3 mb-8">
+                  {[
+                    'Up to 10 separate client workspaces',
+                    'Instant client switching from the dashboard header',
+                    'Per-client Facebook & Instagram connection',
+                    'Per-client AI content, schedule & analytics',
+                    'One monthly bill — not per client',
+                  ].map((f, i) => (
+                    <div key={i} className="flex items-center gap-3 text-sm">
+                      <CheckCircle size={15} className="text-emerald-400 shrink-0" />
+                      <span className="text-white/70">{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-end gap-2 mb-6">
+                  <span className="text-4xl font-black text-white">$149</span>
+                  <span className="text-white/40 mb-1">/month + $99 setup</span>
+                </div>
+                <button
+                  onClick={() => setShowPricing(true)}
+                  className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold px-6 py-3 rounded-xl hover:opacity-90 transition"
+                >
+                  Get Agency Plan <ArrowRight size={16} />
+                </button>
+              </div>
+              <div className="space-y-4">
+                {[
+                  { name: 'Bella\'s Bakery', type: 'Café & Bakery', posts: 14, active: true },
+                  { name: 'FastFit Gym', type: 'Fitness Studio', posts: 21, active: false },
+                  { name: 'Green Thumb Nursery', type: 'Garden Centre', posts: 7, active: false },
+                ].map((client, i) => (
+                  <div key={i} className={`flex items-center gap-4 p-4 rounded-2xl border transition ${
+                    client.active
+                      ? 'bg-emerald-500/10 border-emerald-500/30'
+                      : 'bg-white/3 border-white/8'
+                  }`}>
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                      <span className="text-white font-black text-sm">{client.name.charAt(0)}</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm text-white">{client.name}</p>
+                      <p className="text-xs text-white/40">{client.type}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-bold text-emerald-400">{client.posts} posts/wk</p>
+                      {client.active && <p className="text-[10px] text-emerald-400/60">● Active</p>}
+                    </div>
+                  </div>
+                ))}
+                <p className="text-center text-xs text-white/20 pt-2">Switch clients instantly from the header dropdown</p>
+              </div>
+            </div>
           </div>
         </div>
       </section>

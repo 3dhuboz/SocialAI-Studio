@@ -47,6 +47,9 @@ export const CLIENT = {
   stripePublishableKey: 'pk_live_51P8FoQ00ETA4f7VOQn6UauJebPB5aU4TX5qyMpHgvwgy7OUnGKZllHAFAKwAShNRNcfEOlfeLVjNBm345oSyN0S100Oq8F8l3W',
   stripePricingTableId: 'prctbl_1T9d6K00ETA4f7VOScFSprrm',
 
+  /** Max client workspaces per agency account */
+  agencyClientLimit: 10,
+
   plans: [
     {
       id: 'starter' as const,
@@ -100,6 +103,25 @@ export const CLIENT = {
       limitations: [],
       color: 'from-purple-500 to-pink-600',
       badge: 'Best Value',
+    },
+    {
+      id: 'agency' as const,
+      name: 'Agency',
+      price: 149,
+      postsPerWeek: 21,
+      features: [
+        'Up to 10 client workspaces',
+        'Switch between clients instantly',
+        'Per-client AI content & scheduling',
+        'Per-client Facebook & Instagram connection',
+        'AI-generated images for every post',
+        'Smart AI Scheduler + Saturation Mode',
+        'Per-client Insights & analytics',
+        'Priority support',
+      ],
+      limitations: [],
+      color: 'from-emerald-500 to-teal-600',
+      badge: 'For Agencies',
     },
   ],
 } as const;

@@ -34,5 +34,12 @@ export interface ContentCalendarStats {
   postsLast30Days: number;
 }
 
-export type PlanTier = 'starter' | 'growth' | 'pro';
+export type PlanTier = 'starter' | 'growth' | 'pro' | 'agency';
 export type SetupStatus = 'ordered' | 'form_sent' | 'in_progress' | 'live';
+
+export interface ClientWorkspace {
+  id: string;
+  name: string;
+  businessType: string;
+  createdAt: string;
+}
