@@ -57,7 +57,7 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding }) => {
       <div className="w-full max-w-md relative">
         {/* Logo */}
         <div className="flex justify-center mb-8">
-          <AppLogo size={52} />
+          <AppLogo size={90} />
         </div>
 
         {/* Card */}

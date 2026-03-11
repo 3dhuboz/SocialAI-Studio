@@ -57,7 +57,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
       {/* NAV */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <AppLogo size={36} />
+          <AppLogo size={56} />
           <button
             onClick={() => setShowPricing(true)}
             className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
@@ -297,7 +297,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
       <footer className="border-t border-white/5 py-8 px-6">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-white/20">
           <div className="flex items-center gap-2">
-            <AppLogo size={24} />
+            <AppLogo size={40} />
           </div>
           <span>
             <a href={CLIENT.poweredByUrl} target="_blank" rel="noopener noreferrer" className="hover:text-white/40 transition">

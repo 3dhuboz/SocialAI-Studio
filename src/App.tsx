@@ -486,7 +486,7 @@ const Dashboard: React.FC = () => {
       <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <AppLogo size={44} />
+            <AppLogo size={72} />
             <div className="flex items-center gap-2">
               {planCfg && (
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
@@ -1218,7 +1218,7 @@ const Dashboard: React.FC = () => {
 
       <footer className="border-t border-white/5 mt-12">
         <div className="max-w-6xl mx-auto px-4 py-5 flex items-center justify-between flex-wrap gap-3">
-          <AppLogo size={28} />
+          <AppLogo size={44} />
           <div className="flex items-center gap-4 text-xs text-white/20">
             <a href={`mailto:${CLIENT.supportEmail}`} className="hover:text-white/40 transition">{CLIENT.supportEmail}</a>
             {CLIENT.poweredBy && (
@@ -1259,7 +1259,7 @@ const SplashScreen: React.FC = () => {
       <div className="relative mb-10">
         <div className="absolute inset-[-4px] rounded-3xl bg-amber-400/10 animate-ping" style={{ animationDuration: '2s' }} />
         <div className="absolute inset-[-12px] rounded-[32px] border border-amber-400/10 animate-pulse" />
-        <AppLogo size={100} />
+        <AppLogo size={160} />
       </div>
 
       {/* Cycling status line */}
