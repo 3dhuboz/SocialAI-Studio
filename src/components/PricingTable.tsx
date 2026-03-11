@@ -64,7 +64,7 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
         </div>
 
         {/* Plan cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {CLIENT.plans.map((plan) => {
             const glow = planGlows[plan.id] || 'rgba(255,255,255,0.05)';
             const borderClass = planBorderActive[plan.id] || 'border-white/15';

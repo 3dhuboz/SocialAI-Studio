@@ -150,7 +150,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
             <p className="text-white/40">No lock-in contracts. Cancel anytime.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
             {CLIENT.plans.map((plan) => {
               const checkColor = plan.id === 'starter' ? 'text-blue-400' : plan.id === 'growth' ? 'text-amber-400' : plan.id === 'pro' ? 'text-purple-400' : 'text-emerald-400';
               const glowBg = plan.id === 'starter' ? 'rgba(59,130,246,0.1)' : plan.id === 'growth' ? 'rgba(245,158,11,0.1)' : plan.id === 'pro' ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)';
