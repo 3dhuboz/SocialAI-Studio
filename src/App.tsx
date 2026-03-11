@@ -43,16 +43,20 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
-  // Handle Stripe post-payment redirect: ?checkout=success&plan=starter|growth|pro
+  // Handle Stripe post-payment redirect
+  const [showPlanPicker, setShowPlanPicker] = useState(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const checkoutStatus = params.get('checkout');
-    const planParam = params.get('plan') as PlanTier | null;
-    if (checkoutStatus === 'success' && planParam && ['starter', 'growth', 'pro'].includes(planParam)) {
-      setActivePlan(planParam);
-      localStorage.setItem('sai_plan', planParam);
-      setSetupStatus('ordered');
-      // Clean the URL without reload
+    if (params.get('checkout') === 'success') {
+      const planParam = params.get('plan') as PlanTier | null;
+      if (planParam && ['starter', 'growth', 'pro'].includes(planParam)) {
+        setActivePlan(planParam);
+        localStorage.setItem('sai_plan', planParam);
+        setSetupStatus('ordered');
+      } else {
+        // No plan in URL — show picker
+        setShowPlanPicker(true);
+      }
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
@@ -364,12 +368,43 @@ const Dashboard: React.FC = () => {
   ];
 
   // Show landing page if no plan selected
-  if (!activePlan) {
+  if (!activePlan && !showPlanPicker) {
     return <LandingPage onActivate={plan => { setActivePlan(plan); localStorage.setItem('sai_plan', plan); }} />;
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
+      {/* Post-payment plan picker */}
+      {showPlanPicker && (
+        <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
+          <div className="bg-[#111118] border border-white/10 rounded-3xl p-8 w-full max-w-lg text-center">
+            <div className="w-14 h-14 mx-auto mb-5 bg-gradient-to-br from-green-500/20 to-emerald-500/20 border border-green-500/20 rounded-2xl flex items-center justify-center">
+              <CheckCircle size={26} className="text-green-400" />
+            </div>
+            <h2 className="text-2xl font-black text-white mb-2">Payment successful! 🎉</h2>
+            <p className="text-white/40 text-sm mb-8">Which plan did you purchase? This activates your dashboard.</p>
+            <div className="space-y-3">
+              {CLIENT.plans.map(plan => (
+                <button
+                  key={plan.id}
+                  onClick={() => {
+                    setActivePlan(plan.id);
+                    localStorage.setItem('sai_plan', plan.id);
+                    setSetupStatus('ordered');
+                    setShowPlanPicker(false);
+                    toast(`Welcome! Your ${plan.name} plan is now active. We\'ll be in touch within 1–3 days to connect your Facebook page.`);
+                  }}
+                  className={`w-full bg-gradient-to-r ${plan.color} text-white font-bold py-4 rounded-xl flex items-center justify-between px-5 hover:opacity-90 transition`}
+                >
+                  <span>{plan.name} — ${plan.price}/month</span>
+                  <span className="text-xs opacity-70">{plan.postsPerWeek} posts/week</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-white/20 mt-5">Not sure? Check your Stripe receipt email.</p>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
