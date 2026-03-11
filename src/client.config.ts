@@ -58,6 +58,19 @@ export const CLIENT = {
   stripePublishableKey: 'pk_live_51P8FoQ00ETA4f7VOQn6UauJebPB5aU4TX5qyMpHgvwgy7OUnGKZllHAFAKwAShNRNcfEOlfeLVjNBm345oSyN0S100Oq8F8l3W',
   stripePricingTableId: 'prctbl_1T9d6K00ETA4f7VOScFSprrm',
 
+  /**
+   * STRIPE PAYMENT LINKS (optional but recommended for coloured plan cards):
+   * In Stripe dashboard → Payment Links → Create a link for each plan.
+   * Paste the URL (https://buy.stripe.com/...) for each plan below.
+   * Leave as empty string to fall back to the generic pricing table.
+   */
+  stripePaymentLinks: {
+    starter: '',
+    growth: '',
+    pro: '',
+    agency: '',
+  },
+
   /** Max client workspaces per agency account */
   agencyClientLimit: 10,
 
