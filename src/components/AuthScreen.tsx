@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { CLIENT } from '../client.config';
-import { Sparkles, Mail, Lock, Eye, EyeOff, ArrowRight, Loader2, CheckCircle } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, Loader2, CheckCircle } from 'lucide-react';
+import { AppLogo } from './AppLogo';
 
 type Mode = 'login' | 'signup' | 'reset';
 
@@ -55,11 +56,8 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding }) => {
 
       <div className="w-full max-w-md relative">
         {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-amber-500/30">
-            <Sparkles size={18} className="text-white" />
-          </div>
-          <span className="text-xl font-bold text-white">{CLIENT.appName}</span>
+        <div className="flex justify-center mb-8">
+          <AppLogo size={52} />
         </div>
 
         {/* Card */}

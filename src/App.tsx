@@ -486,17 +486,16 @@ const Dashboard: React.FC = () => {
       <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <AppLogo size={38} />
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold text-white">{CLIENT.appName}</h1>
-                {planCfg && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
-                    {planCfg.name}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-white/30">{profile.name}</p>
+            <AppLogo size={44} />
+            <div className="flex items-center gap-2">
+              {planCfg && (
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
+                  {planCfg.name}
+                </span>
+              )}
+              {profile.name && profile.name !== 'My Business' && (
+                <span className="text-xs text-white/30 hidden sm:inline">{profile.name}</span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
@@ -1219,12 +1218,7 @@ const Dashboard: React.FC = () => {
 
       <footer className="border-t border-white/5 mt-12">
         <div className="max-w-6xl mx-auto px-4 py-5 flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-gradient-to-br from-amber-400 to-orange-500 rounded flex items-center justify-center">
-              <Sparkles size={10} className="text-white" />
-            </div>
-            <span className="text-xs text-white/20">{CLIENT.appName}</span>
-          </div>
+          <AppLogo size={28} />
           <div className="flex items-center gap-4 text-xs text-white/20">
             <a href={`mailto:${CLIENT.supportEmail}`} className="hover:text-white/40 transition">{CLIENT.supportEmail}</a>
             {CLIENT.poweredBy && (
@@ -1262,15 +1256,11 @@ const SplashScreen: React.FC = () => {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_80%,rgba(234,88,12,0.06),transparent_50%)] pointer-events-none" />
 
       {/* Pulsing ring behind logo */}
-      <div className="relative mb-8">
-        <div className="absolute inset-0 rounded-3xl bg-amber-400/10 animate-ping" style={{ animationDuration: '2s' }} />
-        <div className="absolute inset-[-8px] rounded-[32px] border border-amber-400/10 animate-pulse" />
-        <AppLogo size={80} />
+      <div className="relative mb-10">
+        <div className="absolute inset-[-4px] rounded-3xl bg-amber-400/10 animate-ping" style={{ animationDuration: '2s' }} />
+        <div className="absolute inset-[-12px] rounded-[32px] border border-amber-400/10 animate-pulse" />
+        <AppLogo size={100} />
       </div>
-
-      {/* App name */}
-      <h1 className="text-3xl font-black text-white mb-1 tracking-tight">{CLIENT.appName}</h1>
-      <p className="text-sm text-amber-400/70 font-medium mb-10">{CLIENT.tagline}</p>
 
       {/* Cycling status line */}
       <div className="h-6 flex items-center justify-center">

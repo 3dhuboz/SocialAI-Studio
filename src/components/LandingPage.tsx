@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { CLIENT } from '../client.config';
 import { PricingTable } from './PricingTable';
 import {
-  Sparkles, CheckCircle, Zap, Image as ImageIcon, Calendar,
+  CheckCircle, Zap, Image as ImageIcon, Calendar,
   BarChart3, Facebook, Instagram, ArrowRight, Star, Clock,
   Shield, Headphones, ChevronDown, ChevronUp, Brain
 } from 'lucide-react';
+import { AppLogo } from './AppLogo';
 
 interface Props {
   onActivate: (plan: 'starter' | 'growth' | 'pro') => void;
@@ -56,12 +57,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
       {/* NAV */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg flex items-center justify-center">
-              <Sparkles size={16} className="text-white" />
-            </div>
-            <span className="font-bold text-lg">{CLIENT.appName}</span>
-          </div>
+          <AppLogo size={36} />
           <button
             onClick={() => setShowPricing(true)}
             className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
@@ -77,7 +73,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_50%,rgba(168,85,247,0.08),transparent_60%)]" />
         <div className="relative max-w-4xl mx-auto">
           <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-8">
-            <Sparkles size={12} /> AI-Powered Social Media — Done For You
+            <Zap size={12} /> AI-Powered Social Media — Done For You
           </div>
           <h1 className="text-5xl md:text-7xl font-black mb-6 leading-[1.05] tracking-tight">
             Stop worrying about{' '}
@@ -301,10 +297,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
       <footer className="border-t border-white/5 py-8 px-6">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-white/20">
           <div className="flex items-center gap-2">
-            <div className="w-5 h-5 bg-gradient-to-br from-amber-400 to-orange-500 rounded flex items-center justify-center">
-              <Sparkles size={10} className="text-white" />
-            </div>
-            <span>{CLIENT.appName}</span>
+            <AppLogo size={24} />
           </div>
           <span>
             <a href={CLIENT.poweredByUrl} target="_blank" rel="noopener noreferrer" className="hover:text-white/40 transition">
