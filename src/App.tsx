@@ -611,10 +611,13 @@ const Dashboard: React.FC = () => {
 
   // Auth gate
   if (!user) {
+    if (showLanding) {
+      return <LandingPage onActivate={() => setShowLanding(false)} />;
+    }
     return <AuthScreen onShowLanding={() => setShowLanding(true)} />;
   }
 
-  // Show landing page
+  // Show landing page (logged-in user without a plan, or explicitly navigated)
   if (showLanding || (!activePlan && !showPlanPicker && firestoreLoaded)) {
     return <LandingPage onActivate={async plan => {
       setActivePlan(plan);
