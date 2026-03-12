@@ -12,6 +12,7 @@ import { AnimatedDemo } from './AnimatedDemo';
 
 interface Props {
   onActivate: (plan: 'starter' | 'growth' | 'pro') => void;
+  onSignIn: () => void;
 }
 
 const faqs = [
@@ -48,7 +49,7 @@ const howItWorks = [
   { step: '4', title: "You're live!", desc: 'Log in and the AI starts generating your posts. Review, schedule, and publish with one click.', icon: Zap },
 ];
 
-export const LandingPage: React.FC<Props> = ({ onActivate }) => {
+export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [showPricing, setShowPricing] = useState(false);
   const [videoPlaying, setVideoPlaying] = useState(false);
@@ -61,12 +62,20 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <AppLogo size={56} />
-          <button
-            onClick={() => setShowPricing(true)}
-            className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
-          >
-            Get Started
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onSignIn}
+              className="text-sm text-white/60 hover:text-white font-semibold px-4 py-2 rounded-full border border-white/10 hover:border-white/25 bg-white/5 hover:bg-white/10 transition"
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => setShowPricing(true)}
+              className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
+            >
+              Get Started
+            </button>
+          </div>
         </div>
       </nav>
 

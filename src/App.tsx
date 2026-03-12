@@ -694,18 +694,21 @@ const Dashboard: React.FC = () => {
   // Auth gate
   if (!user) {
     if (showLanding) {
-      return <LandingPage onActivate={() => setShowLanding(false)} />;
+      return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} />;
     }
     return <AuthScreen onShowLanding={() => setShowLanding(true)} />;
   }
 
   // Show landing page (logged-in user without a plan, or explicitly navigated)
   if (showLanding || (!activePlan && !showPlanPicker && firestoreLoaded)) {
-    return <LandingPage onActivate={async plan => {
-      setActivePlan(plan);
-      setShowLanding(false);
-      if (user) await updateDoc(doc(db, 'users', user.uid), { plan, setupStatus: 'ordered' });
-    }} />;
+    return <LandingPage
+      onActivate={async plan => {
+        setActivePlan(plan);
+        setShowLanding(false);
+        if (user) await updateDoc(doc(db, 'users', user.uid), { plan, setupStatus: 'ordered' });
+      }}
+      onSignIn={() => setShowLanding(false)}
+    />;
   }
 
   // Still loading Firestore data
