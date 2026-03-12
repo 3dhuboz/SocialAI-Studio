@@ -16,7 +16,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, SmartScheduledPost } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, InsightReport, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
@@ -141,6 +141,13 @@ const Dashboard: React.FC = () => {
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
+          if (d.insightReport) {
+            setInsightReport(d.insightReport as InsightReport);
+            const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
+            if (ageMs > 24 * 60 * 60 * 1000) setInsightStale(true);
+          } else {
+            setInsightStale(true);
+          }
         }
         // Load agency clients
         const clientsSnap = await getDocs(collection(db, 'users', user.uid, 'clients'));
@@ -313,9 +320,19 @@ const Dashboard: React.FC = () => {
   const [recommendations, setRecommendations] = useState('');
   const [bestTimes, setBestTimes] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [insightReport, setInsightReport] = useState<InsightReport | null>(null);
+  const [insightStale, setInsightStale] = useState(false);
 
   const hasApiKey = !!localStorage.getItem('sai_gemini_key');
   const fbConnected = !!(profile.facebookPageId && profile.facebookPageAccessToken);
+
+  // Auto-run daily insight analysis when stale
+  useEffect(() => {
+    if (insightStale && hasApiKey && user) {
+      runInsightReport(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insightStale, user]);
 
   // Plan & setup state (sourced from Firestore via userDoc)
   const [activePlan, setActivePlan] = useState<PlanTier | null>(null);
@@ -601,6 +618,24 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Insights ──
+  const runInsightReport = async (forceRefresh = false) => {
+    if (!hasApiKey) return;
+    if (!forceRefresh && insightReport) return;
+    setIsAnalyzing(true);
+    const recentTopics = posts.slice(0, 10).map(p => p.topic || p.content.substring(0, 40));
+    const report = await generateInsightReport(profile.name, profile.type, profile.location || 'Australia', stats, recentTopics);
+    if (report) {
+      setInsightReport(report);
+      setInsightStale(false);
+      if (user) {
+        updateDoc(dataRef(), { insightReport: report }).catch(() =>
+          setDoc(dataRef(), { insightReport: report }, { merge: true })
+        );
+      }
+    }
+    setIsAnalyzing(false);
+  };
+
   const handleAnalyze = async () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsAnalyzing(true);
@@ -1702,47 +1737,160 @@ const Dashboard: React.FC = () => {
 
         {/* ═══ INSIGHTS TAB ═══ */}
         {activeTab === 'insights' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold flex items-center gap-2"><BarChart3 className="text-amber-400" /> AI Insights</h2>
-
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
-              <h3 className="font-bold text-white">Your Stats</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { label: 'Followers', key: 'followers' as const },
-                  { label: 'Monthly Reach', key: 'reach' as const },
-                  { label: 'Engagement %', key: 'engagement' as const },
-                  { label: 'Posts (30d)', key: 'postsLast30Days' as const }
-                ].map(s => (
-                  <div key={s.key}>
-                    <label className="text-xs text-gray-400 block mb-1">{s.label}</label>
-                    <input
-                      type="number"
-                      value={stats[s.key]}
-                      onChange={e => setStats(prev => ({ ...prev, [s.key]: Number(e.target.value) }))}
-                      className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-white text-sm"
-                    />
-                  </div>
-                ))}
+          <div className="space-y-5">
+            {/* Header */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-2xl font-bold flex items-center gap-2.5"><BarChart3 className="text-amber-400" size={22} /> AI Insights</h2>
+                <p className="text-sm text-white/40 mt-1">
+                  {insightReport
+                    ? <>Last analysed: <span className="text-white/60">{new Date(insightReport.generatedAt).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span> · Updates automatically every 24h</>
+                    : isAnalyzing ? 'Analysing your business…' : 'AI analyses your account daily and surfaces actionable insights.'}
+                </p>
               </div>
-              <button onClick={handleAnalyze} disabled={isAnalyzing} className="bg-amber-500 hover:bg-amber-600 text-black font-bold px-6 py-2 rounded-lg flex items-center gap-2">
-                {isAnalyzing ? <Loader2 className="animate-spin" size={16} /> : <BarChart3 size={16} />}
-                Analyze & Recommend
+              <button
+                onClick={() => runInsightReport(true)}
+                disabled={isAnalyzing}
+                className="flex items-center gap-2 text-xs bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/25 text-white/50 hover:text-amber-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
+              >
+                {isAnalyzing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                {isAnalyzing ? 'Analysing…' : 'Refresh Now'}
               </button>
             </div>
 
-            {recommendations && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <h3 className="font-bold text-amber-300 mb-3">Recommendations</h3>
-                <div className="text-sm text-gray-300 whitespace-pre-wrap">{recommendations}</div>
+            {/* No API key */}
+            {!hasApiKey && (
+              <div className="bg-amber-500/8 border border-amber-500/20 rounded-2xl p-6 text-center space-y-3">
+                <Sparkles size={28} className="text-amber-400 mx-auto" />
+                <p className="text-white/60 font-semibold">Set your Gemini API key in Settings to enable AI Insights</p>
+                <button onClick={() => setActiveTab('settings')} className="text-xs text-amber-400 underline hover:text-amber-300 transition">Go to Settings →</button>
               </div>
             )}
 
-            {bestTimes && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <h3 className="font-bold text-amber-300 mb-3">Best Posting Times</h3>
-                <div className="text-sm text-gray-300 whitespace-pre-wrap">{bestTimes}</div>
+            {/* Loading skeleton */}
+            {isAnalyzing && !insightReport && (
+              <div className="space-y-4">
+                {[1,2,3].map(i => (
+                  <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-5 animate-pulse">
+                    <div className="h-3 bg-white/10 rounded w-1/3 mb-3" />
+                    <div className="h-2 bg-white/6 rounded w-full mb-2" />
+                    <div className="h-2 bg-white/6 rounded w-4/5" />
+                  </div>
+                ))}
               </div>
+            )}
+
+            {insightReport && (
+              <>
+                {/* Score + Summary */}
+                <div className="rounded-2xl border border-white/8 overflow-hidden"
+                  style={{ background: 'linear-gradient(135deg,rgba(245,158,11,0.08) 0%,rgba(10,10,20,0.95) 60%)' }}>
+                  <div className="p-6 flex gap-5 items-start">
+                    <div className="shrink-0 w-20 h-20 rounded-2xl flex flex-col items-center justify-center border-2 border-amber-500/30 bg-amber-500/10">
+                      <span className="text-3xl font-black text-amber-400">{insightReport.score}</span>
+                      <span className="text-[9px] text-amber-400/60 font-bold uppercase tracking-widest">/ 100</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-xs font-bold text-amber-300/70 uppercase tracking-widest mb-1.5">Social Health Score</p>
+                      <p className="text-sm text-white/75 leading-relaxed">{insightReport.summary}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Win */}
+                {insightReport.quickWin && (
+                  <div className="bg-green-500/8 border border-green-500/20 rounded-2xl px-5 py-4 flex gap-3 items-start">
+                    <Zap size={16} className="text-green-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-bold text-green-300 mb-0.5">Quick Win — Do This Today</p>
+                      <p className="text-sm text-white/70">{insightReport.quickWin}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommendations */}
+                <div className="space-y-2.5">
+                  <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Recommendations</h3>
+                  {insightReport.recommendations.map((rec, i) => {
+                    const colors = { high: 'border-red-500/25 bg-red-500/5', medium: 'border-amber-500/25 bg-amber-500/5', low: 'border-blue-500/20 bg-blue-500/5' };
+                    const badges = { high: 'bg-red-500/20 text-red-300', medium: 'bg-amber-500/20 text-amber-300', low: 'bg-blue-500/20 text-blue-300' };
+                    return (
+                      <div key={i} className={`border rounded-2xl p-4 flex gap-3 items-start ${colors[rec.priority]}`}>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full mt-0.5 shrink-0 ${badges[rec.priority]}`}>
+                          {rec.priority.toUpperCase()}
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-white/85">{rec.title}</p>
+                          <p className="text-xs text-white/45 mt-0.5 leading-relaxed">{rec.detail}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Best Times */}
+                {insightReport.bestTimes?.length > 0 && (
+                  <div className="space-y-2.5">
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Best Posting Times</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {insightReport.bestTimes.map((bt, i) => (
+                        <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-4">
+                          <div className="flex items-center gap-2 mb-3">
+                            {bt.platform === 'Facebook' ? <Facebook size={14} className="text-blue-400" /> : <Instagram size={14} className="text-pink-400" />}
+                            <span className="text-xs font-bold text-white/60">{bt.platform}</span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {bt.slots.map((slot, j) => (
+                              <div key={j} className="flex items-center gap-2">
+                                <Clock size={10} className="text-amber-400/60 shrink-0" />
+                                <span className="text-xs text-white/70">{slot}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Content Focus */}
+                {insightReport.contentFocus?.length > 0 && (
+                  <div className="space-y-2.5">
+                    <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Content Topics to Focus On</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {insightReport.contentFocus.map((cf, i) => (
+                        <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-4 space-y-1.5">
+                          <p className="text-sm font-semibold text-amber-300">{cf.topic}</p>
+                          <p className="text-xs text-white/45 leading-relaxed">{cf.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Live Stats edit row */}
+                <details className="group">
+                  <summary className="text-xs text-white/25 hover:text-white/45 cursor-pointer list-none flex items-center gap-1.5 transition">
+                    <ChevronDown size={12} className="group-open:rotate-180 transition-transform" />
+                    Update stats manually (used to calibrate insights)
+                  </summary>
+                  <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {([
+                      { label: 'Followers', key: 'followers' as const },
+                      { label: 'Monthly Reach', key: 'reach' as const },
+                      { label: 'Engagement %', key: 'engagement' as const },
+                      { label: 'Posts (30d)', key: 'postsLast30Days' as const }
+                    ]).map(s => (
+                      <div key={s.key}>
+                        <label className="text-[10px] text-white/30 block mb-1">{s.label}</label>
+                        <input type="number" value={stats[s.key]}
+                          onChange={e => setStats(prev => ({ ...prev, [s.key]: Number(e.target.value) }))}
+                          className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm" />
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </>
             )}
           </div>
         )}
@@ -1753,6 +1901,92 @@ const Dashboard: React.FC = () => {
             <div>
               <h2 className="text-2xl font-bold flex items-center gap-2.5"><Settings className="text-amber-400" size={22} /> Settings</h2>
               <p className="text-sm text-white/40 mt-1">Configure your AI key, brand profile, and integrations.</p>
+            </div>
+
+            {/* ── Plan & Billing ── */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
+                    <ShoppingCart size={16} className="text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">Plan &amp; Billing</h3>
+                    <p className="text-xs text-white/30 mt-0.5">
+                      {activePlan ? <>Currently on <span className={`font-bold bg-gradient-to-r ${CLIENT.plans.find(p => p.id === activePlan)?.color ?? 'from-white to-white'} bg-clip-text text-transparent`}>{CLIENT.plans.find(p => p.id === activePlan)?.name}</span> plan</> : 'No active plan'}
+                    </p>
+                  </div>
+                </div>
+                {CLIENT.stripeCustomerPortalUrl && (
+                  <a href={CLIENT.stripeCustomerPortalUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-white/40 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5">
+                    <Link2 size={12} /> Manage Billing
+                  </a>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {CLIENT.plans.map(plan => {
+                  const isCurrent = activePlan === plan.id;
+                  const planOrder = ['starter', 'growth', 'pro', 'agency'];
+                  const currentIdx = planOrder.indexOf(activePlan ?? '');
+                  const planIdx = planOrder.indexOf(plan.id);
+                  const isUpgrade = planIdx > currentIdx;
+                  const paymentLink = CLIENT.stripePaymentLinks?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
+                  return (
+                    <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
+                      isCurrent
+                        ? 'border-amber-500/40 bg-amber-500/8'
+                        : 'border-white/8 bg-white/2 hover:border-white/15'
+                    }`}>
+                      {plan.badge && (
+                        <span className="absolute -top-2 left-3 text-[9px] font-black bg-amber-500 text-black px-2 py-0.5 rounded-full">{plan.badge}</span>
+                      )}
+                      {isCurrent && (
+                        <span className="absolute -top-2 right-3 text-[9px] font-black bg-green-500 text-black px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle size={8} /> Current</span>
+                      )}
+                      <div>
+                        <p className={`text-sm font-black bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>{plan.name}</p>
+                        <p className="text-xl font-black text-white mt-0.5">${plan.price}<span className="text-xs text-white/30 font-normal">/mo</span></p>
+                      </div>
+                      <ul className="space-y-1">
+                        {plan.features.slice(0, 3).map((f, i) => (
+                          <li key={i} className="text-[10px] text-white/45 flex items-start gap-1.5">
+                            <CheckCircle size={9} className="text-green-400/60 shrink-0 mt-0.5" />
+                            {f}
+                          </li>
+                        ))}
+                      </ul>
+                      {!isCurrent && (
+                        paymentLink ? (
+                          <a href={paymentLink} target="_blank" rel="noopener noreferrer"
+                            className={`block text-center text-xs font-bold py-2 rounded-xl transition ${
+                              isUpgrade
+                                ? `bg-gradient-to-r ${plan.color} text-white hover:opacity-90`
+                                : 'bg-white/8 hover:bg-white/12 text-white/60'
+                            }`}>
+                            {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'}
+                          </a>
+                        ) : (
+                          <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer"
+                            className="block text-center text-xs font-semibold py-2 rounded-xl bg-white/6 hover:bg-white/10 text-white/40 transition">
+                            {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'} →
+                          </a>
+                        )
+                      )}
+                      {isCurrent && (
+                        <div className="text-center text-[10px] text-green-400/60 font-semibold py-1">✓ Active</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!CLIENT.stripeCustomerPortalUrl && (
+                <p className="text-xs text-white/20 text-center">
+                  To cancel or update payment details, contact <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 hover:text-amber-400 underline transition">{CLIENT.supportEmail}</a>
+                </p>
+              )}
             </div>
 
             {/* API Key */}

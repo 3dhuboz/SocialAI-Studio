@@ -205,6 +205,64 @@ export const generateRecommendations = async (businessName: string, businessType
   }
 };
 
+export interface InsightReport {
+  summary: string;
+  score: number;
+  recommendations: Array<{ title: string; detail: string; priority: 'high' | 'medium' | 'low' }>;
+  bestTimes: Array<{ platform: string; slots: string[] }>;
+  contentFocus: Array<{ topic: string; reason: string }>;
+  quickWin: string;
+  generatedAt: string;
+}
+
+export const generateInsightReport = async (
+  businessName: string,
+  businessType: string,
+  location: string,
+  stats: { followers: number; reach: number; engagement: number; postsLast30Days: number },
+  recentTopics: string[]
+): Promise<InsightReport | null> => {
+  const ai = getAI();
+  if (!ai) return null;
+  try {
+    const prompt = `You are a senior social media strategist. Analyse this business and return a structured JSON insight report.
+
+Business: "${businessName}" — ${businessType} based in ${location}.
+Stats: ${stats.followers} followers, ${stats.reach} monthly reach, ${stats.engagement}% engagement rate, ${stats.postsLast30Days} posts last 30 days.
+Recent post topics: ${recentTopics.length ? recentTopics.slice(0, 8).join(', ') : 'none yet'}.
+
+Return ONLY this exact JSON structure, no markdown:
+{
+  "summary": "2-3 sentence plain-English overview of their current social media health and biggest opportunity",
+  "score": <integer 1-100 representing overall social media health>,
+  "recommendations": [
+    { "title": "short action title", "detail": "1-2 sentence specific explanation", "priority": "high" },
+    { "title": "...", "detail": "...", "priority": "medium" },
+    { "title": "...", "detail": "...", "priority": "low" }
+  ],
+  "bestTimes": [
+    { "platform": "Facebook", "slots": ["Tuesday 12–1pm", "Thursday 7–8pm", "Sunday 9–10am"] },
+    { "platform": "Instagram", "slots": ["Wednesday 11am–12pm", "Friday 5–6pm", "Saturday 8–9am"] }
+  ],
+  "contentFocus": [
+    { "topic": "topic name", "reason": "why this will perform well for this business" },
+    { "topic": "...", "reason": "..." },
+    { "topic": "...", "reason": "..." }
+  ],
+  "quickWin": "One single action they can do TODAY to immediately improve engagement"
+}`;
+
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(raw) as InsightReport;
+    parsed.generatedAt = new Date().toISOString();
+    return parsed;
+  } catch (e) {
+    console.warn('generateInsightReport failed:', e);
+    return null;
+  }
+};
+
 export const getPostingAdvice = async (platform: string) => {
   const ai = getAI();
   if (!ai) return "API Key missing.";
