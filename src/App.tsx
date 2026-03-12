@@ -707,15 +707,32 @@ const Dashboard: React.FC = () => {
 
   const handleScanPastPosts = async () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
-    const pageId = profile.sotrendPageId || profile.facebookPageId;
-    if (!pageId) {
-      toast('Add your Facebook Page ID in Settings → Social Media first.', 'warning'); return;
-    }
     setIsScanningPosts(true);
     try {
-      await SotrendService.addProfile(pageId);
-      const posts = await SotrendService.getPosts(pageId, 30);
-      if (!posts.length) { toast('No posts found — check the Page ID is correct.', 'info'); setIsScanningPosts(false); return; }
+      let posts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }> = [];
+
+      // Path 1 — Sotrender (no client token needed, uses their approved FB app)
+      const sotrendId = profile.sotrendPageId || profile.facebookPageId;
+      if (sotrendId) {
+        try {
+          await SotrendService.addProfile(sotrendId);
+          posts = await SotrendService.getPosts(sotrendId, 30);
+        } catch {
+          // Sotrender not configured — fall through to direct FB
+        }
+      }
+
+      // Path 2 — Direct Facebook Graph API (requires stored page access token)
+      if (!posts.length && profile.facebookPageId && profile.facebookPageAccessToken) {
+        posts = await FacebookService.getRecentPosts(profile.facebookPageId, profile.facebookPageAccessToken, 30);
+      }
+
+      if (!posts.length) {
+        toast('No posts found. Connect your Facebook page in Settings first.', 'warning');
+        setIsScanningPosts(false);
+        return;
+      }
+
       const report = await generateInsightReportFromPosts(profile.name, profile.type, profile.location || 'Australia', posts);
       if (report) {
         setInsightReport(report);
