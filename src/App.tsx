@@ -21,7 +21,7 @@ import {
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
-  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList
+  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -778,9 +778,16 @@ const Dashboard: React.FC = () => {
               </button>
             )}
             <button
+              onClick={() => setShowPricing(true)}
+              title="Upgrade plan"
+              className="w-8 h-8 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/30 flex items-center justify-center text-white/40 hover:text-amber-400 transition ml-1"
+            >
+              <ShoppingCart size={15} />
+            </button>
+            <button
               onClick={() => setShowAccount(true)}
               title="My Account"
-              className={`w-8 h-8 rounded-xl bg-gradient-to-br ${planCfg?.color ?? 'from-white/10 to-white/5'} flex items-center justify-center text-white text-xs font-black hover:opacity-80 transition shadow ml-1`}
+              className={`w-8 h-8 rounded-xl bg-gradient-to-br ${planCfg?.color ?? 'from-white/10 to-white/5'} flex items-center justify-center text-white text-xs font-black hover:opacity-80 transition shadow`}
             >
               {user?.email?.charAt(0).toUpperCase() ?? '?'}
             </button>
