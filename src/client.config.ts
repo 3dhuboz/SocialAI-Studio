@@ -68,7 +68,7 @@ export const CLIENT = {
     starter: '',
     growth: '',
     pro: '',
-    agency: '',
+    agency: 'https://buy.stripe.com/14A3cnexK45a1iUgrj2oE02',
   },
 
   /** Max client workspaces per agency account */
