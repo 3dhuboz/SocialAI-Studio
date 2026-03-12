@@ -34,6 +34,15 @@ export const CLIENT = {
   /** Admin emails — these accounts auto-get Pro plan + admin mode on login */
   adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],
 
+  /**
+   * LANDING PAGE VIDEO:
+   * Paste a YouTube video ID (the part after ?v= in the URL) to embed your
+   * "Benefits of AI for Social Media" video on the landing page.
+   * Leave as empty string to show the animated placeholder section instead.
+   * Example: 'dQw4w9WgXcQ' from https://youtube.com/watch?v=dQw4w9WgXcQ
+   */
+  youtubeVideoId: '',
+
   /** Where clients purchase plans */
   salesUrl: 'https://pennywiseit.com.au',
 

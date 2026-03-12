@@ -4,7 +4,8 @@ import { PricingTable } from './PricingTable';
 import {
   CheckCircle, Zap, Image as ImageIcon, Calendar,
   BarChart3, Facebook, Instagram, ArrowRight, Star, Clock,
-  Shield, Headphones, ChevronDown, ChevronUp, Brain, Users
+  Shield, Headphones, ChevronDown, ChevronUp, Brain, Users, Play,
+  TrendingUp, MessageCircle, Repeat2
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
 
@@ -49,6 +50,7 @@ const howItWorks = [
 export const LandingPage: React.FC<Props> = ({ onActivate }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [showPricing, setShowPricing] = useState(false);
+  const [videoPlaying, setVideoPlaying] = useState(false);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
@@ -136,6 +138,120 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* VIDEO — AI Benefits */}
+      <section className="py-20 px-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(168,85,247,0.07),transparent_70%)] pointer-events-none" />
+        <div className="max-w-5xl mx-auto">
+
+          {/* Heading */}
+          <div className="text-center mb-12">
+            <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-semibold px-4 py-2 rounded-full mb-6">
+              <Brain size={12} /> Why AI-Powered Social Media?
+            </div>
+            <h2 className="text-3xl md:text-4xl font-black mb-3">Stop posting manually.<br />Let AI do it better.</h2>
+            <p className="text-white/40 max-w-xl mx-auto">Businesses using AI for social media post 3× more consistently, save 8+ hours a week, and see measurably higher engagement.</p>
+          </div>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
+            {[
+              { icon: Repeat2,       value: '3×',    label: 'More consistent posting',   color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/20' },
+              { icon: Clock,         value: '8 hrs', label: 'Saved per week',             color: 'text-amber-400',  bg: 'bg-amber-500/10',  border: 'border-amber-500/20' },
+              { icon: TrendingUp,    value: '47%',   label: 'Higher engagement rate',    color: 'text-emerald-400',bg: 'bg-emerald-500/10',border: 'border-emerald-500/20' },
+              { icon: MessageCircle, value: '2.4×',  label: 'More audience reach',        color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+            ].map((s, i) => (
+              <div key={i} className={`${s.bg} border ${s.border} rounded-2xl p-5 text-center`}>
+                <s.icon size={20} className={`${s.color} mx-auto mb-2`} />
+                <p className={`text-3xl font-black ${s.color}`}>{s.value}</p>
+                <p className="text-xs text-white/40 mt-1">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Video embed / placeholder */}
+          <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d1a] aspect-video max-w-3xl mx-auto">
+
+            {CLIENT.youtubeVideoId ? (
+              /* ── Real YouTube embed ── */
+              videoPlaying ? (
+                <iframe
+                  className="absolute inset-0 w-full h-full"
+                  src={`https://www.youtube.com/embed/${CLIENT.youtubeVideoId}?autoplay=1&rel=0&modestbranding=1`}
+                  title="AI Social Media Benefits"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : (
+                /* Thumbnail click-to-play */
+                <div
+                  className="absolute inset-0 cursor-pointer group"
+                  onClick={() => setVideoPlaying(true)}
+                >
+                  <img
+                    src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`}
+                    alt="Video thumbnail"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition flex items-center justify-center">
+                    <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl">
+                      <Play size={32} className="text-black ml-1" fill="black" />
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : (
+              /* ── Animated placeholder (no video configured yet) ── */
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+                {/* Ambient glows */}
+                <div className="absolute top-0 left-1/4 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute bottom-0 right-1/4 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                {/* Animated play button */}
+                <div className="relative mb-6">
+                  <div className="absolute inset-0 rounded-full bg-amber-400/20 animate-ping" style={{ animationDuration: '2s' }} />
+                  <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-xl shadow-amber-500/30">
+                    <Play size={30} className="text-white ml-1" fill="white" />
+                  </div>
+                </div>
+
+                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-4">
+                  Coming Soon
+                </div>
+                <h3 className="text-xl md:text-2xl font-black text-white mb-2">Watch: How AI Transforms Your Social Media</h3>
+                <p className="text-white/40 text-sm max-w-md">
+                  Our explainer video walks you through how AI writes, designs, and schedules your social posts — so you never have to start from a blank page again.
+                </p>
+
+                <button
+                  onClick={() => setShowPricing(true)}
+                  className="mt-6 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-6 py-3 rounded-2xl hover:opacity-90 transition text-sm shadow-lg"
+                >
+                  Get Started Today <ArrowRight size={15} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Benefits list below video */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-10">
+            {[
+              { icon: Brain,      title: 'AI writes for your brand',      desc: 'Captions, hashtags, and hooks written in your tone — not generic templates. The AI learns your business.' },
+              { icon: Calendar,   title: 'Auto-scheduled every week',      desc: 'Posts land at the best times for your audience, automatically, without you lifting a finger.' },
+              { icon: BarChart3,  title: 'Insights that drive growth',     desc: 'See what content performs, when your audience is most active, and what to post next.' },
+            ].map((b, i) => (
+              <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-5 hover:bg-white/5 transition">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/20 flex items-center justify-center mb-4">
+                  <b.icon size={18} className="text-purple-400" />
+                </div>
+                <h3 className="font-bold text-white mb-1.5">{b.title}</h3>
+                <p className="text-xs text-white/40 leading-relaxed">{b.desc}</p>
+              </div>
+            ))}
+          </div>
+
         </div>
       </section>
 
