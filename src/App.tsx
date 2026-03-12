@@ -2464,10 +2464,11 @@ const Dashboard: React.FC = () => {
                 <div className="mt-4 space-y-3">
                   <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4">
                     <p className="text-xs font-semibold text-blue-300 mb-2">Get a token from Graph Explorer:</p>
-                    <ol className="text-xs text-white/35 space-y-1 list-decimal list-inside leading-relaxed">
+                    <ol className="text-xs text-white/35 space-y-1.5 list-decimal list-inside leading-relaxed">
                       <li>Go to <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-400/70 hover:text-blue-400">Facebook Graph Explorer</a></li>
-                      <li>Generate Access Token → select your <strong className="text-white/50">Page</strong></li>
-                      <li>Add: <code className="bg-white/10 px-1 rounded">pages_show_list</code> <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
+                      <li>Click <strong className="text-white/50">Generate Access Token</strong> → select your <strong className="text-white/50">Page</strong> (not "Me")</li>
+                      <li>Add permissions: <code className="bg-white/10 px-1 rounded">pages_show_list</code> <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
+                      <li>Copy the token and paste it below — both <strong className="text-white/50">User</strong> and <strong className="text-white/50">Page</strong> tokens are accepted</li>
                     </ol>
                   </div>
                   <div className="flex gap-2">

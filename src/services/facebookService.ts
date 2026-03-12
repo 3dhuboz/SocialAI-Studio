@@ -82,11 +82,33 @@ export const FacebookService = {
     const base = 'https://graph.facebook.com/v21.0';
     const res = await fetch(`${base}/me/accounts?fields=id,name,access_token,category,picture&access_token=${accessToken}`);
     const data = await res.json();
+
     if (data.error) {
-      const msg = data.error.message || 'Unknown error';
-      if (msg.includes('Invalid OAuth') || msg.includes('token')) throw new Error('Invalid or expired access token. Generate a fresh token from Facebook Graph Explorer.');
+      const code = data.error.code;
+      const msg: string = data.error.message || 'Unknown error';
+
+      // Error 100 "nonexisting field (accounts)" means this is a Page Access Token,
+      // not a User Access Token. Fall back to using it directly as a page token.
+      if (code === 100 && msg.includes('accounts')) {
+        const pageRes = await fetch(`${base}/me?fields=id,name,category,picture&access_token=${accessToken}`);
+        const pageData = await pageRes.json();
+        if (pageData.error) throw new Error('This appears to be a Page Access Token but could not retrieve page info. Make sure the token has pages_show_list, pages_manage_posts and pages_read_engagement permissions.');
+        // When the token IS the page token, access_token = the supplied token itself
+        return [{
+          id: pageData.id,
+          name: pageData.name,
+          access_token: accessToken,
+          category: pageData.category || 'Page',
+          picture: pageData.picture,
+        }];
+      }
+
+      if (msg.includes('Invalid OAuth') || msg.includes('token') || code === 190) {
+        throw new Error('Invalid or expired access token. Generate a fresh token from Facebook Graph Explorer.');
+      }
       throw new Error(msg);
     }
+
     if (!data.data || data.data.length === 0) throw new Error('No Pages found for this token. Make sure you are an admin of the Facebook Page and generated the token with pages_show_list permission.');
     return data.data as FacebookPage[];
   },
