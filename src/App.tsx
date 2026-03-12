@@ -389,9 +389,15 @@ const Dashboard: React.FC = () => {
       setLiveStats(data);
       setLastPulled(new Date());
       setStats(prev => ({ ...prev, followers: data.followersCount || data.fanCount, reach: data.reach28d, engagement: data.engagementRate }));
-      toast('Live stats updated from Facebook!', 'success');
+      const hasData = data.fanCount > 0 || data.followersCount > 0 || data.reach28d > 0;
+      toast(hasData ? 'Live stats updated from Facebook!' : 'Connected — page stats require Facebook App Review to display.', hasData ? 'success' : 'info');
     } catch (e: any) {
-      toast(`Stats pull failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+      const msg = e?.message || '';
+      if (msg.includes('#10') || msg.includes('#200') || msg.includes('permission') || msg.includes('reviewable')) {
+        toast('Stats unavailable — Facebook requires App Review for insights access.', 'info');
+      } else {
+        toast(`Stats pull failed: ${msg.substring(0, 100) || 'Unknown error'}`, 'error');
+      }
     }
     setIsPullingStats(false);
   };

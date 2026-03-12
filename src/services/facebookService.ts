@@ -123,21 +123,33 @@ export const FacebookService = {
     const base = 'https://graph.facebook.com/v21.0';
     const pageRes = await fetch(`${base}/${pageId}?fields=fan_count,followers_count&access_token=${pageAccessToken}`);
     const pageData = await pageRes.json();
-    if (pageData.error) throw new Error(pageData.error.message);
+    // Codes 10 / 200: permission not granted or requires App Review — degrade silently
+    if (pageData.error) {
+      const code = pageData.error.code;
+      if (code === 10 || code === 200 || code === 190) {
+        return { fanCount: 0, followersCount: 0, reach28d: 0, engagedUsers28d: 0, engagementRate: 0 };
+      }
+      throw new Error(pageData.error.message);
+    }
 
-    const insightsRes = await fetch(
-      `${base}/${pageId}/insights?metric=page_impressions_unique,page_engaged_users&period=days_28&access_token=${pageAccessToken}`
-    );
-    const insightsData = await insightsRes.json();
-
+    // Insights require read_insights permission (needs Facebook App Review).
+    // Gracefully degrade to zeros if unavailable rather than surfacing an error.
     let reach28d = 0;
     let engagedUsers28d = 0;
-    if (insightsData.data) {
-      for (const item of insightsData.data) {
-        const val = item.values?.[item.values.length - 1]?.value ?? 0;
-        if (item.name === 'page_impressions_unique') reach28d = typeof val === 'number' ? val : 0;
-        if (item.name === 'page_engaged_users') engagedUsers28d = typeof val === 'number' ? val : 0;
+    try {
+      const insightsRes = await fetch(
+        `${base}/${pageId}/insights?metric=page_impressions_unique,page_engaged_users&period=days_28&access_token=${pageAccessToken}`
+      );
+      const insightsData = await insightsRes.json();
+      if (insightsData.data && !insightsData.error) {
+        for (const item of insightsData.data) {
+          const val = item.values?.[item.values.length - 1]?.value ?? 0;
+          if (item.name === 'page_impressions_unique') reach28d = typeof val === 'number' ? val : 0;
+          if (item.name === 'page_engaged_users') engagedUsers28d = typeof val === 'number' ? val : 0;
+        }
       }
+    } catch {
+      // Insights unavailable — continue with zeros
     }
 
     const engagementRate = reach28d > 0 ? Math.round((engagedUsers28d / reach28d) * 1000) / 10 : 0;
