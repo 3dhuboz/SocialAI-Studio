@@ -36,7 +36,7 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
     if (link) {
       window.open(link, '_blank');
     } else {
-      window.open(CLIENT.salesUrl, '_blank');
+      setFallback(true);
     }
   };
 
