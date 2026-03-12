@@ -12,6 +12,7 @@ import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc,
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
+import { DashboardStats } from './components/DashboardStats';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
@@ -1055,42 +1056,17 @@ const Dashboard: React.FC = () => {
             <input ref={uploadFileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
 
             {/* ── Dashboard Overview Strip ── */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
-                <p className="text-xs text-white/30 mb-1">Scheduled Posts</p>
-                <p className="text-3xl font-black text-white">{upcomingPosts.length}</p>
-                <p className="text-xs text-white/25 mt-1">{posts.filter(p => p.status === 'Posted').length} published all-time</p>
-              </div>
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
-                <p className="text-xs text-white/30 mb-1">Next Post</p>
-                {nextPost ? (
-                  <>
-                    <p className="text-sm font-bold text-amber-400">{new Date(nextPost.scheduledFor).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                    <p className="text-xs text-white/30 mt-1">{new Date(nextPost.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {nextPost.platform}</p>
-                  </>
-                ) : (
-                  <p className="text-sm text-white/20 mt-1">Nothing scheduled yet</p>
-                )}
-              </div>
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
-                <p className="text-xs text-white/30 mb-1">Engagement Rate</p>
-                <p className="text-3xl font-black text-white">{stats.engagement}<span className="text-lg text-white/40">%</span></p>
-                <p className="text-xs text-white/25 mt-1">{stats.followers.toLocaleString()} followers</p>
-              </div>
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-4">
-                <p className="text-xs text-white/30 mb-1">Status</p>
-                <div className="space-y-1.5 mt-1">
-                  <div className={`flex items-center gap-1.5 text-xs font-semibold ${hasApiKey ? 'text-green-400' : 'text-red-400/70'}`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${hasApiKey ? 'bg-green-400' : 'bg-red-400/70'}`} />
-                    {hasApiKey ? 'AI Active' : 'No API Key'}
-                  </div>
-                  <div className={`flex items-center gap-1.5 text-xs font-semibold ${fbConnected ? 'text-blue-400' : 'text-white/25'}`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${fbConnected ? 'bg-blue-400' : 'bg-white/15'}`} />
-                    {fbConnected ? 'Facebook Connected' : 'Facebook Not Connected'}
-                  </div>
-                </div>
-              </div>
-            </div>
+            <DashboardStats
+              posts={posts}
+              stats={stats}
+              liveStats={liveStats}
+              hasApiKey={hasApiKey}
+              fbConnected={fbConnected}
+              activePlan={activePlan}
+              planName={planCfg?.name}
+              lastPulled={lastPulled}
+              onGoToSettings={() => setActiveTab('settings')}
+            />
 
             {/* ── Hero Generator ── */}
             <div className="bg-gradient-to-br from-[#0d0d14] via-[#111118] to-[#0d0d14] rounded-3xl p-7 relative overflow-hidden border border-white/10">
