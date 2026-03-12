@@ -42,9 +42,11 @@ export const handler = async (event) => {
       const res = await fetch(`${LATE_BASE}/profiles`, {
         method: 'POST',
         headers: authHeader,
-        body: JSON.stringify({ title: title || 'SocialAI Client' }),
+        body: JSON.stringify({ name: title || 'SocialAI Client' }),
       });
       const data = await res.json();
+      // Normalise response — Late returns profile._id, expose as id for the client
+      if (data.profile) data.id = data.profile._id;
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
