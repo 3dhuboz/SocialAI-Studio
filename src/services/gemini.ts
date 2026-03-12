@@ -107,37 +107,50 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   const key = getApiKey();
   if (!key) return null;
 
-  // Image generation requires the v1beta endpoint — v1 does not expose responseModalities
-  const imageAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
+  const ai = new GoogleGenAI({ apiKey: key });
+  const imagePrompt = `Professional social media marketing image: ${prompt}. High quality, vibrant colours, cinematic lighting. No text, watermarks or logos.`;
 
-  const models = [
-    'gemini-2.0-flash-preview-image-generation',
-    'gemini-2.0-flash-exp',
-  ];
-
-  for (const model of models) {
+  // Try Imagen models via generateImages (correct API for @google/genai v1.x)
+  const imagenModels = ['imagen-4.0-generate-001', 'imagen-3.0-generate-001'];
+  for (const model of imagenModels) {
     try {
-      const response = await imageAI.models.generateContent({
+      const response = await (ai.models as any).generateImages({
         model,
-        contents: `Create a professional marketing image for social media: ${prompt}. High quality, vibrant colours, cinematic lighting. No text, watermarks or logos.`,
-        config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
+        prompt: imagePrompt,
+        config: { numberOfImages: 1, outputMimeType: 'image/jpeg' },
       });
-
-      const parts = (response as any)?.candidates?.[0]?.content?.parts;
-      if (parts) {
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            const mimeType = part.inlineData.mimeType || 'image/png';
-            const raw = `data:${mimeType};base64,${part.inlineData.data}`;
-            return await compressImage(raw, 700, 0.65);
-          }
-        }
+      const imgBytes: string | undefined = response?.generatedImages?.[0]?.image?.imageBytes;
+      if (imgBytes) {
+        const raw = `data:image/jpeg;base64,${imgBytes}`;
+        return await compressImage(raw, 700, 0.65);
       }
     } catch (error: any) {
-      console.warn(`Gemini Image (${model}):`, error?.message ?? error);
-      continue;
+      console.warn(`Imagen (${model}):`, error?.message ?? error);
     }
   }
+
+  // Fallback: Gemini native image generation via v1beta responseModalities
+  try {
+    const betaAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
+    const response = await betaAI.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: imagePrompt,
+      config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
+    });
+    const parts = (response as any)?.candidates?.[0]?.content?.parts;
+    if (parts) {
+      for (const part of parts) {
+        if (part.inlineData?.data) {
+          const mimeType = part.inlineData.mimeType || 'image/png';
+          const raw = `data:${mimeType};base64,${part.inlineData.data}`;
+          return await compressImage(raw, 700, 0.65);
+        }
+      }
+    }
+  } catch (error: any) {
+    console.warn('Gemini image fallback:', error?.message ?? error);
+  }
+
   return null;
 };
 

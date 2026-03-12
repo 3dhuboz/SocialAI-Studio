@@ -386,9 +386,13 @@ const Dashboard: React.FC = () => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return; }
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsGeneratingImage(true);
-    const img = await generateMarketingImage(`${profile.type}: ${topic}`);
-    if (img) setGeneratedImage(img);
-    else toast('Image generation failed. Try again.', 'error');
+    try {
+      const img = await generateMarketingImage(`${profile.type}: ${topic}`);
+      if (img) setGeneratedImage(img);
+      else toast('Image generation failed — check browser console for details.', 'error');
+    } catch (e: any) {
+      toast(`Image error: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+    }
     setIsGeneratingImage(false);
   };
 
