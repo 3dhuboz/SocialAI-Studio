@@ -1014,41 +1014,110 @@ const Dashboard: React.FC = () => {
 
             {/* Generated Output */}
             {(generatedContent || generatedImage) && (
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-                {generatedContent && (
-                  <>
-                    <div className="flex items-center gap-2 ml-auto">
-                      <span className="ml-auto text-[10px] text-white/25">{generatedContent.length} chars</span>
-                    </div>
-                    <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{generatedContent}</div>
-                    {generatedHashtags.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {generatedHashtags.map((tag, i) => (
-                          <span key={i} className="text-xs bg-amber-500/15 text-amber-300 px-2.5 py-1 rounded-full border border-amber-500/20">{tag.startsWith('#') ? tag : `#${tag}`}</span>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-                {generatedImage && (
-                  <img src={generatedImage} alt="Generated" className="w-full max-w-sm rounded-xl border border-white/10" />
-                )}
-                <div className="flex flex-wrap gap-3 items-end pt-2 border-t border-white/5">
-                  <div>
-                    <label className="text-xs text-white/40 block mb-1.5">Schedule (optional)</label>
-                    <input type="datetime-local" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} className="bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm" />
+              <div className="rounded-2xl border border-amber-500/20 overflow-hidden shadow-xl shadow-amber-500/5"
+                style={{ background: 'linear-gradient(145deg,rgba(245,158,11,0.06) 0%,rgba(13,13,26,0.95) 60%)' }}>
+
+                {/* Card header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-white/6">
+                  <span className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+                    <Sparkles size={13} className="text-amber-400" /> Generated Post
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {generatedContent && <span className="text-[10px] text-white/25">{generatedContent.length} chars</span>}
+                    <button
+                      onClick={() => { setGeneratedContent(''); setGeneratedHashtags([]); setGeneratedImage(null); }}
+                      className="text-white/20 hover:text-white/50 transition p-1 rounded-lg hover:bg-white/5"
+                      title="Clear"
+                    >
+                      <X size={13} />
+                    </button>
                   </div>
-                  <button onClick={handleSavePost} className="bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-2.5 rounded-xl flex items-center gap-2 transition">
-                    <Save size={16} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
+                </div>
+
+                {/* Body: two-column when both exist, single when only one */}
+                <div className={`flex ${generatedContent && generatedImage ? 'flex-col md:flex-row' : 'flex-col'} gap-0`}>
+
+                  {/* Image panel */}
+                  {generatedImage && (
+                    <div className={`relative group flex-shrink-0 ${generatedContent ? 'md:w-56' : 'w-full'}`}>
+                      <img
+                        src={generatedImage}
+                        alt="AI Generated"
+                        className={`w-full object-cover ${generatedContent ? 'md:h-full max-h-72 md:max-h-none' : 'max-h-96'}`}
+                        style={{ minHeight: generatedContent ? 180 : undefined }}
+                      />
+                      {/* Overlay actions */}
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2">
+                        {canUseImages && (
+                          <button
+                            onClick={handleGenerateImage}
+                            disabled={isGeneratingImage}
+                            title="Regenerate image"
+                            className="bg-white/15 hover:bg-white/25 backdrop-blur border border-white/20 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition"
+                          >
+                            {isGeneratingImage ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                            Regenerate
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { setGeneratedImage(null); }}
+                          title="Remove image"
+                          className="bg-white/10 hover:bg-red-500/30 backdrop-blur border border-white/15 text-white/70 p-2 rounded-xl transition"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                      {/* Platform badge */}
+                      <div className="absolute top-2 left-2">
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${platform === 'Instagram' ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white' : 'bg-blue-600 text-white'}`}>
+                          {platform}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Caption panel */}
+                  {generatedContent && (
+                    <div className="flex-1 p-5 space-y-4">
+                      <div className="bg-black/25 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed min-h-[80px]">
+                        {generatedContent}
+                      </div>
+                      {generatedHashtags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {generatedHashtags.map((tag, i) => (
+                            <span key={i} className="text-xs bg-amber-500/12 text-amber-300/80 px-2.5 py-1 rounded-full border border-amber-500/15">
+                              {tag.startsWith('#') ? tag : `#${tag}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer actions */}
+                <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/6 bg-black/15">
+                  <input
+                    type="datetime-local"
+                    value={scheduleDate}
+                    onChange={e => setScheduleDate(e.target.value)}
+                    className="bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40 transition"
+                    title="Schedule date/time"
+                  />
+                  <button
+                    onClick={handleSavePost}
+                    className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition text-sm shadow-lg shadow-green-500/15"
+                  >
+                    <Save size={14} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
                   </button>
                   {fbConnected && (
                     <button
                       onClick={handlePublishToFacebook}
                       disabled={isPublishing}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-60 transition"
+                      className="bg-[#1877F2] hover:bg-[#166FE5] text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
                     >
-                      {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                      Publish to Facebook
+                      {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      Publish Now
                     </button>
                   )}
                 </div>
