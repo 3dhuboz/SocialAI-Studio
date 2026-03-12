@@ -10,6 +10,8 @@ import { useAuth } from './contexts/AuthContext';
 import { db } from './firebase';
 import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
 import { ClientSwitcher } from './components/ClientSwitcher';
+import { AccountPanel } from './components/AccountPanel';
+import { PricingTable } from './components/PricingTable';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
@@ -99,6 +101,9 @@ const Dashboard: React.FC = () => {
     !localStorage.getItem('sai_gemini_key') &&
     !localStorage.getItem('sai_onboarding_done')
   );
+
+  const [showAccount, setShowAccount] = useState(false);
+  const [showPricing, setShowPricing] = useState(false);
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -697,6 +702,18 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Pricing Modal */}
+      {showPricing && <PricingTable onClose={() => setShowPricing(false)} />}
+      {/* Account Panel */}
+      {showAccount && (
+        <AccountPanel
+          activePlan={activePlan ?? 'starter'}
+          userEmail={user?.email ?? ''}
+          onClose={() => setShowAccount(false)}
+          onUpgrade={() => { setShowAccount(false); setShowPricing(true); }}
+          onSignOut={() => { setShowAccount(false); logOut(); }}
+        />
+      )}
       {/* Header */}
       <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
@@ -761,11 +778,11 @@ const Dashboard: React.FC = () => {
               </button>
             )}
             <button
-              onClick={() => logOut()}
-              title="Sign out"
-              className="text-white/20 hover:text-red-400 p-1.5 rounded-lg transition ml-1"
+              onClick={() => setShowAccount(true)}
+              title="My Account"
+              className={`w-8 h-8 rounded-xl bg-gradient-to-br ${planCfg?.color ?? 'from-white/10 to-white/5'} flex items-center justify-center text-white text-xs font-black hover:opacity-80 transition shadow ml-1`}
             >
-              <LogOut size={15} />
+              {user?.email?.charAt(0).toUpperCase() ?? '?'}
             </button>
           </div>
         </div>

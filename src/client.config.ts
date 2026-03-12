@@ -59,6 +59,15 @@ export const CLIENT = {
   stripePricingTableId: 'prctbl_1T9d6K00ETA4f7VOScFSprrm',
 
   /**
+   * STRIPE CUSTOMER PORTAL:
+   * 1. Go to dashboard.stripe.com → Settings → Billing → Customer portal
+   * 2. Enable the portal and configure what customers can do (cancel, update payment, etc.)
+   * 3. Copy the portal link and paste below.
+   * Users can then manage/cancel their own subscription directly from the Account panel.
+   */
+  stripeCustomerPortalUrl: '',
+
+  /**
    * STRIPE PAYMENT LINKS (optional but recommended for coloured plan cards):
    * In Stripe dashboard → Payment Links → Create a link for each plan.
    * Paste the URL (https://buy.stripe.com/...) for each plan below.
