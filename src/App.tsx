@@ -153,6 +153,17 @@ const Dashboard: React.FC = () => {
             setInsightStale(true);
           }
         }
+        // Check for pending Stripe activation (webhook ran before user doc existed)
+        if (!isAdmin && !(snap.exists() && snap.data().plan)) {
+          const pendingSnap = await getDoc(doc(db, 'pending_activations', user.email || ''));
+          if (pendingSnap.exists()) {
+            const p = pendingSnap.data();
+            setActivePlan(p.plan);
+            setSetupStatus('live');
+            await setDoc(doc(db, 'users', user.uid), { plan: p.plan, setupStatus: 'live', email: user.email, stripeCustomerId: p.stripeCustomerId || null }, { merge: true });
+            await deleteDoc(doc(db, 'pending_activations', user.email || ''));
+          }
+        }
         // Load agency clients
         const clientsSnap = await getDocs(collection(db, 'users', user.uid, 'clients'));
         const loadedClients: ClientWorkspace[] = clientsSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClientWorkspace));
@@ -1954,7 +1965,11 @@ const Dashboard: React.FC = () => {
                   // New clients → payment link WITH setup fee; existing → upgrade link without setup fee
                   const upgradeLink = CLIENT.stripePaymentLinks?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
                   const newLink = (CLIENT as any).stripePaymentLinksNew?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
-                  const paymentLink = isNew ? (newLink || upgradeLink) : upgradeLink;
+                  const baseLink = isNew ? (newLink || upgradeLink) : upgradeLink;
+                  // Append client_reference_id so the Stripe webhook can identify the user + plan
+                  const paymentLink = baseLink && user
+                    ? `${baseLink}?client_reference_id=${user.uid}:${plan.id}&prefilled_email=${encodeURIComponent(user.email || '')}`
+                    : baseLink;
                   return (
                     <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
                       isCurrent

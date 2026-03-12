@@ -52,6 +52,23 @@ export const CLIENT = {
   /** Support contact */
   supportEmail: 'support@pennywiseit.com.au',
 
+  /**
+   * EMAILJS SETUP (for automatic email alerts when a new client submits the intake form):
+   * 1. Sign up free at https://emailjs.com
+   * 2. Dashboard → Email Services → Add Service (Gmail/Outlook) → copy Service ID
+   * 3. Email Templates → Create Template — use these variables in the template body:
+   *      {{from_name}}, {{from_email}}, {{phone}}, {{business_name}}, {{business_type}},
+   *      {{location}}, {{facebook_page_url}}, {{facebook_page_name}},
+   *      {{instagram_handle}}, {{followers}}, {{chosen_plan}}, {{notes}}
+   *    Set "To Email" to your support email address.
+   * 4. Copy the Template ID
+   * 5. Account → API Keys → copy your Public Key
+   * Leave all three as empty string to fall back to the mailto: method.
+   */
+  emailJsServiceId: '',
+  emailJsTemplateId: '',
+  emailJsPublicKey: '',
+
   setupFee: 99,
 
   /**

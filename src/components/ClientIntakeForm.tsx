@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import emailjs from '@emailjs/browser';
 import { CLIENT } from '../client.config';
-import { X, Send, Facebook, CheckCircle, ChevronRight, ExternalLink } from 'lucide-react';
+import { X, Send, Facebook, CheckCircle, ChevronRight } from 'lucide-react';
 
 interface ClientIntakeFormProps {
   userEmail: string;
@@ -9,7 +10,9 @@ interface ClientIntakeFormProps {
 }
 
 export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, onClose, onSubmitted }) => {
-  const [step, setStep] = useState<'form' | 'sent'>('form');
+  const [step, setStep] = useState<'form' | 'sent' | 'error'>('form');
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState('');
   const [form, setForm] = useState({
     contactName: '',
     phone: '',
@@ -27,37 +30,57 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
   const set = (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm(prev => ({ ...prev, [field]: e.target.value }));
 
-  const handleSend = () => {
-    const body = `
-NEW CLIENT SETUP REQUEST — SocialAI Studio
+  const handleSend = async () => {
+    setIsSending(true);
+    setSendError('');
 
-Contact Name: ${form.contactName}
-Email: ${userEmail}
-Phone: ${form.phone}
+    const templateParams = {
+      from_name: form.contactName,
+      from_email: userEmail,
+      phone: form.phone || 'Not provided',
+      business_name: form.businessName,
+      business_type: form.businessType || 'Not provided',
+      location: form.location || 'Not provided',
+      facebook_page_url: form.facebookPageUrl,
+      facebook_page_name: form.facebookPageName || 'Not provided',
+      instagram_handle: form.instagramHandle || 'Not provided',
+      followers: form.followers || 'Unknown',
+      chosen_plan: form.chosenPlan,
+      notes: form.notes || 'None',
+      to_email: CLIENT.supportEmail,
+    };
 
-Business Name: ${form.businessName}
-Business Type: ${form.businessType}
-Location: ${form.location}
+    const hasEmailJs = CLIENT.emailJsServiceId && CLIENT.emailJsTemplateId && CLIENT.emailJsPublicKey;
 
-Facebook Page URL: ${form.facebookPageUrl}
-Facebook Page Name: ${form.facebookPageName}
-Instagram Handle: ${form.instagramHandle}
-Current Followers: ${form.followers}
+    if (hasEmailJs) {
+      try {
+        await emailjs.send(
+          CLIENT.emailJsServiceId,
+          CLIENT.emailJsTemplateId,
+          templateParams,
+          CLIENT.emailJsPublicKey
+        );
+        setStep('sent');
+        onSubmitted();
+      } catch (e: any) {
+        console.error('EmailJS error:', e);
+        setSendError('Email send failed — opening your email app as fallback.');
+        fallbackMailto(templateParams);
+        setStep('sent');
+        onSubmitted();
+      }
+    } else {
+      fallbackMailto(templateParams);
+      setStep('sent');
+      onSubmitted();
+    }
+    setIsSending(false);
+  };
 
-Chosen Plan: ${form.chosenPlan}
-
-Additional Notes:
-${form.notes || 'None'}
-
----
-Submitted via SocialAI Studio onboarding form.
-`.trim();
-
-    const subject = encodeURIComponent(`New Client Setup Request — ${form.businessName || userEmail}`);
-    const bodyEncoded = encodeURIComponent(body);
-    window.open(`mailto:${CLIENT.supportEmail}?subject=${subject}&body=${bodyEncoded}`, '_blank');
-    setStep('sent');
-    onSubmitted();
+  const fallbackMailto = (p: Record<string, string>) => {
+    const body = `NEW CLIENT SETUP REQUEST — SocialAI Studio\n\nContact: ${p.from_name}\nEmail: ${p.from_email}\nPhone: ${p.phone}\n\nBusiness: ${p.business_name}\nType: ${p.business_type}\nLocation: ${p.location}\n\nFacebook URL: ${p.facebook_page_url}\nFacebook Name: ${p.facebook_page_name}\nInstagram: ${p.instagram_handle}\nFollowers: ${p.followers}\n\nChosen Plan: ${p.chosen_plan}\n\nNotes:\n${p.notes}`;
+    const subject = encodeURIComponent(`New Client Setup Request — ${p.business_name}`);
+    window.open(`mailto:${CLIENT.supportEmail}?subject=${subject}&body=${encodeURIComponent(body)}`, '_blank');
   };
 
   const isValid = form.contactName.trim() && form.businessName.trim() && form.facebookPageUrl.trim();
@@ -208,12 +231,15 @@ Submitted via SocialAI Studio onboarding form.
 
         {/* Footer */}
         <div className="px-6 pb-6 flex flex-wrap items-center gap-3 pt-2 border-t border-white/6">
+          {sendError && <p className="w-full text-xs text-amber-400 text-center">{sendError}</p>}
           <button
             onClick={handleSend}
-            disabled={!isValid}
+            disabled={!isValid || isSending}
             className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-40 text-black font-black py-3 rounded-2xl flex items-center justify-center gap-2 transition hover:opacity-90 text-sm"
           >
-            <Send size={15} /> Send to Setup Team
+            {isSending
+              ? <><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /> Sending…</>
+              : <><Send size={15} /> Send to Setup Team</>}
           </button>
           <button onClick={onClose} className="text-xs text-white/25 hover:text-white/50 transition px-3 py-3">
             I'll do this later
