@@ -15,14 +15,14 @@ import { PricingTable } from './components/PricingTable';
 import { DashboardStats } from './components/DashboardStats';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, SmartScheduledPost } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
-  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart
+  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -244,6 +244,10 @@ const Dashboard: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [scheduleDate, setScheduleDate] = useState('');
+  const [createMode, setCreateMode] = useState<'generate' | 'write'>('generate');
+  const [draftText, setDraftText] = useState('');
+  const [rewriteInstruction, setRewriteInstruction] = useState('');
+  const [isRewriting, setIsRewriting] = useState(false);
 
   // Smart Schedule State
   const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>([]);
@@ -482,6 +486,21 @@ const Dashboard: React.FC = () => {
       toast(`Smart schedule failed: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error');
     }
     setIsSmartGenerating(false);
+  };
+
+  const handleRewrite = async () => {
+    if (!draftText.trim()) { toast('Write your draft first.', 'warning'); return; }
+    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    setIsRewriting(true);
+    try {
+      const instruction = rewriteInstruction.trim() || 'Improve this post — make it more engaging with emojis and hashtags';
+      const result = await rewritePost(draftText, instruction, platform, profile.name, profile.type, profile.tone);
+      setGeneratedContent(result.content);
+      setGeneratedHashtags(result.hashtags || []);
+    } catch (e: any) {
+      toast(`AI error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error');
+    }
+    setIsRewriting(false);
   };
 
   const handleRegenImage = async (idx: number) => {
@@ -908,10 +927,29 @@ const Dashboard: React.FC = () => {
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
                 <h2 className="text-2xl font-bold flex items-center gap-2.5"><Wand2 className="text-amber-400" size={22} /> AI Content Generator</h2>
-                <p className="text-sm text-white/40 mt-1">Write a topic, pick a platform, and let AI craft the perfect caption + hashtags.</p>
+                <p className="text-sm text-white/40 mt-1">Generate a caption from a topic, or write your own post and let AI polish it.</p>
               </div>
             </div>
 
+            {/* Mode toggle */}
+            <div className="flex rounded-xl overflow-hidden border border-white/10 w-fit">
+              <button
+                onClick={() => setCreateMode('generate')}
+                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition ${createMode === 'generate' ? 'bg-amber-500 text-black' : 'bg-transparent text-white/40 hover:text-white/70'}`}
+              >
+                <Wand2 size={14} /> AI Generate
+              </button>
+              <button
+                onClick={() => setCreateMode('write')}
+                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition ${createMode === 'write' ? 'bg-purple-600 text-white' : 'bg-transparent text-white/40 hover:text-white/70'}`}
+              >
+                <Pencil size={14} /> AI Writer
+              </button>
+            </div>
+
+            {/* ── AI GENERATE MODE ── */}
+            {createMode === 'generate' && (
+            <>
             {/* Tip Card */}
             <div className="bg-amber-500/8 border border-amber-500/20 rounded-2xl px-5 py-4 flex gap-3">
               <Lightbulb size={16} className="text-amber-400 shrink-0 mt-0.5" />
@@ -1016,6 +1054,132 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
             )}
+            </>
+            )}
+
+            {/* ── AI WRITER MODE ── */}
+            {createMode === 'write' && (
+              <div className="space-y-5">
+                <div className="bg-purple-500/8 border border-purple-500/20 rounded-2xl px-5 py-4 flex gap-3">
+                  <Pencil size={16} className="text-purple-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-white/50 leading-relaxed">
+                    <span className="text-purple-300 font-semibold">AI Writer: </span>
+                    Write your own post draft or rough idea below. The AI will polish it, add emojis, and generate hashtags — all in your brand voice.
+                  </div>
+                </div>
+
+                <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+                  {/* Platform selector */}
+                  <div className="flex rounded-xl overflow-hidden border border-white/10 w-fit">
+                    {(['Instagram', 'Facebook'] as const).map(p => (
+                      <button
+                        key={p}
+                        onClick={() => setPlatform(p)}
+                        className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition ${
+                          platform === p
+                            ? p === 'Instagram' ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white' : 'bg-blue-600 text-white'
+                            : 'bg-transparent text-white/30 hover:text-white/60'
+                        }`}
+                      >
+                        {p === 'Instagram' ? <Instagram size={14} /> : <Facebook size={14} />}
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Draft text */}
+                  <div>
+                    <label className="text-xs font-semibold text-white/50 uppercase tracking-widest block mb-2">Your Draft / Idea</label>
+                    <textarea
+                      value={draftText}
+                      onChange={e => setDraftText(e.target.value)}
+                      placeholder="e.g., 'We have a new burger on the menu. It has bacon and cheese. Come try it this week.' — The AI will make it shine."
+                      className="w-full bg-black/40 border border-white/8 rounded-xl p-4 text-white resize-none min-h-[120px] text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40 transition"
+                    />
+                    <p className="text-xs text-white/25 mt-1.5">{draftText.length} characters</p>
+                  </div>
+
+                  {/* Instruction */}
+                  <div>
+                    <label className="text-xs font-semibold text-white/50 uppercase tracking-widest block mb-2">Instruction <span className="text-white/25 font-normal normal-case">(optional)</span></label>
+                    <input
+                      type="text"
+                      value={rewriteInstruction}
+                      onChange={e => setRewriteInstruction(e.target.value)}
+                      placeholder='e.g., "Make it more urgent" · "Shorter and punchier" · "More casual tone"'
+                      className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40 transition"
+                    />
+                  </div>
+
+                  {/* Quick instruction chips */}
+                  <div className="flex flex-wrap gap-2">
+                    {['Make it more urgent', 'Shorter & punchier', 'More casual', 'More professional', 'Add a call to action'].map(chip => (
+                      <button
+                        key={chip}
+                        onClick={() => setRewriteInstruction(chip)}
+                        className={`text-xs px-3 py-1.5 rounded-full border transition ${rewriteInstruction === chip ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/70 hover:border-white/20'}`}
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={handleRewrite}
+                    disabled={isRewriting || !draftText.trim()}
+                    className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold px-6 py-2.5 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg"
+                  >
+                    {isRewriting ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                    {isRewriting ? 'Polishing…' : 'AI Polish My Post'}
+                  </button>
+                </div>
+
+                {/* Output after rewrite */}
+                {(generatedContent || generatedImage) && (
+                  <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+                    {generatedContent && (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-purple-300 font-semibold flex items-center gap-1.5"><Sparkles size={12} /> AI-Polished Version</span>
+                          <span className="text-[10px] text-white/25">{generatedContent.length} chars</span>
+                        </div>
+                        <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{generatedContent}</div>
+                        {generatedHashtags.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {generatedHashtags.map((tag, i) => (
+                              <span key={i} className="text-xs bg-purple-500/15 text-purple-300 px-2.5 py-1 rounded-full border border-purple-500/20">{tag.startsWith('#') ? tag : `#${tag}`}</span>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {generatedImage && (
+                      <img src={generatedImage} alt="Generated" className="w-full max-w-sm rounded-xl border border-white/10" />
+                    )}
+                    <div className="flex flex-wrap gap-3 items-end pt-2 border-t border-white/5">
+                      <div>
+                        <label className="text-xs text-white/40 block mb-1.5">Schedule (optional)</label>
+                        <input type="datetime-local" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} className="bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm" />
+                      </div>
+                      <button onClick={handleSavePost} className="bg-green-600 hover:bg-green-700 text-white font-bold px-6 py-2.5 rounded-xl flex items-center gap-2 transition">
+                        <Save size={16} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
+                      </button>
+                      {fbConnected && (
+                        <button
+                          onClick={handlePublishToFacebook}
+                          disabled={isPublishing}
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2.5 rounded-xl flex items-center gap-2 disabled:opacity-60 transition"
+                        >
+                          {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                          Publish to Facebook
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 const getApiKey = () => {
   if (typeof window !== 'undefined') {
@@ -79,20 +79,11 @@ export const generateSocialPost = async (
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            content: { type: Type.STRING },
-            hashtags: { type: Type.ARRAY, items: { type: Type.STRING } }
-          }
-        }
-      }
+      contents: prompt + '\n\nReturn ONLY raw JSON with no markdown or code fences.',
     });
 
-    return response.text ? JSON.parse(response.text) : { content: "Error generating content.", hashtags: [] };
+    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/,'').trim();
+    return raw ? JSON.parse(raw) : { content: 'Error generating content.', hashtags: [] };
   } catch (error: any) {
     console.error("Gemini Text Error:", error);
     const msg = error?.message || error?.statusText || String(error);
@@ -152,6 +143,32 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   }
 
   return null;
+};
+
+export const rewritePost = async (
+  draft: string,
+  instruction: string,
+  platform: 'Facebook' | 'Instagram',
+  businessName: string,
+  businessType: string,
+  tone: string
+): Promise<{ content: string; hashtags: string[] }> => {
+  const ai = getAI();
+  if (!ai) return { content: 'API Key missing. Go to Settings to configure.', hashtags: [] };
+  try {
+    const prompt = `You are an expert social media manager for "${businessName}", a ${businessType}. Tone: ${tone}.
+The user wants to post on ${platform}.
+Their draft or idea: "${draft}"
+Instruction: ${instruction}
+Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
+Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    return raw ? JSON.parse(raw) : { content: 'Error rewriting post.', hashtags: [] };
+  } catch (error: any) {
+    const msg = error?.message || String(error);
+    return { content: `AI Error: ${msg.substring(0, 120)}`, hashtags: [] };
+  }
 };
 
 export const analyzePostTimes = async (businessType: string, location: string) => {
