@@ -13,6 +13,7 @@ import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
 import { DashboardStats } from './components/DashboardStats';
+import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, SmartScheduledPost } from './services/gemini';
@@ -1299,22 +1300,11 @@ const Dashboard: React.FC = () => {
                   <div key={post.id} className="bg-white/3 border border-white/8 rounded-2xl p-4 flex gap-4 hover:bg-white/5 transition group">
                     {/* ── Image / Reel Thumbnail ── */}
                     {(post as any).postType === 'video' ? (
-                      <div className="w-20 h-32 rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg"
-                        style={{ background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
-                      >
-                        <div className="absolute top-1.5 left-1.5 right-1.5 flex items-center justify-between z-10">
-                          <span className="text-[7px] bg-purple-500/60 text-white font-black px-1.5 py-0.5 rounded-full">REEL</span>
-                          <Instagram size={9} className="text-white/50" />
-                        </div>
-                        <div className="absolute inset-0 flex items-center justify-center z-10">
-                          <div className="w-8 h-8 rounded-full bg-white/15 border border-white/25 flex items-center justify-center">
-                            <span className="text-white text-xs ml-0.5">▶</span>
-                          </div>
-                        </div>
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1.5 pt-3 z-10">
-                          <p className="text-[6px] text-white/80 leading-tight line-clamp-3">{post.content.substring(0, 60)}</p>
-                        </div>
-                      </div>
+                      <AnimatedReelPreview
+                        hookText={post.content}
+                        mood={(post as any).videoMood}
+                        size="sm"
+                      />
                     ) : (
                       <div className="w-24 h-24 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group/img">
                         {calendarImages[post.id] || post.image ? (
@@ -1595,39 +1585,15 @@ const Dashboard: React.FC = () => {
                     <div className="p-4 flex gap-4">
                       {/* Image / Video area */}
                       {isVideo ? (
-                        /* ── Reel Preview Mockup ── */
-                        <div className="w-24 h-40 rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg shadow-purple-900/30"
-                          style={{ background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
-                        >
-                          {/* Scanline texture */}
-                          <div className="absolute inset-0 opacity-10"
-                            style={{ backgroundImage: 'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(255,255,255,0.03) 2px,rgba(255,255,255,0.03) 4px)' }}
-                          />
-                          {/* Top bar — Reel badge */}
-                          <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-10">
-                            <span className="text-[8px] bg-purple-500/60 text-white font-black px-1.5 py-0.5 rounded-full backdrop-blur-sm">REEL</span>
-                            <Instagram size={10} className="text-white/60" />
-                          </div>
-                          {/* Centre play button */}
-                          <div className="absolute inset-0 flex items-center justify-center z-10">
-                            <div className="w-9 h-9 rounded-full bg-white/15 backdrop-blur-sm border border-white/25 flex items-center justify-center">
-                              <span className="text-white text-sm ml-0.5">▶</span>
-                            </div>
-                          </div>
-                          {/* Bottom overlay — hook text */}
-                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 pb-2 pt-4 z-10">
-                            <p className="text-[7px] text-white/90 leading-tight font-semibold line-clamp-3">
-                              {(sp as any).videoScript
-                                ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim().substring(0, 70)
-                                : sp.content.substring(0, 70)}
-                            </p>
-                            {(sp as any).videoMood && (
-                              <p className="text-[6px] text-purple-300/70 mt-0.5 flex items-center gap-0.5">
-                                <span>♪</span> {(sp as any).videoMood}
-                              </p>
-                            )}
-                          </div>
-                        </div>
+                        <AnimatedReelPreview
+                          hookText={
+                            (sp as any).videoScript
+                              ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim()
+                              : sp.content
+                          }
+                          mood={(sp as any).videoMood}
+                          size="md"
+                        />
                       ) : (
                         <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group">
                           {hasImage ? (
