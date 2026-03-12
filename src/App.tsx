@@ -17,7 +17,7 @@ import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
-import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, InsightReport, SmartScheduledPost } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, InsightReport, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { LateService } from './services/lateService';
 import { LateConnectButton } from './components/LateConnectButton';
@@ -116,6 +116,7 @@ const Dashboard: React.FC = () => {
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptProgress, setAcceptProgress] = useState(0);
+  const [isScanningPosts, setIsScanningPosts] = useState(false);
   const [lateProfileId, setLateProfileId] = useState<string>('');
   const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
 
@@ -139,9 +140,9 @@ const Dashboard: React.FC = () => {
         const isAdmin = !!user.email && CLIENT.adminEmails.some(e => e === user.email);
         if (isAdmin) {
           localStorage.setItem('sai_admin', '1');
-          setActivePlan('pro');
+          setActivePlan('agency');
           setSetupStatus('live');
-          updateDoc(doc(db, 'users', user.uid), { plan: 'pro', setupStatus: 'live', isAdmin: true }).catch(() => {});
+          updateDoc(doc(db, 'users', user.uid), { plan: 'agency', setupStatus: 'live', isAdmin: true }).catch(() => {});
         }
         const snap = await getDoc(doc(db, 'users', user.uid));
         if (snap.exists()) {
@@ -633,6 +634,21 @@ const Dashboard: React.FC = () => {
     setCalendarUploadId(null);
   };
 
+  const handleUpdatePost = async (id: string, updates: Partial<SocialPost>) => {
+    if (!user) return;
+    const ref = doc(postsCol(), id);
+    const { content, hashtags, scheduledFor, status, image } = updates;
+    const patch: Record<string, string | string[] | undefined> = {};
+    if (content !== undefined) patch.content = content;
+    if (hashtags !== undefined) patch.hashtags = hashtags;
+    if (scheduledFor !== undefined) patch.scheduledFor = scheduledFor;
+    if (status !== undefined) patch.status = status;
+    if (image !== undefined) patch.image = image;
+    await updateDoc(ref, patch);
+    setPosts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+    toast('Post updated!', 'success');
+  };
+
   const handleAcceptSmartPosts = async () => {
     if (!user) return;
     setIsAccepting(true);
@@ -685,6 +701,28 @@ const Dashboard: React.FC = () => {
       }
     }
     setIsAnalyzing(false);
+  };
+
+  const handleScanPastPosts = async () => {
+    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    if (!profile.facebookPageId || !profile.facebookPageAccessToken) {
+      toast('Connect a Facebook page in Settings first.', 'warning'); return;
+    }
+    setIsScanningPosts(true);
+    try {
+      const fbPosts = await FacebookService.getRecentPosts(profile.facebookPageId, profile.facebookPageAccessToken, 30);
+      if (!fbPosts.length) { toast('No posts found on your Facebook page.', 'info'); setIsScanningPosts(false); return; }
+      const report = await generateInsightReportFromPosts(profile.name, profile.type, profile.location || 'Australia', fbPosts);
+      if (report) {
+        setInsightReport(report);
+        setInsightStale(false);
+        if (user) updateDoc(dataRef(), { insightReport: report }).catch(() => setDoc(dataRef(), { insightReport: report }, { merge: true }));
+        toast(`Scanned ${fbPosts.length} posts — insights updated!`, 'success');
+      }
+    } catch (e: any) {
+      toast(`Scan failed: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error');
+    }
+    setIsScanningPosts(false);
   };
 
   const handleAnalyze = async () => {
@@ -1472,6 +1510,7 @@ const Dashboard: React.FC = () => {
               fbConnected={fbConnected}
               hasApiKey={hasApiKey}
               onDelete={deletePost}
+              onSave={handleUpdatePost}
               onPublish={async (post) => {
                 try {
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
@@ -1818,14 +1857,27 @@ const Dashboard: React.FC = () => {
                     : isAnalyzing ? 'Analysing your business…' : 'AI analyses your account daily and surfaces actionable insights.'}
                 </p>
               </div>
-              <button
-                onClick={() => runInsightReport(true)}
-                disabled={isAnalyzing}
-                className="flex items-center gap-2 text-xs bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/25 text-white/50 hover:text-amber-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
-              >
-                {isAnalyzing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                {isAnalyzing ? 'Analysing…' : 'Refresh Now'}
-              </button>
+              <div className="flex gap-2 flex-wrap">
+                {profile.facebookPageId && profile.facebookPageAccessToken && (
+                  <button
+                    onClick={handleScanPastPosts}
+                    disabled={isScanningPosts || isAnalyzing}
+                    className="flex items-center gap-2 text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/35 text-blue-300/70 hover:text-blue-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
+                    title="Fetch your real past Facebook posts and generate insights from actual engagement data"
+                  >
+                    {isScanningPosts ? <Loader2 size={13} className="animate-spin" /> : <BarChart3 size={13} />}
+                    {isScanningPosts ? 'Scanning posts…' : 'Scan Past Posts'}
+                  </button>
+                )}
+                <button
+                  onClick={() => runInsightReport(true)}
+                  disabled={isAnalyzing || isScanningPosts}
+                  className="flex items-center gap-2 text-xs bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/25 text-white/50 hover:text-amber-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
+                >
+                  {isAnalyzing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  {isAnalyzing ? 'Analysing…' : 'Refresh Now'}
+                </button>
+              </div>
             </div>
 
             {/* No API key */}

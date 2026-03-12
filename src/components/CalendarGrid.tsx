@@ -4,6 +4,7 @@ import {
   RefreshCw, Upload, Loader2, Image as ImageIcon, Calendar, Wand2, Brain, X
 } from 'lucide-react';
 import { SocialPost } from '../types';
+import { PostModal } from './PostModal';
 
 interface Props {
   posts: SocialPost[];
@@ -13,6 +14,7 @@ interface Props {
   hasApiKey: boolean;
   onDelete: (id: string) => void;
   onPublish: (post: SocialPost) => Promise<void>;
+  onSave: (id: string, updates: Partial<SocialPost>) => Promise<void>;
   onRegenImage: (postId: string, prompt: string) => void;
   onUpload: (postId: string) => void;
   onGoCreate: () => void;
@@ -28,11 +30,12 @@ function isSameDay(a: Date, b: Date) {
 
 export const CalendarGrid: React.FC<Props> = ({
   posts, calendarImages, calendarGenSet, fbConnected, hasApiKey,
-  onDelete, onPublish, onRegenImage, onUpload, onGoCreate, onGoSmart,
+  onDelete, onPublish, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart,
 }) => {
   const today = new Date();
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selectedDay, setSelectedDay] = useState<Date | null>(today);
+  const [selectedPost, setSelectedPost] = useState<SocialPost | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
 
   const year = viewDate.getFullYear();
@@ -211,37 +214,25 @@ export const CalendarGrid: React.FC<Props> = ({
           ) : (
             <div className="divide-y divide-white/5">
               {selectedPosts.map(post => (
-                <div key={post.id} className="flex gap-4 p-4 hover:bg-white/2 transition group">
+                <button
+                  key={post.id}
+                  onClick={() => setSelectedPost(post)}
+                  className="w-full flex gap-4 p-4 hover:bg-white/4 transition group text-left"
+                >
                   {/* Thumbnail */}
-                  <div className="w-16 h-16 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group/img">
+                  <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8">
                     {calendarImages[post.id] || post.image ? (
-                      <>
-                        <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/55 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center gap-1">
-                          {post.imagePrompt && (
-                            <button onClick={() => onRegenImage(post.id, post.imagePrompt!)} title="Regenerate" className="bg-white/20 hover:bg-white/30 p-1 rounded-lg">
-                              <RefreshCw size={10} className="text-white" />
-                            </button>
-                          )}
-                          <button onClick={() => onUpload(post.id)} title="Upload" className="bg-white/20 hover:bg-white/30 p-1 rounded-lg">
-                            <Upload size={10} className="text-white" />
-                          </button>
-                        </div>
-                      </>
+                      <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
                     ) : calendarGenSet.has(post.id) ? (
                       <div className="w-full h-full flex items-center justify-center">
                         <Loader2 size={14} className="animate-spin text-amber-400" />
                       </div>
                     ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-1">
-                        <ImageIcon size={12} className="text-white/15" />
-                        {post.imagePrompt && hasApiKey && (
-                          <button onClick={() => onRegenImage(post.id, post.imagePrompt!)} className="text-[8px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full hover:bg-amber-500/30 transition">Gen</button>
-                        )}
+                      <div className="w-full h-full flex items-center justify-center">
+                        <ImageIcon size={14} className="text-white/15" />
                       </div>
                     )}
                   </div>
-
                   {/* Content */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -256,40 +247,11 @@ export const CalendarGrid: React.FC<Props> = ({
                       <span className="text-[11px] text-white/25">
                         {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      {post.pillar && <span className="text-[9px] bg-purple-500/15 text-purple-300 px-1.5 py-0.5 rounded-full">{post.pillar}</span>}
                     </div>
                     <p className="text-xs text-white/60 line-clamp-2 leading-relaxed">{post.content}</p>
-                    {post.hashtags?.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {post.hashtags.slice(0, 3).map((t, i) => <span key={i} className="text-[9px] text-amber-400/50">{t.startsWith('#') ? t : `#${t}`}</span>)}
-                        {post.hashtags.length > 3 && <span className="text-[9px] text-white/20">+{post.hashtags.length - 3}</span>}
-                      </div>
-                    )}
                   </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    {fbConnected && post.status !== 'Posted' && (
-                      <button
-                        onClick={() => handlePublish(post)}
-                        disabled={publishingId === post.id}
-                        className="bg-blue-600/20 hover:bg-blue-600/40 disabled:opacity-50 text-blue-300 p-1.5 rounded-lg transition"
-                        title="Publish now"
-                      >
-                        {publishingId === post.id
-                          ? <Loader2 size={12} className="animate-spin" />
-                          : <Send size={12} />}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => onDelete(post.id)}
-                      className="text-white/15 hover:text-red-400 p-1.5 rounded-lg transition opacity-0 group-hover:opacity-100"
-                      title="Delete"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
+                  <div className="text-white/15 group-hover:text-white/35 transition shrink-0 self-center text-xs">›</div>
+                </button>
               ))}
             </div>
           )}
@@ -313,6 +275,22 @@ export const CalendarGrid: React.FC<Props> = ({
             </button>
           </div>
         </div>
+      )}
+      {/* ── Post Modal ───────────────────────────────────────────────────── */}
+      {selectedPost && (
+        <PostModal
+          post={posts.find(p => p.id === selectedPost.id) || selectedPost}
+          image={calendarImages[selectedPost.id]}
+          isGeneratingImage={calendarGenSet.has(selectedPost.id)}
+          fbConnected={fbConnected}
+          hasApiKey={hasApiKey}
+          onClose={() => setSelectedPost(null)}
+          onPublish={async (post) => { await onPublish(post); setSelectedPost(null); }}
+          onDelete={(id) => { onDelete(id); setSelectedPost(null); }}
+          onSave={async (id, updates) => { await onSave(id, updates); setSelectedPost(prev => prev ? { ...prev, ...updates } : prev); }}
+          onRegenImage={onRegenImage}
+          onUpload={onUpload}
+        />
       )}
     </div>
   );

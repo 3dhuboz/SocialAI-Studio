@@ -263,6 +263,75 @@ Return ONLY this exact JSON structure, no markdown:
   }
 };
 
+export const generateInsightReportFromPosts = async (
+  businessName: string,
+  businessType: string,
+  location: string,
+  posts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }>
+): Promise<InsightReport | null> => {
+  const ai = getAI();
+  if (!ai) return null;
+  try {
+    const totalLikes = posts.reduce((s, p) => s + p.likes, 0);
+    const totalComments = posts.reduce((s, p) => s + p.comments, 0);
+    const totalShares = posts.reduce((s, p) => s + p.shares, 0);
+    const avgLikes = posts.length ? Math.round(totalLikes / posts.length) : 0;
+    const avgComments = posts.length ? Math.round(totalComments / posts.length) : 0;
+    const topPosts = [...posts].sort((a, b) => (b.likes + b.comments * 2 + b.shares * 3) - (a.likes + a.comments * 2 + a.shares * 3)).slice(0, 5);
+    const worstPosts = [...posts].sort((a, b) => (a.likes + a.comments * 2 + a.shares * 3) - (b.likes + b.comments * 2 + b.shares * 3)).slice(0, 3);
+
+    const postSummaries = topPosts.map(p => `"${p.message.substring(0, 120)}" — ${p.likes} likes, ${p.comments} comments, ${p.shares} shares`).join('\n');
+    const worstSummaries = worstPosts.map(p => `"${p.message.substring(0, 80)}" — ${p.likes} likes, ${p.comments} comments`).join('\n');
+
+    const prompt = `You are a senior social media analyst. You have been given REAL data from the Facebook page of "${businessName}" (${businessType} in ${location}).
+
+ACTUAL PAGE DATA:
+- Total posts analysed: ${posts.length}
+- Average likes per post: ${avgLikes}
+- Average comments per post: ${avgComments}
+- Total shares: ${totalShares}
+- Date range: ${posts[posts.length - 1]?.created_time?.split('T')[0] || 'unknown'} to ${posts[0]?.created_time?.split('T')[0] || 'unknown'}
+
+TOP 5 PERFORMING POSTS (by engagement score):
+${postSummaries}
+
+3 LOWEST PERFORMING POSTS:
+${worstSummaries}
+
+Based on this REAL data, identify patterns: what content gets the most engagement, what falls flat, what topics resonate, and give specific actionable advice.
+
+Return ONLY this exact JSON, no markdown:
+{
+  "summary": "2-3 sentence plain-English overview of their actual social media performance based on the real data, mentioning specific numbers",
+  "score": <integer 1-100 representing overall social media health based on real engagement>,
+  "recommendations": [
+    { "title": "short action title based on real patterns found", "detail": "specific 1-2 sentence advice citing the actual data", "priority": "high" },
+    { "title": "...", "detail": "...", "priority": "medium" },
+    { "title": "...", "detail": "...", "priority": "low" }
+  ],
+  "bestTimes": [
+    { "platform": "Facebook", "slots": ["inferred from post timestamps of top performing posts"] },
+    { "platform": "Instagram", "slots": ["recommended times based on their audience patterns"] }
+  ],
+  "contentFocus": [
+    { "topic": "topic pattern found in top posts", "reason": "why this is working for this business based on the data" },
+    { "topic": "...", "reason": "..." },
+    { "topic": "...", "reason": "..." }
+  ],
+  "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
+}`;
+
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(raw) as InsightReport;
+    parsed.generatedAt = new Date().toISOString();
+    return parsed;
+  } catch (e) {
+    console.warn('generateInsightReportFromPosts failed:', e);
+    return null;
+  }
+};
+
 export const getPostingAdvice = async (platform: string) => {
   const ai = getAI();
   if (!ai) return "API Key missing.";

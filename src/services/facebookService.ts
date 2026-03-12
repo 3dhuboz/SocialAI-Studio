@@ -163,6 +163,29 @@ export const FacebookService = {
     };
   },
 
+  getRecentPosts: async (pageId: string, pageAccessToken: string, limit = 25): Promise<Array<{
+    message: string;
+    created_time: string;
+    likes: number;
+    comments: number;
+    shares: number;
+  }>> => {
+    const base = 'https://graph.facebook.com/v21.0';
+    const fields = 'message,created_time,likes.summary(true),comments.summary(true),shares';
+    const res = await fetch(
+      `${base}/${pageId}/posts?fields=${fields}&limit=${limit}&access_token=${pageAccessToken}`
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return (data.data || []).map((p: any) => ({
+      message: p.message || '',
+      created_time: p.created_time || '',
+      likes: p.likes?.summary?.total_count || 0,
+      comments: p.comments?.summary?.total_count || 0,
+      shares: p.shares?.count || 0,
+    }));
+  },
+
   postToPageDirect: async (pageId: string, pageAccessToken: string, message: string, imageBase64?: string): Promise<string> => {
     const base = 'https://graph.facebook.com/v21.0';
     if (imageBase64 && imageBase64.startsWith('data:image/')) {
