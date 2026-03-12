@@ -261,6 +261,12 @@ const Dashboard: React.FC = () => {
   const uploadFileRef = useRef<HTMLInputElement>(null);
   const [uploadTargetIdx, setUploadTargetIdx] = useState<number | null>(null);
 
+  // Calendar post image generation (keyed by post ID)
+  const [calendarImages, setCalendarImages] = useState<Record<string, string>>({});
+  const [calendarGenSet, setCalendarGenSet] = useState<Set<string>>(new Set());
+  const calendarUploadRef = useRef<HTMLInputElement>(null);
+  const [calendarUploadId, setCalendarUploadId] = useState<string | null>(null);
+
   // Generation ticker
   const TICKER_STEPS_NORMAL = [
     { label: 'Analysing your brand profile & location...', pct: 5 },
@@ -484,6 +490,60 @@ const Dashboard: React.FC = () => {
       else toast('Image generation failed — check console for details, or upload an image instead.', 'warning');
     } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
     setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
+  };
+
+  // ── Auto-generate images for calendar posts that have imagePrompt but no image ──
+  useEffect(() => {
+    if (!hasApiKey) return;
+    const missing = posts.filter(p =>
+      p.imagePrompt &&
+      !p.image &&
+      !calendarImages[p.id] &&
+      !calendarGenSet.has(p.id) &&
+      (p as any).postType !== 'video'
+    );
+    if (missing.length === 0) return;
+    const run = async () => {
+      for (const post of missing) {
+        setCalendarGenSet(prev => new Set(prev).add(post.id));
+        try {
+          const img = await generateMarketingImage(post.imagePrompt!);
+          if (img) setCalendarImages(prev => ({ ...prev, [post.id]: img }));
+        } catch { /* silently skip */ }
+        setCalendarGenSet(prev => { const s = new Set(prev); s.delete(post.id); return s; });
+      }
+    };
+    run();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posts]);
+
+  const handleCalendarRegenImage = async (postId: string, prompt: string) => {
+    setCalendarGenSet(prev => new Set(prev).add(postId));
+    try {
+      const img = await generateMarketingImage(prompt);
+      if (img) setCalendarImages(prev => ({ ...prev, [postId]: img }));
+      else toast('Image generation failed — try uploading instead.', 'warning');
+    } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
+    setCalendarGenSet(prev => { const s = new Set(prev); s.delete(postId); return s; });
+  };
+
+  const handleCalendarUpload = (postId: string) => {
+    setCalendarUploadId(postId);
+    calendarUploadRef.current?.click();
+  };
+
+  const handleCalendarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !calendarUploadId) return;
+    const reader = new FileReader();
+    const id = calendarUploadId;
+    reader.onload = ev => {
+      const dataUrl = ev.target?.result as string;
+      if (dataUrl) setCalendarImages(prev => ({ ...prev, [id]: dataUrl }));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+    setCalendarUploadId(null);
   };
 
   const handleAcceptSmartPosts = async () => {
@@ -951,6 +1011,7 @@ const Dashboard: React.FC = () => {
         {/* ═══ CALENDAR TAB ═══ */}
         {activeTab === 'calendar' && (
           <div className="space-y-5">
+            <input ref={calendarUploadRef} type="file" accept="image/*" className="hidden" onChange={handleCalendarFileChange} />
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
                 <h2 className="text-2xl font-bold flex items-center gap-2.5"><Calendar className="text-amber-400" size={22} /> Content Calendar</h2>
@@ -992,12 +1053,76 @@ const Dashboard: React.FC = () => {
               <div className="space-y-2.5">
                 {posts.map(post => (
                   <div key={post.id} className="bg-white/3 border border-white/8 rounded-2xl p-4 flex gap-4 hover:bg-white/5 transition group">
-                    <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/30 border border-white/8 flex items-center justify-center">
-                      {post.image
-                        ? <img src={post.image} alt="" className="w-full h-full object-cover" />
-                        : <MessageSquare size={18} className="text-white/15" />
-                      }
-                    </div>
+                    {/* ── Image / Reel Thumbnail ── */}
+                    {(post as any).postType === 'video' ? (
+                      <div className="w-20 h-32 rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg"
+                        style={{ background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
+                      >
+                        <div className="absolute top-1.5 left-1.5 right-1.5 flex items-center justify-between z-10">
+                          <span className="text-[7px] bg-purple-500/60 text-white font-black px-1.5 py-0.5 rounded-full">REEL</span>
+                          <Instagram size={9} className="text-white/50" />
+                        </div>
+                        <div className="absolute inset-0 flex items-center justify-center z-10">
+                          <div className="w-8 h-8 rounded-full bg-white/15 border border-white/25 flex items-center justify-center">
+                            <span className="text-white text-xs ml-0.5">▶</span>
+                          </div>
+                        </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1.5 pt-3 z-10">
+                          <p className="text-[6px] text-white/80 leading-tight line-clamp-3">{post.content.substring(0, 60)}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-24 h-24 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group/img">
+                        {calendarImages[post.id] || post.image ? (
+                          <>
+                            <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/55 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center gap-1">
+                              {post.imagePrompt && (
+                                <button
+                                  onClick={() => handleCalendarRegenImage(post.id, post.imagePrompt!)}
+                                  title="Regenerate"
+                                  className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"
+                                >
+                                  <RefreshCw size={11} className="text-white" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleCalendarUpload(post.id)}
+                                title="Upload"
+                                className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"
+                              >
+                                <Upload size={11} className="text-white" />
+                              </button>
+                            </div>
+                          </>
+                        ) : calendarGenSet.has(post.id) ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center gap-1.5">
+                            <Loader2 size={18} className="animate-spin text-amber-400" />
+                            <span className="text-[9px] text-white/35">Generating…</span>
+                          </div>
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center gap-1">
+                            <ImageIcon size={16} className="text-white/15" />
+                            <div className="flex flex-col gap-1 items-center">
+                              {post.imagePrompt && hasApiKey && (
+                                <button
+                                  onClick={() => handleCalendarRegenImage(post.id, post.imagePrompt!)}
+                                  className="text-[9px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full hover:bg-amber-500/30 transition font-semibold"
+                                >
+                                  Generate
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleCalendarUpload(post.id)}
+                                className="text-[9px] text-white/25 hover:text-white/50 transition"
+                              >
+                                Upload
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                         {post.platform === 'Instagram' ? <Instagram size={13} className="text-pink-400" /> : <Facebook size={13} className="text-blue-400" />}
