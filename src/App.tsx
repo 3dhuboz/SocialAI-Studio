@@ -16,6 +16,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
+import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, InsightReport, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import {
@@ -106,6 +107,8 @@ const Dashboard: React.FC = () => {
 
   const [showAccount, setShowAccount] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
+  const [showIntakeForm, setShowIntakeForm] = useState(false);
+  const [intakeFormDone, setIntakeFormDone] = useState(false);
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -141,6 +144,7 @@ const Dashboard: React.FC = () => {
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
+          if (d.intakeFormDone) setIntakeFormDone(true);
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -785,6 +789,20 @@ const Dashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       {/* Onboarding Wizard */}
+      {showIntakeForm && user && (
+        <ClientIntakeForm
+          userEmail={user.email || ''}
+          onClose={() => setShowIntakeForm(false)}
+          onSubmitted={() => {
+            setIntakeFormDone(true);
+            setShowIntakeForm(false);
+            updateDoc(doc(db, 'users', user.uid), { intakeFormDone: true }).catch(() =>
+              setDoc(doc(db, 'users', user.uid), { intakeFormDone: true }, { merge: true })
+            );
+          }}
+        />
+      )}
+
       {showOnboarding && (
         <OnboardingWizard
           profile={profile}
@@ -1932,7 +1950,11 @@ const Dashboard: React.FC = () => {
                   const currentIdx = planOrder.indexOf(activePlan ?? '');
                   const planIdx = planOrder.indexOf(plan.id);
                   const isUpgrade = planIdx > currentIdx;
-                  const paymentLink = CLIENT.stripePaymentLinks?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
+                  const isNew = !activePlan;
+                  // New clients → payment link WITH setup fee; existing → upgrade link without setup fee
+                  const upgradeLink = CLIENT.stripePaymentLinks?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
+                  const newLink = (CLIENT as any).stripePaymentLinksNew?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
+                  const paymentLink = isNew ? (newLink || upgradeLink) : upgradeLink;
                   return (
                     <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
                       isCurrent
@@ -1948,6 +1970,7 @@ const Dashboard: React.FC = () => {
                       <div>
                         <p className={`text-sm font-black bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>{plan.name}</p>
                         <p className="text-xl font-black text-white mt-0.5">${plan.price}<span className="text-xs text-white/30 font-normal">/mo</span></p>
+                        {isNew && <p className="text-[9px] text-amber-400/70 mt-0.5">+ ${CLIENT.setupFee} setup fee</p>}
                       </div>
                       <ul className="space-y-1">
                         {plan.features.slice(0, 3).map((f, i) => (
@@ -1958,7 +1981,15 @@ const Dashboard: React.FC = () => {
                         ))}
                       </ul>
                       {!isCurrent && (
-                        paymentLink ? (
+                        isNew ? (
+                          // New client — prompt them to fill intake form first
+                          <button
+                            onClick={() => setShowIntakeForm(true)}
+                            className={`w-full text-center text-xs font-bold py-2 rounded-xl transition bg-gradient-to-r ${plan.color} text-white hover:opacity-90`}
+                          >
+                            Get Started
+                          </button>
+                        ) : paymentLink ? (
                           <a href={paymentLink} target="_blank" rel="noopener noreferrer"
                             className={`block text-center text-xs font-bold py-2 rounded-xl transition ${
                               isUpgrade
@@ -1968,7 +1999,7 @@ const Dashboard: React.FC = () => {
                             {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'}
                           </a>
                         ) : (
-                          <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer"
+                          <a href={CLIENT.stripeCustomerPortalUrl || CLIENT.salesUrl} target="_blank" rel="noopener noreferrer"
                             className="block text-center text-xs font-semibold py-2 rounded-xl bg-white/6 hover:bg-white/10 text-white/40 transition">
                             {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'} →
                           </a>
@@ -1982,6 +2013,30 @@ const Dashboard: React.FC = () => {
                 })}
               </div>
 
+              {/* New client intake form prompt */}
+              {!activePlan && !intakeFormDone && (
+                <div className="bg-blue-500/8 border border-blue-500/20 rounded-2xl px-4 py-4 flex items-start gap-3">
+                  <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                    <span className="text-sm">📋</span>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs font-bold text-blue-300 mb-0.5">New to SocialAI Studio?</p>
+                    <p className="text-xs text-white/45 leading-relaxed">Choose a plan above, then complete our quick setup form so we can connect your Facebook Page. A one-time <span className="text-amber-300 font-semibold">${CLIENT.setupFee} setup fee</span> applies to new accounts.</p>
+                  </div>
+                  <button
+                    onClick={() => setShowIntakeForm(true)}
+                    className="shrink-0 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/25 text-blue-300 text-xs font-bold px-3 py-2 rounded-xl transition"
+                  >
+                    Fill Setup Form
+                  </button>
+                </div>
+              )}
+              {intakeFormDone && !activePlan && (
+                <div className="bg-green-500/8 border border-green-500/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+                  <CheckCircle size={14} className="text-green-400 shrink-0" />
+                  <p className="text-xs text-green-300">Setup form submitted — our team will contact you within 1 business day with your payment link.</p>
+                </div>
+              )}
               {!CLIENT.stripeCustomerPortalUrl && (
                 <p className="text-xs text-white/20 text-center">
                   To cancel or update payment details, contact <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 hover:text-amber-400 underline transition">{CLIENT.supportEmail}</a>

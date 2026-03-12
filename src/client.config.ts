@@ -77,16 +77,29 @@ export const CLIENT = {
   stripeCustomerPortalUrl: '',
 
   /**
-   * STRIPE PAYMENT LINKS (optional but recommended for coloured plan cards):
-   * In Stripe dashboard → Payment Links → Create a link for each plan.
-   * Paste the URL (https://buy.stripe.com/...) for each plan below.
-   * Leave as empty string to fall back to the generic pricing table.
+   * STRIPE PAYMENT LINKS — UPGRADES (plan subscription only, no setup fee):
+   * Used when an existing subscriber upgrades from one plan to another.
+   * In Stripe dashboard → Payment Links → Create a link for each plan (subscription only).
    */
   stripePaymentLinks: {
     starter: '',
     growth: '',
     pro: '',
     agency: 'https://buy.stripe.com/14A3cnexK45a1iUgrj2oE02',
+  },
+
+  /**
+   * STRIPE PAYMENT LINKS — NEW CLIENTS (plan subscription + $99 setup fee):
+   * Used for brand-new signups. Create separate Stripe Payment Links that include
+   * a one-time $99 setup fee line item alongside the subscription.
+   * In Stripe dashboard → Payment Links → Add both the plan product AND the setup fee product.
+   * Leave as empty string to fall back to the generic salesUrl.
+   */
+  stripePaymentLinksNew: {
+    starter: '',
+    growth: '',
+    pro: '',
+    agency: '',
   },
 
   /** Max client workspaces per agency account */
