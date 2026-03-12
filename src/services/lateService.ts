@@ -1,5 +1,17 @@
 const PROXY = '/.netlify/functions/late-proxy';
 
+const safeJson = async (res: Response) => {
+  const text = await res.text();
+  if (!text || !text.trim()) {
+    throw new Error('Social connection service is not available on localhost. Open the deployed Netlify site to use this feature, or run `netlify dev` locally.');
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Social connection service returned an unexpected response. Make sure LATE_API_KEY is set in Netlify environment variables.');
+  }
+};
+
 export interface LateProfile {
   id: string;
   title: string;
@@ -24,7 +36,7 @@ export const LateService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title }),
     });
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to create profile');
     return data.id as string;
   },
@@ -37,7 +49,7 @@ export const LateService = {
   getConnectUrl: async (profileId: string, platform: 'facebook' | 'instagram', redirectUrl: string): Promise<string> => {
     const params = new URLSearchParams({ action: 'connect-url', profileId, platform, redirectUrl });
     const res = await fetch(`${PROXY}?${params}`);
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to get connect URL');
     return data.authUrl as string;
   },
@@ -45,7 +57,7 @@ export const LateService = {
   /** List Facebook Pages available after OAuth (headless mode). */
   listFacebookPages: async (connectToken: string): Promise<LatePage[]> => {
     const res = await fetch(`${PROXY}?action=list-pages&connectToken=${encodeURIComponent(connectToken)}`);
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to list pages');
     return (data.pages || data) as LatePage[];
   },
@@ -57,7 +69,7 @@ export const LateService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ connectToken, pageId }),
     });
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to select page');
   },
 
@@ -77,7 +89,7 @@ export const LateService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profileId, platforms, text, mediaUrls, scheduleDate }),
     });
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to publish post');
     return data as LatePostResult;
   },
@@ -85,7 +97,7 @@ export const LateService = {
   /** Get analytics for a profile. */
   getAnalytics: async (profileId: string): Promise<Record<string, unknown>> => {
     const res = await fetch(`${PROXY}?action=analytics&profileId=${encodeURIComponent(profileId)}`);
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to get analytics');
     return data;
   },
@@ -93,7 +105,7 @@ export const LateService = {
   /** Get profile info including connected accounts. */
   getProfileInfo: async (profileId: string): Promise<Record<string, unknown>> => {
     const res = await fetch(`${PROXY}?action=profile-info&profileId=${encodeURIComponent(profileId)}`);
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to get profile info');
     return data;
   },
