@@ -21,6 +21,7 @@ import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateR
 import { FacebookService } from './services/facebookService';
 import { LateService } from './services/lateService';
 import { LateConnectButton } from './components/LateConnectButton';
+import { CalendarGrid } from './components/CalendarGrid';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -113,6 +114,8 @@ const Dashboard: React.FC = () => {
   const [intakeFormDone, setIntakeFormDone] = useState(false);
   const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState<boolean | undefined>(undefined);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
+  const [isAccepting, setIsAccepting] = useState(false);
+  const [acceptProgress, setAcceptProgress] = useState(0);
   const [lateProfileId, setLateProfileId] = useState<string>('');
   const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
 
@@ -348,7 +351,7 @@ const Dashboard: React.FC = () => {
   const [insightStale, setInsightStale] = useState(false);
 
   const hasApiKey = !!localStorage.getItem('sai_gemini_key');
-  const fbConnected = !!(profile.facebookPageId && profile.facebookPageAccessToken);
+  const fbConnected = !!(profile.facebookPageId && profile.facebookPageAccessToken) || !!lateProfileId;
 
   // Auto-run daily insight analysis when stale
   useEffect(() => {
@@ -632,6 +635,8 @@ const Dashboard: React.FC = () => {
 
   const handleAcceptSmartPosts = async () => {
     if (!user) return;
+    setIsAccepting(true);
+    setAcceptProgress(0);
     const saved: SocialPost[] = [];
     for (let i = 0; i < smartPosts.length; i++) {
       const sp = smartPosts[i];
@@ -649,6 +654,7 @@ const Dashboard: React.FC = () => {
       };
       const ref = await addDoc(postsCol(), postData);
       saved.push({ id: ref.id, ...postData });
+      setAcceptProgress(Math.round(((i + 1) / smartPosts.length) * 100));
     }
     setPosts(prev => [...saved, ...prev]);
     toast(`${saved.length} posts added to your calendar! 🎉`, 'success');
@@ -657,6 +663,8 @@ const Dashboard: React.FC = () => {
     setSmartPostImages({});
     setAutoGenSet(new Set());
     setCurrentGenIdx(null);
+    setIsAccepting(false);
+    setAcceptProgress(0);
     setActiveTab('calendar');
   };
 
@@ -1446,144 +1454,41 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
-            {/* Tip */}
-            <div className="bg-blue-500/8 border border-blue-500/15 rounded-2xl px-5 py-3.5 flex gap-3">
-              <Info size={14} className="text-blue-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-white/40 leading-relaxed">
-                <span className="text-blue-300 font-semibold">How publishing works: </span>
-                Once your Facebook page is connected, click <strong className="text-white/60">Publish to Facebook</strong> on any post to go live instantly. Or use <strong className="text-white/60">Smart AI</strong> to auto-schedule an entire week.
-              </p>
-            </div>
-
-            {posts.length === 0 ? (
-              <div className="text-center py-20 border border-white/5 rounded-2xl bg-white/2">
-                <div className="w-16 h-16 mx-auto mb-5 bg-white/5 rounded-2xl flex items-center justify-center">
-                  <Calendar size={28} className="text-white/20" />
-                </div>
-                <p className="text-white/30 font-semibold mb-2">Your calendar is empty</p>
-                <p className="text-white/20 text-sm mb-6">Create a post manually, or use Smart AI to generate a full week at once.</p>
-                <div className="flex justify-center gap-3 flex-wrap">
-                  <button onClick={() => setActiveTab('create')} className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/20 text-amber-300 px-5 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-2">
-                    <Wand2 size={14} /> Create a Post
-                  </button>
-                  <button onClick={() => setActiveTab('smart')} className="bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 px-5 py-2 rounded-xl text-sm font-semibold transition flex items-center gap-2">
-                    <Brain size={14} /> Smart AI Scheduler
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {posts.map(post => (
-                  <div key={post.id} className="bg-white/3 border border-white/8 rounded-2xl p-4 flex gap-4 hover:bg-white/5 transition group">
-                    {/* ── Image / Reel Thumbnail ── */}
-                    {(post as any).postType === 'video' ? (
-                      <AnimatedReelPreview
-                        hookText={post.content}
-                        mood={(post as any).videoMood}
-                        size="sm"
-                        onClick={() => setVideoScriptModal({
-                          hookText: post.content,
-                          script: (post as any).videoScript,
-                          shots: (post as any).videoShots,
-                          mood: (post as any).videoMood,
-                        })}
-                      />
-                    ) : (
-                      <div className="w-24 h-24 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group/img">
-                        {calendarImages[post.id] || post.image ? (
-                          <>
-                            <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/55 opacity-0 group-hover/img:opacity-100 transition flex items-center justify-center gap-1">
-                              {post.imagePrompt && (
-                                <button
-                                  onClick={() => handleCalendarRegenImage(post.id, post.imagePrompt!)}
-                                  title="Regenerate"
-                                  className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"
-                                >
-                                  <RefreshCw size={11} className="text-white" />
-                                </button>
-                              )}
-                              <button
-                                onClick={() => handleCalendarUpload(post.id)}
-                                title="Upload"
-                                className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"
-                              >
-                                <Upload size={11} className="text-white" />
-                              </button>
-                            </div>
-                          </>
-                        ) : calendarGenSet.has(post.id) ? (
-                          <div className="w-full h-full flex flex-col items-center justify-center gap-1.5">
-                            <Loader2 size={18} className="animate-spin text-amber-400" />
-                            <span className="text-[9px] text-white/35">Generating…</span>
-                          </div>
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center gap-1">
-                            <ImageIcon size={16} className="text-white/15" />
-                            <div className="flex flex-col gap-1 items-center">
-                              {post.imagePrompt && hasApiKey && (
-                                <button
-                                  onClick={() => handleCalendarRegenImage(post.id, post.imagePrompt!)}
-                                  className="text-[9px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full hover:bg-amber-500/30 transition font-semibold"
-                                >
-                                  Generate
-                                </button>
-                              )}
-                              <button
-                                onClick={() => handleCalendarUpload(post.id)}
-                                className="text-[9px] text-white/25 hover:text-white/50 transition"
-                              >
-                                Upload
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        {post.platform === 'Instagram' ? <Instagram size={13} className="text-pink-400" /> : <Facebook size={13} className="text-blue-400" />}
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          post.status === 'Posted' ? 'bg-green-500/15 text-green-300' :
-                          post.status === 'Scheduled' ? 'bg-blue-500/15 text-blue-300' :
-                          'bg-white/8 text-white/30'
-                        }`}>{post.status}</span>
-                        <span className="text-xs text-white/25">{new Date(post.scheduledFor).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {post.pillar && <span className="text-[10px] bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full">{post.pillar}</span>}
-                      </div>
-                      <p className="text-sm text-white/60 line-clamp-2 leading-relaxed">{post.content}</p>
-                      {post.hashtags?.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {post.hashtags.slice(0, 4).map((t, i) => <span key={i} className="text-[10px] text-amber-400/60">{t.startsWith('#') ? t : `#${t}`}</span>)}
-                          {post.hashtags.length > 4 && <span className="text-[10px] text-white/20">+{post.hashtags.length - 4} more</span>}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-2 shrink-0">
-                      {fbConnected && post.status !== 'Posted' && (
-                        <button
-                          onClick={async () => {
-                            try {
-                              const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
-                              await FacebookService.postToPageDirect(profile.facebookPageId, profile.facebookPageAccessToken, text, post.image);
-                              setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                              toast('Published to Facebook!');
-                            } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
-                          }}
-                          className="bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 p-2 rounded-lg transition"
-                          title="Publish to Facebook"
-                        >
-                          <Send size={13} />
-                        </button>
-                      )}
-                      <button onClick={() => deletePost(post.id)} className="text-white/15 hover:text-red-400 p-2 rounded-lg transition opacity-0 group-hover:opacity-100" title="Delete">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            {/* Tip — only show when no social account connected */}
+            {!fbConnected && (
+              <div className="bg-blue-500/8 border border-blue-500/15 rounded-2xl px-5 py-3.5 flex gap-3">
+                <Info size={14} className="text-blue-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-white/40 leading-relaxed">
+                  <span className="text-blue-300 font-semibold">Connect to publish: </span>
+                  Go to <button onClick={() => setActiveTab('settings')} className="text-blue-300 underline">Settings</button> to connect Facebook &amp; Instagram, then click <strong className="text-white/60">Publish</strong> on any post to go live instantly.
+                </p>
               </div>
             )}
+
+            <CalendarGrid
+              posts={posts}
+              calendarImages={calendarImages}
+              calendarGenSet={calendarGenSet}
+              fbConnected={fbConnected}
+              hasApiKey={hasApiKey}
+              onDelete={deletePost}
+              onPublish={async (post) => {
+                try {
+                  const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
+                  if (lateProfileId) {
+                    await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text);
+                  } else {
+                    await FacebookService.postToPageDirect(profile.facebookPageId, profile.facebookPageAccessToken, text, post.image);
+                  }
+                  setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+                  toast('Published successfully!', 'success');
+                } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
+              }}
+              onRegenImage={handleCalendarRegenImage}
+              onUpload={handleCalendarUpload}
+              onGoCreate={() => setActiveTab('create')}
+              onGoSmart={() => setActiveTab('smart')}
+            />
           </div>
         )}
 
@@ -1750,9 +1655,18 @@ const Dashboard: React.FC = () => {
                   </div>
                   <button
                     onClick={handleAcceptSmartPosts}
-                    className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition"
+                    disabled={isAccepting}
+                    className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-70 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
                   >
-                    <CheckCircle size={16} /> Accept All & Add to Calendar
+                    {isAccepting ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Saving… {acceptProgress}%</span>
+                        <span className="text-xs font-normal opacity-60 ml-1">({Math.round(acceptProgress / 100 * smartPosts.length)}/{smartPosts.length})</span>
+                      </>
+                    ) : (
+                      <><CheckCircle size={16} /> Accept All & Add to Calendar</>
+                    )}
                   </button>
                 </div>
 
