@@ -19,6 +19,8 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, InsightReport, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
+import { LateService } from './services/lateService';
+import { LateConnectButton } from './components/LateConnectButton';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -111,6 +113,8 @@ const Dashboard: React.FC = () => {
   const [intakeFormDone, setIntakeFormDone] = useState(false);
   const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState<boolean | undefined>(undefined);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
+  const [lateProfileId, setLateProfileId] = useState<string>('');
+  const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -148,6 +152,8 @@ const Dashboard: React.FC = () => {
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
           if (typeof d.fbTokenNeverExpires === 'boolean') setFbTokenNeverExpires(d.fbTokenNeverExpires);
+          if (d.lateProfileId) setLateProfileId(d.lateProfileId);
+          if (d.lateConnectedPlatforms) setLateConnectedPlatforms(d.lateConnectedPlatforms);
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -411,6 +417,19 @@ const Dashboard: React.FC = () => {
       const fullText = generatedHashtags.length > 0 ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
       await FacebookService.postToPageDirect(profile.facebookPageId, profile.facebookPageAccessToken, fullText, generatedImage || undefined);
       toast('Published to Facebook!', 'success');
+    } catch (e: any) {
+      toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+    }
+    setIsPublishing(false);
+  };
+
+  const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
+    if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
+    setIsPublishing(true);
+    try {
+      const fullText = generatedHashtags.length > 0 ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
+      await LateService.post(lateProfileId, platforms, fullText);
+      toast(`Published to ${platforms.join(' & ')} successfully!`, 'success');
     } catch (e: any) {
       toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
     }
@@ -2434,12 +2453,48 @@ const Dashboard: React.FC = () => {
                   <Facebook size={16} className="text-blue-400" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white">Facebook Connection</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page to enable auto-publishing</p>
+                  <h3 className="font-bold text-white">Social Media Connection</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Connect Facebook &amp; Instagram to enable auto-publishing</p>
                 </div>
               </div>
 
-              {/* Primary — OAuth button */}
+              {/* ── Primary — Late (Facebook + Instagram, no App Review needed) ── */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-black bg-gradient-to-r from-blue-500 to-purple-500 text-white px-2 py-0.5 rounded-full">RECOMMENDED</span>
+                  <span className="text-xs text-white/40">Facebook + Instagram in one click</span>
+                </div>
+                <LateConnectButton
+                  profileId={lateProfileId}
+                  connectedPlatforms={lateConnectedPlatforms}
+                  businessName={profile.name}
+                  onConnected={(pid, platforms) => {
+                    setLateProfileId(pid);
+                    setLateConnectedPlatforms(platforms);
+                    if (user) {
+                      updateDoc(doc(db, 'users', user.uid), { lateProfileId: pid, lateConnectedPlatforms: platforms }).catch(() =>
+                        setDoc(doc(db, 'users', user.uid), { lateProfileId: pid, lateConnectedPlatforms: platforms }, { merge: true })
+                      );
+                    }
+                    toast(`Connected to ${platforms.join(' & ')} successfully!`, 'success');
+                  }}
+                  onDisconnect={() => {
+                    setLateProfileId('');
+                    setLateConnectedPlatforms([]);
+                    if (user) updateDoc(doc(db, 'users', user.uid), { lateProfileId: null, lateConnectedPlatforms: [] }).catch(() => {});
+                    toast('Social accounts disconnected.', 'warning');
+                  }}
+                />
+              </div>
+
+              {/* ── Divider ── */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-white/5" />
+                <span className="text-[11px] text-white/20">or connect Facebook only (manual)</span>
+                <div className="flex-1 h-px bg-white/5" />
+              </div>
+
+              {/* Legacy — Facebook-only OAuth button */}
               <FacebookConnectButton
                 connectedPageId={profile.facebookPageId}
                 connectedPageName={profile.name !== CLIENT.defaultBusinessName ? profile.name : undefined}
