@@ -21,6 +21,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
     location: '',
     facebookPageUrl: '',
     facebookPageName: '',
+    facebookPageId: '',
     instagramHandle: '',
     followers: '',
     chosenPlan: 'Starter',
@@ -43,6 +44,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
       location: form.location || 'Not provided',
       facebook_page_url: form.facebookPageUrl,
       facebook_page_name: form.facebookPageName || 'Not provided',
+      facebook_page_id: form.facebookPageId || 'Not provided',
       instagram_handle: form.instagramHandle || 'Not provided',
       followers: form.followers || 'Unknown',
       chosen_plan: form.chosenPlan,
@@ -78,7 +80,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
   };
 
   const fallbackMailto = (p: Record<string, string>) => {
-    const body = `NEW CLIENT SETUP REQUEST — SocialAI Studio\n\nContact: ${p.from_name}\nEmail: ${p.from_email}\nPhone: ${p.phone}\n\nBusiness: ${p.business_name}\nType: ${p.business_type}\nLocation: ${p.location}\n\nFacebook URL: ${p.facebook_page_url}\nFacebook Name: ${p.facebook_page_name}\nInstagram: ${p.instagram_handle}\nFollowers: ${p.followers}\n\nChosen Plan: ${p.chosen_plan}\n\nNotes:\n${p.notes}`;
+    const body = `NEW CLIENT SETUP REQUEST — SocialAI Studio\n\nContact: ${p.from_name}\nEmail: ${p.from_email}\nPhone: ${p.phone}\n\nBusiness: ${p.business_name}\nType: ${p.business_type}\nLocation: ${p.location}\n\nFacebook URL: ${p.facebook_page_url}\nFacebook Page Name: ${p.facebook_page_name}\nFacebook Page ID: ${p.facebook_page_id}\nInstagram: ${p.instagram_handle}\nFollowers: ${p.followers}\n\nChosen Plan: ${p.chosen_plan}\n\nNotes:\n${p.notes}`;
     const subject = encodeURIComponent(`New Client Setup Request — ${p.business_name}`);
     window.open(`mailto:${CLIENT.supportEmail}?subject=${subject}&body=${encodeURIComponent(body)}`, '_blank');
   };
@@ -192,6 +194,12 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
                 <label className="text-xs text-white/40 block mb-1.5 flex items-center gap-1.5"><Facebook size={11} className="text-blue-400" /> Facebook Page URL <span className="text-red-400">*</span></label>
                 <input value={form.facebookPageUrl} onChange={set('facebookPageUrl')} placeholder="https://facebook.com/yourbusiness"
                   className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-blue-500/40 transition" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="text-xs text-white/40 block mb-1">Facebook Page ID <span className="text-amber-400/70 font-semibold">— needed for AI analytics</span></label>
+                <p className="text-[10px] text-white/25 mb-1.5">Find it: go to your Facebook Page → About → scroll to the bottom, or visit <span className="text-white/40">facebook.com/yourbusiness/about</span> and look for "Page ID" (a long number like 123456789012345)</p>
+                <input value={form.facebookPageId} onChange={set('facebookPageId')} placeholder="e.g. 123456789012345"
+                  className="w-full bg-black/40 border border-amber-500/15 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Facebook Page Name</label>

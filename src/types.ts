@@ -35,6 +35,7 @@ export interface BusinessProfile {
   socialGoal: string;
   contentTopics: string;
   videoEnabled: boolean;
+  sotrendPageId: string;
 }
 
 export interface ContentCalendarStats {

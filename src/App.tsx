@@ -20,6 +20,7 @@ import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, InsightReport, SmartScheduledPost } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { LateService } from './services/lateService';
+import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
 import {
@@ -49,6 +50,7 @@ const DEFAULT_PROFILE: BusinessProfile = {
   socialGoal: '',
   contentTopics: '',
   videoEnabled: false,
+  sotrendPageId: '',
 };
 
 const DEFAULT_STATS: ContentCalendarStats = {
@@ -705,22 +707,24 @@ const Dashboard: React.FC = () => {
 
   const handleScanPastPosts = async () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
-    if (!profile.facebookPageId || !profile.facebookPageAccessToken) {
-      toast('Connect a Facebook page in Settings first.', 'warning'); return;
+    const pageId = profile.sotrendPageId || profile.facebookPageId;
+    if (!pageId) {
+      toast('Add your Facebook Page ID in Settings → Social Media first.', 'warning'); return;
     }
     setIsScanningPosts(true);
     try {
-      const fbPosts = await FacebookService.getRecentPosts(profile.facebookPageId, profile.facebookPageAccessToken, 30);
-      if (!fbPosts.length) { toast('No posts found on your Facebook page.', 'info'); setIsScanningPosts(false); return; }
-      const report = await generateInsightReportFromPosts(profile.name, profile.type, profile.location || 'Australia', fbPosts);
+      await SotrendService.addProfile(pageId);
+      const posts = await SotrendService.getPosts(pageId, 30);
+      if (!posts.length) { toast('No posts found — check the Page ID is correct.', 'info'); setIsScanningPosts(false); return; }
+      const report = await generateInsightReportFromPosts(profile.name, profile.type, profile.location || 'Australia', posts);
       if (report) {
         setInsightReport(report);
         setInsightStale(false);
         if (user) updateDoc(dataRef(), { insightReport: report }).catch(() => setDoc(dataRef(), { insightReport: report }, { merge: true }));
-        toast(`Scanned ${fbPosts.length} posts — insights updated!`, 'success');
+        toast(`Scanned ${posts.length} posts — insights updated!`, 'success');
       }
     } catch (e: any) {
-      toast(`Scan failed: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error');
+      toast(`Scan failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
     }
     setIsScanningPosts(false);
   };
@@ -1858,12 +1862,12 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
               <div className="flex gap-2 flex-wrap">
-                {profile.facebookPageId && profile.facebookPageAccessToken && (
+                {(profile.sotrendPageId || profile.facebookPageId) && (
                   <button
                     onClick={handleScanPastPosts}
                     disabled={isScanningPosts || isAnalyzing}
                     className="flex items-center gap-2 text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/35 text-blue-300/70 hover:text-blue-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
-                    title="Fetch your real past Facebook posts and generate insights from actual engagement data"
+                    title="Scan real past Facebook posts via Sotrender and generate data-driven insights"
                   >
                     {isScanningPosts ? <Loader2 size={13} className="animate-spin" /> : <BarChart3 size={13} />}
                     {isScanningPosts ? 'Scanning posts…' : 'Scan Past Posts'}
@@ -2585,6 +2589,43 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
               </details>
+            </div>
+
+            {/* ── AI Analytics — Sotrender Page ID ── */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center">
+                  <BarChart3 size={16} className="text-blue-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">AI Analytics — Facebook Page ID</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Enables real-data insights by scanning your page's past posts via Sotrender</p>
+                </div>
+                {profile.sotrendPageId && (
+                  <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1">
+                    <CheckCircle size={11} /> Set
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-white/25 leading-relaxed">
+                Find your Page ID: go to your Facebook page → <strong className="text-white/40">About</strong> → scroll to the bottom. It's a long number (e.g. <code className="bg-white/8 px-1.5 py-0.5 rounded text-white/50">123456789012345</code>).
+              </p>
+              <div className="flex gap-2 max-w-lg">
+                <input
+                  value={profile.sotrendPageId}
+                  onChange={e => setProfile(prev => ({ ...prev, sotrendPageId: e.target.value }))}
+                  placeholder="e.g. 123456789012345"
+                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-blue-500/40 transition"
+                />
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={isSavingProfile}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
+                >
+                  {isSavingProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Save
+                </button>
+              </div>
             </div>
 
             {/* Your Plan */}
