@@ -975,18 +975,22 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Generated Output */}
-            {generatedContent && (
+            {(generatedContent || generatedImage) && (
               <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-                <div className="flex items-center gap-2 ml-auto">
-                  <span className="ml-auto text-[10px] text-white/25">{generatedContent.length} chars</span>
-                </div>
-                <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{generatedContent}</div>
-                {generatedHashtags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {generatedHashtags.map((tag, i) => (
-                      <span key={i} className="text-xs bg-amber-500/15 text-amber-300 px-2.5 py-1 rounded-full border border-amber-500/20">{tag.startsWith('#') ? tag : `#${tag}`}</span>
-                    ))}
-                  </div>
+                {generatedContent && (
+                  <>
+                    <div className="flex items-center gap-2 ml-auto">
+                      <span className="ml-auto text-[10px] text-white/25">{generatedContent.length} chars</span>
+                    </div>
+                    <div className="bg-black/30 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{generatedContent}</div>
+                    {generatedHashtags.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {generatedHashtags.map((tag, i) => (
+                          <span key={i} className="text-xs bg-amber-500/15 text-amber-300 px-2.5 py-1 rounded-full border border-amber-500/20">{tag.startsWith('#') ? tag : `#${tag}`}</span>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
                 {generatedImage && (
                   <img src={generatedImage} alt="Generated" className="w-full max-w-sm rounded-xl border border-white/10" />
