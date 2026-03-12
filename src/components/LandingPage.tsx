@@ -4,13 +4,13 @@ import { PricingTable } from './PricingTable';
 import {
   CheckCircle, Zap, Image as ImageIcon, Calendar,
   BarChart3, Facebook, Instagram, ArrowRight, Star, Clock,
-  Shield, ChevronDown, ChevronUp, Brain, Users, Play,
+  Shield, ChevronDown, ChevronUp, Brain, Users, Play, X,
   TrendingUp, MessageCircle, Repeat2, DollarSign, Timer, Rocket
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
 import { AnimatedDemo } from './AnimatedDemo';
 
-type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq';
+type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq' | 'contact';
 
 interface Props {
   onActivate: (plan: 'starter' | 'growth' | 'pro') => void;
@@ -51,18 +51,59 @@ const howItWorks = [
   { step: '4', title: "You're live!", desc: 'Log in and the AI starts generating your posts. Review, schedule, and publish with one click.', icon: Zap },
 ];
 
+const planIncludes: Record<string, string> = {
+  growth: 'Everything in Starter, plus:',
+  pro: 'Everything in Growth, plus:',
+  agency: 'Built for agencies:',
+};
+
 export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [showPricing, setShowPricing] = useState(false);
-  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [videoLightbox, setVideoLightbox] = useState(false);
   const [tab, setTab] = useState<LandingTab>('home');
+  const [contactForm, setContactForm] = useState({ name: '', email: '', phone: '', message: '' });
+  const [contactSent, setContactSent] = useState(false);
+  const [contactSending, setContactSending] = useState(false);
 
   const NAV_TABS: { id: LandingTab; label: string }[] = [
     { id: 'home', label: 'Home' },
     { id: 'benefits', label: 'Benefits' },
     { id: 'pricing', label: 'Pricing' },
     { id: 'faq', label: 'FAQ' },
+    { id: 'contact', label: 'Contact' },
   ];
+
+  const handleContactSend = async () => {
+    setContactSending(true);
+    const hasEmailJs = CLIENT.emailJsServiceId && CLIENT.emailJsTemplateId && CLIENT.emailJsPublicKey;
+    if (hasEmailJs) {
+      try {
+        const emailjs = await import('@emailjs/browser');
+        await emailjs.default.send(CLIENT.emailJsServiceId, CLIENT.emailJsTemplateId, {
+          from_name: contactForm.name,
+          from_email: contactForm.email,
+          phone: contactForm.phone || 'Not provided',
+          message: contactForm.message,
+          business_name: 'Website Enquiry',
+          to_email: CLIENT.supportEmail,
+        }, CLIENT.emailJsPublicKey);
+        setContactSent(true);
+      } catch {
+        fallbackContactMailto();
+        setContactSent(true);
+      }
+    } else {
+      fallbackContactMailto();
+      setContactSent(true);
+    }
+    setContactSending(false);
+  };
+
+  const fallbackContactMailto = () => {
+    const body = `Name: ${contactForm.name}\nEmail: ${contactForm.email}\nPhone: ${contactForm.phone}\n\nMessage:\n${contactForm.message}`;
+    window.open(`mailto:${CLIENT.supportEmail}?subject=${encodeURIComponent('Website Enquiry — ' + contactForm.name)}&body=${encodeURIComponent(body)}`, '_blank');
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
@@ -200,7 +241,34 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
               </div>
             </section>
 
-            {/* ANIMATED DEMO */}
+              {/* VIDEO LIGHTBOX */}
+              {videoLightbox && CLIENT.youtubeVideoId && (
+                <div
+                  className="fixed inset-0 z-[999] flex items-center justify-center p-4 md:p-10"
+                  style={{ background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(12px)' }}
+                  onClick={() => setVideoLightbox(false)}
+                >
+                  <div className="relative w-full max-w-5xl" onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => setVideoLightbox(false)}
+                      className="absolute -top-10 right-0 text-white/50 hover:text-white text-sm flex items-center gap-1.5 transition"
+                    >
+                      <X size={16} /> Close
+                    </button>
+                    <div className="aspect-video rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+                      <iframe
+                        className="w-full h-full"
+                        src={`https://www.youtube.com/embed/${CLIENT.youtubeVideoId}?autoplay=1&rel=0&modestbranding=1`}
+                        title="AI Social Media Demo"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ANIMATED DEMO */}
             <section className="py-12 px-6">
               <div className="max-w-3xl mx-auto">
                 <div className="text-center mb-8">
@@ -209,24 +277,15 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                 </div>
                 <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d1a] aspect-video">
                   {CLIENT.youtubeVideoId ? (
-                    videoPlaying ? (
-                      <iframe
-                        className="absolute inset-0 w-full h-full"
-                        src={`https://www.youtube.com/embed/${CLIENT.youtubeVideoId}?autoplay=1&rel=0&modestbranding=1`}
-                        title="AI Social Media Demo"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                      />
-                    ) : (
-                      <div className="absolute inset-0 cursor-pointer group" onClick={() => setVideoPlaying(true)}>
-                        <img src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`} alt="Video thumbnail" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/40 group-hover:bg-black/30 transition flex items-center justify-center">
-                          <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl">
-                            <Play size={32} className="text-black ml-1" fill="black" />
-                          </div>
+                    <div className="absolute inset-0 cursor-pointer group" onClick={() => setVideoLightbox(true)}>
+                      <img src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`} alt="Video thumbnail" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/40 group-hover:bg-black/25 transition flex items-center justify-center">
+                        <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl shadow-black/50">
+                          <Play size={32} className="text-black ml-1" fill="black" />
                         </div>
                       </div>
-                    )
+                      <div className="absolute bottom-4 right-4 text-[10px] text-white/40 bg-black/40 px-2 py-1 rounded-lg backdrop-blur-sm">Click to watch</div>
+                    </div>
                   ) : (
                     <AnimatedDemo />
                   )}
@@ -411,17 +470,18 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
         {tab === 'pricing' && (
           <div className="max-w-5xl mx-auto px-6 py-16">
             <div className="text-center mb-12">
-              <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 text-white/60 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                One-time $99 setup · then monthly
+              <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
+                One-time ${CLIENT.setupFee} setup fee · then pay monthly · cancel anytime
               </div>
               <h2 className="text-3xl md:text-4xl font-black mb-2">Simple, honest pricing</h2>
-              <p className="text-white/40 text-sm">No lock-in contracts. Cancel anytime.</p>
+              <p className="text-white/40 text-sm">Pick one plan — that's it. No stacking, no hidden extras.</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {CLIENT.plans.map((plan) => {
                 const checkColor = plan.id === 'starter' ? 'text-blue-400' : plan.id === 'growth' ? 'text-amber-400' : plan.id === 'pro' ? 'text-purple-400' : 'text-emerald-400';
                 const glowBg = plan.id === 'starter' ? 'rgba(59,130,246,0.1)' : plan.id === 'growth' ? 'rgba(245,158,11,0.1)' : plan.id === 'pro' ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)';
                 const borderColor = plan.id === 'starter' ? 'border-blue-500/30' : plan.id === 'growth' ? 'border-amber-500/30' : plan.id === 'pro' ? 'border-purple-500/30' : 'border-emerald-500/30';
+                const includesLabel = planIncludes[plan.id];
                 return (
                   <div
                     key={plan.id}
@@ -439,11 +499,15 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                         <Zap size={18} className="text-white" />
                       </div>
                       <h3 className="text-xl font-black mb-1 text-white">{plan.name}</h3>
-                      <div className="flex items-baseline gap-1 mb-1">
+                      {/* Price — standalone, not cumulative */}
+                      <div className="flex items-baseline gap-1">
                         <span className="text-3xl font-black text-white">${plan.price}</span>
                         <span className="text-white/40 text-sm">/mo</span>
                       </div>
-                      <p className="text-xs text-white/30 mb-5">+ $99 one-time setup</p>
+                      <p className="text-[11px] text-amber-400/70 mt-0.5 mb-5">+ ${CLIENT.setupFee} one-time setup</p>
+                      {includesLabel && (
+                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-wider mb-2">{includesLabel}</p>
+                      )}
                       <ul className="space-y-2 mb-6 flex-1">
                         {plan.features.map((f, i) => (
                           <li key={i} className="flex items-start gap-2 text-sm">
@@ -469,12 +533,97 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                 );
               })}
             </div>
-            <p className="text-center text-sm text-white/25 mt-8">
-              All plans include the $99 one-time setup fee · Secure payment via{' '}
-              <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="text-amber-400/60 hover:text-amber-400 transition">
-                pennywiseit.com.au
-              </a>
-            </p>
+            <div className="mt-8 bg-white/3 border border-white/8 rounded-2xl px-6 py-5 max-w-2xl mx-auto text-center space-y-1">
+              <p className="text-sm font-bold text-white/60">You only pay for one plan</p>
+              <p className="text-xs text-white/30 leading-relaxed">Each plan is standalone — you're not charged for lower tiers. The {CLIENT.setupFee === 99 ? '$99' : `$${CLIENT.setupFee}`} setup fee is a one-time charge that covers Facebook page connection and account configuration.</p>
+            </div>
+          </div>
+        )}
+
+        {/* ─── CONTACT TAB ─── */}
+        {tab === 'contact' && (
+          <div className="max-w-2xl mx-auto px-6 py-16">
+            <div className="text-center mb-10">
+              <h2 className="text-3xl md:text-4xl font-black mb-2">Get in touch</h2>
+              <p className="text-white/40 text-sm">We'd love to hear from you. Usually reply within 1 business day.</p>
+            </div>
+
+            {contactSent ? (
+              <div className="bg-green-500/8 border border-green-500/25 rounded-3xl p-10 text-center space-y-4">
+                <div className="w-16 h-16 mx-auto bg-green-500/15 border border-green-500/25 rounded-2xl flex items-center justify-center">
+                  <CheckCircle size={28} className="text-green-400" />
+                </div>
+                <h3 className="text-xl font-black text-white">Message sent!</h3>
+                <p className="text-white/50 text-sm">Thanks for reaching out. We'll be in touch shortly at <span className="text-amber-300">{contactForm.email}</span>.</p>
+                <button onClick={() => { setContactSent(false); setContactForm({ name: '', email: '', phone: '', message: '' }); }} className="text-xs text-white/30 hover:text-white/60 transition underline">
+                  Send another message
+                </button>
+              </div>
+            ) : (
+              <div className="bg-white/3 border border-white/8 rounded-3xl p-6 md:p-8 space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-white/40 block mb-1.5">Your Name *</label>
+                    <input
+                      value={contactForm.name}
+                      onChange={e => setContactForm(p => ({ ...p, name: e.target.value }))}
+                      placeholder="Jane Smith"
+                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-white/40 block mb-1.5">Email Address *</label>
+                    <input
+                      type="email"
+                      value={contactForm.email}
+                      onChange={e => setContactForm(p => ({ ...p, email: e.target.value }))}
+                      placeholder="jane@yourbusiness.com.au"
+                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-white/40 block mb-1.5">Phone (optional)</label>
+                  <input
+                    value={contactForm.phone}
+                    onChange={e => setContactForm(p => ({ ...p, phone: e.target.value }))}
+                    placeholder="0412 345 678"
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-white/40 block mb-1.5">Message *</label>
+                  <textarea
+                    value={contactForm.message}
+                    onChange={e => setContactForm(p => ({ ...p, message: e.target.value }))}
+                    rows={5}
+                    placeholder="Tell us about your business and what you need..."
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition resize-none"
+                  />
+                </div>
+                <button
+                  onClick={handleContactSend}
+                  disabled={!contactForm.name.trim() || !contactForm.email.trim() || !contactForm.message.trim() || contactSending}
+                  className="w-full bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-40 text-black font-black py-3.5 rounded-2xl flex items-center justify-center gap-2 transition hover:opacity-90 text-sm"
+                >
+                  {contactSending
+                    ? <><span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" /> Sending…</>
+                    : <>Send Message <ArrowRight size={15} /></>}
+                </button>
+
+                <div className="border-t border-white/6 pt-5 space-y-3">
+                  <p className="text-xs text-white/25 text-center">Or reach us directly:</p>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <a href={`mailto:${CLIENT.supportEmail}`} className="flex items-center gap-2 text-xs text-white/40 hover:text-amber-300 border border-white/8 hover:border-amber-500/25 px-3 py-2 rounded-xl transition">
+                      ✉ {CLIENT.supportEmail}
+                    </a>
+                    <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-white/40 hover:text-amber-300 border border-white/8 hover:border-amber-500/25 px-3 py-2 rounded-xl transition">
+                      🌐 {CLIENT.salesUrl.replace('https://', '')}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -523,7 +672,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
       <footer className="border-t border-white/5 py-8 px-6 mt-8">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-white/20">
           <AppLogo size={40} />
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap justify-center">
             {NAV_TABS.map(t => (
               <button key={t.id} onClick={() => setTab(t.id)} className="hover:text-white/50 transition">{t.label}</button>
             ))}
