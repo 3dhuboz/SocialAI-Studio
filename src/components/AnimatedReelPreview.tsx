@@ -4,20 +4,25 @@ interface AnimatedReelPreviewProps {
   hookText?: string;
   mood?: string;
   size?: 'sm' | 'md';
+  onClick?: () => void;
+  className?: string;
 }
 
 export const AnimatedReelPreview: React.FC<AnimatedReelPreviewProps> = ({
   hookText = '',
   mood,
   size = 'md',
+  onClick,
+  className = '',
 }) => {
   const w = size === 'sm' ? 'w-20' : 'w-24';
   const h = size === 'sm' ? 'h-32' : 'h-40';
 
   return (
     <div
-      className={`${w} ${h} rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg shadow-purple-900/30`}
+      className={`${w} ${h} rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg shadow-purple-900/30 ${onClick ? 'cursor-pointer group/reel' : ''} ${className}`}
       style={{ background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
+      onClick={onClick}
     >
       <style>{`
         @keyframes reel-bg-shift {

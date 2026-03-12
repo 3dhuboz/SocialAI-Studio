@@ -110,6 +110,7 @@ const Dashboard: React.FC = () => {
   const [showIntakeForm, setShowIntakeForm] = useState(false);
   const [intakeFormDone, setIntakeFormDone] = useState(false);
   const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState(false);
+  const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -816,6 +817,75 @@ const Dashboard: React.FC = () => {
         />
       )}
 
+      {/* Video Script Lightbox */}
+      {videoScriptModal && (
+        <div
+          className="fixed inset-0 z-[999] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(14px)' }}
+          onClick={() => setVideoScriptModal(null)}
+        >
+          <div
+            className="relative w-full max-w-2xl bg-[#0f0f1a] border border-purple-500/25 rounded-3xl overflow-hidden shadow-2xl shadow-purple-900/30"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-purple-500/15 bg-purple-950/30">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black bg-purple-500/70 text-white px-2 py-0.5 rounded-full">REEL</span>
+                <span className="text-sm font-bold text-white">Video Script &amp; Brief</span>
+              </div>
+              <button onClick={() => setVideoScriptModal(null)} className="text-white/30 hover:text-white transition p-1 rounded-lg hover:bg-white/8">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex gap-5 p-6">
+              {/* Animated preview — larger */}
+              <AnimatedReelPreview
+                hookText={videoScriptModal.hookText}
+                mood={videoScriptModal.mood}
+                size="md"
+                className="!w-28 !h-48 flex-shrink-0"
+              />
+
+              {/* Script details */}
+              <div className="flex-1 min-w-0 space-y-4 overflow-y-auto max-h-[70vh] pr-1">
+                {videoScriptModal.script && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-black text-purple-400 uppercase tracking-wider">Script</p>
+                    <div className="bg-purple-950/40 border border-purple-500/15 rounded-xl p-4">
+                      <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">{videoScriptModal.script}</p>
+                    </div>
+                  </div>
+                )}
+                {videoScriptModal.shots && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-black text-purple-400 uppercase tracking-wider">Shot-by-Shot Brief</p>
+                    <div className="bg-purple-950/40 border border-purple-500/15 rounded-xl p-4">
+                      <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{videoScriptModal.shots}</p>
+                    </div>
+                  </div>
+                )}
+                {videoScriptModal.mood && (
+                  <div className="flex items-center gap-2 bg-purple-950/20 border border-purple-500/10 rounded-xl px-4 py-3">
+                    <span className="text-purple-300 text-sm">♪</span>
+                    <span className="text-[11px] font-bold text-purple-300 uppercase tracking-wider">Music Mood:</span>
+                    <span className="text-sm text-white/60">{videoScriptModal.mood}</span>
+                  </div>
+                )}
+                {!videoScriptModal.script && !videoScriptModal.shots && (
+                  <p className="text-sm text-white/30 italic">No script details available for this post.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 pb-5">
+              <p className="text-[10px] text-white/20 text-center">Click anywhere outside to close</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showOnboarding && (
         <OnboardingWizard
           profile={profile}
@@ -1370,6 +1440,12 @@ const Dashboard: React.FC = () => {
                         hookText={post.content}
                         mood={(post as any).videoMood}
                         size="sm"
+                        onClick={() => setVideoScriptModal({
+                          hookText: post.content,
+                          script: (post as any).videoScript,
+                          shots: (post as any).videoShots,
+                          mood: (post as any).videoMood,
+                        })}
                       />
                     ) : (
                       <div className="w-24 h-24 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group/img">
@@ -1659,6 +1735,14 @@ const Dashboard: React.FC = () => {
                           }
                           mood={(sp as any).videoMood}
                           size="md"
+                          onClick={() => setVideoScriptModal({
+                            hookText: (sp as any).videoScript
+                              ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() ?? sp.content
+                              : sp.content,
+                            script: (sp as any).videoScript,
+                            shots: (sp as any).videoShots,
+                            mood: (sp as any).videoMood,
+                          })}
                         />
                       ) : (
                         <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group">
