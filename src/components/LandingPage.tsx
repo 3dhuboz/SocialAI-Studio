@@ -8,6 +8,7 @@ import {
   TrendingUp, MessageCircle, Repeat2
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
+import { AnimatedDemo } from './AnimatedDemo';
 
 interface Props {
   onActivate: (plan: 'starter' | 'growth' | 'pro') => void;
@@ -203,35 +204,8 @@ export const LandingPage: React.FC<Props> = ({ onActivate }) => {
                 </div>
               )
             ) : (
-              /* ── Animated placeholder (no video configured yet) ── */
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
-                {/* Ambient glows */}
-                <div className="absolute top-0 left-1/4 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
-                <div className="absolute bottom-0 right-1/4 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-
-                {/* Animated play button */}
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 rounded-full bg-amber-400/20 animate-ping" style={{ animationDuration: '2s' }} />
-                  <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-xl shadow-amber-500/30">
-                    <Play size={30} className="text-white ml-1" fill="white" />
-                  </div>
-                </div>
-
-                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-4">
-                  Coming Soon
-                </div>
-                <h3 className="text-xl md:text-2xl font-black text-white mb-2">Watch: How AI Transforms Your Social Media</h3>
-                <p className="text-white/40 text-sm max-w-md">
-                  Our explainer video walks you through how AI writes, designs, and schedules your social posts — so you never have to start from a blank page again.
-                </p>
-
-                <button
-                  onClick={() => setShowPricing(true)}
-                  className="mt-6 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-6 py-3 rounded-2xl hover:opacity-90 transition text-sm shadow-lg"
-                >
-                  Get Started Today <ArrowRight size={15} />
-                </button>
-              </div>
+              /* ── Animated product demo (no YouTube video configured) ── */
+              <AnimatedDemo />
             )}
           </div>
 
