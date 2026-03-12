@@ -29,6 +29,14 @@ export interface LatePostResult {
 }
 
 export const LateService = {
+  /** List existing Late profiles. Returns array of { id, name }. */
+  listProfiles: async (): Promise<{ id: string; name: string }[]> => {
+    const res = await fetch(`${PROXY}?action=list-profiles`);
+    const data = await safeJson(res);
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to list profiles');
+    return ((data.profiles as any[]) || []).map(p => ({ id: p._id, name: p.name }));
+  },
+
   /** Create a Late profile for a new client. Returns the profileId. */
   createProfile: async (title: string): Promise<string> => {
     const res = await fetch(`${PROXY}?action=create-profile`, {

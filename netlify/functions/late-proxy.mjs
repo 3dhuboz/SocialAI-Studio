@@ -50,11 +50,19 @@ export const handler = async (event) => {
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
-    // ── Get OAuth connect URL for a platform ────────────────────────────
+    // ── List existing profiles (to reuse instead of hitting plan limit) ──
+    if (action === 'list-profiles' && event.httpMethod === 'GET') {
+      const res = await fetch(`${LATE_BASE}/profiles`, { headers: authHeader });
+      const data = await res.json();
+      return { statusCode: res.status, headers, body: JSON.stringify(data) };
+    }
+
+    // ── Get OAuth connect URL for a platform (standard mode — Late hosts UI) ─
     if (action === 'connect-url' && event.httpMethod === 'GET') {
       const { profileId, platform = 'facebook', redirectUrl } = qs;
       if (!profileId) return { statusCode: 400, headers, body: JSON.stringify({ error: 'profileId required' }) };
-      const params = new URLSearchParams({ profileId, redirect_url: redirectUrl || '', headless: 'true' });
+      // Standard mode: Late handles page/account selection UI itself
+      const params = new URLSearchParams({ profileId, redirect_url: redirectUrl || '' });
       const res = await fetch(`${LATE_BASE}/connect/${platform}?${params}`, { headers: authHeader });
       const data = await res.json();
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
