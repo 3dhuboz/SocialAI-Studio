@@ -104,15 +104,22 @@ export const generateSocialPost = async (
 };
 
 export const generateMarketingImage = async (prompt: string): Promise<string | null> => {
-  const ai = getAI();
-  if (!ai) return null;
+  const key = getApiKey();
+  if (!key) return null;
 
-  const models = ['gemini-2.5-flash-image', 'gemini-2.0-flash-exp-image-generation'];
+  // Image generation requires the v1beta endpoint — v1 does not expose responseModalities
+  const imageAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
+
+  const models = [
+    'gemini-2.0-flash-preview-image-generation',
+    'gemini-2.0-flash-exp',
+  ];
+
   for (const model of models) {
     try {
-      const response = await ai.models.generateContent({
+      const response = await imageAI.models.generateContent({
         model,
-        contents: `Professional marketing image: ${prompt}. High quality, vibrant, cinematic lighting, no text or watermarks.`,
+        contents: `Create a professional marketing image for social media: ${prompt}. High quality, vibrant colours, cinematic lighting. No text, watermarks or logos.`,
         config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
       });
 
@@ -126,8 +133,8 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
           }
         }
       }
-    } catch (error) {
-      console.warn(`Gemini Image (${model}):`, error);
+    } catch (error: any) {
+      console.warn(`Gemini Image (${model}):`, error?.message ?? error);
       continue;
     }
   }

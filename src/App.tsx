@@ -480,8 +480,8 @@ const Dashboard: React.FC = () => {
     try {
       const img = await generateMarketingImage(prompt);
       if (img) setSmartPostImages(prev => ({ ...prev, [idx]: img }));
-      else toast('Image generation unavailable — try uploading one instead.', 'warning');
-    } catch { toast('Image generation failed.', 'error'); }
+      else toast('Image generation failed — check console for details, or upload an image instead.', 'warning');
+    } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
     setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
   };
 
