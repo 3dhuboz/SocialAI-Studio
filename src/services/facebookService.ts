@@ -6,6 +6,13 @@ export interface FacebookPage {
   picture?: { data: { url: string } };
 }
 
+export interface ExchangeResult {
+  pages: FacebookPage[];
+  longLivedUserToken: string;
+  expiresIn: number;           // seconds, ~5_184_000 (60 days)
+  pageTokensNeverExpire: boolean;
+}
+
 export const FacebookService = {
   init: (appId: string): Promise<void> => {
     return new Promise((resolve) => {
@@ -35,6 +42,32 @@ export const FacebookService = {
     });
   },
 
+  /** Get the current short-lived user access token from the FB SDK auth response */
+  getUserAccessToken: (): string | null => {
+    if (!window.FB) return null;
+    const auth = window.FB.getAuthResponse();
+    return auth?.accessToken ?? null;
+  },
+
+  /**
+   * Exchange the short-lived user token for permanent page tokens via the
+   * Netlify serverless function (keeps App Secret off the client).
+   * Page tokens derived from a long-lived user token never expire.
+   */
+  exchangeForLongLivedPages: async (shortLivedToken: string): Promise<ExchangeResult> => {
+    const res = await fetch('/.netlify/functions/facebook-exchange-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_token: shortLivedToken }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || 'Token exchange failed');
+    }
+    return data as ExchangeResult;
+  },
+
+  /** Fallback: fetch pages directly with the short-lived token (tokens expire in ~1h) */
   getPages: (): Promise<FacebookPage[]> => {
     return new Promise((resolve, reject) => {
       if (!window.FB) return reject(new Error('Facebook SDK not initialized'));

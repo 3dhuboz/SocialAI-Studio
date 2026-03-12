@@ -1,22 +1,25 @@
 import React, { useState } from 'react';
 import { FacebookService, FacebookPage } from '../services/facebookService';
 import { CLIENT } from '../client.config';
-import { Facebook, Loader2, CheckCircle, ChevronRight, AlertCircle, ExternalLink, X } from 'lucide-react';
+import { Facebook, Loader2, CheckCircle, ChevronRight, AlertCircle, ExternalLink, X, Shield } from 'lucide-react';
 
 interface Props {
-  onConnected: (pageId: string, pageAccessToken: string, pageName: string) => void;
+  onConnected: (pageId: string, pageAccessToken: string, pageName: string, longLivedUserToken?: string) => void;
   onDisconnect: () => void;
   connectedPageId?: string;
   connectedPageName?: string;
+  tokenNeverExpires?: boolean;
 }
 
 type Step = 'idle' | 'logging_in' | 'picking' | 'error';
 
 export const FacebookConnectButton: React.FC<Props> = ({
-  onConnected, onDisconnect, connectedPageId, connectedPageName,
+  onConnected, onDisconnect, connectedPageId, connectedPageName, tokenNeverExpires,
 }) => {
   const [step, setStep] = useState<Step>('idle');
   const [pages, setPages] = useState<FacebookPage[]>([]);
+  const [longLivedToken, setLongLivedToken] = useState<string | undefined>();
+  const [usingPermanentTokens, setUsingPermanentTokens] = useState(false);
   const [error, setError] = useState('');
   const hasAppId = !!CLIENT.facebookAppId;
 
@@ -25,8 +28,28 @@ export const FacebookConnectButton: React.FC<Props> = ({
     setError('');
     try {
       await FacebookService.init(CLIENT.facebookAppId);
-      await FacebookService.login();
-      const fetchedPages = await FacebookService.getPages();
+      const authResponse = await FacebookService.login();
+      const shortLivedToken: string = authResponse?.accessToken;
+
+      let fetchedPages: FacebookPage[] = [];
+      let llt: string | undefined;
+      let permanent = false;
+
+      // Try the Netlify token-exchange function first (permanent page tokens)
+      try {
+        const result = await FacebookService.exchangeForLongLivedPages(shortLivedToken);
+        fetchedPages = result.pages;
+        llt = result.longLivedUserToken;
+        permanent = result.pageTokensNeverExpire;
+      } catch (exchangeErr: any) {
+        // Netlify function not available (e.g. local dev) — fall back to short-lived tokens
+        console.warn('Token exchange unavailable, using short-lived tokens:', exchangeErr.message);
+        fetchedPages = await FacebookService.getPages();
+      }
+
+      setLongLivedToken(llt);
+      setUsingPermanentTokens(permanent);
+
       if (fetchedPages.length === 0) {
         setError('No Facebook Pages found on your account. Make sure you are an admin of a Facebook Page (not just a personal profile).');
         setStep('error');
@@ -34,7 +57,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
       }
       if (fetchedPages.length === 1) {
         const p = fetchedPages[0];
-        onConnected(p.id, p.access_token, p.name);
+        onConnected(p.id, p.access_token, p.name, llt);
         setStep('idle');
         return;
       }
@@ -58,7 +81,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
   };
 
   const handlePickPage = (page: FacebookPage) => {
-    onConnected(page.id, page.access_token, page.name);
+    onConnected(page.id, page.access_token, page.name, longLivedToken);
     setPages([]);
     setStep('idle');
   };
@@ -83,7 +106,12 @@ export const FacebookConnectButton: React.FC<Props> = ({
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <CheckCircle size={11} /> Connected · auto-publishing active
             </p>
-            <p className="text-[11px] text-white/25 font-mono mt-0.5">ID: {connectedPageId}</p>
+            <p className="text-[11px] mt-0.5 flex items-center gap-1.5">
+              {tokenNeverExpires
+                ? <span className="text-emerald-400/80 flex items-center gap-1"><Shield size={10} /> Permanent token — never expires</span>
+                : <span className="text-amber-400/60 flex items-center gap-1">⚠ Short-lived token — reconnect to upgrade</span>
+              }
+            </p>
           </div>
           <button
             onClick={handleDisconnect}

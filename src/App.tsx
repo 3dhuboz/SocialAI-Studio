@@ -109,6 +109,7 @@ const Dashboard: React.FC = () => {
   const [showPricing, setShowPricing] = useState(false);
   const [showIntakeForm, setShowIntakeForm] = useState(false);
   const [intakeFormDone, setIntakeFormDone] = useState(false);
+  const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState(false);
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -145,6 +146,7 @@ const Dashboard: React.FC = () => {
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
+          if (d.fbTokenNeverExpires) setFbTokenNeverExpires(true);
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -2335,7 +2337,10 @@ const Dashboard: React.FC = () => {
               <FacebookConnectButton
                 connectedPageId={profile.facebookPageId}
                 connectedPageName={profile.name !== CLIENT.defaultBusinessName ? profile.name : undefined}
-                onConnected={(pageId, pageAccessToken, pageName) => {
+                tokenNeverExpires={fbTokenNeverExpires}
+                onConnected={(pageId, pageAccessToken, pageName, longLivedUserToken) => {
+                  const permanent = !!longLivedUserToken;
+                  setFbTokenNeverExpires(permanent);
                   setProfile(prev => ({
                     ...prev,
                     facebookPageId: pageId,
@@ -2343,16 +2348,25 @@ const Dashboard: React.FC = () => {
                     facebookConnected: true,
                     name: prev.name === CLIENT.defaultBusinessName ? pageName : prev.name,
                   }));
-                  toast(`Connected to "${pageName}"! Saving…`, 'success');
+                  // Persist permanent token status + optional long-lived user token to Firestore
+                  if (user) {
+                    const extra = { fbTokenNeverExpires: permanent, ...(longLivedUserToken ? { fbLongLivedUserToken: longLivedUserToken } : {}) };
+                    updateDoc(doc(db, 'users', user.uid), extra).catch(() =>
+                      setDoc(doc(db, 'users', user.uid), extra, { merge: true })
+                    );
+                  }
+                  toast(permanent ? `Connected to "${pageName}" with a permanent token ✓` : `Connected to "${pageName}"! Saving…`, 'success');
                   handleSaveFacebook();
                 }}
                 onDisconnect={() => {
+                  setFbTokenNeverExpires(false);
                   setProfile(prev => ({
                     ...prev,
                     facebookPageId: '',
                     facebookPageAccessToken: '',
                     facebookConnected: false,
                   }));
+                  if (user) updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires: false, fbLongLivedUserToken: null }).catch(() => {});
                   toast('Facebook page disconnected.', 'warning');
                 }}
               />
