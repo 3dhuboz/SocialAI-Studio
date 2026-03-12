@@ -155,44 +155,76 @@ const StripeFallback: React.FC<{ onClose?: () => void; onBack: () => void }> = (
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-lg flex items-center justify-center p-4 overflow-y-auto">
-      <div className="w-full max-w-5xl">
-        <div className="flex items-center justify-between mb-4">
-          <button onClick={onBack} className="text-white/40 hover:text-white bg-white/8 hover:bg-white/15 rounded-xl px-4 py-2 text-sm transition flex items-center gap-2">
+    <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-xl flex items-start justify-center p-4 pt-6 overflow-y-auto">
+      <div className="w-full max-w-4xl pb-10">
+
+        {/* Nav row */}
+        <div className="flex items-center justify-between mb-6">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-4 py-2 text-sm transition"
+          >
             ← Back to plans
           </button>
           {onClose && (
-            <button onClick={onClose} className="text-white/40 hover:text-white bg-white/8 hover:bg-white/15 rounded-xl px-4 py-2 text-sm transition flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="flex items-center gap-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-4 py-2 text-sm transition"
+            >
               <X size={14} /> Close
             </button>
           )}
         </div>
-        <div className="bg-[#111118] border border-white/10 rounded-3xl overflow-hidden">
-          <div className="text-center pt-8 pb-4 px-6">
-            <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-4">
-              <Zap size={12} /> Secure checkout via Stripe
+
+        {/* Main card */}
+        <div className="rounded-3xl overflow-hidden shadow-2xl border border-white/10">
+
+          {/* Dark gradient header */}
+          <div className="bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#0f0f1a] px-8 pt-8 pb-10 text-center relative overflow-hidden">
+            {/* Decorative glow */}
+            <div className="absolute inset-0 bg-gradient-to-b from-amber-500/5 to-transparent pointer-events-none" />
+            <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold px-4 py-2 rounded-full mb-5 shadow">
+                <Lock size={11} /> Secure checkout powered by Stripe
+              </div>
+              <h2 className="text-3xl font-black text-white mb-2 tracking-tight">Complete your subscription</h2>
+              <p className="text-white/40 text-sm">Select a plan below · No lock-in · Cancel anytime</p>
             </div>
-            <h2 className="text-2xl font-black text-white mb-2">Complete your subscription</h2>
+
+            {/* Gradient fade into white */}
+            <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-b from-transparent to-white pointer-events-none" />
           </div>
-          <div className="px-6 pb-8 min-h-[380px] relative">
+
+          {/* Stripe table — white background intentionally matches Stripe's own styling */}
+          <div className="bg-white relative min-h-[400px]">
             {!loaded && (
-              <div className="absolute inset-0 flex items-center justify-center">
+              <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
                 <div className="flex flex-col items-center gap-3">
-                  <Loader2 size={28} className="animate-spin text-amber-400" />
-                  <p className="text-sm text-white/40">Loading secure checkout…</p>
+                  <Loader2 size={28} className="animate-spin text-amber-500" />
+                  <p className="text-sm text-gray-400">Loading secure checkout…</p>
                 </div>
               </div>
             )}
-            {React.createElement('stripe-pricing-table', {
-              'pricing-table-id': CLIENT.stripePricingTableId,
-              'publishable-key': CLIENT.stripePublishableKey,
-            })}
+            <div className="px-4 py-6">
+              {React.createElement('stripe-pricing-table', {
+                'pricing-table-id': CLIENT.stripePricingTableId,
+                'publishable-key': CLIENT.stripePublishableKey,
+              })}
+            </div>
           </div>
-          <div className="border-t border-white/5 px-6 py-4 flex items-center justify-center gap-6 text-xs text-white/20">
-            <span className="flex items-center gap-1.5"><CheckCircle size={11} /> 256-bit SSL</span>
-            <span className="flex items-center gap-1.5"><CheckCircle size={11} /> Powered by Stripe</span>
-            <span className="flex items-center gap-1.5"><CheckCircle size={11} /> Cancel anytime</span>
+
+          {/* Dark footer */}
+          <div className="bg-[#0d0d14] border-t border-white/5 px-8 py-5">
+            <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-white/25">
+              <span className="flex items-center gap-1.5"><CheckCircle size={11} className="text-emerald-500/60" /> 256-bit SSL encryption</span>
+              <span className="flex items-center gap-1.5"><Shield size={11} className="text-blue-500/60" /> PCI DSS compliant</span>
+              <span className="flex items-center gap-1.5"><CheckCircle size={11} className="text-emerald-500/60" /> Cancel anytime</span>
+              <span className="flex items-center gap-1.5"><Zap size={11} className="text-amber-500/60" /> Instant activation</span>
+            </div>
           </div>
+
         </div>
       </div>
     </div>
