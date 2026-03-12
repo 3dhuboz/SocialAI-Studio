@@ -8,7 +8,7 @@ interface Props {
   onDisconnect: () => void;
   connectedPageId?: string;
   connectedPageName?: string;
-  tokenNeverExpires?: boolean;
+  tokenNeverExpires?: boolean | undefined;  // true=permanent, false=known short-lived, undefined=unknown
 }
 
 type Step = 'idle' | 'logging_in' | 'picking' | 'error';
@@ -106,12 +106,16 @@ export const FacebookConnectButton: React.FC<Props> = ({
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <CheckCircle size={11} /> Connected · auto-publishing active
             </p>
-            <p className="text-[11px] mt-0.5 flex items-center gap-1.5">
-              {tokenNeverExpires
-                ? <span className="text-emerald-400/80 flex items-center gap-1"><Shield size={10} /> Permanent token — never expires</span>
-                : <span className="text-amber-400/60 flex items-center gap-1">⚠ Short-lived token — reconnect to upgrade</span>
-              }
-            </p>
+            {tokenNeverExpires === true && (
+              <p className="text-[11px] mt-0.5">
+                <span className="text-emerald-400/80 flex items-center gap-1"><Shield size={10} /> Permanent token — never expires</span>
+              </p>
+            )}
+            {tokenNeverExpires === false && (
+              <p className="text-[11px] mt-0.5">
+                <span className="text-amber-400/60 flex items-center gap-1">⚠ Short-lived token — reconnect to upgrade</span>
+              </p>
+            )}
           </div>
           <button
             onClick={handleDisconnect}

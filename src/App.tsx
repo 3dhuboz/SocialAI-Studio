@@ -109,7 +109,7 @@ const Dashboard: React.FC = () => {
   const [showPricing, setShowPricing] = useState(false);
   const [showIntakeForm, setShowIntakeForm] = useState(false);
   const [intakeFormDone, setIntakeFormDone] = useState(false);
-  const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState(false);
+  const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState<boolean | undefined>(undefined);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
 
   // Agency client workspaces
@@ -147,7 +147,7 @@ const Dashboard: React.FC = () => {
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
-          if (d.fbTokenNeverExpires) setFbTokenNeverExpires(true);
+          if (typeof d.fbTokenNeverExpires === 'boolean') setFbTokenNeverExpires(d.fbTokenNeverExpires);
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -714,8 +714,24 @@ const Dashboard: React.FC = () => {
     setFbLookupError('');
     setFbPages([]);
     try {
+      // Try the Netlify exchange first — gives permanent page tokens
+      try {
+        const result = await FacebookService.exchangeForLongLivedPages(token);
+        setFbPages(result.pages);
+        setFbTokenNeverExpires(true);
+        // Store the long-lived user token for future use
+        if (user) {
+          updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires: true, fbLongLivedUserToken: result.longLivedUserToken }).catch(() => {});
+        }
+        setIsFindingPages(false);
+        return;
+      } catch {
+        // Netlify function not configured — fall back to direct lookup
+      }
       const pages = await FacebookService.getPagesByToken(token);
       setFbPages(pages);
+      // Status unknown for manual tokens without exchange — don't mark as short-lived
+      setFbTokenNeverExpires(undefined);
     } catch (e: any) {
       setFbLookupError(e?.message || 'Could not fetch pages.');
     }
@@ -2443,14 +2459,14 @@ const Dashboard: React.FC = () => {
                   handleSaveFacebook();
                 }}
                 onDisconnect={() => {
-                  setFbTokenNeverExpires(false);
+                  setFbTokenNeverExpires(undefined);
                   setProfile(prev => ({
                     ...prev,
                     facebookPageId: '',
                     facebookPageAccessToken: '',
                     facebookConnected: false,
                   }));
-                  if (user) updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires: false, fbLongLivedUserToken: null }).catch(() => {});
+                  if (user) updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires: null, fbLongLivedUserToken: null }).catch(() => {});
                   toast('Facebook page disconnected.', 'warning');
                 }}
               />
@@ -2462,13 +2478,25 @@ const Dashboard: React.FC = () => {
                   Connect manually with an access token instead
                 </summary>
                 <div className="mt-4 space-y-3">
-                  <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4">
-                    <p className="text-xs font-semibold text-blue-300 mb-2">Get a token from Graph Explorer:</p>
+                  {/* ── Option A: System User (permanent, recommended) ── */}
+                  <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4 space-y-2">
+                    <p className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">⭐ Recommended — Never-expiring System User token</p>
                     <ol className="text-xs text-white/35 space-y-1.5 list-decimal list-inside leading-relaxed">
+                      <li>Go to <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className="text-emerald-400/70 hover:text-emerald-400">Facebook Business Manager → System Users</a></li>
+                      <li>Create a System User (role: <strong className="text-white/50">Admin</strong>)</li>
+                      <li>Click <strong className="text-white/50">Add Assets</strong> → select your Facebook Page → give it <strong className="text-white/50">Full Control</strong></li>
+                      <li>Click <strong className="text-white/50">Generate New Token</strong> → select your App → tick <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
+                      <li>Set expiry to <strong className="text-white/50">Never</strong> → copy and paste below</li>
+                    </ol>
+                  </div>
+
+                  {/* ── Option B: Graph Explorer (quick, short-lived) ── */}
+                  <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 space-y-2">
+                    <p className="text-xs font-semibold text-blue-300">Quick option — Graph Explorer token (expires in ~60 days)</p>
+                    <ol className="text-xs text-white/35 space-y-1 list-decimal list-inside leading-relaxed">
                       <li>Go to <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-400/70 hover:text-blue-400">Facebook Graph Explorer</a></li>
-                      <li>Click <strong className="text-white/50">Generate Access Token</strong> → select your <strong className="text-white/50">Page</strong> (not "Me")</li>
-                      <li>Add permissions: <code className="bg-white/10 px-1 rounded">pages_show_list</code> <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
-                      <li>Copy the token and paste it below — both <strong className="text-white/50">User</strong> and <strong className="text-white/50">Page</strong> tokens are accepted</li>
+                      <li>Click <strong className="text-white/50">Generate Access Token</strong> → select your <strong className="text-white/50">Page</strong></li>
+                      <li>Add: <code className="bg-white/10 px-1 rounded">pages_show_list</code> <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
                     </ol>
                   </div>
                   <div className="flex gap-2">
@@ -2497,6 +2525,9 @@ const Dashboard: React.FC = () => {
                         <button key={page.id} type="button"
                           onClick={() => {
                             setProfile(prev => ({ ...prev, facebookPageId: page.id, facebookPageAccessToken: page.access_token || prev.facebookPageAccessToken, facebookConnected: true }));
+                            if (user && typeof fbTokenNeverExpires === 'boolean') {
+                              updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires }).catch(() => {});
+                            }
                             setFbPages([]);
                             toast(`Page "${page.name}" selected!`, 'success');
                           }}
