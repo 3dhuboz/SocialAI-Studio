@@ -312,6 +312,9 @@ const Dashboard: React.FC = () => {
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
   const [isGeneratingReel, setIsGeneratingReel] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
+  const [publishSuccess, setPublishSuccess] = useState(false);
+  const [publishingPlatforms, setPublishingPlatforms] = useState<string[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
@@ -467,22 +470,37 @@ const Dashboard: React.FC = () => {
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
     setIsPublishing(true);
+    setPublishingPlatforms(platforms);
     try {
       const fullText = generatedHashtags.length > 0
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : generatedContent;
 
-      // Build mediaItems: prefer generated video, then uploaded image
+      // Build mediaItems: video > uploaded public image > base64 image (upload first)
       let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
       if (generatedVideoUrl) {
         mediaItems = [{ url: generatedVideoUrl, type: 'video' }];
-      } else if (generatedImage && !generatedImage.startsWith('data:')) {
-        // Only use image if it's a public URL (not base64)
-        mediaItems = [{ url: generatedImage, type: 'image' }];
+      } else if (generatedImage) {
+        if (!generatedImage.startsWith('data:')) {
+          mediaItems = [{ url: generatedImage, type: 'image' }];
+        } else {
+          // Upload base64 image to Late → get public URL
+          try {
+            const mimeType = generatedImage.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+            const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+            const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`post_${Date.now()}.${ext}`, mimeType);
+            const bytes = Uint8Array.from(atob(generatedImage.split(',')[1]), c => c.charCodeAt(0));
+            await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
+            mediaItems = [{ url: publicUrl, type: 'image' }];
+          } catch {
+            toast('Image upload failed — posting text only.', 'warning');
+          }
+        }
       }
 
       await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems);
-      toast(`Published to ${platforms.join(' & ')} successfully!`, 'success');
+      setPublishSuccess(true);
+      setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
       toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
     }
@@ -1081,6 +1099,107 @@ const Dashboard: React.FC = () => {
           userEmail={user?.email ?? undefined}
         />
       )}
+      {/* ── Publishing overlay ── */}
+      {isPublishing && (
+        <div className="fixed inset-0 z-[800] bg-black/75 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-[#0d0d1a] border border-blue-500/20 rounded-3xl p-10 flex flex-col items-center gap-6 max-w-xs w-full mx-4 shadow-2xl shadow-blue-900/30">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 rounded-full border-2 border-blue-500/20" />
+              <div className="absolute inset-0 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Send size={22} className="text-blue-400" />
+              </div>
+            </div>
+            <div className="text-center space-y-1.5">
+              <p className="text-lg font-bold text-white">Publishing your post…</p>
+              <p className="text-xs text-white/40">
+                Sending to {publishingPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' & ')} via Late
+              </p>
+              {generatedVideoUrl && <p className="text-xs text-purple-400/70 mt-1">📹 Video Reel included</p>}
+            </div>
+            <div className="flex gap-1.5">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.18}s` }} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Publish success overlay ── */}
+      {publishSuccess && !isPublishing && (
+        <div className="fixed inset-0 z-[800] bg-black/70 backdrop-blur-sm flex items-center justify-center" onClick={() => setPublishSuccess(false)}>
+          <div className="bg-[#0d0d1a] border border-green-500/25 rounded-3xl p-10 flex flex-col items-center gap-5 max-w-xs w-full mx-4 shadow-2xl shadow-green-900/20">
+            <div className="w-16 h-16 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center">
+              <CheckCircle size={32} className="text-green-400" />
+            </div>
+            <div className="text-center space-y-1.5">
+              <p className="text-xl font-black text-white">Posted! 🎉</p>
+              <p className="text-xs text-white/40">
+                Published to {publishingPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' & ')} successfully
+              </p>
+              {generatedVideoUrl && <p className="text-xs text-purple-300/60 mt-1">📹 Video Reel attached</p>}
+            </div>
+            <p className="text-[10px] text-white/20">Tap anywhere to dismiss</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Post preview modal ── */}
+      {showPreview && (
+        <div className="fixed inset-0 z-[800] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowPreview(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Facebook-style header */}
+            <div className="flex items-center gap-3 p-4 border-b border-gray-100">
+              <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-sm flex-shrink-0">
+                {(profile.name || 'B').charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="font-bold text-gray-900 text-sm leading-tight">{profile.name || 'Your Business'}</p>
+                <p className="text-xs text-gray-400 flex items-center gap-1">Just now · 🌐</p>
+              </div>
+              <button onClick={() => setShowPreview(false)} className="ml-auto text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition">
+                <X size={16} />
+              </button>
+            </div>
+            {/* Post body */}
+            <div className="p-4">
+              <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap">
+                {generatedContent}
+              </p>
+              {generatedHashtags.length > 0 && (
+                <p className="text-blue-600 text-sm mt-2 leading-relaxed">
+                  {generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}
+                </p>
+              )}
+            </div>
+            {/* Media preview */}
+            {generatedVideoUrl ? (
+              <video src={generatedVideoUrl} className="w-full max-h-64 object-cover bg-black" autoPlay loop muted playsInline poster={generatedImage || undefined} />
+            ) : generatedImage ? (
+              <img src={generatedImage} alt="Post media" className="w-full max-h-64 object-cover" />
+            ) : null}
+            {/* Facebook-style actions */}
+            <div className="px-4 py-3 border-t border-gray-100">
+              <div className="flex justify-around text-gray-500 text-sm font-semibold">
+                <span className="flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-gray-50 cursor-default">👍 Like</span>
+                <span className="flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-gray-50 cursor-default">💬 Comment</span>
+                <span className="flex items-center gap-1.5 py-1.5 px-3 rounded-lg hover:bg-gray-50 cursor-default">↗ Share</span>
+              </div>
+            </div>
+            <div className="px-4 pb-4">
+              <button
+                onClick={() => { setShowPreview(false); handlePublishViaLate(lateConnectedPlatforms.length ? lateConnectedPlatforms.map(p => p.toLowerCase() as 'facebook' | 'instagram') : ['facebook', 'instagram']); }}
+                disabled={!fbConnected || isGeneratingReel}
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 transition text-sm"
+              >
+                <Send size={14} /> Publish Now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Post-payment plan picker */}
       {showPlanPicker && (
         <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
@@ -1615,6 +1734,14 @@ const Dashboard: React.FC = () => {
                   >
                     <Save size={14} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
                   </button>
+                  {generatedContent && (
+                    <button
+                      onClick={() => setShowPreview(true)}
+                      className="bg-white/6 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition text-sm"
+                    >
+                      <Eye size={14} /> Preview
+                    </button>
+                  )}
                   {fbConnected && (
                     <button
                       onClick={() => handlePublishViaLate(lateConnectedPlatforms.length ? lateConnectedPlatforms.map(p => p.toLowerCase() as 'facebook' | 'instagram') : ['facebook', 'instagram'])}
