@@ -17,7 +17,7 @@ import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
-import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, InsightReport, SmartScheduledPost } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { LateService } from './services/lateService';
 import { SotrendService } from './services/sotrendService';
@@ -307,6 +307,8 @@ const Dashboard: React.FC = () => {
   const [scheduleDate, setScheduleDate] = useState('');
   const [createMode, setCreateMode] = useState<'generate' | 'write'>('generate');
   const [contentType, setContentType] = useState<'text' | 'image' | 'video'>('text');
+  const [generatedVideoScript, setGeneratedVideoScript] = useState<VideoScript | null>(null);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
@@ -509,8 +511,16 @@ const Dashboard: React.FC = () => {
   };
 
   const handleCreatePost = async () => {
+    setGeneratedVideoScript(null);
     await handleGenerate();
     if (contentType === 'image') await handleGenerateImage();
+    if (contentType === 'video') {
+      setIsGeneratingVideo(true);
+      const caption = generatedContent;
+      const brief = await generateVideoScript(topic, platform, profile.name, profile.type, profile.tone, caption);
+      setGeneratedVideoScript(brief);
+      setIsGeneratingVideo(false);
+    }
   };
 
   const handleGenerateImage = async () => {
@@ -1333,14 +1343,35 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
 
+              {/* Quick-start starters */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold text-white/20 uppercase tracking-widest">Quick starts — click to use</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { icon: '🔥', label: 'Flash sale', text: `Flash sale this weekend — 20% off everything in store. Don't miss out!` },
+                    { icon: '🎉', label: 'New product', text: `We just launched something new — and you're going to love it. Come check it out!` },
+                    { icon: '🎬', label: 'Behind the scenes', text: `Ever wonder what goes on behind the scenes here? Here's a quick look at how we do what we do.` },
+                    { icon: '⭐', label: 'Customer win', text: `A customer came to us with a problem — here's how we helped them and what they said.` },
+                    { icon: '💡', label: 'Top tip', text: `Here's a quick tip that could save you time and money this week.` },
+                    { icon: '📣', label: 'Event / reminder', text: `Don't forget — we're open this public holiday! Pop in and see us.` },
+                  ].map(s => (
+                    <button key={s.label}
+                      onClick={() => setTopic(s.text)}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/8 bg-white/2 text-white/30 hover:text-white/60 hover:border-amber-500/30 hover:bg-amber-500/5 transition">
+                      <span>{s.icon}</span> {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Create button */}
               <button
                 onClick={handleCreatePost}
-                disabled={isGenerating || isGeneratingImage || !topic.trim()}
+                disabled={isGenerating || isGeneratingImage || isGeneratingVideo || !topic.trim()}
                 className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-7 py-3 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20 text-sm"
               >
-                {(isGenerating || isGeneratingImage) ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-                {(isGenerating || isGeneratingImage) ? 'Creating…' : `Create ${contentType === 'image' ? 'Post + Image' : contentType === 'video' ? 'Post + Video Brief' : 'Post'}`}
+                {(isGenerating || isGeneratingImage || isGeneratingVideo) ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                {isGenerating ? 'Writing caption…' : isGeneratingVideo ? 'Building video brief…' : isGeneratingImage ? 'Generating image…' : `Create ${contentType === 'image' ? 'Post + Image' : contentType === 'video' ? 'Post + Video Brief' : 'Post'}`}
               </button>
             </div>
 
@@ -1357,7 +1388,7 @@ const Dashboard: React.FC = () => {
                   <div className="flex items-center gap-2">
                     {generatedContent && <span className="text-[10px] text-white/25">{generatedContent.length} chars</span>}
                     <button
-                      onClick={() => { setGeneratedContent(''); setGeneratedHashtags([]); setGeneratedImage(null); }}
+                      onClick={() => { setGeneratedContent(''); setGeneratedHashtags([]); setGeneratedImage(null); setGeneratedVideoScript(null); }}
                       className="text-white/20 hover:text-white/50 transition p-1 rounded-lg hover:bg-white/5"
                       title="Clear"
                     >
@@ -1426,6 +1457,65 @@ const Dashboard: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Video Brief section */}
+                {(isGeneratingVideo || generatedVideoScript) && (
+                  <div className="border-t border-purple-500/15 bg-purple-950/20">
+                    <div className="flex items-center gap-2 px-5 py-3 border-b border-purple-500/10">
+                      <Play size={13} className="text-purple-400" />
+                      <span className="text-xs font-semibold text-purple-300">Video Brief</span>
+                      {isGeneratingVideo && <Loader2 size={12} className="animate-spin text-purple-400 ml-1" />}
+                    </div>
+                    {generatedVideoScript && (
+                      <div className="p-5 space-y-5">
+                        {/* Hook */}
+                        <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
+                          <p className="text-[10px] font-black text-purple-400/70 uppercase tracking-widest mb-1.5">Opening Hook (0–2 sec)</p>
+                          <p className="text-sm text-purple-100 font-semibold">{generatedVideoScript.hook}</p>
+                        </div>
+
+                        {/* Script */}
+                        <div>
+                          <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Full Script / Voiceover</p>
+                          <div className="bg-black/30 border border-white/6 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+                            {generatedVideoScript.script}
+                          </div>
+                        </div>
+
+                        {/* Shot list */}
+                        {generatedVideoScript.shots.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Shot List</p>
+                            <div className="space-y-2">
+                              {generatedVideoScript.shots.map((shot, i) => (
+                                <div key={i} className="flex gap-3 text-sm">
+                                  <span className="w-6 h-6 rounded-full bg-purple-500/15 border border-purple-500/20 text-purple-400 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                                  <p className="text-white/60 leading-relaxed">{shot}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Mood + Duration */}
+                        <div className="flex flex-wrap gap-3">
+                          {generatedVideoScript.mood && (
+                            <div className="bg-white/3 border border-white/8 rounded-xl px-4 py-2.5">
+                              <p className="text-[10px] text-white/25 uppercase tracking-wider mb-0.5">Music Mood</p>
+                              <p className="text-sm text-white/70">{generatedVideoScript.mood}</p>
+                            </div>
+                          )}
+                          {generatedVideoScript.duration && (
+                            <div className="bg-white/3 border border-white/8 rounded-xl px-4 py-2.5">
+                              <p className="text-[10px] text-white/25 uppercase tracking-wider mb-0.5">Duration</p>
+                              <p className="text-sm text-white/70">{generatedVideoScript.duration}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Footer actions */}
                 <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/6 bg-black/15">

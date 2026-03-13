@@ -145,6 +145,46 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   return null;
 };
 
+export interface VideoScript {
+  script: string;
+  shots: string[];
+  mood: string;
+  duration: string;
+  hook: string;
+}
+
+export const generateVideoScript = async (
+  topic: string,
+  platform: 'Facebook' | 'Instagram',
+  businessName: string,
+  businessType: string,
+  tone: string,
+  caption: string
+): Promise<VideoScript> => {
+  const ai = getAI();
+  if (!ai) return { script: 'API Key missing.', shots: [], mood: '', duration: '', hook: '' };
+  try {
+    const prompt = `You are a video content strategist for "${businessName}", a ${businessType}.
+Create a short-form video brief for a ${platform} Reel/video post about: "${topic}".
+The accompanying caption is: "${caption}"
+Tone: ${tone}.
+
+Return ONLY raw JSON, no markdown:
+{
+  "hook": "Opening 1-2 seconds hook line — the very first thing said or shown on screen",
+  "script": "Full spoken script / voiceover (30–60 seconds when read aloud). Natural, conversational tone.",
+  "shots": ["Scene 1 description (what camera sees, action, angle)", "Scene 2...", "Scene 3...", "Scene 4...", "Scene 5..."],
+  "mood": "Music mood — e.g. Upbeat & energetic, Calm & trustworthy, Inspirational",
+  "duration": "Recommended video length, e.g. 30 seconds, 45 seconds"
+}`;
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    return raw ? JSON.parse(raw) : { script: 'Error generating brief.', shots: [], mood: '', duration: '', hook: '' };
+  } catch (error: any) {
+    return { script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}`, shots: [], mood: '', duration: '', hook: '' };
+  }
+};
+
 export const rewritePost = async (
   draft: string,
   instruction: string,
