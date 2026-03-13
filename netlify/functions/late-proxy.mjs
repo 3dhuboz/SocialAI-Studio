@@ -92,14 +92,45 @@ export const handler = async (event) => {
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
+    // ── List connected accounts (returns { accounts: [{ _id, platform }] }) ──
+    if (action === 'list-accounts' && event.httpMethod === 'GET') {
+      const res = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
+      const data = await res.json();
+      return { statusCode: res.status, headers, body: JSON.stringify(data) };
+    }
+
     // ── Publish a post ──────────────────────────────────────────────────
+    // Late API requires: { content, publishNow|scheduledFor, platforms: [{ platform, accountId }] }
     if (action === 'post' && event.httpMethod === 'POST') {
       const { profileId, platforms, text, mediaUrls, scheduleDate } = JSON.parse(event.body || '{}');
-      if (!profileId || !platforms || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'profileId, platforms, and text required' }) };
-      // Normalise platform names — try both lowercase and capitalised (Late docs unclear)
-      const normalisedPlatforms = platforms.map((p) => p.toLowerCase());
-      const body = { profileId, platforms: normalisedPlatforms, content: text, ...(mediaUrls?.length ? { mediaUrls } : {}), ...(scheduleDate ? { scheduleDate } : {}) };
+      if (!platforms?.length || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'platforms and text are required' }) };
+
+      // ── Fetch all connected accounts to resolve accountIds ──────────────
+      const accRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
+      const accData = await accRes.json();
+      const allAccounts = accData.accounts || accData || [];
+      console.log('[late-proxy] available accounts:', JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform }))));
+
+      // Map requested platform strings → { platform, accountId } objects
+      const requestedPlatforms = platforms.map(p => p.toLowerCase());
+      const platformObjs = requestedPlatforms.map(p => {
+        const acc = allAccounts.find(a => (a.platform || '').toLowerCase() === p);
+        return acc ? { platform: acc.platform, accountId: acc._id } : null;
+      }).filter(Boolean);
+
+      if (platformObjs.length === 0) {
+        const available = allAccounts.map(a => a.platform).join(', ') || 'none';
+        return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}]. Available: ${available}. Please reconnect in Settings → Social Media Connection.` }) };
+      }
+
+      const body = {
+        content: text,
+        platforms: platformObjs,
+        ...(scheduleDate ? { scheduledFor: scheduleDate, timezone: 'UTC' } : { publishNow: true }),
+        ...(mediaUrls?.length ? { mediaUrls } : {}),
+      };
       console.log('[late-proxy] POST /posts payload:', JSON.stringify(body));
+
       const res = await fetch(`${LATE_BASE}/posts`, {
         method: 'POST',
         headers: authHeader,
@@ -107,11 +138,11 @@ export const handler = async (event) => {
       });
       const rawText = await res.text();
       let data;
-      try { data = JSON.parse(rawText); } catch { data = { error: rawText || `Late API returned HTTP ${res.status}` }; }
-      // Surface full Late error for debugging
+      try { data = JSON.parse(rawText); } catch { data = { error: rawText || `Late API HTTP ${res.status}` }; }
       if (!res.ok) {
         const errMsg = data?.message || data?.error || data?.detail || rawText || `Late API HTTP ${res.status}`;
-        return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg, lateStatus: res.status, lateBody: data }) };
+        console.log('[late-proxy] POST /posts error:', errMsg, JSON.stringify(data));
+        return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg }) };
       }
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
