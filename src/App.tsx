@@ -517,8 +517,7 @@ const Dashboard: React.FC = () => {
       setIsGeneratingVideo(false);
 
       // Step 2: Generate thumbnail image + upload to Late → public URL for Runway ML
-      const runwayKey = localStorage.getItem('sai_runway_key');
-      if (runwayKey && hasApiKey) {
+      if (hasApiKey) {
         setIsGeneratingImage(true);
         let imagePublicUrl: string | null = null;
         try {
@@ -539,7 +538,7 @@ const Dashboard: React.FC = () => {
         } catch { /* ignore image gen failure */ }
         setIsGeneratingImage(false);
 
-        // Step 3: Generate actual Reel video via Runway ML
+        // Step 3: Generate actual Reel video via Runway ML (server-side key)
         if (imagePublicUrl) {
           setIsGeneratingReel(true);
           setVideoProgress(0.05);
@@ -547,7 +546,6 @@ const Dashboard: React.FC = () => {
             const videoUrl = await RunwayService.generateVideo(
               `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
               imagePublicUrl,
-              runwayKey,
               5,
               p => setVideoProgress(p),
             );
@@ -557,8 +555,6 @@ const Dashboard: React.FC = () => {
             toast(`Runway ML: ${e?.message?.substring(0, 100) || 'Video generation failed'}`, 'error');
           }
           setIsGeneratingReel(false);
-        } else {
-          toast('Brief & image ready. Add a Runway ML key in Settings to auto-generate the video.', 'info');
         }
       }
     }
@@ -1556,9 +1552,6 @@ const Dashboard: React.FC = () => {
                                 {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                                 {showVideoBriefDetail ? 'Hide full brief' : 'View script & shots'}
                               </button>
-                              {!localStorage.getItem('sai_runway_key') && (
-                                <span className="text-[10px] text-amber-400/60 bg-amber-500/8 border border-amber-500/12 px-2 py-0.5 rounded-full">Add Runway key in Settings to auto-generate video</span>
-                              )}
                             </div>
                           </div>
                         </div>
@@ -2505,45 +2498,6 @@ const Dashboard: React.FC = () => {
                 >
                   {isSavingKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   {isSavingKey ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-
-            {/* Runway ML — AI Video Generation */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
-                  <Play size={16} className="text-purple-400" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white">Runway ML — AI Video</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Auto-generates 5-second Reels when you create a Video post</p>
-                </div>
-                {localStorage.getItem('sai_runway_key') && (
-                  <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>
-                )}
-              </div>
-              <p className="text-xs text-white/30 leading-relaxed">
-                Get an API key from{' '}
-                <a href="https://app.runwayml.com/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-purple-400/70 hover:text-purple-400 underline transition">Runway ML</a>
-                {' '}— Standard plan starts at ~$15/month. Each 5-second video costs ~$0.25 in credits.
-              </p>
-              <div className="flex gap-2 max-w-lg">
-                <input
-                  type="password"
-                  defaultValue={localStorage.getItem('sai_runway_key') || ''}
-                  onChange={e => {
-                    if (e.target.value.trim()) localStorage.setItem('sai_runway_key', e.target.value.trim());
-                    else localStorage.removeItem('sai_runway_key');
-                  }}
-                  placeholder="key_..."
-                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40 transition"
-                />
-                <button
-                  onClick={() => toast('Runway ML key saved — AI video generation is now active!', 'success')}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
-                >
-                  <Save size={14} /> Save
                 </button>
               </div>
             </div>

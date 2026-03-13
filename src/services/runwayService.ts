@@ -1,8 +1,7 @@
 const PROXY = '/.netlify/functions/runway-proxy';
 
-const proxyHeaders = (apiKey: string) => ({
+const proxyHeaders = () => ({
   'Content-Type': 'application/json',
-  'X-Runway-Key': apiKey,
 });
 
 export const RunwayService = {
@@ -14,13 +13,12 @@ export const RunwayService = {
   generateVideo: async (
     promptText: string,
     promptImage: string,   // base64 data URL OR public HTTPS URL
-    apiKey: string,
     duration: 5 | 10 = 5,
     onProgress?: (pct: number) => void,
   ): Promise<string> => {
     const res = await fetch(`${PROXY}?action=generate-video`, {
       method: 'POST',
-      headers: proxyHeaders(apiKey),
+      headers: proxyHeaders(),
       body: JSON.stringify({ promptText, promptImage, duration }),
     });
     const data = await res.json();
@@ -33,7 +31,7 @@ export const RunwayService = {
       await new Promise(r => setTimeout(r, 5000));
       const pollRes = await fetch(
         `${PROXY}?action=task-status&taskId=${encodeURIComponent(taskId)}`,
-        { headers: proxyHeaders(apiKey) },
+        { headers: proxyHeaders() },
       );
       const poll = await pollRes.json();
 
@@ -51,7 +49,7 @@ export const RunwayService = {
     throw new Error('Video generation timed out — try again');
   },
 
-  /** Returns true if a Runway key is configured (client or env). */
+  /** Returns true if RUNWAY_API_KEY is set in the Netlify env. */
   isConfigured: async (): Promise<boolean> => {
     try {
       const res = await fetch(`${PROXY}?action=task-status&taskId=probe`);
