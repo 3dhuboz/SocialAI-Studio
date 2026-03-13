@@ -315,6 +315,9 @@ const Dashboard: React.FC = () => {
   const [publishSuccess, setPublishSuccess] = useState(false);
   const [publishingPlatforms, setPublishingPlatforms] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [pageIdLookupInput, setPageIdLookupInput] = useState('');
+  const [pageIdLookupResult, setPageIdLookupResult] = useState<{ pageId: string; pageName?: string } | null>(null);
+  const [isLookingUpPageId, setIsLookingUpPageId] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
@@ -466,6 +469,47 @@ const Dashboard: React.FC = () => {
     if (lateProfileId && user) handlePullStats(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lateProfileId, user]);
+
+  const handleLookupPageId = async () => {
+    const raw = pageIdLookupInput.trim();
+    if (!raw) return;
+    setPageIdLookupResult(null);
+
+    // 1. Strip to username/path from full URL
+    let username = raw.replace(/^@/, '').replace(/\/$/, '');
+    if (username.includes('facebook.com/')) {
+      username = username.split('facebook.com/')[1].split('?')[0].replace(/\/$/, '');
+    }
+
+    // 2. If /pages/Name/NUMERIC_ID — extract the ID directly
+    const pagesMatch = username.match(/pages\/[^/]+\/(\d+)/);
+    if (pagesMatch) { setPageIdLookupResult({ pageId: pagesMatch[1] }); return; }
+
+    // 3. If the whole thing is already a pure numeric ID
+    if (/^\d{6,}$/.test(username)) { setPageIdLookupResult({ pageId: username }); return; }
+
+    // 4. Try the server-side proxy (needs FACEBOOK_APP_ID + FACEBOOK_APP_SECRET in Netlify)
+    setIsLookingUpPageId(true);
+    try {
+      const res = await fetch('/.netlify/functions/facebook-page-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      const data = await res.json();
+      if (res.ok && data.pageId) {
+        setPageIdLookupResult({ pageId: data.pageId, pageName: data.pageName });
+      } else {
+        // 5. Fallback — open lookup-id.com in new tab
+        window.open(`https://lookup-id.com/?q=${encodeURIComponent(raw)}`, '_blank');
+        toast('Opened lookup-id.com — paste your Page URL there to find the ID.', 'info');
+      }
+    } catch {
+      window.open(`https://lookup-id.com/?q=${encodeURIComponent(raw)}`, '_blank');
+      toast('Opened lookup-id.com — paste your Page URL there to find the ID.', 'info');
+    }
+    setIsLookingUpPageId(false);
+  };
 
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
@@ -2934,9 +2978,7 @@ const Dashboard: React.FC = () => {
                   </span>
                 )}
               </div>
-              <p className="text-xs text-white/25 leading-relaxed">
-                Find your Page ID: go to your Facebook page → <strong className="text-white/40">About</strong> → scroll to the bottom. It's a long number (e.g. <code className="bg-white/8 px-1.5 py-0.5 rounded text-white/50">123456789012345</code>).
-              </p>
+              {/* ── Page ID direct entry ── */}
               <div className="flex gap-2 max-w-lg">
                 <input
                   value={profile.sotrendPageId}
@@ -2952,6 +2994,49 @@ const Dashboard: React.FC = () => {
                   {isSavingProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   Save
                 </button>
+              </div>
+
+              {/* ── Page ID lookup helper ── */}
+              <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-3.5 space-y-2.5">
+                <p className="text-[11px] font-bold text-blue-400/70 uppercase tracking-wider">Don't know your Page ID?</p>
+                <p className="text-xs text-white/30 leading-relaxed">Paste your Facebook page URL or username below and we'll find it for you.</p>
+                <div className="flex gap-2">
+                  <input
+                    value={pageIdLookupInput}
+                    onChange={e => { setPageIdLookupInput(e.target.value); setPageIdLookupResult(null); }}
+                    onKeyDown={e => e.key === 'Enter' && handleLookupPageId()}
+                    placeholder="https://facebook.com/yourpage  or  yourpage"
+                    className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/25 focus:outline-none focus:border-blue-500/40 transition"
+                  />
+                  <button
+                    onClick={handleLookupPageId}
+                    disabled={!pageIdLookupInput.trim() || isLookingUpPageId}
+                    className="bg-blue-600/80 hover:bg-blue-600 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl text-sm transition flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    {isLookingUpPageId ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                    Find ID
+                  </button>
+                </div>
+                {pageIdLookupResult && (
+                  <div className="flex items-center gap-3 bg-green-500/8 border border-green-500/20 rounded-xl px-3 py-2.5">
+                    <CheckCircle size={14} className="text-green-400 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      {pageIdLookupResult.pageName && <p className="text-xs text-white/50 truncate">{pageIdLookupResult.pageName}</p>}
+                      <p className="text-sm font-mono text-green-300 font-bold">{pageIdLookupResult.pageId}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setProfile(prev => ({ ...prev, sotrendPageId: pageIdLookupResult.pageId }));
+                        setPageIdLookupResult(null);
+                        setPageIdLookupInput('');
+                        toast('Page ID filled in — click Save to confirm.', 'success');
+                      }}
+                      className="text-xs bg-green-500/20 hover:bg-green-500/30 border border-green-500/20 text-green-300 font-bold px-3 py-1.5 rounded-lg transition flex-shrink-0"
+                    >
+                      Use this ID
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
