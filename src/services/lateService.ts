@@ -82,8 +82,25 @@ export const LateService = {
   },
 
   /**
+   * Get a presigned upload URL for media. Returns { uploadUrl, publicUrl }.
+   * Client uploads directly to uploadUrl (PUT, no auth needed).
+   * Use publicUrl in subsequent post calls.
+   */
+  getPresignedUrl: async (fileName: string, fileType: string): Promise<{ uploadUrl: string; publicUrl: string }> => {
+    const res = await fetch(`${PROXY}?action=media-presign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName, fileType }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to get presigned URL');
+    return { uploadUrl: data.uploadUrl, publicUrl: data.publicUrl };
+  },
+
+  /**
    * Publish a post to one or more platforms.
    * platforms: ['facebook'] | ['instagram'] | ['facebook','instagram']
+   * mediaItems: [{ url, type: 'image'|'video' }]
    */
   post: async (
     profileId: string,
@@ -91,11 +108,12 @@ export const LateService = {
     text: string,
     mediaUrls?: string[],
     scheduleDate?: string,
+    mediaItems?: { url: string; type: 'image' | 'video' }[],
   ): Promise<LatePostResult> => {
     const res = await fetch(`${PROXY}?action=post`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profileId, platforms, text, mediaUrls, scheduleDate }),
+      body: JSON.stringify({ profileId, platforms, text, mediaUrls, scheduleDate, mediaItems }),
     });
     const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to publish post');

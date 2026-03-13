@@ -18,6 +18,7 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { LateService } from './services/lateService';
+import { RunwayService } from './services/runwayService';
 import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
@@ -308,6 +309,9 @@ const Dashboard: React.FC = () => {
   const [generatedVideoScript, setGeneratedVideoScript] = useState<VideoScript | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [showVideoBriefDetail, setShowVideoBriefDetail] = useState(false);
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+  const [isGeneratingReel, setIsGeneratingReel] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
   const [draftText, setDraftText] = useState('');
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
@@ -464,8 +468,20 @@ const Dashboard: React.FC = () => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
     setIsPublishing(true);
     try {
-      const fullText = generatedHashtags.length > 0 ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
-      await LateService.post(lateProfileId, platforms, fullText);
+      const fullText = generatedHashtags.length > 0
+        ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
+        : generatedContent;
+
+      // Build mediaItems: prefer generated video, then uploaded image
+      let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
+      if (generatedVideoUrl) {
+        mediaItems = [{ url: generatedVideoUrl, type: 'video' }];
+      } else if (generatedImage && !generatedImage.startsWith('data:')) {
+        // Only use image if it's a public URL (not base64)
+        mediaItems = [{ url: generatedImage, type: 'image' }];
+      }
+
+      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems);
       toast(`Published to ${platforms.join(' & ')} successfully!`, 'success');
     } catch (e: any) {
       toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
@@ -474,26 +490,77 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Content Generation ──
-  const handleGenerate = async () => {
-    if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return; }
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+  const handleGenerate = async (): Promise<{ content: string; hashtags: string[] } | null> => {
+    if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
+    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return null; }
     setIsGenerating(true);
     const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile);
     setGeneratedContent(result.content);
     setGeneratedHashtags(result.hashtags || []);
     setIsGenerating(false);
+    return result;
   };
 
   const handleCreatePost = async () => {
     setGeneratedVideoScript(null);
-    await handleGenerate();
+    setGeneratedVideoUrl(null);
+    setVideoProgress(0);
+    const result = await handleGenerate();
+    if (!result) return;
     if (contentType === 'image') await handleGenerateImage();
     if (contentType === 'video') {
+      // Step 1: Generate text brief
       setIsGeneratingVideo(true);
-      const caption = generatedContent;
-      const brief = await generateVideoScript(topic, platform, profile.name, profile.type, profile.tone, caption);
+      const brief = await generateVideoScript(topic, platform, profile.name, profile.type, profile.tone, result.content);
       setGeneratedVideoScript(brief);
+      setShowVideoBriefDetail(false);
       setIsGeneratingVideo(false);
+
+      // Step 2: Generate thumbnail image + upload to Late → public URL for Runway ML
+      const runwayKey = localStorage.getItem('sai_runway_key');
+      if (runwayKey && hasApiKey) {
+        setIsGeneratingImage(true);
+        let imagePublicUrl: string | null = null;
+        try {
+          const img = await generateMarketingImage(`${profile.type}: ${topic}, cinematic frame, professional`);
+          if (img) {
+            setGeneratedImage(img);
+            // Upload base64 → Late presigned URL → public URL
+            try {
+              const mimeType = img.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+              const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+              const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`thumb_${Date.now()}.${ext}`, mimeType);
+              const base64 = img.split(',')[1];
+              const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+              await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
+              imagePublicUrl = publicUrl;
+            } catch { /* continue — image stays as base64 preview */ }
+          }
+        } catch { /* ignore image gen failure */ }
+        setIsGeneratingImage(false);
+
+        // Step 3: Generate actual Reel video via Runway ML
+        if (imagePublicUrl) {
+          setIsGeneratingReel(true);
+          setVideoProgress(0.05);
+          try {
+            const videoUrl = await RunwayService.generateVideo(
+              `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
+              imagePublicUrl,
+              runwayKey,
+              5,
+              p => setVideoProgress(p),
+            );
+            setGeneratedVideoUrl(videoUrl);
+            toast('Your video Reel is ready — click Publish Now to post!', 'success');
+          } catch (e: any) {
+            toast(`Runway ML: ${e?.message?.substring(0, 100) || 'Video generation failed'}`, 'error');
+          }
+          setIsGeneratingReel(false);
+        } else {
+          toast('Brief & image ready. Add a Runway ML key in Settings to auto-generate the video.', 'info');
+        }
+      }
     }
   };
 
@@ -1336,7 +1403,7 @@ const Dashboard: React.FC = () => {
                   <div className="flex items-center gap-2">
                     {generatedContent && <span className="text-[10px] text-white/25">{generatedContent.length} chars</span>}
                     <button
-                      onClick={() => { setGeneratedContent(''); setGeneratedHashtags([]); setGeneratedImage(null); setGeneratedVideoScript(null); }}
+                      onClick={() => { setGeneratedContent(''); setGeneratedHashtags([]); setGeneratedImage(null); setGeneratedVideoScript(null); setGeneratedVideoUrl(null); setVideoProgress(0); setIsGeneratingReel(false); }}
                       className="text-white/20 hover:text-white/50 transition p-1 rounded-lg hover:bg-white/5"
                       title="Clear"
                     >
@@ -1406,76 +1473,120 @@ const Dashboard: React.FC = () => {
                   )}
                 </div>
 
-                {/* Video Brief section */}
-                {(isGeneratingVideo || generatedVideoScript) && (
+                {/* Video section */}
+                {(isGeneratingVideo || isGeneratingReel || generatedVideoScript || generatedVideoUrl) && (
                   <div className="border-t border-purple-500/15 bg-purple-950/20">
                     <div className="flex items-center gap-2 px-5 py-3 border-b border-purple-500/10">
                       <Play size={13} className="text-purple-400" />
-                      <span className="text-xs font-semibold text-purple-300">Video Brief</span>
-                      {isGeneratingVideo && <Loader2 size={12} className="animate-spin text-purple-400 ml-1" />}
+                      <span className="text-xs font-semibold text-purple-300">
+                        {generatedVideoUrl ? 'Video Reel Ready' : isGeneratingReel ? 'Generating Reel…' : 'Video Brief'}
+                      </span>
+                      {(isGeneratingVideo || isGeneratingReel) && <Loader2 size={12} className="animate-spin text-purple-400 ml-1" />}
+                      {generatedVideoUrl && <span className="ml-auto text-[10px] text-green-400 bg-green-500/10 border border-green-500/15 px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle size={9} /> Ready to publish</span>}
                     </div>
-                    {generatedVideoScript && (
-                      <div className="p-4">
-                        {/* Compact preview row */}
+
+                    <div className="p-4 space-y-4">
+                      {/* ── Runway generation progress ── */}
+                      {isGeneratingReel && (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs text-white/40">
+                            <span>Runway ML — generating your 5-second Reel…</span>
+                            <span>{Math.round(videoProgress * 100)}%</span>
+                          </div>
+                          <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
+                              style={{ width: `${Math.round(videoProgress * 100)}%` }}
+                            />
+                          </div>
+                          <p className="text-[10px] text-white/25">This takes 1–3 minutes. You can wait or close and come back.</p>
+                        </div>
+                      )}
+
+                      {/* ── Actual video player ── */}
+                      {generatedVideoUrl && (
                         <div className="flex gap-4 items-start">
-                          <AnimatedReelPreview
-                            hookText={generatedVideoScript.hook}
-                            mood={generatedVideoScript.mood}
-                            size="sm"
-                            onClick={() => setShowVideoBriefDetail(v => !v)}
-                          />
+                          <div className="relative w-20 flex-shrink-0 rounded-xl overflow-hidden border border-purple-500/30 shadow-lg shadow-purple-900/30 bg-black" style={{ aspectRatio: '9/16' }}>
+                            <video
+                              src={generatedVideoUrl}
+                              className="w-full h-full object-cover"
+                              autoPlay
+                              loop
+                              muted
+                              playsInline
+                              poster={generatedImage || undefined}
+                            />
+                            <div className="absolute top-1.5 left-1.5">
+                              <span className="text-[8px] bg-purple-500/80 text-white font-black px-1.5 py-0.5 rounded-full">REEL</span>
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div className="bg-green-500/8 border border-green-500/15 rounded-xl px-3 py-2.5">
+                              <p className="text-[9px] font-black text-green-400/70 uppercase tracking-widest mb-1">AI-Generated Video Ready</p>
+                              <p className="text-xs text-white/60 leading-relaxed">5-second Reel generated by Runway ML. Click <strong className="text-white/80">Publish Now</strong> to post it directly to Facebook/Instagram.</p>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                              {generatedVideoScript?.duration && <span className="text-[11px] text-white/50 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">⏱ {generatedVideoScript.duration}</span>}
+                              {generatedVideoScript?.mood && <span className="text-[11px] text-purple-300/60 bg-purple-500/8 border border-purple-500/12 px-2.5 py-1 rounded-full">♪ {generatedVideoScript.mood}</span>}
+                            </div>
+                            <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1.5 text-xs text-purple-400/70 hover:text-purple-300 transition">
+                              {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              {showVideoBriefDetail ? 'Hide script & shots' : 'View script & shots'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Compact brief (no video yet) ── */}
+                      {generatedVideoScript && !generatedVideoUrl && !isGeneratingReel && (
+                        <div className="flex gap-4 items-start">
+                          <AnimatedReelPreview hookText={generatedVideoScript.hook} mood={generatedVideoScript.mood} size="sm" onClick={() => setShowVideoBriefDetail(v => !v)} />
                           <div className="flex-1 min-w-0 space-y-2">
                             <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-3 py-2.5">
                               <p className="text-[9px] font-black text-purple-400/70 uppercase tracking-widest mb-1">Opening Hook (0–2 sec)</p>
                               <p className="text-sm text-purple-100 font-semibold leading-snug">{generatedVideoScript.hook}</p>
                             </div>
                             <div className="flex gap-2 flex-wrap">
-                              {generatedVideoScript.duration && (
-                                <span className="text-[11px] text-white/50 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">⏱ {generatedVideoScript.duration}</span>
-                              )}
-                              {generatedVideoScript.mood && (
-                                <span className="text-[11px] text-purple-300/60 bg-purple-500/8 border border-purple-500/12 px-2.5 py-1 rounded-full">♪ {generatedVideoScript.mood}</span>
-                              )}
-                              {generatedVideoScript.shots.length > 0 && (
-                                <span className="text-[11px] text-white/40 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">{generatedVideoScript.shots.length} shots</span>
+                              {generatedVideoScript.duration && <span className="text-[11px] text-white/50 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">⏱ {generatedVideoScript.duration}</span>}
+                              {generatedVideoScript.mood && <span className="text-[11px] text-purple-300/60 bg-purple-500/8 border border-purple-500/12 px-2.5 py-1 rounded-full">♪ {generatedVideoScript.mood}</span>}
+                              {generatedVideoScript.shots.length > 0 && <span className="text-[11px] text-white/40 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">{generatedVideoScript.shots.length} shots</span>}
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1.5 text-xs text-purple-400/70 hover:text-purple-300 transition">
+                                {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                {showVideoBriefDetail ? 'Hide full brief' : 'View script & shots'}
+                              </button>
+                              {!localStorage.getItem('sai_runway_key') && (
+                                <span className="text-[10px] text-amber-400/60 bg-amber-500/8 border border-amber-500/12 px-2 py-0.5 rounded-full">Add Runway key in Settings to auto-generate video</span>
                               )}
                             </div>
-                            <button
-                              onClick={() => setShowVideoBriefDetail(v => !v)}
-                              className="flex items-center gap-1.5 text-xs text-purple-400/70 hover:text-purple-300 transition"
-                            >
-                              {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                              {showVideoBriefDetail ? 'Hide full brief' : 'View full brief — script, shots & more'}
-                            </button>
                           </div>
                         </div>
+                      )}
 
-                        {/* Expandable full brief */}
-                        {showVideoBriefDetail && (
-                          <div className="mt-4 space-y-4 border-t border-purple-500/10 pt-4">
+                      {/* ── Expandable full script + shots ── */}
+                      {showVideoBriefDetail && generatedVideoScript && (
+                        <div className="space-y-4 border-t border-purple-500/10 pt-4">
+                          <div>
+                            <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Full Script / Voiceover</p>
+                            <div className="bg-black/30 border border-white/6 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{generatedVideoScript.script}</div>
+                          </div>
+                          {generatedVideoScript.shots.length > 0 && (
                             <div>
-                              <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Full Script / Voiceover</p>
-                              <div className="bg-black/30 border border-white/6 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
-                                {generatedVideoScript.script}
+                              <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Shot List</p>
+                              <div className="space-y-2">
+                                {generatedVideoScript.shots.map((shot, i) => (
+                                  <div key={i} className="flex gap-3 text-sm">
+                                    <span className="w-6 h-6 rounded-full bg-purple-500/15 border border-purple-500/20 text-purple-400 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                                    <p className="text-white/60 leading-relaxed">{shot}</p>
+                                  </div>
+                                ))}
                               </div>
                             </div>
-                            {generatedVideoScript.shots.length > 0 && (
-                              <div>
-                                <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Shot List</p>
-                                <div className="space-y-2">
-                                  {generatedVideoScript.shots.map((shot, i) => (
-                                    <div key={i} className="flex gap-3 text-sm">
-                                      <span className="w-6 h-6 rounded-full bg-purple-500/15 border border-purple-500/20 text-purple-400 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
-                                      <p className="text-white/60 leading-relaxed">{shot}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2394,6 +2505,45 @@ const Dashboard: React.FC = () => {
                 >
                   {isSavingKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   {isSavingKey ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+
+            {/* Runway ML — AI Video Generation */}
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
+                  <Play size={16} className="text-purple-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">Runway ML — AI Video</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Auto-generates 5-second Reels when you create a Video post</p>
+                </div>
+                {localStorage.getItem('sai_runway_key') && (
+                  <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>
+                )}
+              </div>
+              <p className="text-xs text-white/30 leading-relaxed">
+                Get an API key from{' '}
+                <a href="https://app.runwayml.com/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-purple-400/70 hover:text-purple-400 underline transition">Runway ML</a>
+                {' '}— Standard plan starts at ~$15/month. Each 5-second video costs ~$0.25 in credits.
+              </p>
+              <div className="flex gap-2 max-w-lg">
+                <input
+                  type="password"
+                  defaultValue={localStorage.getItem('sai_runway_key') || ''}
+                  onChange={e => {
+                    if (e.target.value.trim()) localStorage.setItem('sai_runway_key', e.target.value.trim());
+                    else localStorage.removeItem('sai_runway_key');
+                  }}
+                  placeholder="key_..."
+                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40 transition"
+                />
+                <button
+                  onClick={() => toast('Runway ML key saved — AI video generation is now active!', 'success')}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
+                >
+                  <Save size={14} /> Save
                 </button>
               </div>
             </div>

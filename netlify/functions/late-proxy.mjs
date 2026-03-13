@@ -92,6 +92,19 @@ export const handler = async (event) => {
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
+    // ── Get presigned upload URL for media (image/video) ────────────────
+    if (action === 'media-presign' && event.httpMethod === 'POST') {
+      const { fileName, fileType } = JSON.parse(event.body || '{}');
+      if (!fileName || !fileType) return { statusCode: 400, headers, body: JSON.stringify({ error: 'fileName and fileType required' }) };
+      const res = await fetch(`${LATE_BASE}/media/presign`, {
+        method: 'POST',
+        headers: authHeader,
+        body: JSON.stringify({ fileName, fileType }),
+      });
+      const data = await res.json();
+      return { statusCode: res.status, headers, body: JSON.stringify(data) };
+    }
+
     // ── List connected accounts (returns { accounts: [{ _id, platform }] }) ──
     if (action === 'list-accounts' && event.httpMethod === 'GET') {
       const res = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
@@ -123,11 +136,12 @@ export const handler = async (event) => {
         return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}]. Available: ${available}. Please reconnect in Settings → Social Media Connection.` }) };
       }
 
+      const { mediaItems } = JSON.parse(event.body || '{}');
       const body = {
         content: text,
         platforms: platformObjs,
         ...(scheduleDate ? { scheduledFor: scheduleDate, timezone: 'UTC' } : { publishNow: true }),
-        ...(mediaUrls?.length ? { mediaUrls } : {}),
+        ...(mediaItems?.length ? { mediaItems } : mediaUrls?.length ? { mediaUrls } : {}),
       };
       console.log('[late-proxy] POST /posts payload:', JSON.stringify(body));
 
