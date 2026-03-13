@@ -68,24 +68,27 @@ export const handler = async (event) => {
         return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg }) };
       }
 
-      return { statusCode: 200, headers, body: JSON.stringify({ requestId: data.request_id }) };
+      return { statusCode: 200, headers, body: JSON.stringify({
+        requestId: data.request_id,
+        statusUrl: data.status_url || null,
+        responseUrl: data.response_url || null,
+      }) };
     }
 
     // ── Poll task status ──────────────────────────────────────────────────
     if (action === 'task-status' && event.httpMethod === 'GET') {
-      const { requestId } = qs;
+      const { requestId, statusUrl, responseUrl } = qs;
       if (!requestId) return { statusCode: 400, headers, body: JSON.stringify({ error: 'requestId required' }) };
 
-      // Try model-scoped status URL first, fall back to model-free if 405/404
-      let statusRes = await fetch(
-        `${FAL_BASE}/${MODEL}/requests/${requestId}/status`,
-        { headers: authHeader },
-      );
-      if (statusRes.status === 405 || statusRes.status === 404) {
-        statusRes = await fetch(
-          `${FAL_BASE}/requests/${requestId}/status`,
-          { headers: authHeader },
-        );
+      // Prefer the status_url returned by fal.ai at submit time (avoids URL construction issues)
+      const pollUrl = statusUrl
+        ? statusUrl
+        : `${FAL_BASE}/${MODEL}/requests/${requestId}/status`;
+
+      let statusRes = await fetch(pollUrl, { headers: authHeader });
+      // Fallback: model-free status endpoint
+      if (!statusRes.ok && (statusRes.status === 405 || statusRes.status === 404)) {
+        statusRes = await fetch(`${FAL_BASE}/requests/${requestId}/status`, { headers: authHeader });
       }
 
       let statusData;

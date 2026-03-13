@@ -27,14 +27,19 @@ export const FalService = {
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to start video generation');
-    const { requestId } = data;
+    const { requestId, statusUrl, responseUrl } = data;
     if (!requestId) throw new Error('No request ID returned from fal.ai');
+
+    // Build poll query — include fal.ai's own status_url to avoid URL construction issues
+    const pollQuery = new URLSearchParams({ action: 'task-status', requestId });
+    if (statusUrl) pollQuery.set('statusUrl', statusUrl);
+    if (responseUrl) pollQuery.set('responseUrl', responseUrl);
 
     // Poll every 6 s, up to 40 attempts (~4 min)
     for (let i = 0; i < 40; i++) {
       await new Promise(r => setTimeout(r, 6000));
       const pollRes = await fetch(
-        `${PROXY}?action=task-status&requestId=${encodeURIComponent(requestId)}`,
+        `${PROXY}?${pollQuery.toString()}`,
         { headers: proxyHeaders() },
       );
       const poll = await pollRes.json();
