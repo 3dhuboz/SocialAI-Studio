@@ -76,15 +76,22 @@ export const handler = async (event) => {
       const { requestId } = qs;
       if (!requestId) return { statusCode: 400, headers, body: JSON.stringify({ error: 'requestId required' }) };
 
-      const statusRes = await fetch(
-        `${FAL_BASE}/${MODEL}/requests/${encodeURIComponent(requestId)}/status`,
+      // Try model-scoped status URL first, fall back to model-free if 405/404
+      let statusRes = await fetch(
+        `${FAL_BASE}/${MODEL}/requests/${requestId}/status`,
         { headers: authHeader },
       );
+      if (statusRes.status === 405 || statusRes.status === 404) {
+        statusRes = await fetch(
+          `${FAL_BASE}/requests/${requestId}/status`,
+          { headers: authHeader },
+        );
+      }
 
       let statusData;
       try { statusData = await statusRes.json(); } catch { statusData = {}; }
 
-      // Surface HTTP errors (e.g. 401, 404, 422) immediately
+      // Surface HTTP errors (e.g. 401, 422) immediately
       if (!statusRes.ok) {
         const errMsg = statusData?.detail || statusData?.message || statusData?.error || `fal.ai status HTTP ${statusRes.status}`;
         return { statusCode: 200, headers, body: JSON.stringify({ status: 'FAILED', failure: errMsg }) };
@@ -92,10 +99,13 @@ export const handler = async (event) => {
 
       // If COMPLETED, fetch the actual result
       if (statusData.status === 'COMPLETED') {
-        const resultRes = await fetch(
-          `${FAL_BASE}/${MODEL}/requests/${encodeURIComponent(requestId)}`,
+        let resultRes = await fetch(
+          `${FAL_BASE}/${MODEL}/requests/${requestId}`,
           { headers: authHeader },
         );
+        if (!resultRes.ok) {
+          resultRes = await fetch(`${FAL_BASE}/requests/${requestId}`, { headers: authHeader });
+        }
         const result = await resultRes.json();
         const videoUrl =
           result?.video?.url ||
