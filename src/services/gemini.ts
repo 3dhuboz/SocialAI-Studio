@@ -67,14 +67,32 @@ export const generateSocialPost = async (
     profile.location && `Location: ${profile.location}`,
   ].filter(Boolean).join('\n') : '';
 
+  // Platform-specific rules (research-backed)
+  const platformRules = platform === 'Facebook'
+    ? `FACEBOOK POST RULES (follow strictly):
+- Body length: 80–150 characters is optimal for engagement. Maximum 300 characters for storytelling posts. Never exceed 400 characters.
+- Paragraphs: 1–3 short punchy paragraphs. No walls of text.
+- Hashtags: Return EXACTLY 3–5 hashtags. More than 5 hurts Facebook reach.
+- Emojis: 2–4 relevant emojis only. Don't overdo it.
+- Call to action: end with a short CTA (question, "DM us", "Learn more", etc.)`
+    : `INSTAGRAM POST RULES (follow strictly):
+- Body length: 138–220 characters for maximum engagement. Can go up to 300 for storytelling, never more.
+- Style: Conversational, punchy first line that hooks (first 125 chars visible before "more").
+- Hashtags: Return EXACTLY 5–8 highly relevant hashtags. Mix broad + niche.
+- Emojis: Use 3–5 to break up text and add personality.
+- Call to action: end with a question or action ("save this", "tag a friend", etc.)`;
+
   try {
     const prompt = `
-      You are an expert social media manager for "${businessName}", a ${businessType}.
-      Tone: ${tone}.
-      ${profileContext ? `\nBusiness context:\n${profileContext}` : ''}
-      Write a catchy, engaging ${platform} post about: "${topic}".
-      Include relevant emojis and 5-10 relevant hashtags.
-      Return JSON with "content" (the post text) and "hashtags" (array of strings).
+You are an expert social media manager for "${businessName}", a ${businessType}.
+Tone: ${tone}.
+${profileContext ? `\nBusiness context:\n${profileContext}` : ''}
+
+${platformRules}
+
+Write a ${platform} post about: "${topic}".
+Return JSON with "content" (post body text only — NO hashtags in content) and "hashtags" (array of strings without # prefix).
+The content field must respect the character limits above. Do not pad with filler.
     `;
 
     const response = await ai.models.generateContent({

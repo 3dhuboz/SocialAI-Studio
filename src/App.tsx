@@ -585,8 +585,7 @@ const Dashboard: React.FC = () => {
         try {
           const img = await generateMarketingImage(`${profile.type}: ${topic}, cinematic frame, professional`);
           if (img) {
-            setGeneratedImage(img);
-            thumbnailBase64 = img; // Runway ML accepts base64 data URLs natively
+            thumbnailBase64 = img; // Runway ML accepts base64 data URLs natively — don't expose as post image
           } else {
             toast('Thumbnail image generation failed — video will be skipped.', 'warning');
           }
@@ -1157,9 +1156,9 @@ const Dashboard: React.FC = () => {
             <div className="text-center space-y-1.5">
               <p className="text-lg font-bold text-white">Publishing your post…</p>
               <p className="text-xs text-white/40">
-                Sending to {publishingPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' & ')} via Late
+                Sending to {publishingPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' & ')}…
               </p>
-              {generatedVideoUrl && <p className="text-xs text-purple-400/70 mt-1">📹 Video Reel included</p>}
+              {generatedVideoUrl && <p className="text-xs text-purple-400/70 mt-1">📹 Video included</p>}
             </div>
             <div className="flex gap-1.5">
               {[0, 1, 2].map(i => (
@@ -1182,7 +1181,7 @@ const Dashboard: React.FC = () => {
               <p className="text-xs text-white/40">
                 Published to {publishingPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' & ')} successfully
               </p>
-              {generatedVideoUrl && <p className="text-xs text-purple-300/60 mt-1">📹 Video Reel attached</p>}
+              {generatedVideoUrl && <p className="text-xs text-purple-300/60 mt-1">📹 Video attached</p>}
             </div>
             <p className="text-[10px] text-white/20">Tap anywhere to dismiss</p>
           </div>
@@ -1219,7 +1218,18 @@ const Dashboard: React.FC = () => {
             </div>
             {/* Media preview */}
             {generatedVideoUrl ? (
-              <video src={generatedVideoUrl} className="w-full max-h-64 object-cover bg-black" autoPlay loop muted playsInline poster={generatedImage || undefined} />
+              <video src={generatedVideoUrl} className="w-full max-h-64 object-cover bg-black" autoPlay loop muted playsInline />
+            ) : contentType === 'video' ? (
+              isGeneratingReel ? (
+                <div className="w-full h-32 bg-purple-950/40 flex flex-col items-center justify-center gap-2 border-t border-purple-500/15">
+                  <Loader2 size={20} className="animate-spin text-purple-400" />
+                  <p className="text-xs text-purple-300/60">Generating video… {Math.round(videoProgress * 100)}%</p>
+                </div>
+              ) : (
+                <div className="w-full h-20 bg-purple-950/20 flex items-center justify-center border-t border-purple-500/10">
+                  <p className="text-xs text-white/20">Video will appear here once generated</p>
+                </div>
+              )
             ) : generatedImage ? (
               <img src={generatedImage} alt="Post media" className="w-full max-h-64 object-cover" />
             ) : null}
