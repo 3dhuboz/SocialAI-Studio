@@ -22,6 +22,7 @@ import { RunwayService } from './services/runwayService';
 import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
+import { DateTimePicker } from './components/DateTimePicker';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -1754,34 +1755,7 @@ const Dashboard: React.FC = () => {
 
                 {/* Footer actions */}
                 <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/6 bg-black/15">
-                  {/* Schedule date + time — split inputs for full clickability */}
-                  <div className="flex items-center bg-black/50 border border-white/10 hover:border-white/20 rounded-xl overflow-hidden transition">
-                    <label className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/5 transition" title="Schedule date">
-                      <Calendar size={12} className="text-white/30 flex-shrink-0" />
-                      <input
-                        type="date"
-                        value={scheduleDate ? scheduleDate.split('T')[0] : ''}
-                        onChange={e => {
-                          const time = scheduleDate ? (scheduleDate.split('T')[1] || '09:00') : '09:00';
-                          setScheduleDate(e.target.value ? `${e.target.value}T${time}` : '');
-                        }}
-                        className="bg-transparent text-white text-xs focus:outline-none cursor-pointer min-w-[120px]"
-                      />
-                    </label>
-                    <div className="w-px h-5 bg-white/10" />
-                    <label className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/5 transition" title="Schedule time">
-                      <Clock size={12} className="text-white/30 flex-shrink-0" />
-                      <input
-                        type="time"
-                        value={scheduleDate ? (scheduleDate.split('T')[1] || '').substring(0, 5) : ''}
-                        onChange={e => {
-                          const date = scheduleDate ? scheduleDate.split('T')[0] : new Date().toISOString().split('T')[0];
-                          setScheduleDate(e.target.value ? `${date}T${e.target.value}` : '');
-                        }}
-                        className="bg-transparent text-white text-xs focus:outline-none cursor-pointer min-w-[70px]"
-                      />
-                    </label>
-                  </div>
+                  <DateTimePicker value={scheduleDate} onChange={setScheduleDate} />
                   <button
                     onClick={handleSavePost}
                     className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition text-sm shadow-lg shadow-green-500/15"
