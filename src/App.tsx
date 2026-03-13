@@ -65,7 +65,8 @@ const DEFAULT_STATS: ContentCalendarStats = {
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, logOut, refreshUserDoc } = useAuth();
-  const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('smart');
+  const [activeTab, setActiveTab] = useState<'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('smart');
+  const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => !user);
 
@@ -1050,9 +1051,8 @@ const Dashboard: React.FC = () => {
 
   // ── Tab Rendering ──
   const tabs = [
-    { id: 'create' as const, label: 'Create', icon: Wand2 },
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
-    { id: 'smart' as const, label: 'Smart AI', icon: Brain },
+    { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
     ...((activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
@@ -1487,14 +1487,9 @@ const Dashboard: React.FC = () => {
           isAdmin={isAdminMode}
         />
 
-        {/* ═══ CREATE TAB ═══ */}
-        {activeTab === 'create' && (
+        {/* ═══ QUICK POST MODE ═══ */}
+        {activeTab === 'smart' && smartSubMode === 'quickpost' && (
           <div className="space-y-5">
-            <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2.5"><Wand2 className="text-amber-400" size={22} /> Create a Post</h2>
-              <p className="text-sm text-white/40 mt-1">Describe your topic and AI writes it — or paste your own draft and AI will polish it.</p>
-            </div>
-
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
               {/* Platform + Content type */}
               <div className="flex flex-wrap gap-5">
@@ -1916,7 +1911,7 @@ const Dashboard: React.FC = () => {
               }}
               onRegenImage={handleCalendarRegenImage}
               onUpload={handleCalendarUpload}
-              onGoCreate={() => setActiveTab('create')}
+              onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
               onGoSmart={() => setActiveTab('smart')}
             />
           </div>
@@ -1944,6 +1939,33 @@ const Dashboard: React.FC = () => {
               lastPulled={lastPulled}
               onGoToSettings={() => setActiveTab('settings')}
             />
+
+            {/* ── Sub-mode toggle ── */}
+            <div className="flex gap-1 p-1 bg-white/3 border border-white/8 rounded-2xl w-fit">
+              <button
+                onClick={() => setSmartSubMode('autopilot')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition ${
+                  smartSubMode === 'autopilot'
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-lg shadow-amber-900/30'
+                    : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                <Brain size={14} /> AI Autopilot
+              </button>
+              <button
+                onClick={() => setSmartSubMode('quickpost')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition ${
+                  smartSubMode === 'quickpost'
+                    ? 'bg-white/10 text-white border border-white/15'
+                    : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                <Wand2 size={14} /> Quick Post
+              </button>
+            </div>
+
+            {/* ── AUTOPILOT MODE ── */}
+            {smartSubMode === 'autopilot' && (<>
 
             {/* ── Hero Generator ── */}
             <div className="bg-gradient-to-br from-[#0d0d14] via-[#111118] to-[#0d0d14] rounded-3xl p-7 relative overflow-hidden border border-white/10">
@@ -2285,6 +2307,8 @@ const Dashboard: React.FC = () => {
                 )}
               </div>
             )}
+
+            </>)}
           </div>
           );
         })()}
@@ -2394,8 +2418,8 @@ const Dashboard: React.FC = () => {
                           <button
                             onClick={() => {
                               setTopic(`${rec.title}: ${rec.detail}`);
-                              setActiveTab('create');
-                              toast('Recommendation loaded into Create tab — generate your post!', 'success');
+                              setActiveTab('smart'); setSmartSubMode('quickpost');
+                              toast('Recommendation loaded — hit Generate in Quick Post!', 'success');
                             }}
                             className="flex items-center gap-1.5 text-xs font-bold text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-xl transition"
                           >
@@ -2404,8 +2428,8 @@ const Dashboard: React.FC = () => {
                           <button
                             onClick={() => {
                               setTopic(`${rec.title}: ${rec.detail}`);
-                              setActiveTab('create');
-                              toast('Recommendation loaded — generate and then schedule your post!', 'success');
+                              setActiveTab('smart'); setSmartSubMode('quickpost');
+                              toast('Recommendation loaded — generate and schedule your post!', 'success');
                             }}
                             className="flex items-center gap-1.5 text-xs font-bold text-amber-300/70 hover:text-amber-300 bg-amber-500/8 hover:bg-amber-500/15 border border-amber-500/15 hover:border-amber-500/25 px-3 py-1.5 rounded-xl transition"
                           >
@@ -2576,7 +2600,7 @@ const Dashboard: React.FC = () => {
                       {/* Actions */}
                       <div className="flex gap-2 pt-1">
                         <button
-                          onClick={() => { setActiveClientId(client.id); setActiveTab('create'); }}
+                          onClick={() => { setActiveClientId(client.id); setActiveTab('smart'); setSmartSubMode('quickpost'); }}
                           className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 text-emerald-300 py-2 rounded-xl transition"
                         >
                           <Wand2 size={12} /> Create Post
