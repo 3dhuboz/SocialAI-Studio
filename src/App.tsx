@@ -156,6 +156,7 @@ const Dashboard: React.FC = () => {
           if (!isAdmin && d.plan) setActivePlan(d.plan);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
+          if (d.runwayApiKey) { localStorage.setItem('sai_runway_key', d.runwayApiKey); setRunwayApiKey(d.runwayApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
@@ -997,14 +998,15 @@ const Dashboard: React.FC = () => {
 
   const [runwayApiKey, setRunwayApiKey] = useState(() => localStorage.getItem('sai_runway_key') || '');
   const [isSavingRunwayKey, setIsSavingRunwayKey] = useState(false);
-  const handleSaveRunwayKey = () => {
+  const handleSaveRunwayKey = async () => {
     if (!runwayApiKey.trim()) { toast('Enter your Runway API key first.', 'warning'); return; }
     setIsSavingRunwayKey(true);
-    localStorage.setItem('sai_runway_key', runwayApiKey.trim());
-    setTimeout(() => {
+    try {
+      localStorage.setItem('sai_runway_key', runwayApiKey.trim());
+      if (user) await updateDoc(doc(db, 'users', user.uid), { runwayApiKey: runwayApiKey.trim() });
       toast('Runway API key saved — video generation is now active!', 'success');
-      setIsSavingRunwayKey(false);
-    }, 300);
+    } catch { toast('Failed to save Runway key.', 'error'); }
+    setIsSavingRunwayKey(false);
   };
 
   const handleSaveProfile = async () => {
