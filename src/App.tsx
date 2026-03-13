@@ -120,6 +120,7 @@ const Dashboard: React.FC = () => {
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptProgress, setAcceptProgress] = useState(0);
+  const [acceptSaved, setAcceptSaved] = useState(0);
   const [isScanningPosts, setIsScanningPosts] = useState(false);
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [lateProfileId, setLateProfileId] = useState<string>('');
@@ -832,37 +833,48 @@ const Dashboard: React.FC = () => {
 
   const handleAcceptSmartPosts = async () => {
     if (!user) return;
+    const total = smartPosts.length;
     setIsAccepting(true);
     setAcceptProgress(0);
-    const saved: SocialPost[] = [];
-    for (let i = 0; i < smartPosts.length; i++) {
-      const sp = smartPosts[i];
-      const postData = {
-        platform: sp.platform,
-        content: sp.content,
-        hashtags: sp.hashtags,
-        scheduledFor: sp.scheduledFor,
-        status: 'Scheduled' as const,
-        image: smartPostImages[i] || undefined,
-        imagePrompt: sp.imagePrompt || undefined,
-        reasoning: sp.reasoning || undefined,
-        pillar: sp.pillar || undefined,
-        topic: sp.topic
-      };
-      const ref = await addDoc(postsCol(), postData);
-      saved.push({ id: ref.id, ...postData });
-      setAcceptProgress(Math.round(((i + 1) / smartPosts.length) * 100));
+    setAcceptSaved(0);
+    let completedCount = 0;
+    try {
+      const results = await Promise.all(
+        smartPosts.map(async (sp, i) => {
+          const postData = {
+            platform: sp.platform,
+            content: sp.content,
+            hashtags: sp.hashtags,
+            scheduledFor: sp.scheduledFor,
+            status: 'Scheduled' as const,
+            image: smartPostImages[i] || undefined,
+            imagePrompt: sp.imagePrompt || undefined,
+            reasoning: sp.reasoning || undefined,
+            pillar: sp.pillar || undefined,
+            topic: sp.topic
+          };
+          const ref = await addDoc(postsCol(), postData);
+          completedCount++;
+          setAcceptSaved(completedCount);
+          setAcceptProgress(Math.round((completedCount / total) * 100));
+          return { id: ref.id, ...postData } as SocialPost;
+        })
+      );
+      setPosts(prev => [...results, ...prev]);
+      toast(`${results.length} posts added to your calendar! 🎉`, 'success');
+      setSmartPosts([]);
+      setSmartStrategy('');
+      setSmartPostImages({});
+      setAutoGenSet(new Set());
+      setCurrentGenIdx(null);
+      setActiveTab('calendar');
+    } catch (e: any) {
+      toast(`Failed to save posts — ${e?.message?.substring(0, 80) ?? 'check your connection and try again.'}`, 'error');
+    } finally {
+      setIsAccepting(false);
+      setAcceptProgress(0);
+      setAcceptSaved(0);
     }
-    setPosts(prev => [...saved, ...prev]);
-    toast(`${saved.length} posts added to your calendar! 🎉`, 'success');
-    setSmartPosts([]);
-    setSmartStrategy('');
-    setSmartPostImages({});
-    setAutoGenSet(new Set());
-    setCurrentGenIdx(null);
-    setIsAccepting(false);
-    setAcceptProgress(0);
-    setActiveTab('calendar');
   };
 
   // ── Insights ──
@@ -2159,21 +2171,27 @@ const Dashboard: React.FC = () => {
                       <p className="text-xs text-white/30">Review below, then add all to your calendar</p>
                     )}
                   </div>
-                  <button
-                    onClick={handleAcceptSmartPosts}
-                    disabled={isAccepting}
-                    className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-70 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
-                  >
-                    {isAccepting ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        <span>Saving… {acceptProgress}%</span>
-                        <span className="text-xs font-normal opacity-60 ml-1">({Math.round(acceptProgress / 100 * smartPosts.length)}/{smartPosts.length})</span>
-                      </>
-                    ) : (
-                      <><CheckCircle size={16} /> Accept All & Add to Calendar</>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <button
+                      onClick={handleAcceptSmartPosts}
+                      disabled={isAccepting}
+                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
+                    >
+                      {isAccepting ? (
+                        <><Loader2 size={16} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
+                      ) : (
+                        <><CheckCircle size={16} /> Accept All & Add to Calendar</>
+                      )}
+                    </button>
+                    {isAccepting && (
+                      <div className="w-full min-w-[220px] bg-white/10 rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-green-400 to-emerald-400 rounded-full transition-all duration-300"
+                          style={{ width: `${acceptProgress}%` }}
+                        />
+                      </div>
                     )}
-                  </button>
+                  </div>
                 </div>
 
                 {/* Post cards */}
@@ -2281,12 +2299,27 @@ const Dashboard: React.FC = () => {
                 })}
 
                 {/* Accept All bottom */}
-                <button
-                  onClick={handleAcceptSmartPosts}
-                  className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-base shadow-xl shadow-green-900/20 transition"
-                >
-                  <CheckCircle size={18} /> Accept All {smartPosts.length} Posts & Add to Calendar
-                </button>
+                <div className="space-y-2">
+                  <button
+                    onClick={handleAcceptSmartPosts}
+                    disabled={isAccepting}
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-base shadow-xl shadow-green-900/20 transition"
+                  >
+                    {isAccepting ? (
+                      <><Loader2 size={18} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
+                    ) : (
+                      <><CheckCircle size={18} /> Accept All {smartPosts.length} Posts & Add to Calendar</>
+                    )}
+                  </button>
+                  {isAccepting && (
+                    <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-green-400 to-emerald-400 rounded-full transition-all duration-300"
+                        style={{ width: `${acceptProgress}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
