@@ -1217,6 +1217,33 @@ const Dashboard: React.FC = () => {
         </div>
       </nav>
 
+      {/* Agency active-client banner */}
+      {activeClientId && activePlan === 'agency' && (() => {
+        const activeClient = clients.find(c => c.id === activeClientId);
+        return activeClient ? (
+          <div className="bg-emerald-950/60 border-b border-emerald-500/25 backdrop-blur-sm sticky top-[121px] z-20">
+            <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-5 h-5 rounded-md bg-emerald-500/30 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
+                  <Users size={11} className="text-emerald-400" />
+                </div>
+                <span className="text-xs text-emerald-300/60">Editing workspace for</span>
+                <span className="text-sm font-bold text-emerald-300 truncate">{activeClient.name}</span>
+                {activeClient.businessType && (
+                  <span className="text-xs text-emerald-400/40 hidden sm:inline">· {activeClient.businessType}</span>
+                )}
+              </div>
+              <button
+                onClick={() => setActiveClientId(null)}
+                className="flex items-center gap-1.5 text-xs text-emerald-400/60 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-3 py-1.5 rounded-lg transition whitespace-nowrap flex-shrink-0"
+              >
+                <X size={11} /> Back to my workspace
+              </button>
+            </div>
+          </div>
+        ) : null;
+      })()}
+
       {/* Content */}
       <main className="max-w-6xl mx-auto px-4 py-8">
         <SetupBanner
