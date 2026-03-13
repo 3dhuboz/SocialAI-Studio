@@ -160,6 +160,16 @@ export const handler = async (event) => {
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
+    // ── List published posts for a profile ───────────────────────────────
+    if (action === 'list-posts' && event.httpMethod === 'GET') {
+      const { profileId, limit = '30' } = qs;
+      if (!profileId) return { statusCode: 400, headers, body: JSON.stringify({ error: 'profileId required' }) };
+      // Try Late's posts endpoint (published/scheduled posts)
+      const res = await fetch(`${LATE_BASE}/profiles/${profileId}/posts?limit=${limit}&status=published`, { headers: authHeader });
+      const data = await res.json();
+      return { statusCode: res.status, headers, body: JSON.stringify(data) };
+    }
+
     // ── Get analytics for a profile ─────────────────────────────────────
     if (action === 'analytics' && event.httpMethod === 'GET') {
       const { profileId } = qs;

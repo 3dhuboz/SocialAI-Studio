@@ -610,7 +610,13 @@ const Dashboard: React.FC = () => {
             setGeneratedVideoUrl(videoUrl);
             toast('Your video Reel is ready — click Publish Now to post!', 'success');
           } catch (e: any) {
-            toast(`Runway ML failed: ${e?.message?.substring(0, 120) || 'Unknown error'}`, 'error');
+            const runwayErr = e?.message || 'Generation failed';
+            const isHostnameErr = runwayErr.toLowerCase().includes('hostname') || runwayErr.toLowerCase().includes('host');
+            if (isHostnameErr) {
+              toast('Runway API key has a hostname restriction. Go to app.runwayml.com → API Keys → edit key → set Allowed Hostname to "No restriction".', 'error');
+            } else {
+              toast(`Video generation failed: ${runwayErr.substring(0, 90)}`, 'error');
+            }
           }
           setIsGeneratingReel(false);
         }
@@ -888,15 +894,31 @@ const Dashboard: React.FC = () => {
       }
 
 
-      // Path 3 — Late analytics (uses Late's managed OAuth — no expiring tokens)
+      // Path 2 — Late list-posts (published posts via Late's managed OAuth)
+      if (!posts.length && lateProfileId) {
+        try {
+          const res = await fetch(`/.netlify/functions/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
+          const lateData = await res.json();
+          const rawPosts: any[] = lateData?.posts ?? lateData?.data ?? lateData?.items ?? (Array.isArray(lateData) ? lateData : []);
+          if (rawPosts.length) {
+            posts = rawPosts.map((p: any) => ({
+              message: p.text ?? p.message ?? p.content ?? p.body ?? p.caption ?? '',
+              created_time: p.publishedAt ?? p.published_at ?? p.scheduledAt ?? p.created_time ?? p.created_at ?? '',
+              likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
+              comments: p.comments ?? p.commentsCount ?? p.metrics?.comments ?? 0,
+              shares: p.shares ?? p.sharesCount ?? p.metrics?.shares ?? 0,
+            })).filter((p: any) => p.message);
+          }
+        } catch {
+          // Late list-posts unavailable — continue
+        }
+      }
+
+      // Path 3 — Late analytics fallback
       if (!posts.length && lateProfileId) {
         try {
           const lateData = await LateService.getAnalytics(lateProfileId);
-          // Late analytics shape is not strictly typed — normalise defensively
-          const rawPosts: any[] = (lateData as any)?.posts
-            ?? (lateData as any)?.data
-            ?? (lateData as any)?.items
-            ?? [];
+          const rawPosts: any[] = (lateData as any)?.posts ?? (lateData as any)?.data ?? (lateData as any)?.items ?? [];
           if (rawPosts.length) {
             posts = rawPosts.map((p: any) => ({
               message: p.text ?? p.message ?? p.content ?? p.body ?? '',
@@ -912,7 +934,10 @@ const Dashboard: React.FC = () => {
       }
 
       if (!posts.length) {
-        toast('No posts found. Connect your Facebook or Late account in Settings first.', 'warning');
+        const msg = lateProfileId
+          ? 'No published posts found yet. Publish a few posts first, then scan again.'
+          : 'Connect your social accounts in Settings first, then try scanning.';
+        toast(msg, 'warning');
         setIsScanningPosts(false);
         return;
       }
@@ -3094,7 +3119,7 @@ const Dashboard: React.FC = () => {
                       <p key={i} className="text-xs text-white/40 flex items-center gap-2"><CheckCircle size={11} className="text-green-400 shrink-0" /> {f}</p>
                     ))}
                   </div>
-                  {activePlan !== 'pro' && (
+                  {activePlan !== 'pro' && activePlan !== 'agency' && (
                     <a
                       href={CLIENT.salesUrl}
                       target="_blank"
@@ -3103,6 +3128,11 @@ const Dashboard: React.FC = () => {
                     >
                       <ArrowRight size={12} /> Upgrade Plan
                     </a>
+                  )}
+                  {activePlan === 'agency' && (
+                    <div className="text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-2 rounded-xl flex items-center gap-1.5 self-start font-bold">
+                      <CheckCircle size={12} /> You're on our top plan
+                    </div>
                   )}
                 </div>
               ) : null}

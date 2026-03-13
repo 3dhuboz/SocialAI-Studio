@@ -179,12 +179,19 @@ export const AccountPanel: React.FC<Props> = ({
                       <CreditCard size={12} /> Billing Enquiry
                     </button>
                   )}
-                  <button
-                    onClick={() => { onClose(); onUpgrade(); }}
-                    className={`flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r ${color} text-white text-xs font-semibold py-2 rounded-xl hover:opacity-90 transition`}
-                  >
-                    <Crown size={12} /> Upgrade
-                  </button>
+                  {activePlan !== 'agency' && (
+                    <button
+                      onClick={() => { onClose(); onUpgrade(); }}
+                      className={`flex-1 flex items-center justify-center gap-1.5 bg-gradient-to-r ${color} text-white text-xs font-semibold py-2 rounded-xl hover:opacity-90 transition`}
+                    >
+                      <Crown size={12} /> Upgrade
+                    </button>
+                  )}
+                  {activePlan === 'agency' && (
+                    <div className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold py-2 rounded-xl">
+                      <CheckCircle size={12} /> Top Plan
+                    </div>
+                  )}
                 </div>
               </div>
 
