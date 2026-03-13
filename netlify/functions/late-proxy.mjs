@@ -96,13 +96,23 @@ export const handler = async (event) => {
     if (action === 'post' && event.httpMethod === 'POST') {
       const { profileId, platforms, text, mediaUrls, scheduleDate } = JSON.parse(event.body || '{}');
       if (!profileId || !platforms || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'profileId, platforms, and text required' }) };
-      const body = { profileId, platforms, content: text, text, ...(mediaUrls?.length ? { mediaUrls } : {}), ...(scheduleDate ? { scheduleDate } : {}) };
+      // Normalise platform names — try both lowercase and capitalised (Late docs unclear)
+      const normalisedPlatforms = platforms.map((p) => p.toLowerCase());
+      const body = { profileId, platforms: normalisedPlatforms, content: text, ...(mediaUrls?.length ? { mediaUrls } : {}), ...(scheduleDate ? { scheduleDate } : {}) };
+      console.log('[late-proxy] POST /posts payload:', JSON.stringify(body));
       const res = await fetch(`${LATE_BASE}/posts`, {
         method: 'POST',
         headers: authHeader,
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      let data;
+      try { data = JSON.parse(rawText); } catch { data = { error: rawText || `Late API returned HTTP ${res.status}` }; }
+      // Surface full Late error for debugging
+      if (!res.ok) {
+        const errMsg = data?.message || data?.error || data?.detail || rawText || `Late API HTTP ${res.status}`;
+        return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg, lateStatus: res.status, lateBody: data }) };
+      }
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
