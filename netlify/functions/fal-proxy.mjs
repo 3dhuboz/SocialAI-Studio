@@ -9,7 +9,7 @@
  */
 
 const FAL_BASE = 'https://queue.fal.run';
-const MODEL = 'fal-ai/kling-video/v2.1/standard/image-to-video';
+const MODEL = 'fal-ai/kling-video/v1.6/standard/image-to-video';
 
 export const handler = async (event) => {
   const headers = {
@@ -80,7 +80,15 @@ export const handler = async (event) => {
         `${FAL_BASE}/${MODEL}/requests/${encodeURIComponent(requestId)}/status`,
         { headers: authHeader },
       );
-      const statusData = await statusRes.json();
+
+      let statusData;
+      try { statusData = await statusRes.json(); } catch { statusData = {}; }
+
+      // Surface HTTP errors (e.g. 401, 404, 422) immediately
+      if (!statusRes.ok) {
+        const errMsg = statusData?.detail || statusData?.message || statusData?.error || `fal.ai status HTTP ${statusRes.status}`;
+        return { statusCode: 200, headers, body: JSON.stringify({ status: 'FAILED', failure: errMsg }) };
+      }
 
       // If COMPLETED, fetch the actual result
       if (statusData.status === 'COMPLETED') {
@@ -89,7 +97,12 @@ export const handler = async (event) => {
           { headers: authHeader },
         );
         const result = await resultRes.json();
-        const videoUrl = result?.video?.url || result?.videos?.[0]?.url;
+        const videoUrl =
+          result?.video?.url ||
+          result?.videos?.[0]?.url ||
+          result?.data?.video?.url ||
+          result?.output?.video?.url ||
+          result?.output?.[0]?.url;
         return {
           statusCode: 200,
           headers,
@@ -101,15 +114,17 @@ export const handler = async (event) => {
         return {
           statusCode: 200,
           headers,
-          body: JSON.stringify({ status: 'FAILED', failure: statusData.error || 'Generation failed' }),
+          body: JSON.stringify({ status: 'FAILED', failure: statusData.error || statusData.detail || 'Generation failed' }),
         };
       }
 
-      // IN_QUEUE or IN_PROGRESS
+      // IN_QUEUE or IN_PROGRESS — report meaningful progress
+      const qPos = typeof statusData.queue_position === 'number' ? statusData.queue_position : null;
+      const progress = statusData.status === 'IN_PROGRESS' ? 0.5 : (qPos !== null && qPos <= 3 ? 0.15 : 0.05);
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ status: 'IN_PROGRESS', progress: statusData.queue_position ? 0.1 : 0.5 }),
+        body: JSON.stringify({ status: 'IN_PROGRESS', progress, queuePosition: qPos }),
       };
     }
 
