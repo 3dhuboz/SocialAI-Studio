@@ -1679,172 +1679,108 @@ const Dashboard: React.FC = () => {
                   )}
                 </div>
 
-                {/* Video section */}
+                {/* Video section — clean ticker */}
                 {(isGeneratingVideo || (isGeneratingImage && contentType === 'video') || isGeneratingReel || generatedVideoScript || generatedVideoUrl) && (
-                  <div className="border-t border-purple-500/15 bg-purple-950/20">
-                    {/* Step tracker */}
-                    <div className="px-5 py-3 border-b border-purple-500/10">
-                      <div className="flex items-center gap-1.5 mb-2.5">
-                        <Play size={12} className="text-purple-400" />
-                        <span className="text-[11px] font-bold text-purple-300 uppercase tracking-wider">AI Video Workflow</span>
-                        {generatedVideoUrl && <span className="ml-auto text-[10px] text-green-400 bg-green-500/10 border border-green-500/15 px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle size={9} /> Ready to publish</span>}
-                      </div>
-                      <div className="flex items-center gap-0">
-                        {/* Step 1: Brief */}
-                        {(() => {
-                          const done = !!generatedVideoScript;
-                          const active = isGeneratingVideo;
-                          return (
-                            <div className="flex items-center gap-1.5 flex-1">
-                              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black transition-all ${
-                                done ? 'bg-green-500 text-black' : active ? 'bg-purple-500 text-white ring-2 ring-purple-400/40' : 'bg-white/8 text-white/30'
-                              }`}>
-                                {done ? <CheckCircle size={11} /> : active ? <Loader2 size={10} className="animate-spin" /> : '1'}
-                              </div>
-                              <span className={`text-[11px] font-semibold truncate ${done ? 'text-green-400' : active ? 'text-purple-300' : 'text-white/25'}`}>
-                                {active ? 'Writing brief…' : 'Brief'}
-                              </span>
+                  <div className="border-t border-purple-500/15 bg-purple-950/20 px-5 py-3.5 space-y-3">
+
+                    {/* ── Step tracker (slim) ── */}
+                    <div className="flex items-center gap-2">
+                      <Play size={11} className="text-purple-400 flex-shrink-0" />
+                      {[
+                        { label: 'Brief',     done: !!generatedVideoScript,  active: isGeneratingVideo },
+                        { label: 'Thumbnail', done: !!generatedVideoScript && !isGeneratingImage && (isGeneratingReel || !!generatedVideoUrl), active: isGeneratingImage && contentType === 'video' },
+                        { label: 'Video',     done: !!generatedVideoUrl,     active: isGeneratingReel },
+                      ].map((step, i) => (
+                        <React.Fragment key={step.label}>
+                          {i > 0 && <div className={`h-px w-6 flex-shrink-0 ${step.done || (i === 1 && !!generatedVideoScript) ? 'bg-purple-500/30' : 'bg-white/8'}`} />}
+                          <div className="flex items-center gap-1.5 flex-shrink-0">
+                            <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-black flex-shrink-0 transition-all ${
+                              step.done ? 'bg-green-500 text-black' : step.active ? 'bg-purple-500 text-white' : 'bg-white/8 text-white/25'
+                            }`}>
+                              {step.done ? <CheckCircle size={9} /> : step.active ? <Loader2 size={8} className="animate-spin" /> : i + 1}
                             </div>
-                          );
-                        })()}
-                        <div className={`h-px flex-shrink-0 w-5 mx-1 ${generatedVideoScript ? 'bg-green-500/40' : 'bg-white/8'}`} />
-                        {/* Step 2: Thumbnail */}
-                        {(() => {
-                          const done = !!generatedVideoScript && !isGeneratingImage && (isGeneratingReel || !!generatedVideoUrl);
-                          const active = isGeneratingImage && contentType === 'video';
-                          return (
-                            <div className="flex items-center gap-1.5 flex-1">
-                              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black transition-all ${
-                                done ? 'bg-green-500 text-black' : active ? 'bg-purple-500 text-white ring-2 ring-purple-400/40' : 'bg-white/8 text-white/30'
-                              }`}>
-                                {done ? <CheckCircle size={11} /> : active ? <Loader2 size={10} className="animate-spin" /> : '2'}
-                              </div>
-                              <span className={`text-[11px] font-semibold truncate ${done ? 'text-green-400' : active ? 'text-purple-300' : 'text-white/25'}`}>
-                                {active ? 'Creating thumbnail…' : 'Thumbnail'}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                        <div className={`h-px flex-shrink-0 w-5 mx-1 ${generatedVideoUrl ? 'bg-green-500/40' : isGeneratingReel ? 'bg-purple-500/40' : 'bg-white/8'}`} />
-                        {/* Step 3: Video */}
-                        {(() => {
-                          const done = !!generatedVideoUrl;
-                          const active = isGeneratingReel;
-                          return (
-                            <div className="flex items-center gap-1.5 flex-1">
-                              <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black transition-all ${
-                                done ? 'bg-green-500 text-black' : active ? 'bg-purple-500 text-white ring-2 ring-purple-400/40 animate-pulse' : 'bg-white/8 text-white/30'
-                              }`}>
-                                {done ? <CheckCircle size={11} /> : active ? <Loader2 size={10} className="animate-spin" /> : '3'}
-                              </div>
-                              <span className={`text-[11px] font-semibold truncate ${done ? 'text-green-400' : active ? 'text-purple-300' : 'text-white/25'}`}>
-                                {active ? `Generating… ${Math.round(videoProgress * 100)}%` : done ? 'Video ready' : 'Video'}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </div>
+                            <span className={`text-[11px] font-medium ${step.done ? 'text-green-400' : step.active ? 'text-purple-300' : 'text-white/25'}`}>
+                              {step.label}
+                            </span>
+                          </div>
+                        </React.Fragment>
+                      ))}
+                      {generatedVideoUrl && (
+                        <span className="ml-auto text-[10px] text-green-400 flex items-center gap-1 flex-shrink-0"><CheckCircle size={9} /> Ready</span>
+                      )}
                     </div>
 
-                    <div className="p-4 space-y-4">
-                      {/* ── Runway generation progress ── */}
-                      {isGeneratingReel && (
-                        <div className="space-y-2">
-                          <div className="flex justify-between text-xs text-white/40">
-                            <span>AI Video — generating your 10-second Reel…</span>
-                            <span>{Math.round(videoProgress * 100)}%</span>
-                          </div>
-                          <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
-                              style={{ width: `${Math.round(videoProgress * 100)}%` }}
-                            />
-                          </div>
-                          <p className="text-[10px] text-white/25">This takes 1–3 minutes. You can wait or close and come back.</p>
-                        </div>
-                      )}
+                    {/* ── Status line ── */}
+                    {(isGeneratingVideo || (isGeneratingImage && contentType === 'video') || isGeneratingReel) && (
+                      <div className="flex items-center gap-2">
+                        <Loader2 size={12} className="animate-spin text-purple-400 flex-shrink-0" />
+                        <span className="text-xs text-white/50">
+                          {isGeneratingVideo && 'Writing video script & shot list…'}
+                          {isGeneratingImage && contentType === 'video' && 'Generating thumbnail image…'}
+                          {isGeneratingReel && `Generating your Reel via fal.ai (Kling) — this takes 1–3 min…`}
+                        </span>
+                        {isGeneratingReel && (
+                          <span className="ml-auto text-xs font-bold text-purple-300 flex-shrink-0">{Math.round(videoProgress * 100)}%</span>
+                        )}
+                      </div>
+                    )}
 
-                      {/* ── Actual video player ── */}
-                      {generatedVideoUrl && (
-                        <div className="flex gap-4 items-start">
-                          <div className="relative w-20 flex-shrink-0 rounded-xl overflow-hidden border border-purple-500/30 shadow-lg shadow-purple-900/30 bg-black" style={{ aspectRatio: '9/16' }}>
-                            <video
-                              src={generatedVideoUrl}
-                              className="w-full h-full object-cover"
-                              autoPlay
-                              loop
-                              muted
-                              playsInline
-                              poster={generatedImage || undefined}
-                            />
-                            <div className="absolute top-1.5 left-1.5">
-                              <span className="text-[8px] bg-purple-500/80 text-white font-black px-1.5 py-0.5 rounded-full">REEL</span>
-                            </div>
-                          </div>
-                          <div className="flex-1 min-w-0 space-y-2">
-                            <div className="bg-green-500/8 border border-green-500/15 rounded-xl px-3 py-2.5">
-                              <p className="text-[9px] font-black text-green-400/70 uppercase tracking-widest mb-1">AI-Generated Video Ready</p>
-                              <p className="text-xs text-white/60 leading-relaxed">10-second Reel generated by AI. Click <strong className="text-white/80">Publish Now</strong> to post it directly to your social accounts.</p>
-                            </div>
-                            <div className="flex gap-2 flex-wrap">
-                              {generatedVideoScript?.duration && <span className="text-[11px] text-white/50 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">⏱ {generatedVideoScript.duration}</span>}
-                              {generatedVideoScript?.mood && <span className="text-[11px] text-purple-300/60 bg-purple-500/8 border border-purple-500/12 px-2.5 py-1 rounded-full">♪ {generatedVideoScript.mood}</span>}
-                            </div>
-                            <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1.5 text-xs text-purple-400/70 hover:text-purple-300 transition">
-                              {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                              {showVideoBriefDetail ? 'Hide script & shots' : 'View script & shots'}
+                    {/* ── Progress bar (video only) ── */}
+                    {isGeneratingReel && (
+                      <div className="h-1 bg-white/8 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-700"
+                          style={{ width: `${Math.max(5, Math.round(videoProgress * 100))}%` }}
+                        />
+                      </div>
+                    )}
+
+                    {/* ── Video ready: small preview ── */}
+                    {generatedVideoUrl && (
+                      <div className="flex items-center gap-3">
+                        <div className="relative w-10 flex-shrink-0 rounded-lg overflow-hidden bg-black border border-purple-500/30" style={{ aspectRatio: '9/16' }}>
+                          <video src={generatedVideoUrl} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-green-400">Video ready — click Publish Now to post</p>
+                          {generatedVideoScript && (
+                            <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1 text-[11px] text-purple-400/60 hover:text-purple-300 transition mt-0.5">
+                              {showVideoBriefDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                              {showVideoBriefDetail ? 'Hide script' : 'View script'}
                             </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ── Compact brief (no video yet) ── */}
-                      {generatedVideoScript && !generatedVideoUrl && !isGeneratingReel && (
-                        <div className="flex gap-4 items-start">
-                          <AnimatedReelPreview hookText={generatedVideoScript.hook} mood={generatedVideoScript.mood} size="sm" onClick={() => setShowVideoBriefDetail(v => !v)} />
-                          <div className="flex-1 min-w-0 space-y-2">
-                            <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-3 py-2.5">
-                              <p className="text-[9px] font-black text-purple-400/70 uppercase tracking-widest mb-1">Opening Hook (0–2 sec)</p>
-                              <p className="text-sm text-purple-100 font-semibold leading-snug">{generatedVideoScript.hook}</p>
-                            </div>
-                            <div className="flex gap-2 flex-wrap">
-                              {generatedVideoScript.duration && <span className="text-[11px] text-white/50 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">⏱ {generatedVideoScript.duration}</span>}
-                              {generatedVideoScript.mood && <span className="text-[11px] text-purple-300/60 bg-purple-500/8 border border-purple-500/12 px-2.5 py-1 rounded-full">♪ {generatedVideoScript.mood}</span>}
-                              {generatedVideoScript.shots.length > 0 && <span className="text-[11px] text-white/40 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">{generatedVideoScript.shots.length} shots</span>}
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1.5 text-xs text-purple-400/70 hover:text-purple-300 transition">
-                                {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                                {showVideoBriefDetail ? 'Hide full brief' : 'View script & shots'}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* ── Expandable full script + shots ── */}
-                      {showVideoBriefDetail && generatedVideoScript && (
-                        <div className="space-y-4 border-t border-purple-500/10 pt-4">
-                          <div>
-                            <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Full Script / Voiceover</p>
-                            <div className="bg-black/30 border border-white/6 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{generatedVideoScript.script}</div>
-                          </div>
-                          {generatedVideoScript.shots.length > 0 && (
-                            <div>
-                              <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Shot List</p>
-                              <div className="space-y-2">
-                                {generatedVideoScript.shots.map((shot, i) => (
-                                  <div key={i} className="flex gap-3 text-sm">
-                                    <span className="w-6 h-6 rounded-full bg-purple-500/15 border border-purple-500/20 text-purple-400 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
-                                    <p className="text-white/60 leading-relaxed">{shot}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
                           )}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
+
+                    {/* ── Script done, awaiting reel ── */}
+                    {generatedVideoScript && !generatedVideoUrl && !isGeneratingReel && !isGeneratingImage && (
+                      <div className="flex items-center gap-2">
+                        <CheckCircle size={11} className="text-green-400 flex-shrink-0" />
+                        <p className="text-xs text-white/50 flex-1 truncate">Script ready — <span className="text-white/70 font-medium">"{generatedVideoScript.hook}"</span></p>
+                        <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1 text-[11px] text-purple-400/60 hover:text-purple-300 transition flex-shrink-0">
+                          {showVideoBriefDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                          {showVideoBriefDetail ? 'Hide' : 'View script'}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ── Expandable script ── */}
+                    {showVideoBriefDetail && generatedVideoScript && (
+                      <div className="border-t border-purple-500/10 pt-3 space-y-3">
+                        <div className="bg-black/30 border border-white/6 rounded-xl px-4 py-3 text-xs text-white/55 whitespace-pre-wrap leading-relaxed">{generatedVideoScript.script}</div>
+                        {generatedVideoScript.shots.length > 0 && (
+                          <div className="space-y-1.5">
+                            {generatedVideoScript.shots.map((shot, i) => (
+                              <div key={i} className="flex gap-2.5 text-xs">
+                                <span className="w-4 h-4 rounded-full bg-purple-500/15 text-purple-400 text-[9px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                                <p className="text-white/45 leading-relaxed">{shot}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
