@@ -2731,14 +2731,15 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
-            {/* API Key */}
+            {/* API Key — admin only */}
+            {isAdminMode ? (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
                   <Sparkles size={16} className="text-amber-400" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white">Gemini AI Key</h3>
+                  <h3 className="font-bold text-white">Gemini AI Key <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded-full ml-1 font-semibold">Admin only</span></h3>
                   <p className="text-xs text-white/30 mt-0.5">Powers all AI content generation features</p>
                 </div>
                 {hasApiKey && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
@@ -2766,6 +2767,17 @@ const Dashboard: React.FC = () => {
                 </button>
               </div>
             </div>
+            ) : (
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
+              <div className="w-8 h-8 bg-green-500/15 border border-green-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                <CheckCircle size={14} className="text-green-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white">AI features active</p>
+                <p className="text-xs text-white/30">AI content generation is managed as part of your plan.</p>
+              </div>
+            </div>
+            )}
 
             {/* Business Profile — Guided Questionnaire */}
             <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
@@ -2966,8 +2978,8 @@ const Dashboard: React.FC = () => {
             </div>}
             </div>
 
-            {/* Runway AI Video Key — Pro+ */}
-            {(activePlan === 'pro' || activePlan === 'agency') && (
+            {/* Runway AI Video Key — admin + Pro/Agency */}
+            {isAdminMode && (activePlan === 'pro' || activePlan === 'agency') && (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
