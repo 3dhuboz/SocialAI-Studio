@@ -14,11 +14,9 @@ import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
-import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
-import { FacebookService } from './services/facebookService';
 import { LateService } from './services/lateService';
 import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
@@ -115,7 +113,6 @@ const Dashboard: React.FC = () => {
   const [showPricing, setShowPricing] = useState(false);
   const [showIntakeForm, setShowIntakeForm] = useState(false);
   const [intakeFormDone, setIntakeFormDone] = useState(false);
-  const [fbTokenNeverExpires, setFbTokenNeverExpires] = useState<boolean | undefined>(undefined);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptProgress, setAcceptProgress] = useState(0);
@@ -159,7 +156,6 @@ const Dashboard: React.FC = () => {
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
-          if (typeof d.fbTokenNeverExpires === 'boolean') setFbTokenNeverExpires(d.fbTokenNeverExpires);
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
           if (d.lateProfileId) setLateProfileId(d.lateProfileId);
           if (d.lateConnectedPlatforms) setLateConnectedPlatforms(d.lateConnectedPlatforms);
@@ -382,7 +378,7 @@ const Dashboard: React.FC = () => {
   const [insightStale, setInsightStale] = useState(false);
 
   const hasApiKey = !!localStorage.getItem('sai_gemini_key');
-  const fbConnected = !!(profile.facebookPageId && profile.facebookPageAccessToken) || !!lateProfileId;
+  const fbConnected = !!lateProfileId;
 
   // Auto-run daily insight analysis when stale
   useEffect(() => {
@@ -443,17 +439,7 @@ const Dashboard: React.FC = () => {
         } catch { /* fall through to FB Graph */ }
       }
 
-      // Path 2 — Direct FB Graph API fallback
-      if (profile.facebookPageId && profile.facebookPageAccessToken) {
-        const data = await FacebookService.getPageStats(profile.facebookPageId, profile.facebookPageAccessToken);
-        setLiveStats(data);
-        setLastPulled(new Date());
-        setStats(prev => ({ ...prev, followers: data.followersCount || data.fanCount, reach: data.reach28d, engagement: data.engagementRate }));
-        const hasData = data.fanCount > 0 || data.followersCount > 0 || data.reach28d > 0;
-        if (!silent) toast(hasData ? 'Live stats updated from Facebook!' : 'Connected — page stats require Facebook App Review to display.', hasData ? 'success' : 'info');
-      } else if (!silent) {
-        toast('Connect your social accounts in Settings to pull live stats.', 'warning');
-      }
+      if (!silent) toast('Connect your social accounts in Settings to pull live stats.', 'warning');
     } catch (e: any) {
       const msg = e?.message || '';
       if (!silent) {
@@ -472,21 +458,6 @@ const Dashboard: React.FC = () => {
     if (lateProfileId && user) handlePullStats(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lateProfileId, user]);
-
-  const handlePublishToFacebook = async () => {
-    if (!profile.facebookPageId || !profile.facebookPageAccessToken) {
-      toast('Facebook page not connected. Go to Settings to connect.', 'warning'); return;
-    }
-    setIsPublishing(true);
-    try {
-      const fullText = generatedHashtags.length > 0 ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
-      await FacebookService.postToPageDirect(profile.facebookPageId, profile.facebookPageAccessToken, fullText, generatedImage || undefined);
-      toast('Published to Facebook!', 'success');
-    } catch (e: any) {
-      toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
-    }
-    setIsPublishing(false);
-  };
 
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
@@ -794,22 +765,6 @@ const Dashboard: React.FC = () => {
         }
       }
 
-      // Path 2 — Direct Facebook Graph API (requires stored page access token)
-      if (!posts.length && profile.facebookPageId && profile.facebookPageAccessToken) {
-        try {
-          posts = await FacebookService.getRecentPosts(profile.facebookPageId, profile.facebookPageAccessToken, 30);
-        } catch (fbErr: any) {
-          const msg: string = fbErr?.message || '';
-          const isExpired = msg.includes('Session has expired') || msg.includes('access token') || msg.includes('OAuthException');
-          if (isExpired) {
-            toast('Facebook token expired — reconnect your page in Settings → Social Media Connection.', 'error');
-            setIsScanningPosts(false);
-            setActiveTab('settings');
-            return;
-          }
-          throw fbErr;
-        }
-      }
 
       // Path 3 — Late analytics (uses Late's managed OAuth — no expiring tokens)
       if (!posts.length && lateProfileId) {
@@ -868,11 +823,7 @@ const Dashboard: React.FC = () => {
   // ── Settings Save Handlers ──
   const [isSavingKey, setIsSavingKey] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [isSavingFacebook, setIsSavingFacebook] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
-  const [fbPages, setFbPages] = useState<import('./services/facebookService').FacebookPage[]>([]);
-  const [isFindingPages, setIsFindingPages] = useState(false);
-  const [fbLookupError, setFbLookupError] = useState('');
 
   const handleDismissOnboarding = async () => {
     setShowOnboarding(false);
@@ -904,47 +855,6 @@ const Dashboard: React.FC = () => {
       toast('Business profile saved!', 'success');
     } catch { toast('Failed to save profile.', 'error'); }
     setIsSavingProfile(false);
-  };
-
-  const handleFindPages = async () => {
-    const token = profile.facebookPageAccessToken.trim();
-    if (!token) { toast('Paste your Access Token first, then click Find My Pages.', 'warning'); return; }
-    setIsFindingPages(true);
-    setFbLookupError('');
-    setFbPages([]);
-    try {
-      // Try the Netlify exchange first — gives permanent page tokens
-      try {
-        const result = await FacebookService.exchangeForLongLivedPages(token);
-        setFbPages(result.pages);
-        setFbTokenNeverExpires(true);
-        // Store the long-lived user token for future use
-        if (user) {
-          updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires: true, fbLongLivedUserToken: result.longLivedUserToken }).catch(() => {});
-        }
-        setIsFindingPages(false);
-        return;
-      } catch {
-        // Netlify function not configured — fall back to direct lookup
-      }
-      const pages = await FacebookService.getPagesByToken(token);
-      setFbPages(pages);
-      // Status unknown for manual tokens without exchange — don't mark as short-lived
-      setFbTokenNeverExpires(undefined);
-    } catch (e: any) {
-      setFbLookupError(e?.message || 'Could not fetch pages.');
-    }
-    setIsFindingPages(false);
-  };
-
-  const handleSaveFacebook = async () => {
-    setIsSavingFacebook(true);
-    try {
-      localStorage.setItem('sai_profile', JSON.stringify(profile));
-      await updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true }));
-      toast('Facebook credentials saved!', 'success');
-    } catch { toast('Failed to save Facebook credentials.', 'error'); }
-    setIsSavingFacebook(false);
   };
 
   const handleSaveAll = async () => {
@@ -1571,9 +1481,9 @@ const Dashboard: React.FC = () => {
                   </button>
                   {fbConnected && (
                     <button
-                      onClick={handlePublishToFacebook}
+                      onClick={() => handlePublishViaLate(lateConnectedPlatforms.length ? lateConnectedPlatforms.map(p => p.toLowerCase() as 'facebook' | 'instagram') : ['facebook', 'instagram'])}
                       disabled={isPublishing}
-                      className="bg-[#1877F2] hover:bg-[#166FE5] text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
+                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
                     >
                       {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                       Publish Now
@@ -1624,11 +1534,8 @@ const Dashboard: React.FC = () => {
               onPublish={async (post) => {
                 try {
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
-                  if (lateProfileId) {
-                    await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text);
-                  } else {
-                    await FacebookService.postToPageDirect(profile.facebookPageId, profile.facebookPageAccessToken, text, post.image);
-                  }
+                  if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
+                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Published successfully!', 'success');
                 } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
@@ -2695,24 +2602,19 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
-            {/* Facebook Connection */}
+            {/* Social Media Connection — Late only */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
-                  <Facebook size={16} className="text-blue-400" />
+                  <Link2 size={16} className="text-blue-400" />
                 </div>
                 <div>
                   <h3 className="font-bold text-white">Social Media Connection</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Connect Facebook &amp; Instagram to enable auto-publishing</p>
+                  <p className="text-xs text-white/30 mt-0.5">Connect Facebook &amp; Instagram via Late — one click, no tokens to manage</p>
                 </div>
               </div>
 
-              {/* ── Primary — Late (Facebook + Instagram, no App Review needed) ── */}
               <div className="space-y-2">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-[10px] font-black bg-gradient-to-r from-blue-500 to-purple-500 text-white px-2 py-0.5 rounded-full">RECOMMENDED</span>
-                  <span className="text-xs text-white/40">Facebook + Instagram in one click</span>
-                </div>
                 <LateConnectButton
                   profileId={lateProfileId}
                   connectedPlatforms={lateConnectedPlatforms}
@@ -2750,138 +2652,6 @@ const Dashboard: React.FC = () => {
                 />
               </div>
 
-              {/* ── Divider ── */}
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-white/5" />
-                <span className="text-[11px] text-white/20">or connect Facebook only (manual)</span>
-                <div className="flex-1 h-px bg-white/5" />
-              </div>
-
-              {/* Legacy — Facebook-only OAuth button */}
-              <FacebookConnectButton
-                connectedPageId={profile.facebookPageId}
-                connectedPageName={profile.name !== CLIENT.defaultBusinessName ? profile.name : undefined}
-                tokenNeverExpires={fbTokenNeverExpires}
-                onConnected={(pageId, pageAccessToken, pageName, longLivedUserToken) => {
-                  const permanent = !!longLivedUserToken;
-                  setFbTokenNeverExpires(permanent);
-                  setProfile(prev => ({
-                    ...prev,
-                    facebookPageId: pageId,
-                    facebookPageAccessToken: pageAccessToken,
-                    facebookConnected: true,
-                    name: prev.name === CLIENT.defaultBusinessName ? pageName : prev.name,
-                  }));
-                  // Persist permanent token status + optional long-lived user token to Firestore
-                  if (user) {
-                    const extra = { fbTokenNeverExpires: permanent, ...(longLivedUserToken ? { fbLongLivedUserToken: longLivedUserToken } : {}) };
-                    updateDoc(doc(db, 'users', user.uid), extra).catch(() =>
-                      setDoc(doc(db, 'users', user.uid), extra, { merge: true })
-                    );
-                  }
-                  toast(permanent ? `Connected to "${pageName}" with a permanent token ✓` : `Connected to "${pageName}"! Saving…`, 'success');
-                  handleSaveFacebook();
-                }}
-                onDisconnect={() => {
-                  setFbTokenNeverExpires(undefined);
-                  setProfile(prev => ({
-                    ...prev,
-                    facebookPageId: '',
-                    facebookPageAccessToken: '',
-                    facebookConnected: false,
-                  }));
-                  if (user) updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires: null, fbLongLivedUserToken: null }).catch(() => {});
-                  toast('Facebook page disconnected.', 'warning');
-                }}
-              />
-
-              {/* Fallback — manual token (collapsible) */}
-              <details className="group">
-                <summary className="text-xs text-white/20 hover:text-white/40 cursor-pointer list-none flex items-center gap-1.5 transition pt-1 border-t border-white/5">
-                  <ChevronDown size={12} className="group-open:rotate-180 transition-transform" />
-                  Connect manually with an access token instead
-                </summary>
-                <div className="mt-4 space-y-3">
-                  {/* ── Option A: System User (permanent, recommended) ── */}
-                  <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4 space-y-2">
-                    <p className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">⭐ Recommended — Never-expiring System User token</p>
-                    <ol className="text-xs text-white/35 space-y-1.5 list-decimal list-inside leading-relaxed">
-                      <li>Go to <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener noreferrer" className="text-emerald-400/70 hover:text-emerald-400">Facebook Business Manager → System Users</a></li>
-                      <li>Create a System User (role: <strong className="text-white/50">Admin</strong>)</li>
-                      <li>Click <strong className="text-white/50">Add Assets</strong> → select your Facebook Page → give it <strong className="text-white/50">Full Control</strong></li>
-                      <li>Click <strong className="text-white/50">Generate New Token</strong> → select your App → tick <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
-                      <li>Set expiry to <strong className="text-white/50">Never</strong> → copy and paste below</li>
-                    </ol>
-                  </div>
-
-                  {/* ── Option B: Graph Explorer (quick, short-lived) ── */}
-                  <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-4 space-y-2">
-                    <p className="text-xs font-semibold text-blue-300">Quick option — Graph Explorer token (expires in ~60 days)</p>
-                    <ol className="text-xs text-white/35 space-y-1 list-decimal list-inside leading-relaxed">
-                      <li>Go to <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-400/70 hover:text-blue-400">Facebook Graph Explorer</a></li>
-                      <li>Click <strong className="text-white/50">Generate Access Token</strong> → select your <strong className="text-white/50">Page</strong></li>
-                      <li>Add: <code className="bg-white/10 px-1 rounded">pages_show_list</code> <code className="bg-white/10 px-1 rounded">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded">pages_read_engagement</code></li>
-                    </ol>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={profile.facebookPageAccessToken}
-                      onChange={e => { setProfile(prev => ({ ...prev, facebookPageAccessToken: e.target.value })); setFbPages([]); setFbLookupError(''); }}
-                      placeholder="EAAxxxxxxxx… paste token here"
-                      className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-xs placeholder:text-white/20 focus:outline-none focus:border-blue-500/40"
-                    />
-                    <button
-                      onClick={handleFindPages}
-                      disabled={isFindingPages || !profile.facebookPageAccessToken.trim()}
-                      className="flex-shrink-0 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition flex items-center gap-2"
-                    >
-                      {isFindingPages ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                      {isFindingPages ? 'Searching…' : 'Find My Pages'}
-                    </button>
-                  </div>
-                  {fbLookupError && (
-                    <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{fbLookupError}</p>
-                  )}
-                  {fbPages.length > 0 && (
-                    <div className="space-y-2">
-                      {fbPages.map(page => (
-                        <button key={page.id} type="button"
-                          onClick={() => {
-                            setProfile(prev => ({ ...prev, facebookPageId: page.id, facebookPageAccessToken: page.access_token || prev.facebookPageAccessToken, facebookConnected: true }));
-                            if (user && typeof fbTokenNeverExpires === 'boolean') {
-                              updateDoc(doc(db, 'users', user.uid), { fbTokenNeverExpires }).catch(() => {});
-                            }
-                            setFbPages([]);
-                            toast(`Page "${page.name}" selected!`, 'success');
-                          }}
-                          className="w-full flex items-center gap-3 p-3 rounded-xl border border-white/8 bg-white/3 hover:bg-white/5 hover:border-blue-500/30 transition text-left"
-                        >
-                          <div className="w-7 h-7 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0"><Facebook size={13} className="text-blue-400" /></div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-white truncate">{page.name}</p>
-                            <p className="text-xs text-white/30">{page.id}</p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2 flex-wrap">
-                    <button onClick={handleSaveFacebook} disabled={isSavingFacebook}
-                      className="bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-4 py-2 rounded-xl text-sm transition flex items-center gap-2">
-                      {isSavingFacebook ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                      {isSavingFacebook ? 'Saving…' : 'Save Credentials'}
-                    </button>
-                    {fbConnected && (
-                      <button onClick={() => handlePullStats()} disabled={isPullingStats}
-                        className="text-sm bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-4 py-2 rounded-xl flex items-center gap-2 transition disabled:opacity-50">
-                        <RefreshCw size={14} className={isPullingStats ? 'animate-spin' : ''} />
-                        {isPullingStats ? 'Testing…' : 'Test Connection'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </details>
             </div>
 
             {/* ── AI Analytics — Sotrender Page ID ── */}
