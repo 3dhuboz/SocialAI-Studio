@@ -19,7 +19,6 @@ import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { LateService } from './services/lateService';
 import { FalService } from './services/falService';
-import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
 import { DateTimePicker } from './components/DateTimePicker';
@@ -318,9 +317,6 @@ const Dashboard: React.FC = () => {
   const [publishSuccess, setPublishSuccess] = useState(false);
   const [publishingPlatforms, setPublishingPlatforms] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
-  const [pageIdLookupInput, setPageIdLookupInput] = useState('');
-  const [pageIdLookupResult, setPageIdLookupResult] = useState<{ pageId: string; pageName?: string } | null>(null);
-  const [isLookingUpPageId, setIsLookingUpPageId] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
@@ -475,47 +471,6 @@ const Dashboard: React.FC = () => {
     if (lateProfileId && user) handlePullStats(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lateProfileId, user]);
-
-  const handleLookupPageId = async () => {
-    const raw = pageIdLookupInput.trim();
-    if (!raw) return;
-    setPageIdLookupResult(null);
-
-    // 1. Strip to username/path from full URL
-    let username = raw.replace(/^@/, '').replace(/\/$/, '');
-    if (username.includes('facebook.com/')) {
-      username = username.split('facebook.com/')[1].split('?')[0].replace(/\/$/, '');
-    }
-
-    // 2. If /pages/Name/NUMERIC_ID — extract the ID directly
-    const pagesMatch = username.match(/pages\/[^/]+\/(\d+)/);
-    if (pagesMatch) { setPageIdLookupResult({ pageId: pagesMatch[1] }); return; }
-
-    // 3. If the whole thing is already a pure numeric ID
-    if (/^\d{6,}$/.test(username)) { setPageIdLookupResult({ pageId: username }); return; }
-
-    // 4. Try the server-side proxy (needs FACEBOOK_APP_ID + FACEBOOK_APP_SECRET in Netlify)
-    setIsLookingUpPageId(true);
-    try {
-      const res = await fetch('/.netlify/functions/facebook-page-lookup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-      });
-      const data = await res.json();
-      if (res.ok && data.pageId) {
-        setPageIdLookupResult({ pageId: data.pageId, pageName: data.pageName });
-      } else {
-        // 5. Fallback — open lookup-id.com in new tab
-        window.open(`https://lookup-id.com/?q=${encodeURIComponent(raw)}`, '_blank');
-        toast('Opened lookup-id.com — paste your Page URL there to find the ID.', 'info');
-      }
-    } catch {
-      window.open(`https://lookup-id.com/?q=${encodeURIComponent(raw)}`, '_blank');
-      toast('Opened lookup-id.com — paste your Page URL there to find the ID.', 'info');
-    }
-    setIsLookingUpPageId(false);
-  };
 
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
@@ -899,19 +854,7 @@ const Dashboard: React.FC = () => {
         }));
       if (appPosts.length) scanPosts = appPosts;
 
-      // Path 1 — Sotrender (real engagement data, overrides app posts if available)
-      const sotrendId = profile.sotrendPageId || profile.facebookPageId;
-      if (sotrendId) {
-        try {
-          await SotrendService.addProfile(sotrendId);
-          const sotrendPosts = await SotrendService.getPosts(sotrendId, 30);
-          if (sotrendPosts.length) scanPosts = sotrendPosts;
-        } catch {
-          // Sotrender not configured — keep app posts
-        }
-      }
-
-      // Path 2 — Late list-posts (published posts via Late's managed OAuth)
+      // Path 1 — Late list-posts (published posts via Late's managed OAuth)
       if (scanPosts === appPosts && lateProfileId) {
         try {
           const res = await fetch(`/.netlify/functions/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
@@ -931,7 +874,7 @@ const Dashboard: React.FC = () => {
         }
       }
 
-      // Path 3 — Late analytics fallback
+      // Path 2 — Late analytics fallback
       if (scanPosts === appPosts && lateProfileId) {
         try {
           const lateData = await LateService.getAnalytics(lateProfileId);
@@ -3158,83 +3101,6 @@ const Dashboard: React.FC = () => {
 
             </div>
 
-            {/* ── AI Analytics — Sotrender Page ID ── */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center">
-                  <BarChart3 size={16} className="text-blue-400" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white">AI Analytics — Facebook Page ID</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Enables real-data insights by scanning your page's past posts via Sotrender</p>
-                </div>
-                {profile.sotrendPageId && (
-                  <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1">
-                    <CheckCircle size={11} /> Set
-                  </span>
-                )}
-              </div>
-              {/* ── Page ID direct entry ── */}
-              <div className="flex gap-2 max-w-lg">
-                <input
-                  value={profile.sotrendPageId}
-                  onChange={e => setProfile(prev => ({ ...prev, sotrendPageId: e.target.value }))}
-                  placeholder="e.g. 123456789012345"
-                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-blue-500/40 transition"
-                />
-                <button
-                  onClick={handleSaveProfile}
-                  disabled={isSavingProfile}
-                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
-                >
-                  {isSavingProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  Save
-                </button>
-              </div>
-
-              {/* ── Page ID lookup helper ── */}
-              <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-3.5 space-y-2.5">
-                <p className="text-[11px] font-bold text-blue-400/70 uppercase tracking-wider">Don't know your Page ID?</p>
-                <p className="text-xs text-white/30 leading-relaxed">Paste your Facebook page URL or username below and we'll find it for you.</p>
-                <div className="flex gap-2">
-                  <input
-                    value={pageIdLookupInput}
-                    onChange={e => { setPageIdLookupInput(e.target.value); setPageIdLookupResult(null); }}
-                    onKeyDown={e => e.key === 'Enter' && handleLookupPageId()}
-                    placeholder="https://facebook.com/yourpage  or  yourpage"
-                    className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/25 focus:outline-none focus:border-blue-500/40 transition"
-                  />
-                  <button
-                    onClick={handleLookupPageId}
-                    disabled={!pageIdLookupInput.trim() || isLookingUpPageId}
-                    className="bg-blue-600/80 hover:bg-blue-600 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl text-sm transition flex items-center gap-1.5 flex-shrink-0"
-                  >
-                    {isLookingUpPageId ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
-                    Find ID
-                  </button>
-                </div>
-                {pageIdLookupResult && (
-                  <div className="flex items-center gap-3 bg-green-500/8 border border-green-500/20 rounded-xl px-3 py-2.5">
-                    <CheckCircle size={14} className="text-green-400 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      {pageIdLookupResult.pageName && <p className="text-xs text-white/50 truncate">{pageIdLookupResult.pageName}</p>}
-                      <p className="text-sm font-mono text-green-300 font-bold">{pageIdLookupResult.pageId}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setProfile(prev => ({ ...prev, sotrendPageId: pageIdLookupResult.pageId }));
-                        setPageIdLookupResult(null);
-                        setPageIdLookupInput('');
-                        toast('Page ID filled in — click Save to confirm.', 'success');
-                      }}
-                      className="text-xs bg-green-500/20 hover:bg-green-500/30 border border-green-500/20 text-green-300 font-bold px-3 py-1.5 rounded-lg transition flex-shrink-0"
-                    >
-                      Use this ID
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
 
             {/* ── SECTION: Plan & Admin ── */}
             <div className="flex items-center gap-3">
