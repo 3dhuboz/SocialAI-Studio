@@ -885,28 +885,40 @@ const Dashboard: React.FC = () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsScanningPosts(true);
     try {
-      let posts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }> = [];
+      let scanPosts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }> = [];
 
-      // Path 1 — Sotrender (no client token needed, uses their approved FB app)
+      // Path 0 — App's own posts (always available, no external API needed)
+      const appPosts = posts
+        .filter(p => p.content && p.content.trim().length > 0)
+        .map(p => ({
+          message: p.content,
+          created_time: p.scheduledFor || new Date().toISOString(),
+          likes: 0,
+          comments: 0,
+          shares: 0,
+        }));
+      if (appPosts.length) scanPosts = appPosts;
+
+      // Path 1 — Sotrender (real engagement data, overrides app posts if available)
       const sotrendId = profile.sotrendPageId || profile.facebookPageId;
       if (sotrendId) {
         try {
           await SotrendService.addProfile(sotrendId);
-          posts = await SotrendService.getPosts(sotrendId, 30);
+          const sotrendPosts = await SotrendService.getPosts(sotrendId, 30);
+          if (sotrendPosts.length) scanPosts = sotrendPosts;
         } catch {
-          // Sotrender not configured — fall through to direct FB
+          // Sotrender not configured — keep app posts
         }
       }
 
-
       // Path 2 — Late list-posts (published posts via Late's managed OAuth)
-      if (!posts.length && lateProfileId) {
+      if (scanPosts === appPosts && lateProfileId) {
         try {
           const res = await fetch(`/.netlify/functions/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
           const lateData = await res.json();
           const rawPosts: any[] = lateData?.posts ?? lateData?.data ?? lateData?.items ?? (Array.isArray(lateData) ? lateData : []);
           if (rawPosts.length) {
-            posts = rawPosts.map((p: any) => ({
+            scanPosts = rawPosts.map((p: any) => ({
               message: p.text ?? p.message ?? p.content ?? p.body ?? p.caption ?? '',
               created_time: p.publishedAt ?? p.published_at ?? p.scheduledAt ?? p.created_time ?? p.created_at ?? '',
               likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
@@ -915,17 +927,17 @@ const Dashboard: React.FC = () => {
             })).filter((p: any) => p.message);
           }
         } catch {
-          // Late list-posts unavailable — continue
+          // Late list-posts unavailable — keep app posts
         }
       }
 
       // Path 3 — Late analytics fallback
-      if (!posts.length && lateProfileId) {
+      if (scanPosts === appPosts && lateProfileId) {
         try {
           const lateData = await LateService.getAnalytics(lateProfileId);
           const rawPosts: any[] = (lateData as any)?.posts ?? (lateData as any)?.data ?? (lateData as any)?.items ?? [];
           if (rawPosts.length) {
-            posts = rawPosts.map((p: any) => ({
+            scanPosts = rawPosts.map((p: any) => ({
               message: p.text ?? p.message ?? p.content ?? p.body ?? '',
               created_time: p.publishedAt ?? p.published_at ?? p.created_time ?? p.created_at ?? '',
               likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
@@ -934,25 +946,22 @@ const Dashboard: React.FC = () => {
             })).filter((p: any) => p.message);
           }
         } catch {
-          // Late analytics unavailable — continue
+          // Late analytics unavailable — keep app posts
         }
       }
 
-      if (!posts.length) {
-        const msg = lateProfileId
-          ? 'No published posts found yet. Publish a few posts first, then scan again.'
-          : 'Connect your social accounts in Settings first, then try scanning.';
-        toast(msg, 'warning');
+      if (!scanPosts.length) {
+        toast('No posts found — create a few posts in the Create tab first, then scan.', 'warning');
         setIsScanningPosts(false);
         return;
       }
 
-      const report = await generateInsightReportFromPosts(profile.name, profile.type, profile.location || 'Australia', posts);
+      const report = await generateInsightReportFromPosts(profile.name, profile.type, profile.location || 'Australia', scanPosts);
       if (report) {
         setInsightReport(report);
         setInsightStale(false);
         if (user) updateDoc(dataRef(), { insightReport: report }).catch(() => setDoc(dataRef(), { insightReport: report }, { merge: true }));
-        toast(`Scanned ${posts.length} posts — insights updated!`, 'success');
+        toast(`Scanned ${scanPosts.length} posts — insights updated!`, 'success');
       }
     } catch (e: any) {
       toast(`Scan failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
@@ -2230,17 +2239,15 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
               <div className="flex gap-2 flex-wrap">
-                {(profile.sotrendPageId || profile.facebookPageId || lateProfileId) && (
-                  <button
+                <button
                     onClick={handleScanPastPosts}
                     disabled={isScanningPosts || isAnalyzing}
                     className="flex items-center gap-2 text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/35 text-blue-300/70 hover:text-blue-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
-                    title="Scan real past posts and generate data-driven insights"
+                    title="Analyse your posts and generate data-driven insights"
                   >
                     {isScanningPosts ? <Loader2 size={13} className="animate-spin" /> : <BarChart3 size={13} />}
                     {isScanningPosts ? 'Scanning posts…' : 'Scan Past Posts'}
                   </button>
-                )}
                 <button
                   onClick={() => runInsightReport(true)}
                   disabled={isAnalyzing || isScanningPosts}
@@ -2309,13 +2316,37 @@ const Dashboard: React.FC = () => {
                     const colors = { high: 'border-red-500/25 bg-red-500/5', medium: 'border-amber-500/25 bg-amber-500/5', low: 'border-blue-500/20 bg-blue-500/5' };
                     const badges = { high: 'bg-red-500/20 text-red-300', medium: 'bg-amber-500/20 text-amber-300', low: 'bg-blue-500/20 text-blue-300' };
                     return (
-                      <div key={i} className={`border rounded-2xl p-4 flex gap-3 items-start ${colors[rec.priority]}`}>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full mt-0.5 shrink-0 ${badges[rec.priority]}`}>
-                          {rec.priority.toUpperCase()}
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold text-white/85">{rec.title}</p>
-                          <p className="text-xs text-white/45 mt-0.5 leading-relaxed">{rec.detail}</p>
+                      <div key={i} className={`border rounded-2xl p-4 ${colors[rec.priority]}`}>
+                        <div className="flex gap-3 items-start">
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full mt-0.5 shrink-0 ${badges[rec.priority]}`}>
+                            {rec.priority.toUpperCase()}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-white/85">{rec.title}</p>
+                            <p className="text-xs text-white/45 mt-0.5 leading-relaxed">{rec.detail}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 mt-3 ml-10">
+                          <button
+                            onClick={() => {
+                              setTopic(`${rec.title}: ${rec.detail}`);
+                              setActiveTab('create');
+                              toast('Recommendation loaded into Create tab — generate your post!', 'success');
+                            }}
+                            className="flex items-center gap-1.5 text-xs font-bold text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-xl transition"
+                          >
+                            <Wand2 size={11} /> Create Post
+                          </button>
+                          <button
+                            onClick={() => {
+                              setTopic(`${rec.title}: ${rec.detail}`);
+                              setActiveTab('create');
+                              toast('Recommendation loaded — generate and then schedule your post!', 'success');
+                            }}
+                            className="flex items-center gap-1.5 text-xs font-bold text-amber-300/70 hover:text-amber-300 bg-amber-500/8 hover:bg-amber-500/15 border border-amber-500/15 hover:border-amber-500/25 px-3 py-1.5 rounded-xl transition"
+                          >
+                            <Calendar size={11} /> Schedule
+                          </button>
                         </div>
                       </div>
                     );
