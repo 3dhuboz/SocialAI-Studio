@@ -1737,19 +1737,30 @@ const Dashboard: React.FC = () => {
 
                     {/* ── Video ready: small preview ── */}
                     {generatedVideoUrl && (
-                      <div className="flex items-center gap-3">
-                        <div className="relative w-10 flex-shrink-0 rounded-lg overflow-hidden bg-black border border-purple-500/30" style={{ aspectRatio: '9/16' }}>
-                          <video src={generatedVideoUrl} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-10 flex-shrink-0 rounded-lg overflow-hidden bg-black border border-purple-500/30" style={{ aspectRatio: '9/16' }}>
+                            <video src={generatedVideoUrl} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-green-400">Video ready — click Publish Now to post</p>
+                            {generatedVideoScript && (
+                              <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1 text-[11px] text-purple-400/60 hover:text-purple-300 transition mt-0.5">
+                                {showVideoBriefDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                                {showVideoBriefDetail ? 'Hide script' : 'View script'}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-green-400">Video ready — click Publish Now to post</p>
-                          {generatedVideoScript && (
-                            <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1 text-[11px] text-purple-400/60 hover:text-purple-300 transition mt-0.5">
-                              {showVideoBriefDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                              {showVideoBriefDetail ? 'Hide script' : 'View script'}
-                            </button>
-                          )}
-                        </div>
+                        {generatedVideoScript?.mood && (
+                          <div className="flex items-start gap-2 bg-pink-500/8 border border-pink-500/15 rounded-xl px-3 py-2">
+                            <span className="text-sm flex-shrink-0">🎵</span>
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-bold text-pink-300/80">Add music when publishing</p>
+                              <p className="text-[11px] text-white/50 leading-snug mt-0.5">Suggested: <span className="text-white/75 font-medium">{generatedVideoScript.mood}</span> — use Instagram/Facebook's music library after posting to add a matching track.</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
