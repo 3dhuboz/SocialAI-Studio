@@ -18,7 +18,7 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { LateService } from './services/lateService';
-import { RunwayService } from './services/runwayService';
+import { FalService } from './services/falService';
 import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
@@ -156,7 +156,7 @@ const Dashboard: React.FC = () => {
           if (!isAdmin && d.plan) setActivePlan(d.plan);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
-          if (d.runwayApiKey) { localStorage.setItem('sai_runway_key', d.runwayApiKey); setRunwayApiKey(d.runwayApiKey); }
+          if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
@@ -601,9 +601,9 @@ const Dashboard: React.FC = () => {
         if (thumbnailBase64) {
           setIsGeneratingReel(true);
           setVideoProgress(0.05);
-          toast('Generating your Reel via Runway ML — this takes 1–3 minutes…', 'info');
+          toast('Generating your Reel via fal.ai (Kling) — this takes 1–3 minutes…', 'info');
           try {
-            const videoUrl = await RunwayService.generateVideo(
+            const videoUrl = await FalService.generateVideo(
               `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
               thumbnailBase64,
               10,
@@ -612,12 +612,12 @@ const Dashboard: React.FC = () => {
             setGeneratedVideoUrl(videoUrl);
             toast('Your video Reel is ready — click Publish Now to post!', 'success');
           } catch (e: any) {
-            const runwayErr = e?.message || 'Generation failed';
-            const isHostnameErr = runwayErr.toLowerCase().includes('hostname') || runwayErr.toLowerCase().includes('host');
-            if (isHostnameErr) {
-              toast('Runway API key has a hostname restriction. Go to app.runwayml.com → API Keys → edit key → set Allowed Hostname to "No restriction".', 'error');
+            const falErr = e?.message || 'Generation failed';
+            const isKeyErr = falErr.toLowerCase().includes('key') || falErr.toLowerCase().includes('unauthorized') || falErr.toLowerCase().includes('403');
+            if (isKeyErr) {
+              toast('fal.ai API key missing or invalid. Go to Settings → fal.ai API Key and paste your key from fal.ai/dashboard/keys.', 'error');
             } else {
-              toast(`Video generation failed: ${runwayErr.substring(0, 90)}`, 'error');
+              toast(`Video generation failed: ${falErr.substring(0, 90)}`, 'error');
             }
           }
           setIsGeneratingReel(false);
@@ -996,17 +996,17 @@ const Dashboard: React.FC = () => {
     setIsSavingKey(false);
   };
 
-  const [runwayApiKey, setRunwayApiKey] = useState(() => localStorage.getItem('sai_runway_key') || '');
-  const [isSavingRunwayKey, setIsSavingRunwayKey] = useState(false);
-  const handleSaveRunwayKey = async () => {
-    if (!runwayApiKey.trim()) { toast('Enter your Runway API key first.', 'warning'); return; }
-    setIsSavingRunwayKey(true);
+  const [falApiKey, setFalApiKey] = useState(() => localStorage.getItem('sai_fal_key') || '');
+  const [isSavingFalKey, setIsSavingFalKey] = useState(false);
+  const handleSaveFalKey = async () => {
+    if (!falApiKey.trim()) { toast('Enter your fal.ai API key first.', 'warning'); return; }
+    setIsSavingFalKey(true);
     try {
-      localStorage.setItem('sai_runway_key', runwayApiKey.trim());
-      if (user) await updateDoc(doc(db, 'users', user.uid), { runwayApiKey: runwayApiKey.trim() });
-      toast('Runway API key saved — video generation is now active!', 'success');
-    } catch { toast('Failed to save Runway key.', 'error'); }
-    setIsSavingRunwayKey(false);
+      localStorage.setItem('sai_fal_key', falApiKey.trim());
+      if (user) await updateDoc(doc(db, 'users', user.uid), { falApiKey: falApiKey.trim() });
+      toast('fal.ai key saved — AI video generation is now active!', 'success');
+    } catch { toast('Failed to save fal.ai key.', 'error'); }
+    setIsSavingFalKey(false);
   };
 
   const handleSaveProfile = async () => {
@@ -2986,30 +2986,30 @@ const Dashboard: React.FC = () => {
                   <span className="text-base">🎬</span>
                 </div>
                 <div>
-                  <h3 className="font-bold text-white">Runway ML API Key</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Required for AI video / Reels generation</p>
+                  <h3 className="font-bold text-white">fal.ai API Key <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full ml-1 font-semibold">Admin only</span></h3>
+                  <p className="text-xs text-white/30 mt-0.5">Powers AI Reel / video generation (Kling v1.6)</p>
                 </div>
-                {runwayApiKey && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
+                {falApiKey && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
               </div>
               <p className="text-xs text-white/30 leading-relaxed">
-                Get your key from{' '}
-                <a href="https://app.runwayml.com/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-purple-400/70 hover:text-purple-400 underline transition">app.runwayml.com → API Keys</a>
-                {' '}— click <strong className="text-white/50">+ New API key</strong>, give it a name, and paste it here.
+                Get a free key at{' '}
+                <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="text-purple-400/70 hover:text-purple-400 underline transition">fal.ai/dashboard/keys</a>
+                {' '}— sign up free, click <strong className="text-white/50">+ Add key</strong>, copy and paste it here.
               </p>
               <div className="flex gap-2 max-w-lg">
                 <input
                   type="password"
-                  value={runwayApiKey}
-                  onChange={e => setRunwayApiKey(e.target.value)}
-                  placeholder="key_..."
+                  value={falApiKey}
+                  onChange={e => setFalApiKey(e.target.value)}
+                  placeholder="fal_..."
                   className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
                 />
                 <button
-                  onClick={handleSaveRunwayKey}
-                  disabled={isSavingRunwayKey}
+                  onClick={handleSaveFalKey}
+                  disabled={isSavingFalKey}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
                 >
-                  {isSavingRunwayKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {isSavingFalKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   Save
                 </button>
               </div>
