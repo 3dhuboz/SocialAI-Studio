@@ -516,44 +516,39 @@ const Dashboard: React.FC = () => {
       setShowVideoBriefDetail(false);
       setIsGeneratingVideo(false);
 
-      // Step 2: Generate thumbnail image + upload to Late → public URL for Runway ML
+      // Step 2: Generate thumbnail image (base64 — passed directly to Runway ML)
       if (hasApiKey) {
         setIsGeneratingImage(true);
-        let imagePublicUrl: string | null = null;
+        let thumbnailBase64: string | null = null;
         try {
           const img = await generateMarketingImage(`${profile.type}: ${topic}, cinematic frame, professional`);
           if (img) {
             setGeneratedImage(img);
-            // Upload base64 → Late presigned URL → public URL
-            try {
-              const mimeType = img.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-              const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-              const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`thumb_${Date.now()}.${ext}`, mimeType);
-              const base64 = img.split(',')[1];
-              const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-              await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
-              imagePublicUrl = publicUrl;
-            } catch { /* continue — image stays as base64 preview */ }
+            thumbnailBase64 = img; // Runway ML accepts base64 data URLs natively
+          } else {
+            toast('Thumbnail image generation failed — video will be skipped.', 'warning');
           }
-        } catch { /* ignore image gen failure */ }
+        } catch (e: any) {
+          toast(`Image generation error: ${e?.message?.substring(0, 80)}`, 'error');
+        }
         setIsGeneratingImage(false);
 
-        // Step 3: Generate actual Reel video via Runway ML (server-side key)
-        if (imagePublicUrl) {
+        // Step 3: Generate actual Reel video via Runway ML (base64 thumbnail as starting frame)
+        if (thumbnailBase64) {
           setIsGeneratingReel(true);
           setVideoProgress(0.05);
-          toast('Generating your Reel via Runway ML — this takes 1–3 minutes… do not publish yet!', 'info');
+          toast('Generating your Reel via Runway ML — this takes 1–3 minutes…', 'info');
           try {
             const videoUrl = await RunwayService.generateVideo(
               `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
-              imagePublicUrl,
+              thumbnailBase64,
               10,
               p => setVideoProgress(p),
             );
             setGeneratedVideoUrl(videoUrl);
             toast('Your video Reel is ready — click Publish Now to post!', 'success');
           } catch (e: any) {
-            toast(`Runway ML: ${e?.message?.substring(0, 100) || 'Video generation failed'}`, 'error');
+            toast(`Runway ML failed: ${e?.message?.substring(0, 120) || 'Unknown error'}`, 'error');
           }
           setIsGeneratingReel(false);
         }
