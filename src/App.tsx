@@ -19,6 +19,7 @@ import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { LateService } from './services/lateService';
 import { FalService } from './services/falService';
+import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
 import { DateTimePicker } from './components/DateTimePicker';
@@ -325,7 +326,9 @@ const Dashboard: React.FC = () => {
   const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>([]);
   const [smartStrategy, setSmartStrategy] = useState('');
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
-  const [saturationMode, setSaturationMode] = useState(false);
+  type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
+  const [autopilotMode, setAutopilotMode] = useState<AutopilotMode>('smart');
+  const saturationMode = autopilotMode === 'saturation';
   const [smartCount, setSmartCount] = useState(7);
   const [includeVideos, setIncludeVideos] = useState(false);
 
@@ -344,6 +347,22 @@ const Dashboard: React.FC = () => {
   const [calendarUploadId, setCalendarUploadId] = useState<string | null>(null);
 
   // Generation ticker
+  const TICKER_STEPS_QUICK24H = [
+    { label: 'Analysing your brand for a quick-fire burst...', pct: 10 },
+    { label: 'Finding the top time slots in the next 24 hours...', pct: 30 },
+    { label: 'Writing punchy, high-engagement content...', pct: 55 },
+    { label: 'Crafting image prompts for maximum impact...', pct: 75 },
+    { label: 'Finalising your 24-hour burst schedule...', pct: 95 },
+  ];
+  const TICKER_STEPS_HIGHLIGHTS = [
+    { label: 'Researching your industry\'s absolute peak moments...', pct: 8 },
+    { label: 'Identifying the top 3 highest-engagement time slots...', pct: 22 },
+    { label: 'Selecting the strongest content pillars for your brand...', pct: 40 },
+    { label: 'Writing polished, pillar-defining captions...', pct: 58 },
+    { label: 'Crafting premium image prompts for highlight posts...', pct: 75 },
+    { label: 'Verifying perfect timing alignment...', pct: 88 },
+    { label: 'Finalising your highlights-only schedule...', pct: 96 },
+  ];
   const TICKER_STEPS_NORMAL = [
     { label: 'Analysing your brand profile & location...', pct: 5 },
     { label: 'Researching best posting times for your audience...', pct: 15 },
@@ -370,7 +389,10 @@ const Dashboard: React.FC = () => {
     { label: 'Loading niche + broad hashtag mix per post...', pct: 90 },
     { label: 'Finalising your 7-day saturation campaign...', pct: 96 },
   ];
-  const TICKER_STEPS = saturationMode ? TICKER_STEPS_SATURATION : TICKER_STEPS_NORMAL;
+  const TICKER_STEPS = autopilotMode === 'saturation' ? TICKER_STEPS_SATURATION
+    : autopilotMode === 'quick24h' ? TICKER_STEPS_QUICK24H
+    : autopilotMode === 'highlights' ? TICKER_STEPS_HIGHLIGHTS
+    : TICKER_STEPS_NORMAL;
   const [tickerIdx, setTickerIdx] = useState(0);
   useEffect(() => {
     if (!isSmartGenerating) { setTickerIdx(0); return; }
@@ -662,6 +684,30 @@ const Dashboard: React.FC = () => {
     setUploadTargetIdx(null);
   };
 
+  // ── Audio mixing state ──
+  const [isMixingAudio, setIsMixingAudio] = useState(false);
+  const [mixedVideoUrl, setMixedVideoUrl] = useState<string | null>(null);
+  const [audioMixProgress, setAudioMixProgress] = useState(0);
+
+  const handleAddAudio = async () => {
+    const sourceUrl = generatedVideoUrl;
+    const mood = generatedVideoScript?.mood || 'upbeat';
+    if (!sourceUrl) return;
+    setIsMixingAudio(true);
+    setAudioMixProgress(0);
+    try {
+      const result = await addAudioToVideo(sourceUrl, mood, {
+        onProgress: p => setAudioMixProgress(p),
+      });
+      setMixedVideoUrl(result);
+      setAudioMixProgress(1);
+      toast('Music added! Download or publish your video with audio.', 'success');
+    } catch (e: any) {
+      toast(`Audio mix failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+    }
+    setIsMixingAudio(false);
+  };
+
   // ── Smart Schedule ──
   const handleSmartSchedule = async () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
@@ -675,7 +721,8 @@ const Dashboard: React.FC = () => {
         { facebook: true, instagram: true },
         saturationMode,
         profile,
-        includeVideos
+        includeVideos,
+        autopilotMode
       );
       setSmartPosts(result.posts);
       setSmartStrategy(result.strategy);
@@ -1707,13 +1754,33 @@ const Dashboard: React.FC = () => {
                             )}
                           </div>
                         </div>
-                        {generatedVideoScript?.mood && (
-                          <div className="flex items-start gap-2 bg-pink-500/8 border border-pink-500/15 rounded-xl px-3 py-2">
+                        {generatedVideoScript?.mood && !mixedVideoUrl && (
+                          <div className="flex items-center gap-2 bg-pink-500/8 border border-pink-500/15 rounded-xl px-3 py-2">
                             <span className="text-sm flex-shrink-0">🎵</span>
-                            <div className="min-w-0">
-                              <p className="text-[11px] font-bold text-pink-300/80">Add music when publishing</p>
-                              <p className="text-[11px] text-white/50 leading-snug mt-0.5">Suggested: <span className="text-white/75 font-medium">{generatedVideoScript.mood}</span> — use Instagram/Facebook's music library after posting to add a matching track.</p>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] font-bold text-pink-300/80">Suggested vibe: <span className="text-white/70 font-medium">{generatedVideoScript.mood}</span></p>
                             </div>
+                            <button
+                              onClick={handleAddAudio}
+                              disabled={isMixingAudio}
+                              className="flex items-center gap-1.5 text-[11px] font-bold text-pink-300 hover:text-white bg-pink-500/15 hover:bg-pink-500/25 border border-pink-500/20 px-2.5 py-1.5 rounded-lg transition flex-shrink-0 disabled:opacity-50"
+                            >
+                              {isMixingAudio ? <Loader2 size={10} className="animate-spin" /> : <span>🎵</span>}
+                              {isMixingAudio ? `Mixing… ${Math.round(audioMixProgress * 100)}%` : 'Add Music'}
+                            </button>
+                          </div>
+                        )}
+                        {mixedVideoUrl && (
+                          <div className="flex items-center gap-2 bg-green-500/8 border border-green-500/15 rounded-xl px-3 py-2">
+                            <CheckCircle size={12} className="text-green-400 flex-shrink-0" />
+                            <p className="text-[11px] font-bold text-green-300 flex-1">Music added!</p>
+                            <a
+                              href={mixedVideoUrl}
+                              download="reel-with-music.webm"
+                              className="text-[11px] font-bold text-green-300 hover:text-white bg-green-500/15 hover:bg-green-500/25 border border-green-500/20 px-2.5 py-1.5 rounded-lg transition flex-shrink-0"
+                            >
+                              ⬇ Download
+                            </a>
                           </div>
                         )}
                       </div>
@@ -1890,53 +1957,103 @@ const Dashboard: React.FC = () => {
                   <p className="text-white/35 text-sm mt-1">Researches your industry, audience & platform algorithms — then writes your entire content calendar in one click.</p>
                 </div>
 
-                {/* Mode row */}
-                <div className="flex flex-wrap gap-2">
-                  {/* Normal mode */}
-                  <button
-                    onClick={() => { setSaturationMode(false); setSmartCount(7); }}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
-                      !saturationMode ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
-                    }`}
-                  >
-                    <Calendar size={14} /> Smart Schedule
-                  </button>
-                  {/* Saturation mode */}
-                  <button
-                    onClick={() => {
-                      if (!canUseSaturation) { toast('Saturation Mode is a Pro plan feature.', 'warning'); return; }
-                      setSaturationMode(true); setSmartCount(21);
-                    }}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
-                      saturationMode ? 'bg-red-500/15 border-red-500/40 text-red-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
-                    } ${!canUseSaturation ? 'opacity-50' : ''}`}
-                  >
-                    🔥 Saturation Campaign
-                    {!canUseSaturation && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Pro</span>}
-                  </button>
-                  {/* Short Videos */}
-                  <button
-                    onClick={() => {
-                      if (!canUseVideos) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
-                      setIncludeVideos(v => !v);
-                    }}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition ${
-                      includeVideos ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
-                    } ${!canUseVideos ? 'opacity-50' : ''}`}
-                  >
-                    🎬 Include Reels/Videos
-                    {!canUseVideos && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Pro</span>}
-                  </button>
+                {/* Vibe Mode selector */}
+                <div>
+                  <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">Choose your vibe</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {/* Smart Schedule */}
+                    <button
+                      onClick={() => { setAutopilotMode('smart'); setSmartCount(7); }}
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                        autopilotMode === 'smart' ? 'bg-amber-500/15 border-amber-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                      }`}
+                    >
+                      <span className="text-base">📅</span>
+                      <span className={`text-xs font-bold ${autopilotMode === 'smart' ? 'text-amber-300' : 'text-white/50'}`}>Smart Schedule</span>
+                      <span className="text-[10px] text-white/25 leading-tight">Best times, 1–2 weeks</span>
+                    </button>
+                    {/* Quick 24hr */}
+                    <button
+                      onClick={() => { setAutopilotMode('quick24h'); setSmartCount(3); }}
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                        autopilotMode === 'quick24h' ? 'bg-blue-500/15 border-blue-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                      }`}
+                    >
+                      <span className="text-base">⚡</span>
+                      <span className={`text-xs font-bold ${autopilotMode === 'quick24h' ? 'text-blue-300' : 'text-white/50'}`}>Quick 24hr Burst</span>
+                      <span className="text-[10px] text-white/25 leading-tight">3–5 posts today</span>
+                    </button>
+                    {/* Highlights Only */}
+                    <button
+                      onClick={() => {
+                        const canUse = activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency' || isAdminMode;
+                        if (!canUse) { toast('Highlights Only requires a Growth plan or above.', 'warning'); return; }
+                        setAutopilotMode('highlights'); setSmartCount(5);
+                      }}
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                        autopilotMode === 'highlights' ? 'bg-green-500/15 border-green-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                      } ${!(activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency' || isAdminMode) ? 'opacity-50' : ''}`}
+                    >
+                      <span className="text-base">🏆</span>
+                      <span className={`text-xs font-bold flex items-center gap-1 ${autopilotMode === 'highlights' ? 'text-green-300' : 'text-white/50'}`}>
+                        Highlights Only
+                        {!(activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency' || isAdminMode) && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Growth</span>}
+                      </span>
+                      <span className="text-[10px] text-white/25 leading-tight">Peak slots only</span>
+                    </button>
+                    {/* Saturation */}
+                    <button
+                      onClick={() => {
+                        if (!canUseSaturation) { toast('Saturation Mode is a Pro plan feature.', 'warning'); return; }
+                        setAutopilotMode('saturation'); setSmartCount(21);
+                      }}
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                        autopilotMode === 'saturation' ? 'bg-red-500/15 border-red-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                      } ${!canUseSaturation ? 'opacity-50' : ''}`}
+                    >
+                      <span className="text-base">🔥</span>
+                      <span className={`text-xs font-bold flex items-center gap-1 ${autopilotMode === 'saturation' ? 'text-red-300' : 'text-white/50'}`}>
+                        Saturation
+                        {!canUseSaturation && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Pro</span>}
+                      </span>
+                      <span className="text-[10px] text-white/25 leading-tight">3–5 posts/day, 7 days</span>
+                    </button>
+                  </div>
                 </div>
 
-                {saturationMode && (
-                  <div className="bg-red-500/8 border border-red-500/15 rounded-xl px-4 py-3">
-                    <p className="text-xs text-red-300 font-semibold">🔥 Saturation Mode: 3–5 posts per day over 7 days — maximum algorithmic reach through sheer posting volume and content variety.</p>
+                {/* Mode hint */}
+                {autopilotMode === 'quick24h' && (
+                  <div className="bg-blue-500/8 border border-blue-500/15 rounded-xl px-4 py-3">
+                    <p className="text-xs text-blue-300 font-semibold">⚡ Quick 24hr Burst: generates 3–5 high-energy posts scheduled across the best windows in the next 24 hours — ideal for promotions, events, or when you need results fast.</p>
                   </div>
                 )}
+                {autopilotMode === 'highlights' && (
+                  <div className="bg-green-500/8 border border-green-500/15 rounded-xl px-4 py-3">
+                    <p className="text-xs text-green-300 font-semibold">🏆 Highlights Only: AI identifies the absolute top 3 researched time slots and places one polished, pillar-defining post at each — quality over quantity.</p>
+                  </div>
+                )}
+                {autopilotMode === 'saturation' && (
+                  <div className="bg-red-500/8 border border-red-500/15 rounded-xl px-4 py-3">
+                    <p className="text-xs text-red-300 font-semibold">🔥 Saturation: 3–5 posts per day over 7 days — maximum algorithmic reach through volume and content variety.</p>
+                  </div>
+                )}
+
+                {/* Include Reels toggle */}
+                <button
+                  onClick={() => {
+                    if (!canUseVideos) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
+                    setIncludeVideos(v => !v);
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition w-fit ${
+                    includeVideos ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
+                  } ${!canUseVideos ? 'opacity-50' : ''}`}
+                >
+                  🎬 Include Reels/Videos
+                  {!canUseVideos && <span className="text-[9px] bg-white/10 px-1.5 py-0.5 rounded-full">Pro</span>}
+                </button>
                 {includeVideos && (
                   <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
-                    <p className="text-xs text-purple-300 font-semibold">🎬 Reels/Videos included: the AI will generate detailed video scripts, shot-by-shot briefs and music mood for short-form video posts alongside your regular content.</p>
+                    <p className="text-xs text-purple-300 font-semibold">🎬 Reels included: AI generates video scripts, shot-by-shot briefs and music mood alongside your regular posts.</p>
                   </div>
                 )}
 
@@ -1948,9 +2065,13 @@ const Dashboard: React.FC = () => {
                       onChange={e => setSmartCount(Number(e.target.value))}
                       className="bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none"
                     >
-                      {saturationMode
+                      {autopilotMode === 'saturation'
                         ? [<option key={14} value={14}>14 posts (2/day)</option>, <option key={21} value={21}>21 posts (3/day)</option>, <option key={28} value={28}>28 posts (4/day)</option>]
-                        : [<option key={5} value={5}>5 posts (1 week)</option>, <option key={7} value={7}>7 posts (1 week)</option>, <option key={10} value={10}>10 posts (2 weeks)</option>, <option key={14} value={14}>14 posts (2 weeks)</option>]
+                        : autopilotMode === 'quick24h'
+                          ? [<option key={3} value={3}>3 posts</option>, <option key={4} value={4}>4 posts</option>, <option key={5} value={5}>5 posts</option>]
+                          : autopilotMode === 'highlights'
+                            ? [<option key={3} value={3}>3 posts (top 3 slots)</option>, <option key={5} value={5}>5 posts (top 5 slots)</option>]
+                            : [<option key={5} value={5}>5 posts (1 week)</option>, <option key={7} value={7}>7 posts (1 week)</option>, <option key={10} value={10}>10 posts (2 weeks)</option>, <option key={14} value={14}>14 posts (2 weeks)</option>]
                       }
                     </select>
                   </div>

@@ -495,14 +495,18 @@ export const generateSmartSchedule = async (
     socialGoal?: string;
     contentTopics?: string;
   },
-  includeVideos: boolean = false
+  includeVideos: boolean = false,
+  scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart'
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   const ai = getAI();
   if (!ai) return { posts: [], strategy: "API Key missing." };
 
   try {
     const now = new Date();
-    const windowDays = saturationMode ? 7 : 14;
+    const isQuick24h = scheduleMode === 'quick24h';
+    const isHighlights = scheduleMode === 'highlights';
+    const windowDays = saturationMode ? 7 : isQuick24h ? 1 : 14;
+    const effectivePosts = isQuick24h ? Math.min(postsToGenerate, 5) : isHighlights ? Math.min(postsToGenerate, 5) : postsToGenerate;
     const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
     const profileBlock = [
@@ -637,15 +641,15 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     let fbCount: number;
     let igCount: number;
     if (platforms.facebook && !platforms.instagram) {
-      fbCount = postsToGenerate; igCount = 0;
+      fbCount = effectivePosts; igCount = 0;
     } else if (platforms.instagram && !platforms.facebook) {
-      igCount = postsToGenerate; fbCount = 0;
+      igCount = effectivePosts; fbCount = 0;
     } else {
-      igCount = Math.round(postsToGenerate * (research.platformSplit?.instagram || 60) / 100);
-      fbCount = postsToGenerate - igCount;
+      igCount = Math.round(effectivePosts * (research.platformSplit?.instagram || 60) / 100);
+      fbCount = effectivePosts - igCount;
     }
 
-    const postsPerDay = saturationMode ? Math.ceil(postsToGenerate / windowDays) : null;
+    const postsPerDay = saturationMode ? Math.ceil(effectivePosts / windowDays) : null;
     const postingWindows = saturationMode
       ? (research.dailyPostingWindows || saturationFallback.dailyPostingWindows)
       : (research.bestPostingTimes || normalFallback.bestPostingTimes);
@@ -668,7 +672,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       ? (research.contentPillars || saturationFallback.contentPillars)
       : (research.contentPillars?.map((p: any) => typeof p === 'object' ? p.name : p) || normalFallback.contentPillars);
 
-    const videoCount = includeVideos ? Math.max(1, Math.round(postsToGenerate * 0.3)) : 0;
+    const videoCount = includeVideos ? Math.max(1, Math.round(effectivePosts * 0.3)) : 0;
     const videoInstructions = includeVideos ? `
 VIDEO POST RULES (${videoCount} posts should be "video" type Reels):
 - Set "postType": "video" for these posts
@@ -678,6 +682,11 @@ VIDEO POST RULES (${videoCount} posts should be "video" type Reels):
 - Ideal Reel style: ${research.videoStyle || 'fast-paced, trending audio, product/service in action'}
 - "imagePrompt" should describe the thumbnail/cover frame for the Reel
 For image posts, set "postType": "image". For pure text posts, set "postType": "text".` : '';
+
+    const quick24hExtra = isQuick24h ? `
+MODE: QUICK 24HR BURST — schedule ALL posts within the next 24 hours ONLY (${now.toISOString().split('T')[0]}T${now.getHours().toString().padStart(2,'0')}:00 to ${windowEnd.toISOString().split('T')[0]}T${now.getHours().toString().padStart(2,'0')}:59). Use only the top researched time slots that fall within the next 24 hours. Generate punchy, high-engagement content designed for immediate interaction.` : '';
+    const highlightsExtra = isHighlights ? `
+MODE: HIGHLIGHTS ONLY — schedule posts ONLY at the absolute top 3 researched time slots across the 14-day window. Quality over quantity. Each post must be polished, pillar-defining, and perfectly timed. No filler — every post must be your single best recommendation for that pillar.` : '';
 
     const prompt = saturationMode ? `
 You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${businessType}.
@@ -727,7 +736,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${quick24hExtra}${highlightsExtra}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
 - Best days: ${(research.bestDays || normalFallback.bestDays).join(', ')} | Avoid: ${(research.worstDays || []).join(', ')}
@@ -741,7 +750,7 @@ RESEARCH INSIGHTS — apply every finding precisely:
 - Key engagement tactic: ${research.engagementTips || 'Ask a question every post'}
 ${videoInstructions}
 RULES:
-1. Exactly ${postsToGenerate} posts (${fbCount} Facebook, ${igCount} Instagram${videoCount > 0 ? `, ${videoCount} Reels` : ''}).
+1. Exactly ${effectivePosts} posts (${fbCount} Facebook, ${igCount} Instagram${videoCount > 0 ? `, ${videoCount} Reels` : ''}).
 2. Schedule ONLY on the best days listed above, at the researched peak times.
 3. Rotate through ALL content pillars — no pillar used more than twice in a row.
 4. Each caption: strong hook first line, body matching the caption style, specific CTA last line.
