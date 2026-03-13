@@ -91,7 +91,7 @@ export const CLIENT = {
    * 3. Copy the portal link and paste below.
    * Users can then manage/cancel their own subscription directly from the Account panel.
    */
-  stripeCustomerPortalUrl: '',
+  stripeCustomerPortalUrl: 'https://billing.stripe.com/p/login/8x25kv9dq6did1Ca2V2oE00',
 
   /**
    * STRIPE PAYMENT LINKS — UPGRADES (plan subscription only, no setup fee):
