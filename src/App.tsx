@@ -395,28 +395,59 @@ const Dashboard: React.FC = () => {
   const [lastPulled, setLastPulled] = useState<Date | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
 
-  const handlePullStats = async () => {
-    if (!profile.facebookPageId || !profile.facebookPageAccessToken) {
-      toast('Connect a Facebook page in Settings first.', 'warning'); return;
-    }
+  const handlePullStats = async (silent = false) => {
     setIsPullingStats(true);
     try {
-      const data = await FacebookService.getPageStats(profile.facebookPageId, profile.facebookPageAccessToken);
-      setLiveStats(data);
-      setLastPulled(new Date());
-      setStats(prev => ({ ...prev, followers: data.followersCount || data.fanCount, reach: data.reach28d, engagement: data.engagementRate }));
-      const hasData = data.fanCount > 0 || data.followersCount > 0 || data.reach28d > 0;
-      toast(hasData ? 'Live stats updated from Facebook!' : 'Connected — page stats require Facebook App Review to display.', hasData ? 'success' : 'info');
+      // Path 1 — Late analytics (preferred: no token needed, uses connected account)
+      if (lateProfileId) {
+        try {
+          const raw = await LateService.getAnalytics(lateProfileId);
+          const d = (raw as any);
+          const followers = d.followers ?? d.followersCount ?? d.fans ?? d.fanCount ?? 0;
+          const reach = d.reach ?? d.reach28d ?? d.impressions ?? 0;
+          const engagement = d.engagementRate ?? d.engagement_rate ?? d.engagement ?? 0;
+          const posts = d.postsCount ?? d.posts ?? d.postsLast30Days ?? 0;
+          if (followers > 0 || reach > 0) {
+            const mapped: LiveFbStats = { fanCount: followers, followersCount: followers, reach28d: reach, engagedUsers28d: 0, engagementRate: engagement };
+            setLiveStats(mapped);
+            setLastPulled(new Date());
+            setStats(prev => ({ ...prev, followers, reach, engagement: engagement || prev.engagement, postsLast30Days: posts || prev.postsLast30Days }));
+            if (!silent) toast('Stats updated from Late analytics!', 'success');
+            setIsPullingStats(false);
+            return;
+          }
+        } catch { /* fall through to FB Graph */ }
+      }
+
+      // Path 2 — Direct FB Graph API fallback
+      if (profile.facebookPageId && profile.facebookPageAccessToken) {
+        const data = await FacebookService.getPageStats(profile.facebookPageId, profile.facebookPageAccessToken);
+        setLiveStats(data);
+        setLastPulled(new Date());
+        setStats(prev => ({ ...prev, followers: data.followersCount || data.fanCount, reach: data.reach28d, engagement: data.engagementRate }));
+        const hasData = data.fanCount > 0 || data.followersCount > 0 || data.reach28d > 0;
+        if (!silent) toast(hasData ? 'Live stats updated from Facebook!' : 'Connected — page stats require Facebook App Review to display.', hasData ? 'success' : 'info');
+      } else if (!silent) {
+        toast('Connect your social accounts in Settings to pull live stats.', 'warning');
+      }
     } catch (e: any) {
       const msg = e?.message || '';
-      if (msg.includes('#10') || msg.includes('#200') || msg.includes('permission') || msg.includes('reviewable')) {
-        toast('Stats unavailable — Facebook requires App Review for insights access.', 'info');
-      } else {
-        toast(`Stats pull failed: ${msg.substring(0, 100) || 'Unknown error'}`, 'error');
+      if (!silent) {
+        if (msg.includes('#10') || msg.includes('#200') || msg.includes('permission')) {
+          toast('Stats unavailable — Facebook requires App Review for insights access.', 'info');
+        } else {
+          toast(`Stats pull failed: ${msg.substring(0, 100) || 'Unknown error'}`, 'error');
+        }
       }
     }
     setIsPullingStats(false);
   };
+
+  // Auto-fetch stats on login when Late is connected
+  useEffect(() => {
+    if (lateProfileId && user) handlePullStats(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lateProfileId, user]);
 
   const handlePublishToFacebook = async () => {
     if (!profile.facebookPageId || !profile.facebookPageAccessToken) {
@@ -1096,7 +1127,7 @@ const Dashboard: React.FC = () => {
             )}
             {fbConnected && (
               <button
-                onClick={handlePullStats}
+                onClick={() => handlePullStats()}
                 disabled={isPullingStats}
                 className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white px-2.5 py-1 rounded-full transition disabled:opacity-40 text-xs"
                 title="Pull live stats from Facebook"
@@ -2601,7 +2632,7 @@ const Dashboard: React.FC = () => {
                       {isSavingFacebook ? 'Saving…' : 'Save Credentials'}
                     </button>
                     {fbConnected && (
-                      <button onClick={handlePullStats} disabled={isPullingStats}
+                      <button onClick={() => handlePullStats()} disabled={isPullingStats}
                         className="text-sm bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/20 px-4 py-2 rounded-xl flex items-center gap-2 transition disabled:opacity-50">
                         <RefreshCw size={14} className={isPullingStats ? 'animate-spin' : ''} />
                         {isPullingStats ? 'Testing…' : 'Test Connection'}
