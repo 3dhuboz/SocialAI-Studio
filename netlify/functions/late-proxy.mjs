@@ -96,7 +96,7 @@ export const handler = async (event) => {
     if (action === 'post' && event.httpMethod === 'POST') {
       const { profileId, platforms, text, mediaUrls, scheduleDate } = JSON.parse(event.body || '{}');
       if (!profileId || !platforms || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'profileId, platforms, and text required' }) };
-      const body = { profileId, platforms, text, ...(mediaUrls?.length ? { mediaUrls } : {}), ...(scheduleDate ? { scheduleDate } : {}) };
+      const body = { profileId, platforms, content: text, text, ...(mediaUrls?.length ? { mediaUrls } : {}), ...(scheduleDate ? { scheduleDate } : {}) };
       const res = await fetch(`${LATE_BASE}/posts`, {
         method: 'POST',
         headers: authHeader,
