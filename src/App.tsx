@@ -29,7 +29,7 @@ import {
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
-  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play
+  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -2678,6 +2678,12 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
+            {/* ── SECTION: AI & Keys ── */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">AI &amp; Keys</span>
+              <div className="h-px flex-1 bg-white/6" />
+            </div>
+
             {/* API Key — admin only */}
             {isAdminMode ? (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
@@ -2725,6 +2731,12 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
             )}
+
+            {/* ── SECTION: Business Profile ── */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Business Profile</span>
+              <div className="h-px flex-1 bg-white/6" />
+            </div>
 
             {/* Business Profile — Guided Questionnaire */}
             <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
@@ -2963,6 +2975,54 @@ const Dashboard: React.FC = () => {
             </div>
             )}
 
+            {/* Service Credits — admin only */}
+            {isAdminMode && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* fal.ai Credits */}
+                <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
+                  <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <span className="text-base">🎬</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-white">fal.ai Credits</p>
+                    <p className="text-xs text-white/30">Video generation usage &amp; balance</p>
+                  </div>
+                  <a
+                    href="https://fal.ai/dashboard/billing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 flex items-center gap-1.5 text-xs font-bold text-purple-300 bg-purple-500/12 hover:bg-purple-500/20 border border-purple-500/20 px-3 py-1.5 rounded-xl transition"
+                  >
+                    View <ExternalLink size={11} />
+                  </a>
+                </div>
+                {/* Late.dev Credits */}
+                <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
+                  <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Link2 size={16} className="text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-white">Late.dev Credits</p>
+                    <p className="text-xs text-white/30">Social scheduling usage &amp; balance</p>
+                  </div>
+                  <a
+                    href="https://app.late.dev/billing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 flex items-center gap-1.5 text-xs font-bold text-blue-300 bg-blue-500/12 hover:bg-blue-500/20 border border-blue-500/20 px-3 py-1.5 rounded-xl transition"
+                  >
+                    View <ExternalLink size={11} />
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* ── SECTION: Content & Video ── */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Content &amp; Video</span>
+              <div className="h-px flex-1 bg-white/6" />
+            </div>
+
             {/* Short Video Toggle — Pro+ */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6">
               <div className="flex items-center justify-between gap-4">
@@ -3002,6 +3062,12 @@ const Dashboard: React.FC = () => {
                   <p className="text-xs text-purple-300">🎬 Short videos are now included in your AI content calendar. Each Reel post includes a full script, shot-by-shot brief, and music recommendation that you can film with your phone.</p>
                 </div>
               )}
+            </div>
+
+            {/* ── SECTION: Connected Accounts ── */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Connected Accounts</span>
+              <div className="h-px flex-1 bg-white/6" />
             </div>
 
             {/* Social Media Connection — Late only */}
@@ -3132,6 +3198,12 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* ── SECTION: Plan & Admin ── */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Plan &amp; Admin</span>
+              <div className="h-px flex-1 bg-white/6" />
             </div>
 
             {/* Your Plan */}
