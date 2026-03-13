@@ -168,15 +168,19 @@ const Dashboard: React.FC = () => {
             setInsightStale(true);
           }
         }
-        // Check for pending Stripe activation (webhook ran before user doc existed)
-        if (!isAdmin && !(snap.exists() && snap.data().plan)) {
-          const pendingSnap = await getDoc(doc(db, 'pending_activations', user.email || ''));
-          if (pendingSnap.exists()) {
-            const p = pendingSnap.data();
-            setActivePlan(p.plan);
-            setSetupStatus('live');
-            await setDoc(doc(db, 'users', user.uid), { plan: p.plan, setupStatus: 'live', email: user.email, stripeCustomerId: p.stripeCustomerId || null }, { merge: true });
-            await deleteDoc(doc(db, 'pending_activations', user.email || ''));
+        // Check for pending Stripe activation — webhook stores by UID (preferred) or email
+        if (!isAdmin && !(snap.exists() && snap.data()?.plan)) {
+          const byUid = await getDoc(doc(db, 'pending_activations', user.uid));
+          const byEmail = user.email ? await getDoc(doc(db, 'pending_activations', user.email)) : null;
+          const pendingSnap = byUid.exists() ? byUid : (byEmail?.exists() ? byEmail : null);
+          if (pendingSnap) {
+            const p = pendingSnap.data()!;
+            if (!p.consumed) {
+              setActivePlan(p.plan);
+              setSetupStatus('live');
+              await setDoc(doc(db, 'users', user.uid), { plan: p.plan, setupStatus: 'live', email: user.email, stripeCustomerId: p.stripeCustomerId || null }, { merge: true });
+              await updateDoc(pendingSnap.ref, { consumed: true });
+            }
           }
         }
         // Load agency clients
