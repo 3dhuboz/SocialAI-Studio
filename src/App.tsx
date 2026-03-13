@@ -811,6 +811,29 @@ const Dashboard: React.FC = () => {
         }
       }
 
+      // Path 3 — Late analytics (uses Late's managed OAuth — no expiring tokens)
+      if (!posts.length && lateProfileId) {
+        try {
+          const lateData = await LateService.getAnalytics(lateProfileId);
+          // Late analytics shape is not strictly typed — normalise defensively
+          const rawPosts: any[] = (lateData as any)?.posts
+            ?? (lateData as any)?.data
+            ?? (lateData as any)?.items
+            ?? [];
+          if (rawPosts.length) {
+            posts = rawPosts.map((p: any) => ({
+              message: p.text ?? p.message ?? p.content ?? p.body ?? '',
+              created_time: p.publishedAt ?? p.published_at ?? p.created_time ?? p.created_at ?? '',
+              likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
+              comments: p.comments ?? p.commentsCount ?? p.metrics?.comments ?? 0,
+              shares: p.shares ?? p.sharesCount ?? p.metrics?.shares ?? 0,
+            })).filter((p: any) => p.message);
+          }
+        } catch {
+          // Late analytics unavailable — continue
+        }
+      }
+
       if (!posts.length) {
         toast('No posts found. Connect your Facebook or Late account in Settings first.', 'warning');
         setIsScanningPosts(false);
@@ -1945,12 +1968,12 @@ const Dashboard: React.FC = () => {
                 </p>
               </div>
               <div className="flex gap-2 flex-wrap">
-                {(profile.sotrendPageId || profile.facebookPageId) && (
+                {(profile.sotrendPageId || profile.facebookPageId || lateProfileId) && (
                   <button
                     onClick={handleScanPastPosts}
                     disabled={isScanningPosts || isAnalyzing}
                     className="flex items-center gap-2 text-xs bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/35 text-blue-300/70 hover:text-blue-300 px-4 py-2 rounded-xl transition disabled:opacity-40"
-                    title="Scan real past Facebook posts via Sotrender and generate data-driven insights"
+                    title="Scan real past posts and generate data-driven insights"
                   >
                     {isScanningPosts ? <Loader2 size={13} className="animate-spin" /> : <BarChart3 size={13} />}
                     {isScanningPosts ? 'Scanning posts…' : 'Scan Past Posts'}
