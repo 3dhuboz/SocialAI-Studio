@@ -100,22 +100,32 @@ export const handler = async (event) => {
         return { statusCode: 200, headers, body: JSON.stringify({ status: 'FAILED', failure: errMsg }) };
       }
 
-      // If COMPLETED, fetch the actual result
+      // If COMPLETED, extract video URL — check inline first, then fetch result URL
       if (statusData.status === 'COMPLETED') {
-        let resultRes = await fetch(
-          `${FAL_BASE}/${MODEL}/requests/${requestId}`,
-          { headers: authHeader },
-        );
-        if (!resultRes.ok) {
-          resultRes = await fetch(`${FAL_BASE}/requests/${requestId}`, { headers: authHeader });
+        const extractUrl = (obj) =>
+          obj?.video?.url ||
+          obj?.videos?.[0]?.url ||
+          obj?.data?.video?.url ||
+          obj?.output?.video?.url ||
+          obj?.output?.[0]?.url ||
+          obj?.output?.url;
+
+        // Result may be embedded directly in status response
+        let videoUrl = extractUrl(statusData);
+
+        if (!videoUrl) {
+          // Use responseUrl if provided, otherwise construct
+          const resultEndpoint = responseUrl
+            ? responseUrl
+            : `${FAL_BASE}/${MODEL}/requests/${requestId}`;
+          let resultRes = await fetch(resultEndpoint, { headers: authHeader });
+          if (!resultRes.ok) {
+            resultRes = await fetch(`${FAL_BASE}/requests/${requestId}`, { headers: authHeader });
+          }
+          const result = await resultRes.json();
+          videoUrl = extractUrl(result);
         }
-        const result = await resultRes.json();
-        const videoUrl =
-          result?.video?.url ||
-          result?.videos?.[0]?.url ||
-          result?.data?.video?.url ||
-          result?.output?.video?.url ||
-          result?.output?.[0]?.url;
+
         return {
           statusCode: 200,
           headers,
@@ -131,13 +141,12 @@ export const handler = async (event) => {
         };
       }
 
-      // IN_QUEUE or IN_PROGRESS — report meaningful progress
+      // IN_QUEUE or IN_PROGRESS — pass raw status so client can track time-based progress
       const qPos = typeof statusData.queue_position === 'number' ? statusData.queue_position : null;
-      const progress = statusData.status === 'IN_PROGRESS' ? 0.5 : (qPos !== null && qPos <= 3 ? 0.15 : 0.05);
       return {
         statusCode: 200,
         headers,
-        body: JSON.stringify({ status: 'IN_PROGRESS', progress, queuePosition: qPos }),
+        body: JSON.stringify({ status: statusData.status || 'IN_PROGRESS', queuePosition: qPos }),
       };
     }
 

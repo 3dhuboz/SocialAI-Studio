@@ -53,7 +53,9 @@ export const FalService = {
       if (poll.status === 'FAILED') {
         throw new Error(poll.failure || 'Video generation failed');
       }
-      onProgress?.(poll.progress ?? Math.min(0.9, (i + 1) / 40));
+      // Smoothly increment: IN_QUEUE stays low, IN_PROGRESS climbs toward 90%
+      const base = poll.status === 'IN_QUEUE' ? 0.05 : 0.15;
+      onProgress?.(Math.min(0.9, base + (i / 40) * (1 - base)));
     }
     throw new Error('Video generation timed out — try again');
   },
