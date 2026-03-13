@@ -478,6 +478,9 @@ export interface SmartScheduledPost {
   pillar: string;
 }
 
+const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`AI response timed out after ${ms / 1000}s — try again or check your API key.`)), ms))]);
+
 export const generateSmartSchedule = async (
   businessName: string,
   businessType: string,
@@ -496,7 +499,8 @@ export const generateSmartSchedule = async (
     contentTopics?: string;
   },
   includeVideos: boolean = false,
-  scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart'
+  scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
+  onPhase?: (phase: 'researching' | 'writing') => void
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   const ai = getAI();
   if (!ai) return { posts: [], strategy: "API Key missing." };
@@ -625,12 +629,13 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     };
 
     let research: any = {};
+    onPhase?.('researching');
     try {
-      const researchRes = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+      const researchRes = await withTimeout(ai.models.generateContent({
+        model: 'gemini-2.0-flash',
         contents: researchPrompt,
         config: { responseMimeType: 'application/json', temperature: 0.5 } as any,
-      });
+      }), 90000);
       const researchRaw = (researchRes.text || '').trim()
         .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
       if (researchRaw) research = JSON.parse(researchRaw);
@@ -776,11 +781,12 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
   ]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    onPhase?.('writing');
+    const response = await withTimeout(ai.models.generateContent({
+      model: 'gemini-2.0-flash',
       contents: prompt,
       config: { responseMimeType: 'application/json', temperature: 0.75 } as any,
-    });
+    }), 90000);
 
     const raw = (response.text || '').trim();
     const data = raw ? JSON.parse(raw) : { posts: [], strategy: '' };

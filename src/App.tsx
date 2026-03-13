@@ -333,6 +333,8 @@ const Dashboard: React.FC = () => {
   const saturationMode = autopilotMode === 'saturation';
   const [smartCount, setSmartCount] = useState(7);
   const [includeVideos, setIncludeVideos] = useState(false);
+  const [autopilotPlatform, setAutopilotPlatform] = useState<'both' | 'facebook' | 'instagram'>('both');
+  const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | null>(null);
 
   // Smart post image generation
   const [smartPostImages, setSmartPostImages] = useState<Record<number, string>>({});
@@ -714,25 +716,37 @@ const Dashboard: React.FC = () => {
   const handleSmartSchedule = async () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsSmartGenerating(true);
+    setSmartGenPhase('researching');
     setSmartPostImages({});
     setAutoGenSet(new Set());
+    const platformsObj = {
+      facebook: autopilotPlatform === 'both' || autopilotPlatform === 'facebook',
+      instagram: autopilotPlatform === 'both' || autopilotPlatform === 'instagram',
+    };
     try {
       const result = await generateSmartSchedule(
         profile.name, profile.type, profile.tone, stats, smartCount,
         profile.location || 'Australia',
-        { facebook: true, instagram: true },
+        platformsObj,
         saturationMode,
         profile,
         includeVideos,
-        autopilotMode
+        autopilotMode,
+        (phase) => setSmartGenPhase(phase)
       );
-      setSmartPosts(result.posts);
-      setSmartStrategy(result.strategy);
-      autoGenerateAllImages(result.posts);
+      if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
+        toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
+      } else {
+        setSmartPosts(result.posts);
+        setSmartStrategy(result.strategy);
+        autoGenerateAllImages(result.posts);
+      }
     } catch (e: any) {
-      toast(`Smart schedule failed: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error');
+      toast(`Smart schedule failed: ${e?.message?.substring(0, 100) || 'Unknown error — check your API key and connection.'}`, 'error');
+    } finally {
+      setIsSmartGenerating(false);
+      setSmartGenPhase(null);
     }
-    setIsSmartGenerating(false);
   };
 
   const handleRewrite = async () => {
@@ -2072,6 +2086,33 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* Platform selector */}
+                <div>
+                  <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Post to</label>
+                  <div className="flex rounded-xl overflow-hidden border border-white/10 w-fit">
+                    {(['both', 'facebook', 'instagram'] as const).map(opt => (
+                      <button
+                        key={opt}
+                        onClick={() => setAutopilotPlatform(opt)}
+                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold transition ${
+                          autopilotPlatform === opt
+                            ? opt === 'instagram'
+                              ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white'
+                              : opt === 'facebook'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
+                            : 'bg-transparent text-white/30 hover:text-white/60'
+                        }`}
+                      >
+                        {opt === 'facebook' && <Facebook size={13} />}
+                        {opt === 'instagram' && <Instagram size={13} />}
+                        {opt === 'both' && <span className="text-[11px]">f + 📸</span>}
+                        {opt === 'both' ? 'Both' : opt.charAt(0).toUpperCase() + opt.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Include Reels toggle */}
                 <button
                   onClick={() => {
@@ -2129,18 +2170,46 @@ const Dashboard: React.FC = () => {
             {/* Generation Ticker */}
             {isSmartGenerating && (
               <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-amber-500/15 rounded-xl flex items-center justify-center flex-shrink-0">
-                    <Loader2 size={16} className="animate-spin text-amber-400" />
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                      smartGenPhase === 'writing' ? 'bg-purple-500/15' : 'bg-amber-500/15'
+                    }`}>
+                      <Loader2 size={16} className={`animate-spin ${
+                        smartGenPhase === 'writing' ? 'text-purple-400' : 'text-amber-400'
+                      }`} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-amber-300">{TICKER_STEPS[tickerIdx]?.label}</p>
+                        {smartGenPhase && (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            smartGenPhase === 'writing'
+                              ? 'bg-purple-500/20 text-purple-300'
+                              : 'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {smartGenPhase === 'researching' ? 'Phase 1: Researching' : 'Phase 2: Writing posts'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-white/25 mt-0.5">This can take 30–60 seconds — two AI calls for research + content</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-amber-300">{TICKER_STEPS[tickerIdx]?.label}</p>
-                    <p className="text-xs text-white/25 mt-0.5">Using two AI calls for research + content quality</p>
-                  </div>
+                  <button
+                    onClick={() => { setIsSmartGenerating(false); setSmartGenPhase(null); }}
+                    className="text-xs text-white/25 hover:text-white/60 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                    title="Cancel generation"
+                  >
+                    <X size={11} /> Cancel
+                  </button>
                 </div>
                 <div className="w-full bg-white/8 rounded-full h-2">
                   <div
-                    className="bg-gradient-to-r from-amber-400 to-orange-500 h-2 rounded-full transition-all duration-700"
+                    className={`h-2 rounded-full transition-all duration-700 ${
+                      smartGenPhase === 'writing'
+                        ? 'bg-gradient-to-r from-purple-400 to-pink-500'
+                        : 'bg-gradient-to-r from-amber-400 to-orange-500'
+                    }`}
                     style={{ width: `${TICKER_STEPS[tickerIdx]?.pct ?? 0}%` }}
                   />
                 </div>
