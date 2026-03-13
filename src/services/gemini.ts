@@ -100,8 +100,18 @@ The content field must respect the character limits above. Do not pad with fille
       contents: prompt + '\n\nReturn ONLY raw JSON with no markdown or code fences.',
     });
 
-    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/,'').trim();
-    return raw ? JSON.parse(raw) : { content: 'Error generating content.', hashtags: [] };
+    const text = (response.text || '').trim();
+    // Strip markdown code fences (```json ... ``` or ``` ... ```)
+    const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/,'').trim();
+    // Extract first valid JSON object to avoid trailing text/commentary
+    const jsonMatch = stripped.match(/\{[\s\S]*\}/);
+    const raw = jsonMatch ? jsonMatch[0] : stripped;
+    try {
+      return raw ? JSON.parse(raw) : { content: 'Error generating content.', hashtags: [] };
+    } catch {
+      // Last resort: return raw text as content
+      return { content: stripped.replace(/^\{.*"content"\s*:\s*"/, '').replace(/".*$/, '').trim() || 'Could not parse AI response.', hashtags: [] };
+    }
   } catch (error: any) {
     console.error("Gemini Text Error:", error);
     const msg = error?.message || error?.statusText || String(error);
