@@ -29,7 +29,7 @@ export const CLIENT = {
    * 5. Go Live (toggle in top bar) once approved
    * 6. Copy your App ID from the app dashboard and paste below
    */
-  facebookAppId: '',
+  facebookAppId: '847198108337884',
 
   /** Admin emails — these accounts auto-get Pro plan + admin mode on login */
   adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],
