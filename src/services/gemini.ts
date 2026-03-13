@@ -11,7 +11,7 @@ const getApiKey = () => {
 const getAI = () => {
   const key = getApiKey();
   if (!key) return null;
-  return new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1' } });
+  return new GoogleGenAI({ apiKey: key });
 };
 
 const compressImage = (base64Str: string, maxWidth = 800, quality = 0.7): Promise<string> => {
@@ -69,18 +69,21 @@ export const generateSocialPost = async (
 
   // Platform-specific rules (research-backed)
   const platformRules = platform === 'Facebook'
-    ? `FACEBOOK POST RULES (follow strictly):
-- Body length: 80–150 characters is optimal for engagement. Maximum 300 characters for storytelling posts. Never exceed 400 characters.
-- Paragraphs: 1–3 short punchy paragraphs. No walls of text.
-- Hashtags: Return EXACTLY 3–5 hashtags. More than 5 hurts Facebook reach.
-- Emojis: 2–4 relevant emojis only. Don't overdo it.
-- Call to action: end with a short CTA (question, "DM us", "Learn more", etc.)`
-    : `INSTAGRAM POST RULES (follow strictly):
-- Body length: 138–220 characters for maximum engagement. Can go up to 300 for storytelling, never more.
-- Style: Conversational, punchy first line that hooks (first 125 chars visible before "more").
-- Hashtags: Return EXACTLY 5–8 highly relevant hashtags. Mix broad + niche.
-- Emojis: Use 3–5 to break up text and add personality.
-- Call to action: end with a question or action ("save this", "tag a friend", etc.)`;
+    ? `FACEBOOK POST RULES (2025/26 algorithm — follow strictly):
+- Body: 80–150 characters is the engagement sweet spot. Max 300 for storytelling. NEVER exceed 400.
+- Structure: attention-grabbing hook first line → 1–2 body lines → CTA last.
+- Voice: conversational, human, first-person. Not a brand announcement. Write like a person.
+- Hashtags: EXACTLY 3–5 niche-relevant hashtags. More than 5 actively reduces reach.
+- Emojis: 2–4 placed naturally mid-sentence or at line breaks. Not at the end of every line.
+- CTA: end with a comment-driving question OR a soft "DM us" / "tap the link". Never hard-sell.
+- Avoid: pasting links in the post body (kills reach), all-caps words, "link in bio" on Facebook.`
+    : `INSTAGRAM POST RULES (2025/26 Reels-first algorithm — follow strictly):
+- Hook: the first 125 characters must stop the scroll — bold claim, intriguing question, or surprising fact.
+- Body: 150–280 characters total. Reels-era captions are shorter; save-worthy value drives shares.
+- Hashtags: EXACTLY 5–8. Mix tiers: 1 mega (1M+ posts), 2 large (100k–1M), 3 medium (10k–100k), 2 niche (<10k).
+- Emojis: 3–5 used to break lines and add rhythm. Not filler.
+- CTA: prioritise saves ("Save this ✓"), shares ("Tag someone"), or comments (open question).
+- Avoid: hashtag dumps >10 (penalised), generic captions, posting without a scroll-stopping hook.`;
 
   try {
     const prompt = `
@@ -97,20 +100,17 @@ The content field must respect the character limits above. Do not pad with fille
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt + '\n\nReturn ONLY raw JSON with no markdown or code fences.',
+      contents: prompt,
+      config: { responseMimeType: 'application/json', temperature: 0.8 } as any,
     });
 
-    const text = (response.text || '').trim();
-    // Strip markdown code fences (```json ... ``` or ``` ... ```)
-    const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/,'').trim();
-    // Extract first valid JSON object to avoid trailing text/commentary
-    const jsonMatch = stripped.match(/\{[\s\S]*\}/);
-    const raw = jsonMatch ? jsonMatch[0] : stripped;
+    const raw = (response.text || '').trim();
     try {
       return raw ? JSON.parse(raw) : { content: 'Error generating content.', hashtags: [] };
     } catch {
-      // Last resort: return raw text as content
-      return { content: stripped.replace(/^\{.*"content"\s*:\s*"/, '').replace(/".*$/, '').trim() || 'Could not parse AI response.', hashtags: [] };
+      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      const match = stripped.match(/\{[\s\S]*\}/);
+      return match ? JSON.parse(match[0]) : { content: stripped || 'Could not parse AI response.', hashtags: [] };
     }
   } catch (error: any) {
     console.error("Gemini Text Error:", error);
@@ -127,7 +127,7 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   if (!key) return null;
 
   const ai = new GoogleGenAI({ apiKey: key });
-  const imagePrompt = `Professional social media marketing image: ${prompt}. High quality, vibrant colours, cinematic lighting. No text, watermarks or logos.`;
+  const imagePrompt = `Professional social media marketing photograph: ${prompt}. Shot on high-end DSLR, cinematic lighting, vibrant colours, sharp focus, depth of field, commercial quality. No text, no watermarks, no logos.`;
 
   // Try Imagen models via generateImages (correct API for @google/genai v1.x)
   const imagenModels = ['imagen-4.0-generate-001', 'imagen-3.0-generate-001'];
@@ -205,8 +205,12 @@ Return ONLY raw JSON, no markdown:
   "mood": "Music mood — e.g. Upbeat & energetic, Calm & trustworthy, Inspirational",
   "duration": "Recommended video length, e.g. 30 seconds, 45 seconds"
 }`;
-    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json', temperature: 0.85 } as any,
+    });
+    const raw = (response.text || '').trim();
     return raw ? JSON.parse(raw) : { script: 'Error generating brief.', shots: [], mood: '', duration: '', hook: '' };
   } catch (error: any) {
     return { script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}`, shots: [], mood: '', duration: '', hook: '' };
@@ -230,8 +234,12 @@ Their draft or idea: "${draft}"
 Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
-    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json', temperature: 0.8 } as any,
+    });
+    const raw = (response.text || '').trim();
     return raw ? JSON.parse(raw) : { content: 'Error rewriting post.', hashtags: [] };
   } catch (error: any) {
     const msg = error?.message || String(error);
@@ -320,8 +328,12 @@ Return ONLY this exact JSON structure, no markdown:
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
 }`;
 
-    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json', temperature: 0.4 } as any,
+    });
+    const raw = (response.text || '').trim();
     const parsed = JSON.parse(raw) as InsightReport;
     parsed.generatedAt = new Date().toISOString();
     return parsed;
@@ -389,8 +401,12 @@ Return ONLY this exact JSON, no markdown:
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
 }`;
 
-    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
-    const raw = (response.text || '').trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: 'application/json', temperature: 0.3 } as any,
+    });
+    const raw = (response.text || '').trim();
     const parsed = JSON.parse(raw) as InsightReport;
     parsed.generatedAt = new Date().toISOString();
     return parsed;
@@ -609,6 +625,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       const researchRes = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: researchPrompt,
+        config: { responseMimeType: 'application/json', temperature: 0.5 } as any,
       });
       const researchRaw = (researchRes.text || '').trim()
         .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
@@ -753,10 +770,10 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
+      config: { responseMimeType: 'application/json', temperature: 0.75 } as any,
     });
 
-    const raw = (response.text || '').trim()
-      .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    const raw = (response.text || '').trim();
     const data = raw ? JSON.parse(raw) : { posts: [], strategy: '' };
     return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
   } catch (error: any) {

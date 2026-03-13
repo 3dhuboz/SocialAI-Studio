@@ -9,7 +9,7 @@
  */
 
 const FAL_BASE = 'https://queue.fal.run';
-const MODEL = 'fal-ai/kling-video/v1.6/standard/image-to-video';
+const MODEL = 'fal-ai/kling-video/v2.1/standard/image-to-video';
 
 export const handler = async (event) => {
   const headers = {

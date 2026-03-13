@@ -606,7 +606,7 @@ const Dashboard: React.FC = () => {
             const videoUrl = await FalService.generateVideo(
               `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
               thumbnailBase64,
-              10,
+              5,
               p => setVideoProgress(p),
             );
             setGeneratedVideoUrl(videoUrl);
