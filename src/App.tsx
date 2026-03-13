@@ -61,6 +61,26 @@ const DEFAULT_STATS: ContentCalendarStats = {
   postsLast30Days: 8
 };
 
+// ── Autopilot draft persistence ─────────────────────────
+const DRAFT_KEY = 'sai_autopilot_draft';
+const DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
+const readDraft = (): { posts: any[]; strategy: string; savedAt: number; mode: string; platform: string } | null => {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d?.posts?.length || Date.now() - (d.savedAt || 0) > DRAFT_MAX_AGE_MS) {
+      localStorage.removeItem(DRAFT_KEY);
+      return null;
+    }
+    return d;
+  } catch { return null; }
+};
+const saveDraft = (posts: any[], strategy: string, mode: string, platform: string) => {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ posts, strategy, savedAt: Date.now(), mode, platform })); } catch {}
+};
+const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch {} };
+
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
@@ -324,9 +344,10 @@ const Dashboard: React.FC = () => {
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
 
-  // Smart Schedule State
-  const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>([]);
-  const [smartStrategy, setSmartStrategy] = useState('');
+  // Smart Schedule State — restored from localStorage draft if browser crashed before accepting
+  const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>(() => readDraft()?.posts ?? []);
+  const [smartStrategy, setSmartStrategy] = useState(() => readDraft()?.strategy ?? '');
+  const [draftRestoredAt] = useState<number | null>(() => readDraft()?.savedAt ?? null);
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
   type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
   const [autopilotMode, setAutopilotMode] = useState<AutopilotMode>('smart');
@@ -719,6 +740,7 @@ const Dashboard: React.FC = () => {
     setSmartGenPhase('researching');
     setSmartPostImages({});
     setAutoGenSet(new Set());
+    clearDraft();
     const platformsObj = {
       facebook: autopilotPlatform === 'both' || autopilotPlatform === 'facebook',
       instagram: autopilotPlatform === 'both' || autopilotPlatform === 'instagram',
@@ -739,6 +761,7 @@ const Dashboard: React.FC = () => {
       } else {
         setSmartPosts(result.posts);
         setSmartStrategy(result.strategy);
+        saveDraft(result.posts, result.strategy, autopilotMode, autopilotPlatform);
         autoGenerateAllImages(result.posts);
       }
     } catch (e: any) {
@@ -875,6 +898,7 @@ const Dashboard: React.FC = () => {
         })
       );
       setPosts(prev => [...results, ...prev]);
+      clearDraft();
       toast(`${results.length} posts added to your calendar! 🎉`, 'success');
       setSmartPosts([]);
       setSmartStrategy('');
@@ -2228,6 +2252,30 @@ const Dashboard: React.FC = () => {
             {/* Generated Posts */}
             {smartPosts.length > 0 && !isSmartGenerating && (
               <div className="space-y-4">
+                {/* Restored draft banner */}
+                {draftRestoredAt && (
+                  <div className="bg-amber-500/8 border border-amber-500/25 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-lg flex-shrink-0">📋</span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-amber-300">Draft restored from previous session</p>
+                        <p className="text-xs text-white/40 mt-0.5">
+                          {smartPosts.length} posts saved {Math.round((Date.now() - draftRestoredAt) / 60000) < 60
+                            ? `${Math.round((Date.now() - draftRestoredAt) / 60000)} min ago`
+                            : `${Math.round((Date.now() - draftRestoredAt) / 3600000)} hr ago`
+                          } — accept them below or generate a new set.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { clearDraft(); setSmartPosts([]); setSmartStrategy(''); }}
+                      className="text-xs text-white/30 hover:text-white/60 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      <X size={11} /> Discard
+                    </button>
+                  </div>
+                )}
+
                 {/* Accept All bar */}
                 <div className="sticky top-[72px] z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl">
                   <div>
