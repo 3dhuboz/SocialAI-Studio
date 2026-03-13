@@ -546,7 +546,7 @@ const Dashboard: React.FC = () => {
             const videoUrl = await RunwayService.generateVideo(
               `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
               imagePublicUrl,
-              5,
+              10,
               p => setVideoProgress(p),
             );
             setGeneratedVideoUrl(videoUrl);
