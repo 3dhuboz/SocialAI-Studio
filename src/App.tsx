@@ -406,6 +406,9 @@ const Dashboard: React.FC = () => {
   const [activePlan, setActivePlan] = useState<PlanTier | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatus>('ordered');
   const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
+  // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai/Late credits, API keys).
+  // isAdminMode may be broadened to client admins in future; isSuperAdmin never will be.
+  const isSuperAdmin = !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
 
   // Persist plan/setupStatus to Firestore
   useEffect(() => {
@@ -2678,14 +2681,16 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
-            {/* ── SECTION: AI & Keys ── */}
-            <div className="flex items-center gap-3">
-              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">AI &amp; Keys</span>
-              <div className="h-px flex-1 bg-white/6" />
-            </div>
+            {/* ── SECTION: AI & Keys (super-admin / owner only) ── */}
+            {isSuperAdmin && (
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">AI &amp; Keys</span>
+                <div className="h-px flex-1 bg-white/6" />
+              </div>
+            )}
 
-            {/* API Key — admin only */}
-            {isAdminMode ? (
+            {/* API Key — super-admin only */}
+            {isSuperAdmin ? (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
@@ -2937,8 +2942,8 @@ const Dashboard: React.FC = () => {
             </div>}
             </div>
 
-            {/* Runway AI Video Key — admin + Pro/Agency */}
-            {isAdminMode && (activePlan === 'pro' || activePlan === 'agency') && (
+            {/* fal.ai API Key — super-admin only */}
+            {isSuperAdmin && (activePlan === 'pro' || activePlan === 'agency') && (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
@@ -2975,8 +2980,8 @@ const Dashboard: React.FC = () => {
             </div>
             )}
 
-            {/* Service Credits — admin only */}
-            {isAdminMode && (
+            {/* Service Credits — super-admin (owner) only */}
+            {isSuperAdmin && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* fal.ai Credits */}
                 <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
