@@ -307,6 +307,7 @@ const Dashboard: React.FC = () => {
   const [contentType, setContentType] = useState<'text' | 'image' | 'video'>('text');
   const [generatedVideoScript, setGeneratedVideoScript] = useState<VideoScript | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [showVideoBriefDetail, setShowVideoBriefDetail] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
@@ -1414,51 +1415,65 @@ const Dashboard: React.FC = () => {
                       {isGeneratingVideo && <Loader2 size={12} className="animate-spin text-purple-400 ml-1" />}
                     </div>
                     {generatedVideoScript && (
-                      <div className="p-5 space-y-5">
-                        {/* Hook */}
-                        <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
-                          <p className="text-[10px] font-black text-purple-400/70 uppercase tracking-widest mb-1.5">Opening Hook (0–2 sec)</p>
-                          <p className="text-sm text-purple-100 font-semibold">{generatedVideoScript.hook}</p>
-                        </div>
-
-                        {/* Script */}
-                        <div>
-                          <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Full Script / Voiceover</p>
-                          <div className="bg-black/30 border border-white/6 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
-                            {generatedVideoScript.script}
+                      <div className="p-4">
+                        {/* Compact preview row */}
+                        <div className="flex gap-4 items-start">
+                          <AnimatedReelPreview
+                            hookText={generatedVideoScript.hook}
+                            mood={generatedVideoScript.mood}
+                            size="sm"
+                            onClick={() => setShowVideoBriefDetail(v => !v)}
+                          />
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div className="bg-purple-500/8 border border-purple-500/15 rounded-xl px-3 py-2.5">
+                              <p className="text-[9px] font-black text-purple-400/70 uppercase tracking-widest mb-1">Opening Hook (0–2 sec)</p>
+                              <p className="text-sm text-purple-100 font-semibold leading-snug">{generatedVideoScript.hook}</p>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                              {generatedVideoScript.duration && (
+                                <span className="text-[11px] text-white/50 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">⏱ {generatedVideoScript.duration}</span>
+                              )}
+                              {generatedVideoScript.mood && (
+                                <span className="text-[11px] text-purple-300/60 bg-purple-500/8 border border-purple-500/12 px-2.5 py-1 rounded-full">♪ {generatedVideoScript.mood}</span>
+                              )}
+                              {generatedVideoScript.shots.length > 0 && (
+                                <span className="text-[11px] text-white/40 bg-white/5 border border-white/8 px-2.5 py-1 rounded-full">{generatedVideoScript.shots.length} shots</span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => setShowVideoBriefDetail(v => !v)}
+                              className="flex items-center gap-1.5 text-xs text-purple-400/70 hover:text-purple-300 transition"
+                            >
+                              {showVideoBriefDetail ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              {showVideoBriefDetail ? 'Hide full brief' : 'View full brief — script, shots & more'}
+                            </button>
                           </div>
                         </div>
 
-                        {/* Shot list */}
-                        {generatedVideoScript.shots.length > 0 && (
-                          <div>
-                            <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Shot List</p>
-                            <div className="space-y-2">
-                              {generatedVideoScript.shots.map((shot, i) => (
-                                <div key={i} className="flex gap-3 text-sm">
-                                  <span className="w-6 h-6 rounded-full bg-purple-500/15 border border-purple-500/20 text-purple-400 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
-                                  <p className="text-white/60 leading-relaxed">{shot}</p>
-                                </div>
-                              ))}
+                        {/* Expandable full brief */}
+                        {showVideoBriefDetail && (
+                          <div className="mt-4 space-y-4 border-t border-purple-500/10 pt-4">
+                            <div>
+                              <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Full Script / Voiceover</p>
+                              <div className="bg-black/30 border border-white/6 rounded-xl p-4 text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                {generatedVideoScript.script}
+                              </div>
                             </div>
+                            {generatedVideoScript.shots.length > 0 && (
+                              <div>
+                                <p className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Shot List</p>
+                                <div className="space-y-2">
+                                  {generatedVideoScript.shots.map((shot, i) => (
+                                    <div key={i} className="flex gap-3 text-sm">
+                                      <span className="w-6 h-6 rounded-full bg-purple-500/15 border border-purple-500/20 text-purple-400 text-[11px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                                      <p className="text-white/60 leading-relaxed">{shot}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
-
-                        {/* Mood + Duration */}
-                        <div className="flex flex-wrap gap-3">
-                          {generatedVideoScript.mood && (
-                            <div className="bg-white/3 border border-white/8 rounded-xl px-4 py-2.5">
-                              <p className="text-[10px] text-white/25 uppercase tracking-wider mb-0.5">Music Mood</p>
-                              <p className="text-sm text-white/70">{generatedVideoScript.mood}</p>
-                            </div>
-                          )}
-                          {generatedVideoScript.duration && (
-                            <div className="bg-white/3 border border-white/8 rounded-xl px-4 py-2.5">
-                              <p className="text-[10px] text-white/25 uppercase tracking-wider mb-0.5">Duration</p>
-                              <p className="text-sm text-white/70">{generatedVideoScript.duration}</p>
-                            </div>
-                          )}
-                        </div>
                       </div>
                     )}
                   </div>
@@ -1466,13 +1481,34 @@ const Dashboard: React.FC = () => {
 
                 {/* Footer actions */}
                 <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/6 bg-black/15">
-                  <input
-                    type="datetime-local"
-                    value={scheduleDate}
-                    onChange={e => setScheduleDate(e.target.value)}
-                    className="bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40 transition"
-                    title="Schedule date/time"
-                  />
+                  {/* Schedule date + time — split inputs for full clickability */}
+                  <div className="flex items-center bg-black/50 border border-white/10 hover:border-white/20 rounded-xl overflow-hidden transition">
+                    <label className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/5 transition" title="Schedule date">
+                      <Calendar size={12} className="text-white/30 flex-shrink-0" />
+                      <input
+                        type="date"
+                        value={scheduleDate ? scheduleDate.split('T')[0] : ''}
+                        onChange={e => {
+                          const time = scheduleDate ? (scheduleDate.split('T')[1] || '09:00') : '09:00';
+                          setScheduleDate(e.target.value ? `${e.target.value}T${time}` : '');
+                        }}
+                        className="bg-transparent text-white text-xs focus:outline-none cursor-pointer min-w-[120px]"
+                      />
+                    </label>
+                    <div className="w-px h-5 bg-white/10" />
+                    <label className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/5 transition" title="Schedule time">
+                      <Clock size={12} className="text-white/30 flex-shrink-0" />
+                      <input
+                        type="time"
+                        value={scheduleDate ? (scheduleDate.split('T')[1] || '').substring(0, 5) : ''}
+                        onChange={e => {
+                          const date = scheduleDate ? scheduleDate.split('T')[0] : new Date().toISOString().split('T')[0];
+                          setScheduleDate(e.target.value ? `${date}T${e.target.value}` : '');
+                        }}
+                        className="bg-transparent text-white text-xs focus:outline-none cursor-pointer min-w-[70px]"
+                      />
+                    </label>
+                  </div>
                   <button
                     onClick={handleSavePost}
                     className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition text-sm shadow-lg shadow-green-500/15"
