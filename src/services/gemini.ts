@@ -632,7 +632,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     onPhase?.('researching');
     try {
       const researchRes = await withTimeout(ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents: researchPrompt,
         config: { responseMimeType: 'application/json', temperature: 0.5 } as any,
       }), 90000);
@@ -783,7 +783,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 
     onPhase?.('writing');
     const response = await withTimeout(ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: { responseMimeType: 'application/json', temperature: 0.75 } as any,
     }), 90000);
