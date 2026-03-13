@@ -2621,6 +2621,62 @@ const Dashboard: React.FC = () => {
               ) : null}
             </div>
 
+            {/* Agency Client Management */}
+            {(activePlan === 'agency' || isAdminMode) && (
+              <div className="bg-white/3 border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <h3 className="font-bold text-white flex items-center gap-2"><Users size={16} className="text-emerald-400" /> Client Workspaces</h3>
+                  <span className="text-xs text-white/30">{clients.length} / {CLIENT.agencyClientLimit} used</span>
+                </div>
+                {clients.length === 0 ? (
+                  <p className="text-sm text-white/30 py-2">No client workspaces yet. Add one using the switcher in the header.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {clients.map(client => (
+                      <div key={client.id} className="flex items-center justify-between gap-3 bg-black/25 border border-white/6 rounded-xl px-4 py-3 flex-wrap">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                            <Users size={13} className="text-emerald-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-white truncate">{client.name}</p>
+                            <p className="text-xs text-white/30 truncate">{client.businessType || 'No business type set'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {client.lateProfileId ? (
+                            <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
+                              <Link2 size={10} /> Social Connected
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5 text-[11px] text-white/30 bg-white/5 border border-white/10 px-2.5 py-1 rounded-full">
+                              <Link2Off size={10} /> Not Connected
+                            </span>
+                          )}
+                          <button
+                            onClick={() => setActiveClientId(client.id)}
+                            className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                          >
+                            <ArrowRight size={11} /> Open Workspace
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {CLIENT.stripeCustomerPortalUrl && (
+                  <a
+                    href={CLIENT.stripeCustomerPortalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-xs text-emerald-300/70 hover:text-emerald-300 transition w-fit"
+                  >
+                    <ShoppingCart size={12} /> Manage agency billing in Stripe
+                  </a>
+                )}
+              </div>
+            )}
+
             {/* Save All */}
             <div className="flex justify-end">
               <button
