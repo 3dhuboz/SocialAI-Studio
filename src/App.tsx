@@ -205,7 +205,7 @@ const Dashboard: React.FC = () => {
     sync();
   }, [user]);
 
-  // Reload profile+posts when switching client workspace
+  // Reload profile+posts+Late profile when switching client workspace
   useEffect(() => {
     if (!user || activeClientId === null) return;
     const loadClient = async () => {
@@ -217,15 +217,33 @@ const Dashboard: React.FC = () => {
           else setProfile(DEFAULT_PROFILE);
           if (d.stats) setStats({ ...DEFAULT_STATS, ...d.stats });
           else setStats(DEFAULT_STATS);
+          setLateProfileId(d.lateProfileId || '');
+          setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
         } else {
           setProfile(DEFAULT_PROFILE);
           setStats(DEFAULT_STATS);
+          setLateProfileId('');
+          setLateConnectedPlatforms([]);
         }
         const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'clients', activeClientId, 'posts'), orderBy('scheduledFor', 'asc')));
         setPosts(pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost)));
       } catch (e) { console.warn('Client load error:', e); }
     };
     loadClient();
+  }, [activeClientId, user]);
+
+  // Restore own Late profile when switching back to own workspace
+  useEffect(() => {
+    if (!user || activeClientId !== null) return;
+    const restoreOwn = async () => {
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        setLateProfileId(d.lateProfileId || '');
+        setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
+      }
+    };
+    restoreOwn().catch(() => {});
   }, [activeClientId, user]);
 
   // Add a new client workspace
@@ -2494,16 +2512,30 @@ const Dashboard: React.FC = () => {
                     setLateProfileId(pid);
                     setLateConnectedPlatforms(platforms);
                     if (user) {
-                      updateDoc(doc(db, 'users', user.uid), { lateProfileId: pid, lateConnectedPlatforms: platforms }).catch(() =>
-                        setDoc(doc(db, 'users', user.uid), { lateProfileId: pid, lateConnectedPlatforms: platforms }, { merge: true })
+                      const ref = activeClientId
+                        ? doc(db, 'users', user.uid, 'clients', activeClientId)
+                        : doc(db, 'users', user.uid);
+                      updateDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms }).catch(() =>
+                        setDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms }, { merge: true })
                       );
+                      if (activeClientId) {
+                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: pid, lateConnectedPlatforms: platforms } : c));
+                      }
                     }
                     toast(`Connected to ${platforms.join(' & ')} successfully!`, 'success');
                   }}
                   onDisconnect={() => {
                     setLateProfileId('');
                     setLateConnectedPlatforms([]);
-                    if (user) updateDoc(doc(db, 'users', user.uid), { lateProfileId: null, lateConnectedPlatforms: [] }).catch(() => {});
+                    if (user) {
+                      const ref = activeClientId
+                        ? doc(db, 'users', user.uid, 'clients', activeClientId)
+                        : doc(db, 'users', user.uid);
+                      updateDoc(ref, { lateProfileId: null, lateConnectedPlatforms: [] }).catch(() => {});
+                      if (activeClientId) {
+                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [] } : c));
+                      }
+                    }
                     toast('Social accounts disconnected.', 'warning');
                   }}
                 />

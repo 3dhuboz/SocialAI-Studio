@@ -53,4 +53,6 @@ export interface ClientWorkspace {
   name: string;
   businessType: string;
   createdAt: string;
+  lateProfileId?: string;
+  lateConnectedPlatforms?: string[];
 }
