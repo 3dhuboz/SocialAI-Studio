@@ -120,6 +120,7 @@ const Dashboard: React.FC = () => {
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptProgress, setAcceptProgress] = useState(0);
   const [isScanningPosts, setIsScanningPosts] = useState(false);
+  const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [lateProfileId, setLateProfileId] = useState<string>('');
   const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
 
@@ -159,6 +160,7 @@ const Dashboard: React.FC = () => {
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
           if (typeof d.fbTokenNeverExpires === 'boolean') setFbTokenNeverExpires(d.fbTokenNeverExpires);
+          if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
           if (d.lateProfileId) setLateProfileId(d.lateProfileId);
           if (d.lateConnectedPlatforms) setLateConnectedPlatforms(d.lateConnectedPlatforms);
           if (d.insightReport) {
@@ -250,7 +252,7 @@ const Dashboard: React.FC = () => {
   // Add a new client workspace
   const addClient = async (name: string, businessType: string) => {
     if (!user) return;
-    if (activePlan !== 'agency') { toast('Client workspaces require an Agency plan.', 'warning'); return; }
+    if (activePlan !== 'agency' && !isAdminMode) { toast('Client workspaces require an Agency plan.', 'warning'); return; }
     if (clients.length >= CLIENT.agencyClientLimit) {
       toast(`You have reached the ${CLIENT.agencyClientLimit}-client limit on the Agency plan.`, 'warning'); return;
     }
@@ -794,11 +796,23 @@ const Dashboard: React.FC = () => {
 
       // Path 2 — Direct Facebook Graph API (requires stored page access token)
       if (!posts.length && profile.facebookPageId && profile.facebookPageAccessToken) {
-        posts = await FacebookService.getRecentPosts(profile.facebookPageId, profile.facebookPageAccessToken, 30);
+        try {
+          posts = await FacebookService.getRecentPosts(profile.facebookPageId, profile.facebookPageAccessToken, 30);
+        } catch (fbErr: any) {
+          const msg: string = fbErr?.message || '';
+          const isExpired = msg.includes('Session has expired') || msg.includes('access token') || msg.includes('OAuthException');
+          if (isExpired) {
+            toast('Facebook token expired — reconnect your page in Settings → Social Media Connection.', 'error');
+            setIsScanningPosts(false);
+            setActiveTab('settings');
+            return;
+          }
+          throw fbErr;
+        }
       }
 
       if (!posts.length) {
-        toast('No posts found. Connect your Facebook page in Settings first.', 'warning');
+        toast('No posts found. Connect your Facebook or Late account in Settings first.', 'warning');
         setIsScanningPosts(false);
         return;
       }
@@ -2226,19 +2240,21 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Agency billing link */}
-            {CLIENT.stripeCustomerPortalUrl && (
+            {(agencyBillingUrl || CLIENT.stripeCustomerPortalUrl) && (
               <div className="flex items-center justify-between bg-white/3 border border-white/8 rounded-2xl px-5 py-4">
                 <div>
                   <p className="text-sm font-semibold text-white">Agency Billing</p>
-                  <p className="text-xs text-white/30 mt-0.5">Manage your agency subscription, invoices, and payment method</p>
+                  <p className="text-xs text-white/30 mt-0.5">
+                    {agencyBillingUrl ? 'Your custom client billing portal' : 'Manage your agency subscription, invoices, and payment method'}
+                  </p>
                 </div>
                 <a
-                  href={CLIENT.stripeCustomerPortalUrl}
+                  href={agencyBillingUrl || CLIENT.stripeCustomerPortalUrl!}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-xs font-semibold bg-white/8 hover:bg-white/12 border border-white/10 text-white/60 hover:text-white px-4 py-2.5 rounded-xl transition flex-shrink-0"
                 >
-                  <ShoppingCart size={13} /> Stripe Portal
+                  <ShoppingCart size={13} /> {agencyBillingUrl ? 'Client Portal' : 'Stripe Portal'}
                 </a>
               </div>
             )}
@@ -2954,14 +2970,40 @@ const Dashboard: React.FC = () => {
                     ))}
                   </div>
                 )}
-                {CLIENT.stripeCustomerPortalUrl && (
+                {/* Custom billing URL */}
+                <div className="pt-2 border-t border-white/5 space-y-2">
+                  <label className="text-xs font-semibold text-white/40 uppercase tracking-wider block">Your client billing portal URL <span className="text-white/20 font-normal normal-case">(optional)</span></label>
+                  <p className="text-xs text-white/25 leading-relaxed">Point clients to your own Stripe or payment portal instead of the default. Leave blank to use the SocialAI Studio billing link.</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={agencyBillingUrl}
+                      onChange={e => setAgencyBillingUrl(e.target.value)}
+                      placeholder="https://billing.stripe.com/p/login/your-portal-id"
+                      className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-emerald-500/40 transition"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!user) return;
+                        await updateDoc(doc(db, 'users', user.uid), { agencyBillingUrl }).catch(() =>
+                          setDoc(doc(db, 'users', user.uid), { agencyBillingUrl }, { merge: true })
+                        );
+                        toast('Billing URL saved.', 'success');
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition flex items-center gap-2 flex-shrink-0"
+                    >
+                      <Save size={13} /> Save
+                    </button>
+                  </div>
+                </div>
+                {(agencyBillingUrl || CLIENT.stripeCustomerPortalUrl) && (
                   <a
-                    href={CLIENT.stripeCustomerPortalUrl}
+                    href={agencyBillingUrl || CLIENT.stripeCustomerPortalUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 text-xs text-emerald-300/70 hover:text-emerald-300 transition w-fit"
                   >
-                    <ShoppingCart size={12} /> Manage agency billing in Stripe
+                    <ShoppingCart size={12} /> {agencyBillingUrl ? 'Open your client billing portal' : 'Manage agency billing in Stripe'}
                   </a>
                 )}
               </div>
