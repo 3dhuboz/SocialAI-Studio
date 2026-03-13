@@ -542,6 +542,7 @@ const Dashboard: React.FC = () => {
         if (imagePublicUrl) {
           setIsGeneratingReel(true);
           setVideoProgress(0.05);
+          toast('Generating your Reel via Runway ML — this takes 1–3 minutes… do not publish yet!', 'info');
           try {
             const videoUrl = await RunwayService.generateVideo(
               `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
@@ -1622,11 +1623,12 @@ const Dashboard: React.FC = () => {
                   {fbConnected && (
                     <button
                       onClick={() => handlePublishViaLate(lateConnectedPlatforms.length ? lateConnectedPlatforms.map(p => p.toLowerCase() as 'facebook' | 'instagram') : ['facebook', 'instagram'])}
-                      disabled={isPublishing}
+                      disabled={isPublishing || isGeneratingReel}
+                      title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : undefined}
                       className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
                     >
-                      {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      Publish Now
+                      {isPublishing ? <Loader2 size={14} className="animate-spin" /> : isGeneratingReel ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      {isGeneratingReel ? 'Generating video…' : 'Publish Now'}
                     </button>
                   )}
                 </div>

@@ -115,7 +115,7 @@ export const handler = async (event) => {
     // ── Publish a post ──────────────────────────────────────────────────
     // Late API requires: { content, publishNow|scheduledFor, platforms: [{ platform, accountId }] }
     if (action === 'post' && event.httpMethod === 'POST') {
-      const { profileId, platforms, text, mediaUrls, scheduleDate } = JSON.parse(event.body || '{}');
+      const { profileId, platforms, text, mediaUrls, scheduleDate, mediaItems } = JSON.parse(event.body || '{}');
       if (!platforms?.length || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'platforms and text are required' }) };
 
       // ── Fetch all connected accounts to resolve accountIds ──────────────
@@ -136,7 +136,6 @@ export const handler = async (event) => {
         return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}]. Available: ${available}. Please reconnect in Settings → Social Media Connection.` }) };
       }
 
-      const { mediaItems } = JSON.parse(event.body || '{}');
       const body = {
         content: text,
         platforms: platformObjs,
