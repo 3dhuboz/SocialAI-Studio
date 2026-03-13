@@ -65,7 +65,7 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, logOut, refreshUserDoc } = useAuth();
   const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings'>('smart');
-  const [showLanding, setShowLanding] = useState(false);
+  const [showLanding, setShowLanding] = useState(() => !user);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
