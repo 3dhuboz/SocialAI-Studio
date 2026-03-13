@@ -64,7 +64,8 @@ const DEFAULT_STATS: ContentCalendarStats = {
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, logOut, refreshUserDoc } = useAuth();
-  const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings'>('smart');
+  const [activeTab, setActiveTab] = useState<'create' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('smart');
+  const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => !user);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
@@ -932,6 +933,7 @@ const Dashboard: React.FC = () => {
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Smart AI', icon: Brain },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
+    ...((activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -1998,6 +2000,161 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
+        {/* ═══ CLIENTS TAB ═══ */}
+        {activeTab === 'clients' && (
+          <div className="space-y-6">
+            <div className="flex items-start justify-between flex-wrap gap-3">
+              <div>
+                <h2 className="text-2xl font-bold flex items-center gap-2.5"><Users className="text-emerald-400" size={22} /> Client Workspaces</h2>
+                <p className="text-sm text-white/40 mt-1">Manage each client's workspace, social connections, and content independently.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
+                  <p className="text-xl font-black text-white">{clients.length}</p>
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider">Active</p>
+                </div>
+                <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
+                  <p className="text-xl font-black text-emerald-400">{clients.filter(c => c.lateProfileId).length}</p>
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider">Connected</p>
+                </div>
+                <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
+                  <p className="text-xl font-black text-white/40">{Math.max(0, (CLIENT.agencyClientLimit ?? 5) - clients.length)}</p>
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider">Slots free</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Billing model info */}
+            <div className="bg-blue-500/6 border border-blue-500/15 rounded-2xl px-5 py-4 flex gap-3">
+              <Info size={15} className="text-blue-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-white/40 leading-relaxed space-y-1">
+                <p><span className="text-blue-300 font-semibold">Agency billing model: </span>Your single Agency plan covers all client workspaces. You bill each client directly at your own rate — they never interact with Stripe or SocialAI Studio billing.</p>
+                <p>Each workspace has its own AI business profile, content calendar, social media connection, and Smart AI schedule — fully isolated.</p>
+              </div>
+            </div>
+
+            {/* Client cards */}
+            {clients.length === 0 ? (
+              <div className="bg-white/3 border border-white/8 rounded-2xl p-10 text-center space-y-3">
+                <div className="w-14 h-14 bg-emerald-500/10 border border-emerald-500/15 rounded-2xl flex items-center justify-center mx-auto">
+                  <Users size={24} className="text-emerald-400/50" />
+                </div>
+                <p className="text-white/40 text-sm">No client workspaces yet.</p>
+                <p className="text-white/25 text-xs">Use the client switcher in the header to add your first client.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {clients.map(client => {
+                  const isActive = activeClientId === client.id;
+                  const connected = !!client.lateProfileId;
+                  const platforms = client.lateConnectedPlatforms ?? [];
+                  return (
+                    <div key={client.id} className={`bg-white/3 border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/8 hover:border-white/15'}`}>
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 text-sm font-black text-emerald-300">
+                            {client.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-bold text-white truncate">{client.name}</p>
+                            <p className="text-xs text-white/30 truncate">{client.businessType || 'No business type set'}</p>
+                          </div>
+                        </div>
+                        {isActive && (
+                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/25 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">Active</span>
+                        )}
+                      </div>
+
+                      {/* Connection status */}
+                      <div className="space-y-1.5">
+                        {connected ? (
+                          <div className="flex items-center gap-2 text-xs text-emerald-400">
+                            <Link2 size={12} />
+                            <span className="font-semibold">Social connected</span>
+                            {platforms.length > 0 && (
+                              <span className="text-emerald-400/50">· {platforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(', ')}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-xs text-white/30">
+                            <Link2Off size={12} />
+                            <span>Social not connected</span>
+                          </div>
+                        )}
+                        {client.businessType && (
+                          <p className="text-xs text-white/20 flex items-center gap-1.5">
+                            <span>🏢</span> {client.businessType}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => { setActiveClientId(client.id); setActiveTab('create'); }}
+                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 text-emerald-300 py-2 rounded-xl transition"
+                        >
+                          <Wand2 size={12} /> Create Post
+                        </button>
+                        <button
+                          onClick={() => { setActiveClientId(client.id); setActiveTab('smart'); }}
+                          className="flex-1 flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white py-2 rounded-xl transition"
+                        >
+                          <Brain size={12} /> Smart AI
+                        </button>
+                        <button
+                          onClick={() => { setActiveClientId(client.id); setActiveTab('settings'); }}
+                          className="flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/40 hover:text-white py-2 px-3 rounded-xl transition"
+                          title="Client settings"
+                        >
+                          <Settings size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Empty slot card */}
+                {clients.length < (CLIENT.agencyClientLimit ?? 5) && (
+                  <div className="border-2 border-dashed border-white/8 rounded-2xl p-5 flex flex-col items-center justify-center gap-3 text-center min-h-[180px] hover:border-white/15 transition cursor-pointer"
+                    onClick={() => {
+                      const name = prompt('Client name:');
+                      const btype = name?.trim() ? (prompt('Business type (optional):') ?? '') : '';
+                      if (name?.trim()) addClient(name.trim(), btype.trim() || 'Business');
+                    }}>
+                    <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+                      <Plus size={18} className="text-white/30" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-white/30">Add client</p>
+                      <p className="text-xs text-white/20 mt-0.5">{(CLIENT.agencyClientLimit ?? 5) - clients.length} slot{((CLIENT.agencyClientLimit ?? 5) - clients.length) !== 1 ? 's' : ''} remaining</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Agency billing link */}
+            {CLIENT.stripeCustomerPortalUrl && (
+              <div className="flex items-center justify-between bg-white/3 border border-white/8 rounded-2xl px-5 py-4">
+                <div>
+                  <p className="text-sm font-semibold text-white">Agency Billing</p>
+                  <p className="text-xs text-white/30 mt-0.5">Manage your agency subscription, invoices, and payment method</p>
+                </div>
+                <a
+                  href={CLIENT.stripeCustomerPortalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-xs font-semibold bg-white/8 hover:bg-white/12 border border-white/10 text-white/60 hover:text-white px-4 py-2.5 rounded-xl transition flex-shrink-0"
+                >
+                  <ShoppingCart size={13} /> Stripe Portal
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ═══ SETTINGS TAB ═══ */}
         {activeTab === 'settings' && (
           <div className="space-y-5">
@@ -2170,12 +2327,27 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Business Profile — Guided Questionnaire */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-6">
-              <div className="flex items-center justify-between gap-3">
+            <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+              <button
+                onClick={() => setProfileExpanded(p => !p)}
+                className="w-full flex items-center justify-between p-6 text-left hover:bg-white/2 transition"
+              >
                 <div>
                   <h3 className="font-bold text-white flex items-center gap-2"><Brain size={16} className="text-amber-400" /> AI Business Profile</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Your answers train the AI to write in your voice, for your audience, about what matters to your business.</p>
+                  <p className="text-xs text-white/30 mt-0.5">
+                    {profile.name && profile.name !== CLIENT.defaultBusinessName ? `${profile.name} · ${profile.type || 'No type set'}` : 'Your answers train the AI to write in your voice and for your audience.'}
+                  </p>
                 </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {profile.name && profile.name !== CLIENT.defaultBusinessName && (
+                    <span className="text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full hidden sm:flex items-center gap-1"><CheckCircle size={10} /> Profile set</span>
+                  )}
+                  {profileExpanded ? <ChevronUp size={16} className="text-white/40" /> : <ChevronDown size={16} className="text-white/40" />}
+                </div>
+              </button>
+
+              {profileExpanded && <div className="px-6 pb-6 space-y-6 border-t border-white/5 pt-5">
+              <div className="flex justify-end">
                 <button
                   onClick={handleSaveProfile}
                   disabled={isSavingProfile}
@@ -2350,6 +2522,7 @@ const Dashboard: React.FC = () => {
                   />
                 </div>
               </div>
+            </div>}
             </div>
 
             {/* Short Video Toggle — Pro+ */}
