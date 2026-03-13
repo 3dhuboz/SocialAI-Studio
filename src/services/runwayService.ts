@@ -1,8 +1,12 @@
 const PROXY = '/.netlify/functions/runway-proxy';
 
-const proxyHeaders = () => ({
-  'Content-Type': 'application/json',
-});
+const proxyHeaders = () => {
+  const key = localStorage.getItem('sai_runway_key');
+  return {
+    'Content-Type': 'application/json',
+    ...(key ? { 'X-Runway-Key': key } : {}),
+  };
+};
 
 export const RunwayService = {
   /**

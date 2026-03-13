@@ -995,6 +995,18 @@ const Dashboard: React.FC = () => {
     setIsSavingKey(false);
   };
 
+  const [runwayApiKey, setRunwayApiKey] = useState(() => localStorage.getItem('sai_runway_key') || '');
+  const [isSavingRunwayKey, setIsSavingRunwayKey] = useState(false);
+  const handleSaveRunwayKey = () => {
+    if (!runwayApiKey.trim()) { toast('Enter your Runway API key first.', 'warning'); return; }
+    setIsSavingRunwayKey(true);
+    localStorage.setItem('sai_runway_key', runwayApiKey.trim());
+    setTimeout(() => {
+      toast('Runway API key saved — video generation is now active!', 'success');
+      setIsSavingRunwayKey(false);
+    }, 300);
+  };
+
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
     try {
@@ -2951,6 +2963,44 @@ const Dashboard: React.FC = () => {
               </div>
             </div>}
             </div>
+
+            {/* Runway AI Video Key — Pro+ */}
+            {(activePlan === 'pro' || activePlan === 'agency') && (
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
+                  <span className="text-base">🎬</span>
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">Runway ML API Key</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Required for AI video / Reels generation</p>
+                </div>
+                {runwayApiKey && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
+              </div>
+              <p className="text-xs text-white/30 leading-relaxed">
+                Get your key from{' '}
+                <a href="https://app.runwayml.com/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-purple-400/70 hover:text-purple-400 underline transition">app.runwayml.com → API Keys</a>
+                {' '}— click <strong className="text-white/50">+ New API key</strong>, give it a name, and paste it here.
+              </p>
+              <div className="flex gap-2 max-w-lg">
+                <input
+                  type="password"
+                  value={runwayApiKey}
+                  onChange={e => setRunwayApiKey(e.target.value)}
+                  placeholder="key_..."
+                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
+                />
+                <button
+                  onClick={handleSaveRunwayKey}
+                  disabled={isSavingRunwayKey}
+                  className="bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
+                >
+                  {isSavingRunwayKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  Save
+                </button>
+              </div>
+            </div>
+            )}
 
             {/* Short Video Toggle — Pro+ */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6">
