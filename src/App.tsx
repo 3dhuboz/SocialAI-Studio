@@ -23,6 +23,7 @@ import { SotrendService } from './services/sotrendService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
 import { DateTimePicker } from './components/DateTimePicker';
+import { LivePostPreview } from './components/LivePostPreview';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -1847,7 +1848,7 @@ const Dashboard: React.FC = () => {
                       onClick={() => setShowPreview(true)}
                       className="bg-white/6 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition text-sm"
                     >
-                      <Eye size={14} /> Preview
+                      <Eye size={14} /> Full Preview
                     </button>
                   )}
                   {fbConnected && (
@@ -1862,6 +1863,24 @@ const Dashboard: React.FC = () => {
                     </button>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ── Live Post Preview (auto-show when content generated) ── */}
+            {generatedContent && (
+              <div className="mt-4 pb-6">
+                <LivePostPreview
+                  platform={platform}
+                  profileName={profile.name}
+                  profileLogo={profile.logoUrl || undefined}
+                  content={generatedContent}
+                  hashtags={generatedHashtags}
+                  image={generatedImage}
+                  videoUrl={generatedVideoUrl}
+                  isGeneratingReel={isGeneratingReel}
+                  videoProgress={videoProgress}
+                  contentType={contentType}
+                />
               </div>
             )}
 
