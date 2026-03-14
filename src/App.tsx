@@ -8,7 +8,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { db } from './firebase';
-import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
@@ -141,6 +141,7 @@ const Dashboard: React.FC = () => {
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  const [clientHealthMap, setClientHealthMap] = useState<Record<string, { scheduledCount: number; lastPostAt: string | null }>>({});
 
   // Returns the Firestore doc ref for the active workspace (own or client)
   const dataRef = () => activeClientId && user
@@ -222,6 +223,30 @@ const Dashboard: React.FC = () => {
     sync();
   }, [user]);
 
+  // Load health metrics (last post + scheduled count) when Clients tab is active
+  useEffect(() => {
+    if (activeTab !== 'clients' || !user || clients.length === 0) return;
+    const loadHealth = async () => {
+      const health: Record<string, { scheduledCount: number; lastPostAt: string | null }> = {};
+      await Promise.all(clients.map(async c => {
+        try {
+          const snap = await getDocs(query(
+            collection(db, 'users', user.uid, 'clients', c.id, 'posts'),
+            orderBy('scheduledFor', 'desc'),
+            limit(50)
+          ));
+          health[c.id] = {
+            scheduledCount: snap.docs.filter(d => d.data().status !== 'Posted').length,
+            lastPostAt: snap.docs[0]?.data().scheduledFor ?? null,
+          };
+        } catch { health[c.id] = { scheduledCount: 0, lastPostAt: null }; }
+      }));
+      setClientHealthMap(health);
+    };
+    loadHealth();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, user, clients.length]);
+
   // Reload profile+posts+Late profile when switching client workspace
   useEffect(() => {
     if (!user || activeClientId === null) return;
@@ -284,6 +309,14 @@ const Dashboard: React.FC = () => {
     await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { name, businessType });
     setClients(prev => prev.map(c => c.id === clientId ? { ...c, name, businessType } : c));
     toast('Client updated.', 'success');
+  };
+
+  // Set plan tier for a client workspace
+  const setClientPlan = async (clientId: string, plan: PlanTier) => {
+    if (!user) return;
+    await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { plan });
+    setClients(prev => prev.map(c => c.id === clientId ? { ...c, plan } : c));
+    toast(`Plan updated to ${plan}.`, 'success');
   };
 
   // Delete a client workspace (including all posts)
@@ -456,9 +489,11 @@ const Dashboard: React.FC = () => {
     updateDoc(doc(db, 'users', user.uid), { setupStatus });
   }, [setupStatus, user]);
 
-  const planCfg = CLIENT.plans.find(p => p.id === activePlan);
-  const canUseImages = activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency';
-  const canUseSaturation = activePlan === 'pro' || activePlan === 'agency';
+  const activeClientWorkspace = clients.find(c => c.id === activeClientId);
+  const effectivePlan: PlanTier = (activeClientId && activeClientWorkspace?.plan) ? activeClientWorkspace.plan : activePlan;
+  const planCfg = CLIENT.plans.find(p => p.id === effectivePlan);
+  const canUseImages = effectivePlan === 'growth' || effectivePlan === 'pro' || effectivePlan === 'agency';
+  const canUseSaturation = effectivePlan === 'pro' || effectivePlan === 'agency';
   const maxPostsPerWeek = isAdminMode ? Infinity : (planCfg?.postsPerWeek ?? 7);
 
   // Live Facebook Stats
@@ -2760,13 +2795,22 @@ const Dashboard: React.FC = () => {
                   const isActive = activeClientId === client.id;
                   const connected = !!client.lateProfileId;
                   const platforms = client.lateConnectedPlatforms ?? [];
+                  const health = clientHealthMap[client.id];
+                  const lastPostDate = health?.lastPostAt ? new Date(health.lastPostAt) : null;
+                  const daysSincePost = lastPostDate ? Math.floor((Date.now() - lastPostDate.getTime()) / 86400000) : null;
+                  const healthColor = !health ? 'text-white/20' : daysSincePost === null ? 'text-red-400' : daysSincePost <= 7 ? 'text-emerald-400' : daysSincePost <= 30 ? 'text-amber-400' : 'text-red-400';
+                  const healthDot = !health ? 'bg-white/15' : daysSincePost === null ? 'bg-red-500' : daysSincePost <= 7 ? 'bg-emerald-500' : daysSincePost <= 30 ? 'bg-amber-500' : 'bg-red-500';
+                  const planColors: Record<string, string> = { starter: 'text-blue-300 bg-blue-500/15 border-blue-500/25', growth: 'text-purple-300 bg-purple-500/15 border-purple-500/25', pro: 'text-amber-300 bg-amber-500/15 border-amber-500/25', agency: 'text-emerald-300 bg-emerald-500/15 border-emerald-500/25' };
                   return (
                     <div key={client.id} className={`bg-white/3 border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/8 hover:border-white/15'}`}>
                       {/* Header */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 text-sm font-black text-emerald-300">
-                            {client.name.charAt(0).toUpperCase()}
+                          <div className="relative">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0 text-sm font-black text-emerald-300">
+                              {client.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0d0d1a] ${healthDot}`} title={daysSincePost === null ? 'No posts yet' : `Last post ${daysSincePost}d ago`} />
                           </div>
                           <div className="min-w-0">
                             <p className="font-bold text-white truncate">{client.name}</p>
@@ -2778,7 +2822,7 @@ const Dashboard: React.FC = () => {
                         )}
                       </div>
 
-                      {/* Connection status */}
+                      {/* Connection + health row */}
                       <div className="space-y-1.5">
                         {connected ? (
                           <div className="flex items-center gap-2 text-xs text-emerald-400">
@@ -2794,11 +2838,35 @@ const Dashboard: React.FC = () => {
                             <span>Social not connected</span>
                           </div>
                         )}
-                        {client.businessType && (
-                          <p className="text-xs text-white/20 flex items-center gap-1.5">
-                            <span>🏢</span> {client.businessType}
-                          </p>
-                        )}
+                        {/* Health metrics */}
+                        <div className={`flex items-center gap-3 text-xs ${healthColor}`}>
+                          <Activity size={11} />
+                          <span>
+                            {!health ? 'Loading…' : daysSincePost === null ? 'No posts yet' : daysSincePost === 0 ? 'Posted today' : `Last post ${daysSincePost}d ago`}
+                          </span>
+                          {health && health.scheduledCount > 0 && (
+                            <span className="text-white/30">· {health.scheduledCount} scheduled</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Plan setter */}
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-semibold text-white/25 uppercase tracking-wider">Client Plan</p>
+                        <div className="flex gap-1.5 flex-wrap">
+                          {(['starter', 'growth', 'pro'] as PlanTier[]).map(p => (
+                            <button
+                              key={p}
+                              onClick={() => setClientPlan(client.id, p)}
+                              className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition capitalize ${client.plan === p ? planColors[p] : 'text-white/25 bg-white/3 border-white/8 hover:border-white/20'}`}
+                            >
+                              {p}
+                            </button>
+                          ))}
+                          {!client.plan && (
+                            <span className="text-[10px] text-white/20 flex items-center">← set tier</span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Actions */}

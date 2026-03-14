@@ -54,4 +54,7 @@ export interface ClientWorkspace {
   createdAt: string;
   lateProfileId?: string;
   lateConnectedPlatforms?: string[];
+  plan?: PlanTier;
+  lastPostAt?: string;
+  scheduledPostCount?: number;
 }
