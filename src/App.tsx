@@ -1036,8 +1036,6 @@ const Dashboard: React.FC = () => {
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsScanningPosts(true);
     try {
-      let scanPosts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }> = [];
-
       // Path 0 — App's own posts (always available, no external API needed)
       const appPosts = posts
         .filter(p => p.content && p.content.trim().length > 0)
@@ -1048,7 +1046,9 @@ const Dashboard: React.FC = () => {
           comments: 0,
           shares: 0,
         }));
-      if (appPosts.length) scanPosts = appPosts;
+      // Keep same reference so the Late fallback checks (scanPosts === appPosts) work
+      // correctly even when there are zero local posts.
+      let scanPosts = appPosts;
 
       // Path 1 — Late list-posts (published posts via Late's managed OAuth)
       if (scanPosts === appPosts && lateProfileId) {
