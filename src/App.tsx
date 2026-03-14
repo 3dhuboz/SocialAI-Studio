@@ -356,6 +356,7 @@ const Dashboard: React.FC = () => {
   const [imgGenDone, setImgGenDone] = useState(0);
   const uploadFileRef = useRef<HTMLInputElement>(null);
   const [uploadTargetIdx, setUploadTargetIdx] = useState<number | null>(null);
+  const quickPostVideoUploadRef = useRef<HTMLInputElement>(null);
 
   // Calendar post image generation (keyed by post ID)
   const [calendarImages, setCalendarImages] = useState<Record<string, string>>({});
@@ -710,6 +711,18 @@ const Dashboard: React.FC = () => {
   const handleUploadImage = (idx: number) => {
     setUploadTargetIdx(idx);
     uploadFileRef.current?.click();
+  };
+
+  const handleQuickPostVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    setGeneratedVideoUrl(objectUrl);
+    setGeneratedVideoScript(null);
+    setIsGeneratingReel(false);
+    setVideoProgress(0);
+    toast('Video uploaded — schedule or publish it below.', 'success');
+    e.target.value = '';
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1644,14 +1657,34 @@ const Dashboard: React.FC = () => {
               </div>
 
               {/* Create button */}
-              <button
-                onClick={handleCreatePost}
-                disabled={isGenerating || isGeneratingImage || isGeneratingVideo || !topic.trim()}
-                className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-7 py-3 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20 text-sm"
-              >
-                {(isGenerating || isGeneratingImage || isGeneratingVideo) ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
-                {isGenerating ? 'Writing caption…' : isGeneratingVideo ? 'Building video brief…' : isGeneratingImage ? 'Generating image…' : `Create ${contentType === 'image' ? 'Post + Image' : contentType === 'video' ? 'Post + Video Brief' : 'Post'}`}
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={handleCreatePost}
+                  disabled={isGenerating || isGeneratingImage || isGeneratingVideo || !topic.trim()}
+                  className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-7 py-3 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20 text-sm"
+                >
+                  {(isGenerating || isGeneratingImage || isGeneratingVideo) ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
+                  {isGenerating ? 'Writing caption…' : isGeneratingVideo ? 'Building video brief…' : isGeneratingImage ? 'Generating image…' : `Create ${contentType === 'image' ? 'Post + Image' : contentType === 'video' ? 'Post + Video Brief' : 'Post'}`}
+                </button>
+                {contentType === 'video' && (
+                  <>
+                    <span className="text-white/20 text-xs">or</span>
+                    <button
+                      onClick={() => quickPostVideoUploadRef.current?.click()}
+                      className="flex items-center gap-2 px-4 py-3 text-sm font-semibold border border-white/10 bg-white/3 hover:bg-purple-500/10 hover:border-purple-500/30 text-white/40 hover:text-purple-300 rounded-xl transition"
+                    >
+                      <Upload size={14} /> Upload your own video
+                    </button>
+                    <input
+                      ref={quickPostVideoUploadRef}
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={handleQuickPostVideoUpload}
+                    />
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Generated Output */}
@@ -1844,12 +1877,20 @@ const Dashboard: React.FC = () => {
 
                     {/* ── Script done, awaiting reel ── */}
                     {generatedVideoScript && !generatedVideoUrl && !isGeneratingReel && !isGeneratingImage && (
-                      <div className="flex items-center gap-2">
-                        <CheckCircle size={11} className="text-green-400 flex-shrink-0" />
-                        <p className="text-xs text-white/50 flex-1 truncate">Script ready — <span className="text-white/70 font-medium">"{generatedVideoScript.hook}"</span></p>
-                        <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1 text-[11px] text-purple-400/60 hover:text-purple-300 transition flex-shrink-0">
-                          {showVideoBriefDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                          {showVideoBriefDetail ? 'Hide' : 'View script'}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle size={11} className="text-green-400 flex-shrink-0" />
+                          <p className="text-xs text-white/50 flex-1 truncate">Script ready — <span className="text-white/70 font-medium">"{generatedVideoScript.hook}"</span></p>
+                          <button onClick={() => setShowVideoBriefDetail(v => !v)} className="flex items-center gap-1 text-[11px] text-purple-400/60 hover:text-purple-300 transition flex-shrink-0">
+                            {showVideoBriefDetail ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                            {showVideoBriefDetail ? 'Hide' : 'View script'}
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => quickPostVideoUploadRef.current?.click()}
+                          className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl border border-purple-500/20 bg-purple-500/8 text-purple-300/70 hover:text-purple-200 hover:bg-purple-500/15 transition w-fit"
+                        >
+                          <Upload size={12} /> Upload your own video instead
                         </button>
                       </div>
                     )}
