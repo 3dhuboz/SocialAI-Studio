@@ -72,52 +72,44 @@ export const CLIENT = {
   setupFee: 99,
 
   /**
-   * STRIPE SETUP:
-   * 1. Go to dashboard.stripe.com → Products → Pricing tables → Create pricing table
-   * 2. Add your 3 plans (Starter $29, Growth $49, Pro $79) + $99 setup fee as an add-on
-   * 3. Set the success URL to: https://YOUR_APP_URL/?checkout=success&plan={plan_id}
-   *    where {plan_id} is one of: starter | growth | pro
-   * 4. Copy your Publishable Key from Stripe dashboard → Developers → API keys
-   * 5. Copy the Pricing Table ID from the embed code (starts with prctbl_)
-   * Leave these as empty strings to fall back to the static pricing cards.
+   * PAYPAL SETUP:
+   * 1. Go to developer.paypal.com → My Apps & Credentials → Create App (Live)
+   * 2. Copy your Client ID and paste into paypalClientId below
+   * 3. In your PayPal Business account, go to Products & Services → Subscription Plans
+   * 4. For each plan (Starter/Growth/Pro/Agency):
+   *    a. Create a Subscription Plan with monthly billing at the plan price
+   *    b. In Payment Preferences, set Setup Fee = $99 (new subscribers only)
+   *    c. Copy the Plan ID — it starts with P-
+   * 5. Paste each Plan ID into paypalPlanIds below
+   * 6. Add your Client ID and Client Secret to Netlify env vars:
+   *    PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET
+   * 7. Set up a PayPal Webhook (developer.paypal.com → Webhooks) pointing to:
+   *    https://YOUR_APP_URL/.netlify/functions/paypal-webhook
+   *    Subscribe to: BILLING.SUBSCRIPTION.ACTIVATED, BILLING.SUBSCRIPTION.CANCELLED
+   *    Copy the Webhook ID into PAYPAL_WEBHOOK_ID Netlify env var
+   * Leave paypalClientId as empty string to hide PayPal checkout and fall back to salesUrl.
    */
-  stripePublishableKey: 'pk_live_51P8FoQ00ETA4f7VOQn6UauJebPB5aU4TX5qyMpHgvwgy7OUnGKZllHAFAKwAShNRNcfEOlfeLVjNBm345oSyN0S100Oq8F8l3W',
-  stripePricingTableId: 'prctbl_1T9d6K00ETA4f7VOScFSprrm',
+  paypalClientId: '',
 
   /**
-   * STRIPE CUSTOMER PORTAL:
-   * 1. Go to dashboard.stripe.com → Settings → Billing → Customer portal
-   * 2. Enable the portal and configure what customers can do (cancel, update payment, etc.)
-   * 3. Copy the portal link and paste below.
-   * Users can then manage/cancel their own subscription directly from the Account panel.
-   */
-  stripeCustomerPortalUrl: 'https://billing.stripe.com/p/login/8x25kv9dq6did1Ca2V2oE00',
-
-  /**
-   * STRIPE PAYMENT LINKS — UPGRADES (plan subscription only, no setup fee):
-   * Used when an existing subscriber upgrades from one plan to another.
-   * In Stripe dashboard → Payment Links → Create a link for each plan (subscription only).
-   */
-  stripePaymentLinks: {
-    starter: '',
-    growth: '',
-    pro: '',
-    agency: 'https://buy.stripe.com/14A3cnexK45a1iUgrj2oE02',
-  },
-
-  /**
-   * STRIPE PAYMENT LINKS — NEW CLIENTS (plan subscription + $99 setup fee):
-   * Used for brand-new signups. Create separate Stripe Payment Links that include
-   * a one-time $99 setup fee line item alongside the subscription.
-   * In Stripe dashboard → Payment Links → Add both the plan product AND the setup fee product.
+   * PAYPAL SUBSCRIPTION PLAN IDs (each starts with P-):
+   * Create one subscription plan per tier in PayPal dashboard.
+   * Include a $99 one-time setup fee on each plan for new subscribers.
    * Leave as empty string to fall back to the generic salesUrl.
    */
-  stripePaymentLinksNew: {
+  paypalPlanIds: {
     starter: '',
     growth: '',
     pro: '',
     agency: '',
   },
+
+  /**
+   * PAYPAL MANAGE URL:
+   * Where customers go to manage or cancel their PayPal subscription.
+   * Default points to the PayPal autopay management page.
+   */
+  paypalManageUrl: 'https://www.paypal.com/myaccount/autopay',
 
   /** Max client workspaces per agency account */
   agencyClientLimit: 5,

@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { CLIENT } from '../client.config';
 import { CheckCircle, Zap, ArrowRight, X, Loader2, Shield, Lock } from 'lucide-react';
 
 interface Props {
   onClose?: () => void;
-  selectedPlan?: string | null;
+  onPlanActivated?: (planId: string) => void;
+  userId?: string | null;
 }
 
 const planGlows: Record<string, string> = {
@@ -28,30 +30,85 @@ const planCheckColor: Record<string, string> = {
   agency:  'text-emerald-400',
 };
 
-export const PricingTable: React.FC<Props> = ({ onClose }) => {
-  const [fallback, setFallback] = useState(false);
+export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId }) => {
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [activating, setActivating] = useState(false);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [activated, setActivated] = useState(false);
 
-  const handlePlanClick = (planId: string) => {
-    const link = (CLIENT.stripePaymentLinks as Record<string, string>)[planId];
-    if (link) {
-      window.open(link, '_blank');
-    } else {
-      setFallback(true);
+  const hasPayPal = !!CLIENT.paypalClientId;
+
+  const handleSelectPlan = (planId: string) => {
+    if (!hasPayPal) {
+      window.open(CLIENT.salesUrl, '_blank');
+      return;
+    }
+    const planId_ = (CLIENT.paypalPlanIds as Record<string, string>)[planId];
+    if (!planId_) {
+      window.open(CLIENT.salesUrl, '_blank');
+      return;
+    }
+    setSelectedPlanId(planId);
+    setActivationError(null);
+  };
+
+  const handleApprove = async (subscriptionId: string, planId: string) => {
+    setActivating(true);
+    setActivationError(null);
+    try {
+      const res = await fetch('/.netlify/functions/paypal-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId, uid: userId || null, planId }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setActivated(true);
+        onPlanActivated?.(planId);
+      } else {
+        setActivationError(json.error || 'Activation failed. Please contact support.');
+      }
+    } catch {
+      setActivationError('Network error during activation. Please contact support.');
+    } finally {
+      setActivating(false);
     }
   };
 
-  if (fallback) {
-    return <StripeFallback onClose={onClose} onBack={() => setFallback(false)} />;
+  if (activated) {
+    return (
+      <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-lg flex items-center justify-center p-6">
+        <div className="bg-[#111118] border border-green-500/25 rounded-3xl p-10 w-full max-w-md text-center">
+          <div className="w-16 h-16 mx-auto mb-5 bg-green-500/15 border border-green-500/30 rounded-2xl flex items-center justify-center">
+            <CheckCircle size={30} className="text-green-400" />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2">You're all set! 🎉</h2>
+          <p className="text-white/40 text-sm mb-6">Your subscription is active. We'll be in touch within 1–3 business days to connect your Facebook page.</p>
+          <button
+            onClick={onClose}
+            className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3 px-8 rounded-2xl hover:opacity-90 transition"
+          >
+            Go to Dashboard
+          </button>
+        </div>
+      </div>
+    );
   }
+
+  const selectedPlan = CLIENT.plans.find(p => p.id === selectedPlanId);
+  const selectedPayPalPlanId = selectedPlanId
+    ? (CLIENT.paypalPlanIds as Record<string, string>)[selectedPlanId]
+    : null;
 
   return (
     <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-lg flex items-start justify-center p-4 pt-6 overflow-y-auto">
       <div className="w-full max-w-5xl pb-10">
-        {/* Header row */}
+
+        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-black text-white">Choose your plan</h2>
-            <p className="text-white/35 text-sm mt-1">One-time $99 setup · Cancel anytime · No lock-in</p>
+            <p className="text-white/35 text-sm mt-1">One-time ${CLIENT.setupFee} setup · Cancel anytime · No lock-in</p>
           </div>
           {onClose && (
             <button
@@ -66,23 +123,21 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
         {/* Plan cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
           {CLIENT.plans.map((plan) => {
-            const glow = planGlows[plan.id] || 'rgba(255,255,255,0.05)';
+            const glow        = planGlows[plan.id]       || 'rgba(255,255,255,0.05)';
             const borderClass = planBorderActive[plan.id] || 'border-white/15';
-            const checkClass = planCheckColor[plan.id] || 'text-green-400';
-            const isPopular = plan.badge === 'Most Popular';
+            const checkClass  = planCheckColor[plan.id]   || 'text-green-400';
+            const isSelected  = selectedPlanId === plan.id;
 
             return (
               <div
                 key={plan.id}
                 className={`relative rounded-3xl border flex flex-col overflow-hidden transition-transform hover:scale-[1.02] ${
-                  isPopular ? `${borderClass} shadow-2xl` : `${borderClass}`
+                  isSelected ? `${borderClass} shadow-2xl ring-2 ring-offset-2 ring-offset-transparent ${borderClass.replace('border-', 'ring-')}` : borderClass
                 }`}
                 style={{ background: `linear-gradient(160deg, ${glow} 0%, #0d0d14 55%)` }}
               >
-                {/* Coloured top bar */}
                 <div className={`h-1.5 w-full bg-gradient-to-r ${plan.color}`} />
 
-                {/* Badge */}
                 {plan.badge && (
                   <div className={`absolute top-4 right-4 bg-gradient-to-r ${plan.color} text-white text-[10px] font-black px-3 py-1 rounded-full shadow-lg`}>
                     {plan.badge}
@@ -90,12 +145,10 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
                 )}
 
                 <div className="p-6 flex flex-col flex-1">
-                  {/* Icon */}
                   <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${plan.color} flex items-center justify-center mb-5 shadow-lg`}>
                     <Zap size={18} className="text-white" />
                   </div>
 
-                  {/* Name & price */}
                   <h3 className="text-xl font-black text-white mb-1">{plan.name}</h3>
                   <div className="flex items-baseline gap-1 mb-1">
                     <span className="text-4xl font-black text-white">${plan.price}</span>
@@ -103,7 +156,6 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
                   </div>
                   <p className="text-xs text-white/25 mb-6">+ ${CLIENT.setupFee} one-time setup</p>
 
-                  {/* Features */}
                   <ul className="space-y-2.5 mb-8 flex-1">
                     {plan.features.map((f, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm">
@@ -119,12 +171,13 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
                     ))}
                   </ul>
 
-                  {/* CTA */}
                   <button
-                    onClick={() => handlePlanClick(plan.id)}
-                    className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-2xl hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg text-sm`}
+                    onClick={() => handleSelectPlan(plan.id)}
+                    className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-2xl hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg text-sm ${
+                      isSelected ? 'opacity-70' : ''
+                    }`}
                   >
-                    Get {plan.name} <ArrowRight size={15} />
+                    {isSelected ? 'Selected ✓' : <>Get {plan.name} <ArrowRight size={15} /></>}
                   </button>
                 </div>
               </div>
@@ -132,97 +185,75 @@ export const PricingTable: React.FC<Props> = ({ onClose }) => {
           })}
         </div>
 
+        {/* PayPal checkout panel */}
+        {selectedPlan && selectedPayPalPlanId && (
+          <div className="mt-8 bg-[#0d0d18] border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
+            <div className="bg-gradient-to-r from-[#1a1a2e] to-[#0f0f1a] px-8 py-6 border-b border-white/5 flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <div className="inline-flex items-center gap-2 bg-[#003087]/20 border border-[#003087]/30 text-[#009cde] text-xs font-bold px-3 py-1.5 rounded-full mb-2">
+                  <Lock size={10} /> Secure checkout via PayPal
+                </div>
+                <h3 className="text-lg font-black text-white">
+                  {selectedPlan.name} — ${selectedPlan.price}/mo
+                </h3>
+                <p className="text-xs text-white/35 mt-0.5">
+                  Includes ${CLIENT.setupFee} one-time setup fee · Cancel anytime
+                </p>
+              </div>
+              <button
+                onClick={() => { setSelectedPlanId(null); setActivationError(null); }}
+                className="text-white/30 hover:text-white text-xs flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-1.5 rounded-xl transition"
+              >
+                <X size={12} /> Change plan
+              </button>
+            </div>
+
+            <div className="px-8 py-6">
+              {activating && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <Loader2 size={28} className="animate-spin text-[#009cde]" />
+                  <p className="text-sm text-white/50">Activating your subscription…</p>
+                </div>
+              )}
+
+              {activationError && (
+                <div className="bg-red-500/10 border border-red-500/25 rounded-2xl px-5 py-4 mb-5 text-sm text-red-300">
+                  {activationError}
+                </div>
+              )}
+
+              {!activating && hasPayPal && (
+                <PayPalScriptProvider
+                  options={{
+                    clientId: CLIENT.paypalClientId,
+                    vault: true,
+                    intent: 'subscription',
+                  }}
+                >
+                  <PayPalButtons
+                    style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'subscribe' }}
+                    createSubscription={(_data, actions) =>
+                      actions.subscriptions.create({ plan_id: selectedPayPalPlanId })
+                    }
+                    onApprove={(data) => {
+                      if (data.subscriptionID) {
+                        handleApprove(data.subscriptionID, selectedPlan.id);
+                      }
+                    }}
+                    onError={() => setActivationError('PayPal encountered an error. Please try again or contact support.')}
+                  />
+                </PayPalScriptProvider>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Trust row */}
         <div className="flex flex-wrap items-center justify-center gap-6 mt-8 text-xs text-white/20">
           <span className="flex items-center gap-1.5"><Lock size={11} /> 256-bit SSL</span>
-          <span className="flex items-center gap-1.5"><Shield size={11} /> Powered by Stripe</span>
+          <span className="flex items-center gap-1.5"><Shield size={11} /> Powered by PayPal</span>
           <span className="flex items-center gap-1.5"><CheckCircle size={11} /> Cancel anytime</span>
           <span className="flex items-center gap-1.5"><CheckCircle size={11} /> No lock-in contract</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const StripeFallback: React.FC<{ onClose?: () => void; onBack: () => void }> = ({ onClose, onBack }) => {
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      if (customElements.get('stripe-pricing-table')) { setLoaded(true); return; }
-      setTimeout(check, 200);
-    };
-    check();
-  }, []);
-
-  return (
-    <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-xl flex items-start justify-center p-4 pt-6 overflow-y-auto">
-      <div className="w-full max-w-4xl pb-10">
-
-        {/* Nav row */}
-        <div className="flex items-center justify-between mb-6">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-4 py-2 text-sm transition"
-          >
-            ← Back to plans
-          </button>
-          <button
-            onClick={onClose ?? onBack}
-            className="flex items-center gap-2 text-white/50 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-4 py-2 text-sm transition"
-          >
-            <X size={14} /> Close
-          </button>
-        </div>
-
-        {/* Main card */}
-        <div className="rounded-3xl overflow-hidden shadow-2xl border border-white/10">
-
-          {/* Dark gradient header */}
-          <div className="bg-gradient-to-br from-[#1a1a2e] via-[#16213e] to-[#0f0f1a] px-8 pt-8 pb-10 text-center relative overflow-hidden">
-            {/* Decorative glow */}
-            <div className="absolute inset-0 bg-gradient-to-b from-amber-500/5 to-transparent pointer-events-none" />
-            <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-
-            <div className="relative">
-              <div className="inline-flex items-center gap-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold px-4 py-2 rounded-full mb-5 shadow">
-                <Lock size={11} /> Secure checkout powered by Stripe
-              </div>
-              <h2 className="text-3xl font-black text-white mb-2 tracking-tight">Complete your subscription</h2>
-              <p className="text-white/40 text-sm">Select a plan below · No lock-in · Cancel anytime</p>
-            </div>
-
-            {/* Gradient fade into white */}
-            <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-b from-transparent to-white pointer-events-none" />
-          </div>
-
-          {/* Stripe table — white background intentionally matches Stripe's own styling */}
-          <div className="bg-white relative min-h-[400px]">
-            {!loaded && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 size={28} className="animate-spin text-amber-500" />
-                  <p className="text-sm text-gray-400">Loading secure checkout…</p>
-                </div>
-              </div>
-            )}
-            <div className="px-4 py-6">
-              {React.createElement('stripe-pricing-table', {
-                'pricing-table-id': CLIENT.stripePricingTableId,
-                'publishable-key': CLIENT.stripePublishableKey,
-              })}
-            </div>
-          </div>
-
-          {/* Dark footer */}
-          <div className="bg-[#0d0d14] border-t border-white/5 px-8 py-5">
-            <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-white/25">
-              <span className="flex items-center gap-1.5"><CheckCircle size={11} className="text-emerald-500/60" /> 256-bit SSL encryption</span>
-              <span className="flex items-center gap-1.5"><Shield size={11} className="text-blue-500/60" /> PCI DSS compliant</span>
-              <span className="flex items-center gap-1.5"><CheckCircle size={11} className="text-emerald-500/60" /> Cancel anytime</span>
-              <span className="flex items-center gap-1.5"><Zap size={11} className="text-amber-500/60" /> Instant activation</span>
-            </div>
-          </div>
-
         </div>
       </div>
     </div>

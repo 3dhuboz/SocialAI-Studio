@@ -162,23 +162,14 @@ export const AccountPanel: React.FC<Props> = ({
                   </ul>
                 )}
                 <div className="flex gap-2">
-                  {CLIENT.stripeCustomerPortalUrl ? (
-                    <a
-                      href={CLIENT.stripeCustomerPortalUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-white text-xs font-semibold py-2 rounded-xl transition"
-                    >
-                      <CreditCard size={12} /> Manage Billing <ExternalLink size={10} />
-                    </a>
-                  ) : (
-                    <button
-                      onClick={() => window.open(`mailto:${CLIENT.supportEmail}?subject=Billing enquiry`, '_blank')}
-                      className="flex-1 flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-white text-xs font-semibold py-2 rounded-xl transition"
-                    >
-                      <CreditCard size={12} /> Billing Enquiry
-                    </button>
-                  )}
+                  <a
+                    href={CLIENT.paypalManageUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-white text-xs font-semibold py-2 rounded-xl transition"
+                  >
+                    <CreditCard size={12} /> Manage Billing <ExternalLink size={10} />
+                  </a>
                   {activePlan !== 'agency' && (
                     <button
                       onClick={() => { onClose(); onUpgrade(); }}

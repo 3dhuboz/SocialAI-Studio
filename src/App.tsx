@@ -93,25 +93,16 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
-  // Handle Stripe post-payment redirect
-  const [showPlanPicker, setShowPlanPicker] = useState(false);
-  useEffect(() => {
-    const handle = async () => {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('checkout') === 'success') {
-        const planParam = params.get('plan') as PlanTier | null;
-        if (planParam && ['starter', 'growth', 'pro'].includes(planParam)) {
-          setActivePlan(planParam);
-          setSetupStatus('ordered');
-          if (user) await updateDoc(doc(db, 'users', user.uid), { plan: planParam, setupStatus: 'ordered' });
-        } else {
-          setShowPlanPicker(true);
-        }
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-    };
-    handle();
-  }, [user]);
+  const handlePlanActivated = async (planId: string) => {
+    setActivePlan(planId as PlanTier);
+    setSetupStatus('ordered');
+    setShowPricing(false);
+    if (user) {
+      await updateDoc(doc(db, 'users', user.uid), { plan: planId, setupStatus: 'ordered' }).catch(() =>
+        setDoc(doc(db, 'users', user.uid), { plan: planId, setupStatus: 'ordered' }, { merge: true })
+      );
+    }
+  };
 
   // Profile & Posts — init from localStorage cache for instant render
   const [profile, setProfile] = useState<BusinessProfile>(() => {
@@ -194,7 +185,7 @@ const Dashboard: React.FC = () => {
             setInsightStale(true);
           }
         }
-        // Check for pending Stripe activation — webhook stores by UID (preferred) or email
+        // Check for pending PayPal activation — webhook stores by UID (preferred) or email
         if (!isAdmin && !(snap.exists() && snap.data()?.plan)) {
           const byUid = await getDoc(doc(db, 'pending_activations', user.uid));
           const byEmail = user.email ? await getDoc(doc(db, 'pending_activations', user.email)) : null;
@@ -204,7 +195,7 @@ const Dashboard: React.FC = () => {
             if (!p.consumed) {
               setActivePlan(p.plan);
               setSetupStatus('live');
-              await setDoc(doc(db, 'users', user.uid), { plan: p.plan, setupStatus: 'live', email: user.email, stripeCustomerId: p.stripeCustomerId || null }, { merge: true });
+              await setDoc(doc(db, 'users', user.uid), { plan: p.plan, setupStatus: 'live', email: user.email, paypalSubscriptionId: p.paypalSubscriptionId || null }, { merge: true });
               await updateDoc(pendingSnap.ref, { consumed: true });
             }
           }
@@ -1168,7 +1159,7 @@ const Dashboard: React.FC = () => {
   }
 
   // Show landing page (logged-in user without a plan, or explicitly navigated)
-  if (showLanding || (!activePlan && !showPlanPicker && firestoreLoaded)) {
+  if (showLanding || (!activePlan && firestoreLoaded)) {
     return <LandingPage
       onActivate={async plan => {
         setActivePlan(plan);
@@ -1398,39 +1389,8 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Post-payment plan picker */}
-      {showPlanPicker && (
-        <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="bg-[#111118] border border-white/10 rounded-3xl p-8 w-full max-w-lg text-center">
-            <div className="w-14 h-14 mx-auto mb-5 bg-gradient-to-br from-green-500/20 to-emerald-500/20 border border-green-500/20 rounded-2xl flex items-center justify-center">
-              <CheckCircle size={26} className="text-green-400" />
-            </div>
-            <h2 className="text-2xl font-black text-white mb-2">Payment successful! 🎉</h2>
-            <p className="text-white/40 text-sm mb-8">Which plan did you purchase? This activates your dashboard.</p>
-            <div className="space-y-3">
-              {CLIENT.plans.map(plan => (
-                <button
-                  key={plan.id}
-                  onClick={async () => {
-                    setActivePlan(plan.id);
-                    setSetupStatus('ordered');
-                    setShowPlanPicker(false);
-                    if (user) await updateDoc(doc(db, 'users', user.uid), { plan: plan.id, setupStatus: 'ordered' });
-                    toast(`Welcome! Your ${plan.name} plan is now active. We\'ll be in touch within 1–3 days to connect your Facebook page.`);
-                  }}
-                  className={`w-full bg-gradient-to-r ${plan.color} text-white font-bold py-4 rounded-xl flex items-center justify-between px-5 hover:opacity-90 transition`}
-                >
-                  <span>{plan.name} — ${plan.price}/month</span>
-                  <span className="text-xs opacity-70">{plan.postsPerWeek} posts/week</span>
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-white/20 mt-5">Not sure? Check your Stripe receipt email.</p>
-          </div>
-        </div>
-      )}
       {/* Pricing Modal */}
-      {showPricing && <PricingTable onClose={() => setShowPricing(false)} />}
+      {showPricing && <PricingTable onClose={() => setShowPricing(false)} onPlanActivated={handlePlanActivated} userId={user?.uid} />}
       {/* Account Panel */}
       {showAccount && (
         <AccountPanel
@@ -2739,7 +2699,7 @@ const Dashboard: React.FC = () => {
             <div className="bg-blue-500/6 border border-blue-500/15 rounded-2xl px-5 py-4 flex gap-3">
               <Info size={15} className="text-blue-400 shrink-0 mt-0.5" />
               <div className="text-xs text-white/40 leading-relaxed space-y-1">
-                <p><span className="text-blue-300 font-semibold">Agency billing model: </span>Your single Agency plan covers all client workspaces. You bill each client directly at your own rate — they never interact with Stripe or SocialAI Studio billing.</p>
+                <p><span className="text-blue-300 font-semibold">Agency billing model: </span>Your single Agency plan covers all client workspaces. You bill each client directly at your own rate — they never interact with SocialAI Studio billing.</p>
                 <p>Each workspace has its own AI business profile, content calendar, social media connection, and Smart AI schedule — fully isolated.</p>
               </div>
             </div>
@@ -2847,21 +2807,21 @@ const Dashboard: React.FC = () => {
             )}
 
             {/* Agency billing link */}
-            {(agencyBillingUrl || CLIENT.stripeCustomerPortalUrl) && (
+            {(agencyBillingUrl || CLIENT.paypalManageUrl) && (
               <div className="flex items-center justify-between bg-white/3 border border-white/8 rounded-2xl px-5 py-4">
                 <div>
                   <p className="text-sm font-semibold text-white">Agency Billing</p>
                   <p className="text-xs text-white/30 mt-0.5">
-                    {agencyBillingUrl ? 'Your custom client billing portal' : 'Manage your agency subscription, invoices, and payment method'}
+                    {agencyBillingUrl ? 'Your custom client billing portal' : 'Manage your agency subscription and payment method'}
                   </p>
                 </div>
                 <a
-                  href={agencyBillingUrl || CLIENT.stripeCustomerPortalUrl!}
+                  href={agencyBillingUrl || CLIENT.paypalManageUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-xs font-semibold bg-white/8 hover:bg-white/12 border border-white/10 text-white/60 hover:text-white px-4 py-2.5 rounded-xl transition flex-shrink-0"
                 >
-                  <ShoppingCart size={13} /> {agencyBillingUrl ? 'Client Portal' : 'Stripe Portal'}
+                  <ShoppingCart size={13} /> {agencyBillingUrl ? 'Client Portal' : 'PayPal Billing'}
                 </a>
               </div>
             )}
@@ -2890,8 +2850,8 @@ const Dashboard: React.FC = () => {
                     </p>
                   </div>
                 </div>
-                {CLIENT.stripeCustomerPortalUrl && (
-                  <a href={CLIENT.stripeCustomerPortalUrl} target="_blank" rel="noopener noreferrer"
+                {CLIENT.paypalManageUrl && (
+                  <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer"
                     className="text-xs text-white/40 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5">
                     <Link2 size={12} /> Manage Billing
                   </a>
@@ -2906,14 +2866,6 @@ const Dashboard: React.FC = () => {
                   const planIdx = planOrder.indexOf(plan.id);
                   const isUpgrade = planIdx > currentIdx;
                   const isNew = !activePlan;
-                  // New clients → payment link WITH setup fee; existing → upgrade link without setup fee
-                  const upgradeLink = CLIENT.stripePaymentLinks?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
-                  const newLink = (CLIENT as any).stripePaymentLinksNew?.[plan.id as keyof typeof CLIENT.stripePaymentLinks];
-                  const baseLink = isNew ? (newLink || upgradeLink) : upgradeLink;
-                  // Append client_reference_id so the Stripe webhook can identify the user + plan
-                  const paymentLink = baseLink && user
-                    ? `${baseLink}?client_reference_id=${user.uid}:${plan.id}&prefilled_email=${encodeURIComponent(user.email || '')}`
-                    : baseLink;
                   return (
                     <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
                       isCurrent
@@ -2941,27 +2893,23 @@ const Dashboard: React.FC = () => {
                       </ul>
                       {!isCurrent && (
                         isNew ? (
-                          // New client — prompt them to fill intake form first
                           <button
                             onClick={() => setShowIntakeForm(true)}
                             className={`w-full text-center text-xs font-bold py-2 rounded-xl transition bg-gradient-to-r ${plan.color} text-white hover:opacity-90`}
                           >
                             Get Started
                           </button>
-                        ) : paymentLink ? (
-                          <a href={paymentLink} target="_blank" rel="noopener noreferrer"
-                            className={`block text-center text-xs font-bold py-2 rounded-xl transition ${
+                        ) : (
+                          <button
+                            onClick={() => setShowPricing(true)}
+                            className={`w-full text-center text-xs font-bold py-2 rounded-xl transition ${
                               isUpgrade
                                 ? `bg-gradient-to-r ${plan.color} text-white hover:opacity-90`
                                 : 'bg-white/8 hover:bg-white/12 text-white/60'
-                            }`}>
+                            }`}
+                          >
                             {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'}
-                          </a>
-                        ) : (
-                          <a href={CLIENT.stripeCustomerPortalUrl || CLIENT.salesUrl} target="_blank" rel="noopener noreferrer"
-                            className="block text-center text-xs font-semibold py-2 rounded-xl bg-white/6 hover:bg-white/10 text-white/40 transition">
-                            {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'} →
-                          </a>
+                          </button>
                         )
                       )}
                       {isCurrent && (
@@ -2996,11 +2944,9 @@ const Dashboard: React.FC = () => {
                   <p className="text-xs text-green-300">Setup form submitted — our team will contact you within 1 business day with your payment link.</p>
                 </div>
               )}
-              {!CLIENT.stripeCustomerPortalUrl && (
-                <p className="text-xs text-white/20 text-center">
-                  To cancel or update payment details, contact <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 hover:text-amber-400 underline transition">{CLIENT.supportEmail}</a>
-                </p>
-              )}
+              <p className="text-xs text-white/20 text-center">
+                To cancel or update payment details, visit <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer" className="text-amber-400/60 hover:text-amber-400 underline transition">PayPal autopay</a> or contact <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 hover:text-amber-400 underline transition">{CLIENT.supportEmail}</a>
+              </p>
             </div>
 
             {/* ── SECTION: AI & Keys (super-admin / owner only) ── */}
@@ -3536,13 +3482,13 @@ const Dashboard: React.FC = () => {
                 {/* Custom billing URL */}
                 <div className="pt-2 border-t border-white/5 space-y-2">
                   <label className="text-xs font-semibold text-white/40 uppercase tracking-wider block">Your client billing portal URL <span className="text-white/20 font-normal normal-case">(optional)</span></label>
-                  <p className="text-xs text-white/25 leading-relaxed">Point clients to your own Stripe or payment portal instead of the default. Leave blank to use the SocialAI Studio billing link.</p>
+                  <p className="text-xs text-white/25 leading-relaxed">Point clients to your own payment portal instead of the default. Leave blank to use the SocialAI Studio billing link.</p>
                   <div className="flex gap-2">
                     <input
                       type="url"
                       value={agencyBillingUrl}
                       onChange={e => setAgencyBillingUrl(e.target.value)}
-                      placeholder="https://billing.stripe.com/p/login/your-portal-id"
+                      placeholder="https://www.paypal.com/myaccount/autopay"
                       className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-emerald-500/40 transition"
                     />
                     <button
@@ -3559,14 +3505,14 @@ const Dashboard: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                {(agencyBillingUrl || CLIENT.stripeCustomerPortalUrl) && (
+                {(agencyBillingUrl || CLIENT.paypalManageUrl) && (
                   <a
-                    href={agencyBillingUrl || CLIENT.stripeCustomerPortalUrl}
+                    href={agencyBillingUrl || CLIENT.paypalManageUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-2 text-xs text-emerald-300/70 hover:text-emerald-300 transition w-fit"
                   >
-                    <ShoppingCart size={12} /> {agencyBillingUrl ? 'Open your client billing portal' : 'Manage agency billing in Stripe'}
+                    <ShoppingCart size={12} /> {agencyBillingUrl ? 'Open your client billing portal' : 'Manage PayPal billing'}
                   </a>
                 )}
               </div>
