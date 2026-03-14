@@ -659,7 +659,24 @@ const Dashboard: React.FC = () => {
     };
     const ref = await addDoc(postsCol(), postData);
     setPosts(prev => [{ id: ref.id, ...postData } as SocialPost, ...prev]);
-    toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!`);
+    // If a schedule date is set and Late is connected, hand it off to Late.dev for auto-publishing
+    if (scheduleDate && lateProfileId) {
+      try {
+        const fullText = generatedHashtags.length ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
+        await LateService.post(
+          lateProfileId,
+          [platform.toLowerCase() as 'facebook' | 'instagram'],
+          fullText,
+          undefined,
+          scheduleDate
+        );
+        toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
+      } catch (e: any) {
+        toast(`Post saved but Late scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
+      }
+    } else {
+      toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !lateProfileId ? ' Connect social accounts in Settings to enable auto-publishing.' : ''}`);
+    }
     setGeneratedContent('');
     setGeneratedHashtags([]);
     setGeneratedImage(null);
@@ -875,6 +892,7 @@ const Dashboard: React.FC = () => {
     setAcceptProgress(0);
     setAcceptSaved(0);
     let completedCount = 0;
+    let lateFailCount = 0;
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
@@ -894,12 +912,34 @@ const Dashboard: React.FC = () => {
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
+          // Schedule via Late.dev so it auto-publishes at the scheduled time
+          if (lateProfileId) {
+            try {
+              const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
+              await LateService.post(
+                lateProfileId,
+                [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
+                text,
+                undefined,
+                sp.scheduledFor
+              );
+            } catch (lateErr: any) {
+              lateFailCount++;
+              console.warn(`Late scheduling failed for post ${i}:`, lateErr?.message);
+            }
+          }
           return { id: ref.id, ...postData } as SocialPost;
         })
       );
       setPosts(prev => [...results, ...prev]);
       clearDraft();
-      toast(`${results.length} posts added to your calendar! 🎉`, 'success');
+      if (!lateProfileId) {
+        toast(`${results.length} posts saved to calendar. Connect social accounts in Settings to enable auto-publishing.`, 'success');
+      } else if (lateFailCount > 0) {
+        toast(`${results.length} posts saved. ${lateFailCount} failed to schedule via Late — publish those manually from the calendar.`, 'warning');
+      } else {
+        toast(`${results.length} posts scheduled via Late.dev — they'll auto-publish at the set times! 🎉`, 'success');
+      }
       setSmartPosts([]);
       setSmartStrategy('');
       setSmartPostImages({});
