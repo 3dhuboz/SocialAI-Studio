@@ -52,7 +52,7 @@ In Netlify → Domain management → Add custom domain:
 |---|---|
 | Street Meats Barbeque | `social.streetmeatsbarbeque.com.au` |
 | Pickle Nick | `social.picklenick.au` |
-| Hughes Q | `social.hughesq.au` |
+| Hughes Q | `social.hugheseysque.au` |
 
 Add a CNAME record in your DNS provider pointing to the Netlify subdomain.
 

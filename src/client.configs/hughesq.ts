@@ -1,7 +1,7 @@
 /**
  * ─────────────────────────────────────────────────────────
  *  CLIENT CONFIG  —  Hughes Q (Uzi's Q)
- *  Deployed at: social.hughesq.au
+ *  Deployed at: social.hugheseysque.au
  *  Netlify env: VITE_CLIENT_ID=hughesq
  * ─────────────────────────────────────────────────────────
  */
