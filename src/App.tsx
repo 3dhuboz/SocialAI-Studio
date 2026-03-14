@@ -645,6 +645,23 @@ const Dashboard: React.FC = () => {
     setIsGeneratingImage(false);
   };
 
+  // Upload a base64 data URL image to Late.dev and return a mediaItems array (or undefined on failure)
+  const uploadImageToLate = async (dataUrl: string): Promise<{ url: string; type: 'image' }[] | undefined> => {
+    if (!dataUrl) return undefined;
+    if (!dataUrl.startsWith('data:')) return [{ url: dataUrl, type: 'image' }];
+    try {
+      const mimeType = dataUrl.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+      const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+      const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`post_${Date.now()}.${ext}`, mimeType);
+      const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
+      await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
+      return [{ url: publicUrl, type: 'image' }];
+    } catch (e: any) {
+      console.warn('Image upload to Late failed:', e?.message);
+      return undefined;
+    }
+  };
+
   const handleSavePost = async () => {
     if (!generatedContent) { toast('Generate content first.', 'warning'); return; }
     if (!user) return;
@@ -663,12 +680,14 @@ const Dashboard: React.FC = () => {
     if (scheduleDate && lateProfileId) {
       try {
         const fullText = generatedHashtags.length ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
+        const mediaItems = generatedImage ? await uploadImageToLate(generatedImage) : undefined;
         await LateService.post(
           lateProfileId,
           [platform.toLowerCase() as 'facebook' | 'instagram'],
           fullText,
           undefined,
-          scheduleDate
+          scheduleDate,
+          mediaItems
         );
         toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
       } catch (e: any) {
@@ -912,16 +931,19 @@ const Dashboard: React.FC = () => {
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
-          // Schedule via Late.dev so it auto-publishes at the scheduled time
+          // Schedule via Late.dev so it auto-publishes at the scheduled time (with image if present)
           if (lateProfileId) {
             try {
               const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
+              const imageDataUrl = smartPostImages[i];
+              const mediaItems = imageDataUrl ? await uploadImageToLate(imageDataUrl) : undefined;
               await LateService.post(
                 lateProfileId,
                 [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
                 text,
                 undefined,
-                sp.scheduledFor
+                sp.scheduledFor,
+                mediaItems
               );
             } catch (lateErr: any) {
               lateFailCount++;
