@@ -51,7 +51,6 @@ const DEFAULT_PROFILE: BusinessProfile = {
   socialGoal: '',
   contentTopics: '',
   videoEnabled: false,
-  sotrendPageId: '',
 };
 
 const DEFAULT_STATS: ContentCalendarStats = {
