@@ -81,6 +81,8 @@ const saveDraft = (posts: any[], strategy: string, mode: string, platform: strin
 };
 const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch {} };
 
+type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
+
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
@@ -345,11 +347,11 @@ const Dashboard: React.FC = () => {
   const [isRewriting, setIsRewriting] = useState(false);
 
   // Smart Schedule State — restored from localStorage draft if browser crashed before accepting
-  const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>(() => readDraft()?.posts ?? []);
-  const [smartStrategy, setSmartStrategy] = useState(() => readDraft()?.strategy ?? '');
-  const [draftRestoredAt] = useState<number | null>(() => readDraft()?.savedAt ?? null);
+  const [_initialDraft] = useState(readDraft); // reads localStorage exactly once
+  const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>(_initialDraft?.posts ?? []);
+  const [smartStrategy, setSmartStrategy] = useState(_initialDraft?.strategy ?? '');
+  const [draftRestoredAt] = useState<number | null>(_initialDraft?.savedAt ?? null);
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
-  type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
   const [autopilotMode, setAutopilotMode] = useState<AutopilotMode>('smart');
   const saturationMode = autopilotMode === 'saturation';
   const [smartCount, setSmartCount] = useState(7);
@@ -528,26 +530,14 @@ const Dashboard: React.FC = () => {
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : generatedContent;
 
-      // Build mediaItems: video > uploaded public image > base64 image (upload first)
+      // Build mediaItems: video > image (uploaded via helper if base64)
       let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
       if (generatedVideoUrl) {
         mediaItems = [{ url: generatedVideoUrl, type: 'video' }];
       } else if (generatedImage) {
-        if (!generatedImage.startsWith('data:')) {
-          mediaItems = [{ url: generatedImage, type: 'image' }];
-        } else {
-          // Upload base64 image to Late → get public URL
-          try {
-            const mimeType = generatedImage.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-            const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-            const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`post_${Date.now()}.${ext}`, mimeType);
-            const bytes = Uint8Array.from(atob(generatedImage.split(',')[1]), c => c.charCodeAt(0));
-            await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
-            mediaItems = [{ url: publicUrl, type: 'image' }];
-          } catch {
-            toast('Image upload failed — posting text only.', 'warning');
-          }
-        }
+        const uploaded = await uploadImageToLate(generatedImage);
+        if (uploaded) mediaItems = uploaded;
+        else toast('Image upload failed — posting text only.', 'warning');
       }
 
       await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems);
