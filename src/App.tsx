@@ -292,8 +292,8 @@ const Dashboard: React.FC = () => {
   const addClient = async (name: string, businessType: string) => {
     if (!user) return;
     if (activePlan !== 'agency' && !isAdminMode) { toast('Client workspaces require an Agency plan.', 'warning'); return; }
-    if (clients.length >= CLIENT.agencyClientLimit) {
-      toast(`You have reached the ${CLIENT.agencyClientLimit}-client limit on the Agency plan.`, 'warning'); return;
+    if (clients.length >= agencyClientLimit) {
+      toast(`You have reached the ${agencyClientLimit}-client limit on the Agency plan.`, 'warning'); return;
     }
     const newClient: Omit<ClientWorkspace, 'id'> = { name, businessType, createdAt: new Date().toISOString() };
     const ref = await addDoc(collection(db, 'users', user.uid, 'clients'), newClient);
@@ -490,7 +490,8 @@ const Dashboard: React.FC = () => {
   }, [setupStatus, user]);
 
   const activeClientWorkspace = clients.find(c => c.id === activeClientId);
-  const effectivePlan: PlanTier = (activeClientId && activeClientWorkspace?.plan) ? activeClientWorkspace.plan : activePlan;
+  const effectivePlan: PlanTier = (activeClientId && activeClientWorkspace?.plan) ? activeClientWorkspace.plan : (activePlan ?? 'starter');
+  const agencyClientLimit = isAdminMode ? 10 : CLIENT.agencyClientLimit;
   const planCfg = CLIENT.plans.find(p => p.id === effectivePlan);
   const canUseImages = effectivePlan === 'growth' || effectivePlan === 'pro' || effectivePlan === 'agency';
   const canUseSaturation = effectivePlan === 'pro' || effectivePlan === 'agency';
@@ -1469,6 +1470,7 @@ const Dashboard: React.FC = () => {
                   onRename={renameClient}
                   onDelete={deleteClient}
                   agencyName={profile.name}
+                  clientLimit={agencyClientLimit}
                 />
               )}
               {activePlan !== 'agency' && profile.name && profile.name !== 'My Business' && (
@@ -2765,7 +2767,7 @@ const Dashboard: React.FC = () => {
                   <p className="text-[10px] text-white/30 uppercase tracking-wider">Connected</p>
                 </div>
                 <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
-                  <p className="text-xl font-black text-white/40">{Math.max(0, (CLIENT.agencyClientLimit ?? 5) - clients.length)}</p>
+                  <p className="text-xl font-black text-white/40">{Math.max(0, agencyClientLimit - clients.length)}</p>
                   <p className="text-[10px] text-white/30 uppercase tracking-wider">Slots free</p>
                 </div>
               </div>
@@ -2896,7 +2898,7 @@ const Dashboard: React.FC = () => {
                 })}
 
                 {/* Empty slot card */}
-                {clients.length < (CLIENT.agencyClientLimit ?? 5) && (
+                {clients.length < agencyClientLimit && (
                   <div className="border-2 border-dashed border-white/8 rounded-2xl p-5 flex flex-col items-center justify-center gap-3 text-center min-h-[180px] hover:border-white/15 transition cursor-pointer"
                     onClick={() => {
                       const name = prompt('Client name:');
@@ -2908,7 +2910,7 @@ const Dashboard: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-white/30">Add client</p>
-                      <p className="text-xs text-white/20 mt-0.5">{(CLIENT.agencyClientLimit ?? 5) - clients.length} slot{((CLIENT.agencyClientLimit ?? 5) - clients.length) !== 1 ? 's' : ''} remaining</p>
+                      <p className="text-xs text-white/20 mt-0.5">{agencyClientLimit - clients.length} slot{(agencyClientLimit - clients.length) !== 1 ? 's' : ''} remaining</p>
                     </div>
                   </div>
                 )}

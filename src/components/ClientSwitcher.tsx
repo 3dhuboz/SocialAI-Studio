@@ -11,10 +11,11 @@ interface Props {
   onRename: (clientId: string, name: string, businessType: string) => Promise<void>;
   onDelete: (clientId: string) => Promise<void>;
   agencyName: string;
+  clientLimit?: number;
 }
 
 export const ClientSwitcher: React.FC<Props> = ({
-  clients, activeClientId, onSwitch, onAdd, onRename, onDelete, agencyName,
+  clients, activeClientId, onSwitch, onAdd, onRename, onDelete, agencyName, clientLimit,
 }) => {
   const [open, setOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -28,9 +29,10 @@ export const ClientSwitcher: React.FC<Props> = ({
 
   const activeClient = clients.find(c => c.id === activeClientId);
   const label = activeClient ? activeClient.name : agencyName || 'My Agency';
-  const atLimit = clients.length >= CLIENT.agencyClientLimit;
+  const limit = clientLimit ?? CLIENT.agencyClientLimit;
+  const atLimit = clients.length >= limit;
   const slotsUsed = clients.length;
-  const slotsTotal = CLIENT.agencyClientLimit;
+  const slotsTotal = limit;
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
@@ -234,7 +236,7 @@ export const ClientSwitcher: React.FC<Props> = ({
                   className="w-full flex items-center gap-2 text-sm text-emerald-400 hover:text-emerald-300 disabled:opacity-40 disabled:cursor-not-allowed transition py-1"
                 >
                   <Plus size={14} />
-                  {atLimit ? `All ${slotsTotal} client slots used` : `Add New Client (${slotsTotal - slotsUsed} slot${slotsTotal - slotsUsed !== 1 ? 's' : ''} remaining)`}
+                  {atLimit ? `All ${slotsTotal} slots used` : `Add New Client (${slotsTotal - slotsUsed} slot${slotsTotal - slotsUsed !== 1 ? 's' : ''} remaining)`}
                 </button>
               )}
             </div>
