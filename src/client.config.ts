@@ -114,6 +114,13 @@ export const CLIENT = {
   /** Max client workspaces per agency account */
   agencyClientLimit: 5,
 
+  /**
+   * CLIENT MODE: set true on white-label sites deployed for end-clients.
+   * Hides billing, upgrade prompts, plan badges, agency/client-switcher,
+   * and setup banners — shows only the core Create/Calendar/Insights/Settings tabs.
+   */
+  clientMode: false,
+
   plans: [
     {
       id: 'starter' as const,

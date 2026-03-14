@@ -55,6 +55,7 @@ export const CLIENT = {
   },
 
   agencyClientLimit: 5,
+  clientMode: true,
 
   plans: [
     {

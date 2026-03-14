@@ -89,7 +89,7 @@ const Dashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('smart');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
-  const [showLanding, setShowLanding] = useState(() => !user);
+  const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
@@ -490,7 +490,7 @@ const Dashboard: React.FC = () => {
   }, [setupStatus, user]);
 
   const activeClientWorkspace = clients.find(c => c.id === activeClientId);
-  const effectivePlan: PlanTier = (activeClientId && activeClientWorkspace?.plan) ? activeClientWorkspace.plan : (activePlan ?? 'starter');
+  const effectivePlan: PlanTier = (activeClientId && activeClientWorkspace?.plan) ? activeClientWorkspace.plan : (activePlan ?? (CLIENT.clientMode ? 'pro' : 'starter'));
   const agencyClientLimit = isAdminMode ? 10 : CLIENT.agencyClientLimit;
   const planCfg = CLIENT.plans.find(p => p.id === effectivePlan);
   const canUseImages = effectivePlan === 'growth' || effectivePlan === 'pro' || effectivePlan === 'agency';
@@ -1195,20 +1195,20 @@ const Dashboard: React.FC = () => {
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
-    ...((activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
+    ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
   // Auth gate
   if (!user) {
-    if (showLanding) {
+    if (showLanding && !CLIENT.clientMode) {
       return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} />;
     }
-    return <AuthScreen onShowLanding={() => setShowLanding(true)} />;
+    return <AuthScreen onShowLanding={() => setShowLanding(false)} />;
   }
 
-  // Show landing page (logged-in user without a plan, or explicitly navigated)
-  if (showLanding || (!activePlan && firestoreLoaded)) {
+  // Show landing page (logged-in user without a plan, or explicitly navigated) — skip in clientMode
+  if (!CLIENT.clientMode && (showLanding || (!activePlan && firestoreLoaded))) {
     return <LandingPage
       onActivate={async plan => {
         setActivePlan(plan);
@@ -1456,7 +1456,7 @@ const Dashboard: React.FC = () => {
           <div className="flex items-center gap-3">
             <AppLogo size={72} />
             <div className="flex items-center gap-2 flex-wrap">
-              {planCfg && (
+              {planCfg && !CLIENT.clientMode && (
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
                   {planCfg.name}
                 </span>
@@ -1514,6 +1514,7 @@ const Dashboard: React.FC = () => {
                 <ClipboardList size={11} /> Complete Setup
               </button>
             )}
+            {!CLIENT.clientMode && (
             <button
               onClick={() => setShowPricing(true)}
               title="Upgrade plan"
@@ -1521,6 +1522,7 @@ const Dashboard: React.FC = () => {
             >
               <ShoppingCart size={15} />
             </button>
+            )}
             <button
               onClick={() => setShowAccount(true)}
               title="My Account"
@@ -1592,11 +1594,13 @@ const Dashboard: React.FC = () => {
 
       {/* Content */}
       <main className="max-w-6xl mx-auto px-4 py-8">
+        {!CLIENT.clientMode && (
         <SetupBanner
           status={setupStatus}
           onStatusChange={isAdminMode ? setSetupStatus : undefined}
           isAdmin={isAdminMode}
         />
+        )}
 
         {/* ═══ QUICK POST MODE ═══ */}
         {activeTab === 'smart' && smartSubMode === 'quickpost' && (
