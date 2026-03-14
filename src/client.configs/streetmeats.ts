@@ -1,7 +1,7 @@
 /**
  * ─────────────────────────────────────────────────────────
  *  CLIENT CONFIG  —  Street Meats Barbeque
- *  Deployed at: social.streetmeatsbarbeque.com.au
+ *  Deployed at: social.streetmeatzbbq.com.au
  *  Netlify env: VITE_CLIENT_ID=streetmeats
  * ─────────────────────────────────────────────────────────
  */

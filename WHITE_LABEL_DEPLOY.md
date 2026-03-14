@@ -50,7 +50,7 @@ In Netlify → Domain management → Add custom domain:
 
 | Client | Domain |
 |---|---|
-| Street Meats Barbeque | `social.streetmeatsbarbeque.com.au` |
+| Street Meats Barbeque | `social.streetmeatzbbq.com.au` |
 | Pickle Nick | `social.picklenick.au` |
 | Hughes Q | `social.hugheseysque.au` |
 
