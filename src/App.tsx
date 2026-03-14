@@ -85,13 +85,20 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, logOut, refreshUserDoc } = useAuth();
+  const { user, userDoc, logIn, logOut, refreshUserDoc } = useAuth();
   const [activeTab, setActiveTab] = useState<'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('smart');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
+
+  useEffect(() => {
+    if (CLIENT.clientMode && CLIENT.autoLoginEmail && CLIENT.autoLoginPassword && !user) {
+      logIn(CLIENT.autoLoginEmail, CLIENT.autoLoginPassword).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePlanActivated = async (planId: string) => {
     setActivePlan(planId as PlanTier);

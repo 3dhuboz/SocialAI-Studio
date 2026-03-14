@@ -121,6 +121,10 @@ export const CLIENT = {
    */
   clientMode: false,
 
+  /** Auto-login credentials for clientMode deployments (leave empty on main agency site) */
+  autoLoginEmail: '',
+  autoLoginPassword: '',
+
   plans: [
     {
       id: 'starter' as const,
