@@ -2005,7 +2005,9 @@ const Dashboard: React.FC = () => {
                 try {
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
                   if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text);
+                  const imageSource = calendarImages[post.id] || post.image;
+                  const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
+                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Published successfully!', 'success');
                 } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
