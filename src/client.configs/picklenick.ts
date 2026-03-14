@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * ─────────────────────────────────────────────────────────
  *  CLIENT CONFIG  —  Pickle Nick
@@ -55,6 +56,9 @@ export const CLIENT = {
   },
 
   agencyClientLimit: 5,
+  clientMode: true,
+  autoLoginEmail: import.meta.env.VITE_AUTO_LOGIN_EMAIL ?? '',
+  autoLoginPassword: import.meta.env.VITE_AUTO_LOGIN_PASSWORD ?? '',
 
   plans: [
     {
