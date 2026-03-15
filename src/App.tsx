@@ -412,6 +412,7 @@ const Dashboard: React.FC = () => {
           setProfile(p);
           if (d.stats) setStats({ ...DEFAULT_STATS, ...d.stats });
           else setStats(DEFAULT_STATS);
+          console.log(`[Workspace Switch] Client "${wsName}" lateProfileId:`, d.lateProfileId || '(none)', 'agency ref:', agencyLateRef.current.profileId);
           setLateProfileId(d.lateProfileId || '');
           setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
           if (d.insightReport) {

@@ -50,14 +50,10 @@ export const LateConnectButton: React.FC<Props> = ({
     setStep('creating');
     setError('');
     try {
-      // ── Reuse existing profile or create new one ──────────────────────
+      // ── Reuse THIS workspace's profile or create a brand-new one ─────
+      // IMPORTANT: never reuse another workspace's profile — each workspace
+      // must have its own Late profile so it can connect to its own FB page.
       let pid = profileId;
-      if (!pid) {
-        try {
-          const existing = await LateService.listProfiles();
-          pid = existing[0]?.id;
-        } catch { /* ignore — will create new */ }
-      }
       if (!pid) {
         pid = await LateService.createProfile(businessName || 'SocialAI Client');
       }
