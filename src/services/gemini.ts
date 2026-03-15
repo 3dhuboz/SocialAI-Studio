@@ -153,7 +153,7 @@ ANTI-GENERIC RULES:
 - Write like you're texting a smart friend, not writing a press release
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "A 10–15 word vivid visual description of the perfect photo/image to accompany this specific post. Be concrete — describe the scene, objects, lighting, colours, and mood. NOT abstract concepts."}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "A 10–15 word vivid visual description of the perfect photo/image to accompany this specific post. MUST feature ${businessName}'s actual products or brand (${businessType}). Be concrete — describe the specific product, scene, lighting, colours, mood. NOT generic food or abstract concepts."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
