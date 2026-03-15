@@ -500,6 +500,38 @@ const Dashboard: React.FC = () => {
   const [bestTimes, setBestTimes] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [insightReport, setInsightReport] = useState<InsightReport | null>(null);
+
+  const INSIGHT_TICKER_STEPS_SCAN = [
+    { label: 'Connecting to your social accounts…', pct: 8 },
+    { label: 'Fetching your published posts…', pct: 20 },
+    { label: 'Reading post content and engagement data…', pct: 35 },
+    { label: 'Identifying top-performing content…', pct: 50 },
+    { label: 'Analysing audience engagement patterns…', pct: 65 },
+    { label: 'Scoring your social health…', pct: 78 },
+    { label: 'Building actionable recommendations…', pct: 88 },
+    { label: 'Finalising your insight report…', pct: 96 },
+  ];
+  const INSIGHT_TICKER_STEPS_ANALYZE = [
+    { label: 'Reviewing your business profile…', pct: 10 },
+    { label: 'Analysing your industry & location…', pct: 25 },
+    { label: 'Studying engagement trends for your business type…', pct: 42 },
+    { label: 'Identifying content opportunities…', pct: 58 },
+    { label: 'Researching best posting times…', pct: 72 },
+    { label: 'Scoring your social health…', pct: 84 },
+    { label: 'Building actionable recommendations…', pct: 93 },
+    { label: 'Finalising your insight report…', pct: 97 },
+  ];
+  const [insightTickerIdx, setInsightTickerIdx] = useState(0);
+  const [insightTickerSteps, setInsightTickerSteps] = useState(INSIGHT_TICKER_STEPS_ANALYZE);
+  useEffect(() => {
+    if (!isAnalyzing && !isScanningPosts) { setInsightTickerIdx(0); return; }
+    setInsightTickerSteps(isScanningPosts ? INSIGHT_TICKER_STEPS_SCAN : INSIGHT_TICKER_STEPS_ANALYZE);
+    const id = setInterval(() => {
+      setInsightTickerIdx(prev => (prev < (isScanningPosts ? INSIGHT_TICKER_STEPS_SCAN : INSIGHT_TICKER_STEPS_ANALYZE).length - 1 ? prev + 1 : prev));
+    }, 2600);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAnalyzing, isScanningPosts]);
   const [insightStale, setInsightStale] = useState(false);
 
   const hasApiKey = !!localStorage.getItem('sai_gemini_key');
@@ -2675,16 +2707,47 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* Loading skeleton */}
-            {isAnalyzing && !insightReport && (
-              <div className="space-y-4">
-                {[1,2,3].map(i => (
-                  <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-5 animate-pulse">
-                    <div className="h-3 bg-white/10 rounded w-1/3 mb-3" />
-                    <div className="h-2 bg-white/6 rounded w-full mb-2" />
-                    <div className="h-2 bg-white/6 rounded w-4/5" />
+            {/* Progress ticker */}
+            {(isAnalyzing || isScanningPosts) && (
+              <div className="rounded-2xl border border-amber-500/20 overflow-hidden"
+                style={{ background: 'linear-gradient(135deg,rgba(245,158,11,0.07) 0%,rgba(10,10,20,0.97) 60%)' }}>
+                <div className="px-6 py-5 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/25 flex items-center justify-center flex-shrink-0">
+                      <Loader2 size={18} className="animate-spin text-amber-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">
+                        {isScanningPosts ? 'Scanning Past Posts…' : 'Generating AI Insights…'}
+                      </p>
+                      <p className="text-xs text-white/40">Powered by Gemini</p>
+                    </div>
                   </div>
-                ))}
+
+                  {/* Progress bar */}
+                  <div className="w-full bg-white/8 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-400 to-orange-400 rounded-full transition-all duration-700"
+                      style={{ width: `${insightTickerSteps[insightTickerIdx]?.pct ?? 5}%` }}
+                    />
+                  </div>
+
+                  {/* Step list */}
+                  <div className="space-y-1.5">
+                    {insightTickerSteps.map((step, i) => {
+                      const done = i < insightTickerIdx;
+                      const active = i === insightTickerIdx;
+                      return (
+                        <div key={i} className={`flex items-center gap-2.5 text-xs transition-all duration-500 ${active ? 'opacity-100' : done ? 'opacity-35' : 'opacity-15'}`}>
+                          <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${done ? 'bg-emerald-500/30 text-emerald-400' : active ? 'bg-amber-500/25 text-amber-400' : 'bg-white/5 text-white/20'}`}>
+                            {done ? <CheckCircle size={10} /> : active ? <Loader2 size={9} className="animate-spin" /> : <div className="w-1.5 h-1.5 rounded-full bg-current" />}
+                          </div>
+                          <span className={active ? 'text-white font-medium' : done ? 'text-white/50' : 'text-white/20'}>{step.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
 
