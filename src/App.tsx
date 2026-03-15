@@ -1008,7 +1008,7 @@ const Dashboard: React.FC = () => {
     setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
   };
 
-  // ── Image generation: fal.ai FLUX first, Gemini Imagen fallback ──
+  // ── Image generation: fal.ai FLUX → Gemini Imagen → Pollinations.ai (free) ──
   const generateImage = async (prompt: string): Promise<string | null> => {
     if (FalService.isConfigured()) {
       try {

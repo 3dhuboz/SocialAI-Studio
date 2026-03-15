@@ -161,50 +161,70 @@ The content field must respect the character limits above. Do not pad with fille
 
 export const generateMarketingImage = async (prompt: string): Promise<string | null> => {
   const key = getApiKey();
-  if (!key) return null;
-
-  const ai = new GoogleGenAI({ apiKey: key });
   const imagePrompt = `Professional social media marketing photograph: ${prompt}. Shot on high-end DSLR, cinematic lighting, vibrant colours, sharp focus, depth of field, commercial quality. No text, no watermarks, no logos.`;
 
-  // Try Imagen models via generateImages (correct API for @google/genai v1.x)
-  const imagenModels = ['imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001'];
-  for (const model of imagenModels) {
+  // ── 1. Gemini Imagen (if key available) ──────────────────────────────
+  if (key) {
+    const ai = new GoogleGenAI({ apiKey: key });
+    const imagenModels = ['imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001'];
+    for (const model of imagenModels) {
+      try {
+        const response = await (ai.models as any).generateImages({
+          model,
+          prompt: imagePrompt,
+          config: { numberOfImages: 1, outputMimeType: 'image/jpeg' },
+        });
+        const imgBytes: string | undefined = response?.generatedImages?.[0]?.image?.imageBytes;
+        if (imgBytes) {
+          const raw = `data:image/jpeg;base64,${imgBytes}`;
+          return await compressImage(raw, 700, 0.65);
+        }
+      } catch (error: any) {
+        console.warn(`Imagen (${model}):`, error?.message ?? error);
+      }
+    }
+
+    // Gemini native image generation via v1beta responseModalities
     try {
-      const response = await (ai.models as any).generateImages({
-        model,
-        prompt: imagePrompt,
-        config: { numberOfImages: 1, outputMimeType: 'image/jpeg' },
+      const betaAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
+      const response = await betaAI.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: imagePrompt,
+        config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
       });
-      const imgBytes: string | undefined = response?.generatedImages?.[0]?.image?.imageBytes;
-      if (imgBytes) {
-        const raw = `data:image/jpeg;base64,${imgBytes}`;
-        return await compressImage(raw, 700, 0.65);
+      const parts = (response as any)?.candidates?.[0]?.content?.parts;
+      if (parts) {
+        for (const part of parts) {
+          if (part.inlineData?.data) {
+            const mimeType = part.inlineData.mimeType || 'image/png';
+            const raw = `data:${mimeType};base64,${part.inlineData.data}`;
+            return await compressImage(raw, 700, 0.65);
+          }
+        }
       }
     } catch (error: any) {
-      console.warn(`Imagen (${model}):`, error?.message ?? error);
+      console.warn('Gemini image fallback:', error?.message ?? error);
     }
   }
 
-  // Fallback: Gemini native image generation via v1beta responseModalities
+  // ── 2. Pollinations.ai — free, no key needed, always works ──────────
   try {
-    const betaAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
-    const response = await betaAI.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: imagePrompt,
-      config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
-    });
-    const parts = (response as any)?.candidates?.[0]?.content?.parts;
-    if (parts) {
-      for (const part of parts) {
-        if (part.inlineData?.data) {
-          const mimeType = part.inlineData.mimeType || 'image/png';
-          const raw = `data:${mimeType};base64,${part.inlineData.data}`;
-          return await compressImage(raw, 700, 0.65);
-        }
-      }
+    const pollinationsPrompt = encodeURIComponent(
+      `Professional social media marketing photo: ${prompt}. Cinematic lighting, vibrant, commercial quality, no text, no watermarks`
+    );
+    const url = `https://image.pollinations.ai/prompt/${pollinationsPrompt}?width=1024&height=1024&nologo=true`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const blob = await res.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
     }
   } catch (error: any) {
-    console.warn('Gemini image fallback:', error?.message ?? error);
+    console.warn('Pollinations.ai fallback:', error?.message ?? error);
   }
 
   return null;
