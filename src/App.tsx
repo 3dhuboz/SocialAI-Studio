@@ -835,30 +835,30 @@ const Dashboard: React.FC = () => {
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
-      // ── RESOLVE accountIds from this profile's connected accounts ────
-      // This is the DEFINITIVE fix: ask Late.dev which accounts are on THIS profile
+      // ── RESOLVE accountIds: fetch ALL accounts, find the one for THIS profile ──
       let resolvedAccountIds: Record<string, string> = { ...lateAccountIds };
       try {
-        const profileInfo = await LateService.getProfileInfo(lateProfileId);
-        console.log('[Publish] Raw profile info:', JSON.stringify(profileInfo));
-        // Extract accounts from profile — try every possible field name
-        const pi: any = profileInfo;
-        const prof = pi.profile || pi;
-        const accounts = prof.accounts || prof.connections || prof.socialAccounts || prof.connectedAccounts || [];
-        if (Array.isArray(accounts) && accounts.length > 0) {
-          for (const acc of accounts) {
+        const allAccounts = await LateService.getAccounts();
+        // DIAGNOSTIC: dump complete raw data for every account
+        console.log('[Publish] ALL accounts raw dump:', JSON.stringify(allAccounts, null, 2));
+        if (allAccounts.length > 0) {
+          console.log('[Publish] Account field names:', Object.keys(allAccounts[0]));
+        }
+        // Try to find the account that belongs to THIS profile
+        for (const acc of allAccounts) {
+          const profField = acc.profile || acc.profileId || acc.profile_id || '';
+          const profStr = typeof profField === 'object' ? (profField._id || profField.id || '') : String(profField);
+          if (profStr === lateProfileId) {
             const plat = (acc.platform || '').toLowerCase();
-            const accId = acc._id || acc.id || acc.accountId;
+            const accId = acc._id || acc.id;
             if (plat && accId) {
               resolvedAccountIds[plat] = accId;
+              console.log(`[Publish] Matched account ${accId} (${acc.name}) to profile ${lateProfileId} via profile field`);
             }
           }
-          console.log('[Publish] Resolved accountIds from profile:', JSON.stringify(resolvedAccountIds));
-        } else {
-          console.warn('[Publish] No accounts found in profile response. Keys:', Object.keys(prof));
         }
       } catch (e) {
-        console.warn('[Publish] Failed to resolve accountIds from profile:', e);
+        console.warn('[Publish] Failed to fetch accounts:', e);
       }
 
       const fullText = generatedHashtags.length > 0

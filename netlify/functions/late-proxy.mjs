@@ -130,27 +130,56 @@ export const handler = async (event) => {
         console.log('[late-proxy] Using client-provided accountIds:', JSON.stringify(platformObjs));
       }
 
-      // ── Fallback: resolve from profile details (server-side) ──
+      // ── Fallback 1: GET /accounts?profileId=X (filter by profile) ──
       if (platformObjs.length === 0 && profileId) {
         try {
-          const profRes = await fetch(`${LATE_BASE}/profiles/${profileId}`, { headers: authHeader });
-          if (profRes.ok) {
-            const profData = await profRes.json();
-            const prof = profData.profile || profData;
-            console.log(`[late-proxy] Profile ${profileId} RAW:`, JSON.stringify(profData).substring(0, 500));
-            // Try every possible field name for connected accounts
-            const accs = prof.accounts || prof.connections || prof.socialAccounts || prof.connectedAccounts || [];
-            if (Array.isArray(accs) && accs.length > 0) {
+          const filteredRes = await fetch(`${LATE_BASE}/accounts?profileId=${profileId}`, { headers: authHeader });
+          if (filteredRes.ok) {
+            const filteredData = await filteredRes.json();
+            const filteredAccounts = filteredData.accounts || filteredData || [];
+            console.log(`[late-proxy] GET /accounts?profileId=${profileId} returned ${filteredAccounts.length} accounts:`, JSON.stringify(filteredAccounts));
+            if (Array.isArray(filteredAccounts) && filteredAccounts.length > 0) {
               platformObjs = requestedPlatforms.map(p => {
-                const acc = accs.find(a => (a.platform || '').toLowerCase() === p);
+                const acc = filteredAccounts.find(a => (a.platform || '').toLowerCase() === p);
                 const accId = acc?._id || acc?.id || acc?.accountId;
                 return acc && accId ? { platform: p, accountId: accId } : null;
               }).filter(Boolean);
-              console.log('[late-proxy] Resolved from profile:', JSON.stringify(platformObjs));
+              if (platformObjs.length > 0) {
+                console.log('[late-proxy] Resolved from filtered accounts:', JSON.stringify(platformObjs));
+              }
             }
           }
         } catch (e) {
-          console.warn('[late-proxy] Profile lookup failed:', e.message);
+          console.warn('[late-proxy] Filtered accounts lookup failed:', e.message);
+        }
+      }
+
+      // ── Fallback 2: GET /accounts (all) — find by profile field on account ──
+      if (platformObjs.length === 0 && profileId) {
+        try {
+          const allRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
+          if (allRes.ok) {
+            const allData = await allRes.json();
+            const allAccounts = allData.accounts || allData || [];
+            // DIAGNOSTIC: log EVERY field of EVERY account so we can find the profile link
+            console.log(`[late-proxy] ALL ${allAccounts.length} raw accounts:`, JSON.stringify(allAccounts).substring(0, 2000));
+            // Try every possible profile field name
+            const matched = allAccounts.filter(a => {
+              const p = a.profile || a.profileId || a.profile_id || a.profileid || a.owner || a.profileRef || '';
+              const pStr = typeof p === 'object' ? (p._id || p.id || JSON.stringify(p)) : String(p);
+              return pStr === profileId;
+            });
+            console.log(`[late-proxy] Matched ${matched.length} accounts for profile ${profileId}`);
+            if (matched.length > 0) {
+              platformObjs = requestedPlatforms.map(p => {
+                const acc = matched.find(a => (a.platform || '').toLowerCase() === p);
+                const accId = acc?._id || acc?.id || acc?.accountId;
+                return acc && accId ? { platform: p, accountId: accId } : null;
+              }).filter(Boolean);
+            }
+          }
+        } catch (e) {
+          console.warn('[late-proxy] All accounts lookup failed:', e.message);
         }
       }
 
