@@ -442,6 +442,7 @@ const Dashboard: React.FC = () => {
   const [createMode, setCreateMode] = useState<'generate' | 'write'>('generate');
   const [contentType, setContentType] = useState<'text' | 'image' | 'video'>('text');
   const [contentFormat, setContentFormat] = useState<string>('standard');
+  const [lastImagePrompt, setLastImagePrompt] = useState<string>('');
   const [generatedVideoScript, setGeneratedVideoScript] = useState<VideoScript | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [showVideoBriefDetail, setShowVideoBriefDetail] = useState(false);
@@ -740,6 +741,7 @@ const Dashboard: React.FC = () => {
       const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat);
       setGeneratedContent(result.content);
       setGeneratedHashtags(result.hashtags || []);
+      if (result.imagePrompt) setLastImagePrompt(result.imagePrompt);
       return result;
     } catch (e: any) {
       const msg: string = e?.message || String(e);
@@ -769,7 +771,7 @@ const Dashboard: React.FC = () => {
     setVideoProgress(0);
     const result = await handleGenerate();
     if (!result) return;
-    if (contentType === 'image') await handleGenerateImage();
+    if (contentType === 'image') await handleGenerateImage(result.imagePrompt);
     if (contentType === 'video') {
       // Step 1: Generate text brief
       setIsGeneratingVideo(true);
@@ -823,11 +825,14 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const handleGenerateImage = async () => {
+  const handleGenerateImage = async (aiImagePrompt?: string) => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return; }
     setIsGeneratingImage(true);
+    // Use AI-generated image prompt if available, otherwise fall back to topic
+    const imageDesc = aiImagePrompt || lastImagePrompt || `${profile.type}: ${topic}`;
+    console.log('Image prompt:', imageDesc);
     try {
-      const img = await generateMarketingImage(`${profile.type}: ${topic}`);
+      const img = await generateMarketingImage(imageDesc);
       if (img) setGeneratedImage(img);
       else toast('Image generation failed — check browser console for details.', 'error');
     } catch (e: any) {
@@ -2081,7 +2086,7 @@ const Dashboard: React.FC = () => {
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-2">
                         {canUseImages && (
                           <button
-                            onClick={handleGenerateImage}
+                            onClick={() => handleGenerateImage()}
                             disabled={isGeneratingImage}
                             title="Regenerate image"
                             className="bg-white/15 hover:bg-white/25 backdrop-blur border border-white/20 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition"

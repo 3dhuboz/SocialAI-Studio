@@ -153,7 +153,7 @@ ANTI-GENERIC RULES:
 - Write like you're texting a smart friend, not writing a press release
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...]}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "A 10–15 word vivid visual description of the perfect photo/image to accompany this specific post. Be concrete — describe the scene, objects, lighting, colours, and mood. NOT abstract concepts."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
@@ -265,24 +265,25 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
     return dataUrl ? await compressImage(dataUrl, 700, 0.65) : null;
   };
 
-  // Extract just the core topic — keep prompt SHORT to avoid 500 errors
-  const corePrompt = prompt.replace(/^.*?:\s*/, '').substring(0, 80).trim();
+  // Use the prompt directly — it's already an AI-generated visual description
+  // Keep it short (max 120 chars) to avoid Pollinations 500 errors
+  const visualPrompt = prompt.substring(0, 120).trim();
   try {
-    const img = await pollinationsFetch(`${corePrompt}, professional photo, vibrant`);
+    const img = await pollinationsFetch(`${visualPrompt}, professional photography, sharp focus, vibrant colors`);
     if (img) return img;
   } catch (e: any) { console.warn('Pollinations attempt 1:', e?.message); }
 
-  // Retry with even simpler prompt
+  // Retry with shorter version
   try {
-    const simplePrompt = corePrompt.split(/[,\-–—.]/).slice(0, 2).join(' ').trim().substring(0, 40);
-    const img = await pollinationsFetch(`${simplePrompt} photo`);
+    const shortPrompt = visualPrompt.split(/[,\-–—.]/).slice(0, 3).join(',').trim().substring(0, 60);
+    const img = await pollinationsFetch(`${shortPrompt}, photo`);
     if (img) return img;
   } catch (e: any) { console.warn('Pollinations attempt 2:', e?.message); }
 
   // ── 3. Picsum — random quality photo as absolute last resort ────────
   try {
     console.log('Falling back to Picsum (random stock photo)…');
-    const seed = encodeURIComponent(corePrompt.substring(0, 20));
+    const seed = encodeURIComponent(visualPrompt.substring(0, 20));
     const picRes = await fetch(`https://picsum.photos/seed/${seed}/1024/1024`);
     if (picRes.ok) {
       const blob = await picRes.blob();
