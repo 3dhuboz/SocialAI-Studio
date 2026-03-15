@@ -838,10 +838,11 @@ ABSOLUTE RULES:
 1. Exactly ${postsToGenerate} posts total (${fbCount} Facebook, ${igCount} Instagram${videoCount > 0 ? `, ${videoCount} Reels/Videos` : ''}).
 2. Spread ~${postsPerDay} posts per day. Distribute evenly across all ${windowDays} days.
 3. NEVER schedule two posts at the same time on the same day.
-4. Each day: different pillars, different formats (1-liner, storytelling, question, list, testimonial, CTA).
-5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat).
+4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
+5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: 10-15 per post, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
 7. imagePrompt: specific, vivid, production-quality description of the visual for this exact post.
+8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
@@ -881,10 +882,12 @@ RULES:
 1. Exactly ${effectivePosts} posts (${fbCount} Facebook, ${igCount} Instagram${videoCount > 0 ? `, ${videoCount} Reels` : ''}).
 2. Schedule ONLY on the best days listed above, at the researched peak times.
 3. Rotate through ALL content pillars — no pillar used more than twice in a row.
-4. Each caption: strong hook first line, body matching the caption style, specific CTA last line.
-5. Hashtags: 8-12 per post, mix all 4 tiers + local. Vary the set per post — no identical hashtag lists.
-6. imagePrompt: ultra-specific, production-quality visual description tailored to this exact post topic.
-7. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
+4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
+5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
+6. Hashtags: 8-12 per post, mix all 4 tiers + local. Vary the set per post — no identical hashtag lists.
+7. imagePrompt: ultra-specific, production-quality visual description tailored to this exact post topic.
+8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
+9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
