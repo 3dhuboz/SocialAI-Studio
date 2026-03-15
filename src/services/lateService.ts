@@ -1,9 +1,9 @@
-const PROXY = '/.netlify/functions/late-proxy';
+const PROXY = '/api/late-proxy';
 
 const safeJson = async (res: Response) => {
   const text = await res.text();
   if (!text || !text.trim()) {
-    throw new Error('Social connection service is not available. If running locally, use `netlify dev`. Otherwise check the Netlify deploy status.');
+    throw new Error('Social connection service is not available. Check the deployment status or try refreshing.');
   }
   try {
     return JSON.parse(text);
