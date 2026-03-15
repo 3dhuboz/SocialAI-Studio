@@ -22,6 +22,7 @@ import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
 import { LateConnectButton } from './components/LateConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
+import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
 import { LivePostPreview } from './components/LivePostPreview';
 import {
@@ -30,7 +31,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff
+  Key, EyeOff, Home
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -173,7 +174,7 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, logIn, logOut, refreshUserDoc } = useAuth();
-  const [activeTab, setActiveTab] = useState<'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('smart');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -1616,6 +1617,7 @@ const Dashboard: React.FC = () => {
 
   // ── Tab Rendering ──
   const tabs = [
+    { id: 'home' as const, label: 'Home', icon: Home },
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
@@ -2568,6 +2570,25 @@ const Dashboard: React.FC = () => {
             )}
 
           </div>
+        )}
+
+        {/* ═══ HOME TAB ═══ */}
+        {activeTab === 'home' && (
+          <HomeDashboard
+            posts={posts}
+            stats={stats}
+            liveStats={liveStats}
+            hasApiKey={hasApiKey}
+            fbConnected={fbConnected}
+            activePlan={activePlan}
+            planName={planCfg?.name}
+            businessName={profile.name || CLIENT.defaultBusinessName}
+            onGoCalendar={() => setActiveTab('calendar')}
+            onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
+            onGoSchedule={() => { setActiveTab('smart'); setSmartSubMode('autopilot'); }}
+            onGoInsights={() => setActiveTab('insights')}
+            onGoSettings={() => setActiveTab('settings')}
+          />
         )}
 
         {/* ═══ CALENDAR TAB ═══ */}
