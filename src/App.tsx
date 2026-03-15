@@ -425,6 +425,7 @@ const Dashboard: React.FC = () => {
   const [scheduleDate, setScheduleDate] = useState('');
   const [createMode, setCreateMode] = useState<'generate' | 'write'>('generate');
   const [contentType, setContentType] = useState<'text' | 'image' | 'video'>('text');
+  const [contentFormat, setContentFormat] = useState<string>('standard');
   const [generatedVideoScript, setGeneratedVideoScript] = useState<VideoScript | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [showVideoBriefDetail, setShowVideoBriefDetail] = useState(false);
@@ -720,7 +721,7 @@ const Dashboard: React.FC = () => {
     if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings first.', 'warning'); return null; }
     setIsGenerating(true);
     try {
-      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile);
+      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat);
       setGeneratedContent(result.content);
       setGeneratedHashtags(result.hashtags || []);
       return result;
@@ -1920,6 +1921,33 @@ const Dashboard: React.FC = () => {
                 ))}
               </div>
 
+              {/* Post Style / Format selector */}
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold text-white/20 uppercase tracking-widest">Post style</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'standard', icon: '✨', label: 'Standard' },
+                    { id: 'question', icon: '❓', label: 'Question' },
+                    { id: 'tip', icon: '💡', label: 'Quick Tip' },
+                    { id: 'story', icon: '📖', label: 'Micro-Story' },
+                    { id: 'behindscenes', icon: '🎬', label: 'Behind the Scenes' },
+                    { id: 'poll', icon: '📊', label: 'Poll / This or That' },
+                    { id: 'carousel', icon: '📋', label: 'List / Carousel' },
+                    { id: 'promotional', icon: '🏷️', label: 'Soft Promo' },
+                  ].map(f => (
+                    <button key={f.id}
+                      onClick={() => setContentFormat(f.id)}
+                      className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition font-medium ${
+                        contentFormat === f.id
+                          ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                          : 'bg-white/3 border-white/8 text-white/30 hover:text-white/60 hover:border-white/20'
+                      }`}>
+                      <span>{f.icon}</span> {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Quick-start starters */}
               <div className="space-y-2">
                 <p className="text-[10px] font-semibold text-white/20 uppercase tracking-widest">Quick starts — click to use</p>
@@ -1972,6 +2000,29 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
+            {/* Generation loading skeleton */}
+            {(isGenerating || isGeneratingImage || isGeneratingVideo) && !generatedContent && !generatedImage && (
+              <div className="rounded-2xl border border-white/10 overflow-hidden bg-white/2 p-5 space-y-4 animate-pulse">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-full bg-amber-500/20" />
+                  <div className="h-3 w-32 bg-white/8 rounded-full" />
+                </div>
+                <div className="space-y-2.5">
+                  <div className="h-3 bg-white/6 rounded-full w-full" />
+                  <div className="h-3 bg-white/6 rounded-full w-4/5" />
+                  <div className="h-3 bg-white/6 rounded-full w-3/5" />
+                </div>
+                <div className="flex gap-2">
+                  <div className="h-5 w-16 bg-white/5 rounded-full" />
+                  <div className="h-5 w-20 bg-white/5 rounded-full" />
+                  <div className="h-5 w-14 bg-white/5 rounded-full" />
+                </div>
+                <p className="text-xs text-white/20 text-center pt-2">
+                  {isGenerating ? '✍️ Writing your post…' : isGeneratingImage ? '🎨 Generating image…' : '🎬 Building video brief…'}
+                </p>
+              </div>
+            )}
+
             {/* Generated Output */}
             {(generatedContent || generatedImage) && (
               <div className="rounded-2xl border border-amber-500/20 overflow-hidden shadow-xl shadow-amber-500/5"
@@ -1981,6 +2032,11 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center justify-between px-5 py-3 border-b border-white/6">
                   <span className="flex items-center gap-2 text-xs font-semibold text-amber-300">
                     <Sparkles size={13} className="text-amber-400" /> Generated Post
+                    {contentFormat !== 'standard' && (
+                      <span className="text-[9px] bg-amber-500/15 text-amber-400/70 border border-amber-500/20 px-2 py-0.5 rounded-full font-semibold uppercase">
+                        {contentFormat === 'behindscenes' ? 'BTS' : contentFormat}
+                      </span>
+                    )}
                   </span>
                   <div className="flex items-center gap-2">
                     {generatedContent && <span className="text-[10px] text-white/25">{generatedContent.length} chars</span>}

@@ -79,27 +79,55 @@ export const generateSocialPost = async (
     productsServices?: string;
     socialGoal?: string;
     location?: string;
-  }
+  },
+  contentFormat?: string
 ) => {
   const profileContext = profile ? [
-    profile.description && `About the business: ${profile.description}`,
+    profile.description && `About: ${profile.description}`,
     profile.targetAudience && `Target audience: ${profile.targetAudience}`,
-    profile.uniqueValue && `What makes them unique: ${profile.uniqueValue}`,
-    profile.productsServices && `Main products/services: ${profile.productsServices}`,
-    profile.socialGoal && `Social media goal: ${profile.socialGoal}`,
+    profile.uniqueValue && `Differentiator: ${profile.uniqueValue}`,
+    profile.productsServices && `Products/services: ${profile.productsServices}`,
+    profile.socialGoal && `Primary social goal: ${profile.socialGoal}`,
     profile.location && `Location: ${profile.location}`,
   ].filter(Boolean).join('\n') : '';
+
+  // Pick a random content angle so repeated generations feel fresh
+  const angles = [
+    'Tell a micro-story or anecdote that connects emotionally',
+    'Share a surprising fact, stat, or counterintuitive insight',
+    'Ask a thought-provoking question that invites comments',
+    'Give a quick actionable tip the audience can use today',
+    'Show a behind-the-scenes moment or honest reflection',
+    'Create urgency or FOMO around the topic',
+    'Use a bold opinion or hot take to spark conversation',
+    'Celebrate a win, milestone, or customer success',
+  ];
+  const angle = angles[Math.floor(Math.random() * angles.length)];
+
+  // Content format instructions
+  const formatGuide: Record<string, string> = {
+    standard: '',
+    question: 'FORMAT: Write as an engaging question post — pose a thought-provoking question to drive comments. The entire post should revolve around sparking a conversation.',
+    tip: 'FORMAT: Write as a "Quick Tip" post — share one specific, actionable piece of advice. Start with a hook like "Pro tip:" or "Did you know?" and deliver real value.',
+    story: 'FORMAT: Write as a micro-story — use a brief narrative arc (situation → tension → resolution). Make it personal and relatable. First-person preferred.',
+    behindscenes: 'FORMAT: Write as a behind-the-scenes peek — show the human side of the business. Raw, authentic, not polished. Let the audience feel like an insider.',
+    poll: 'FORMAT: Write as a poll/this-or-that post — present two options and ask the audience to vote in comments. Keep it fun and low-friction to respond to.',
+    carousel: 'FORMAT: Write as a carousel/list post — structure content as a numbered list (3–5 points). Each point should be a standalone insight. Great for saves.',
+    promotional: 'FORMAT: Write as a soft promotional post — highlight a product/service without being salesy. Lead with the problem it solves or the outcome it delivers. CTA at end.',
+  };
+  const formatInstr = formatGuide[contentFormat || 'standard'] || '';
 
   // Platform-specific rules (research-backed)
   const platformRules = platform === 'Facebook'
     ? `FACEBOOK POST RULES (2025/26 algorithm — follow strictly):
 - Body: 80–150 characters is the engagement sweet spot. Max 300 for storytelling. NEVER exceed 400.
 - Structure: attention-grabbing hook first line → 1–2 body lines → CTA last.
-- Voice: conversational, human, first-person. Not a brand announcement. Write like a person.
+- Voice: conversational, human, first-person. Not a brand announcement. Write like a real person talking to a friend.
 - Hashtags: EXACTLY 3–5 niche-relevant hashtags. More than 5 actively reduces reach.
 - Emojis: 2–4 placed naturally mid-sentence or at line breaks. Not at the end of every line.
 - CTA: end with a comment-driving question OR a soft "DM us" / "tap the link". Never hard-sell.
-- Avoid: pasting links in the post body (kills reach), all-caps words, "link in bio" on Facebook.`
+- Line breaks: use short paragraphs (1–2 sentences each) with blank lines between them for readability.
+- Avoid: pasting links in the post body (kills reach), all-caps words, "link in bio" on Facebook, generic filler, corporate jargon.`
     : `INSTAGRAM POST RULES (2025/26 Reels-first algorithm — follow strictly):
 - Hook: the first 125 characters must stop the scroll — bold claim, intriguing question, or surprising fact.
 - Body: 150–280 characters total. Reels-era captions are shorter; save-worthy value drives shares.
@@ -108,17 +136,25 @@ export const generateSocialPost = async (
 - CTA: prioritise saves ("Save this ✓"), shares ("Tag someone"), or comments (open question).
 - Avoid: hashtag dumps >10 (penalised), generic captions, posting without a scroll-stopping hook.`;
 
-  const prompt = `
-You are an expert social media manager for "${businessName}", a ${businessType}.
-Tone: ${tone}.
-${profileContext ? `\nBusiness context:\n${profileContext}` : ''}
+  const prompt = `You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
+Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
+${profileContext ? `\nBRAND CONTEXT:\n${profileContext}` : ''}
+
+CREATIVE ANGLE FOR THIS POST: ${angle}
+${formatInstr ? `\n${formatInstr}` : ''}
 
 ${platformRules}
 
+ANTI-GENERIC RULES:
+- Never start with "Exciting news!" or "We're thrilled to announce"
+- Never use filler phrases like "In today's fast-paced world" or "As a business owner"
+- Every sentence must earn its place — if it could apply to any business, rewrite it
+- Reference specific details about this business (products, location, audience) when relevant
+- Write like you're texting a smart friend, not writing a press release
+
 Write a ${platform} post about: "${topic}".
-Return JSON with "content" (post body text only — NO hashtags in content) and "hashtags" (array of strings without # prefix).
-The content field must respect the character limits above. Do not pad with filler.
-  `;
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...]}
+Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
     const trimmed = raw.trim();
