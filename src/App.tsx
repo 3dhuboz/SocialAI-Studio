@@ -385,6 +385,23 @@ const Dashboard: React.FC = () => {
     sync();
   }, [user]);
 
+  // Detect overdue scheduled posts and mark them as 'Missed'
+  useEffect(() => {
+    if (!user || posts.length === 0) return;
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const overdue = posts.filter(p => p.status === 'Scheduled' && new Date(p.scheduledFor) < fiveMinAgo);
+    if (overdue.length === 0) return;
+    overdue.forEach(async (p) => {
+      try {
+        const col = activeClientId
+          ? collection(db, 'users', user.uid, 'clients', activeClientId, 'posts')
+          : collection(db, 'users', user.uid, 'posts');
+        await updateDoc(doc(col, p.id), { status: 'Missed' });
+      } catch { /* silent */ }
+    });
+    setPosts(prev => prev.map(p => overdue.find(o => o.id === p.id) ? { ...p, status: 'Missed' as const } : p));
+  }, [posts.length, user, activeClientId]);
+
   // Load health metrics (last post + scheduled count) when Clients tab is active
   useEffect(() => {
     if (activeTab !== 'clients' || !user || clients.length === 0) return;
@@ -1027,7 +1044,7 @@ const Dashboard: React.FC = () => {
       try {
         const fullText = generatedHashtags.length ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
         const mediaItems = generatedImage ? await uploadImageToLate(generatedImage) : undefined;
-        await LateService.post(
+        const lateResult = await LateService.post(
           lateProfileId,
           [platform.toLowerCase() as 'facebook' | 'instagram'],
           fullText,
@@ -1035,6 +1052,7 @@ const Dashboard: React.FC = () => {
           scheduleDate,
           mediaItems
         );
+        if (lateResult?.id) await updateDoc(ref, { latePostId: lateResult.id });
         toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
       } catch (e: any) {
         toast(`Post saved but Late scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
@@ -1310,7 +1328,7 @@ const Dashboard: React.FC = () => {
               const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
               const imageDataUrl = smartPostImages[i];
               const mediaItems = imageDataUrl ? await uploadImageToLate(imageDataUrl) : undefined;
-              await LateService.post(
+              const lateResult = await LateService.post(
                 lateProfileId,
                 [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
                 text,
@@ -1318,6 +1336,7 @@ const Dashboard: React.FC = () => {
                 sp.scheduledFor,
                 mediaItems
               );
+              if (lateResult?.id) await updateDoc(ref, { latePostId: lateResult.id });
             } catch (lateErr: any) {
               lateFailCount++;
               console.warn(`Late scheduling failed for post ${i}:`, lateErr?.message);
@@ -2594,8 +2613,22 @@ const Dashboard: React.FC = () => {
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
                   await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+                  await updateDoc(doc(activeClientId ? collection(db, 'users', user!.uid, 'clients', activeClientId, 'posts') : collection(db, 'users', user!.uid, 'posts'), post.id), { status: 'Posted' });
                   toast('Published successfully!', 'success');
                 } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
+              }}
+              onRetry={async (post) => {
+                try {
+                  const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
+                  if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
+                  const imageSource = calendarImages[post.id] || post.image;
+                  const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
+                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
+                  const postsCollection = activeClientId ? collection(db, 'users', user!.uid, 'clients', activeClientId, 'posts') : collection(db, 'users', user!.uid, 'posts');
+                  await updateDoc(doc(postsCollection, post.id), { status: 'Posted' });
+                  setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+                  toast('Post published successfully!', 'success');
+                } catch (e: any) { toast(`Retry failed: ${e?.message?.substring(0, 80)}`, 'error'); }
               }}
               onRegenImage={handleCalendarRegenImage}
               onUpload={handleCalendarUpload}

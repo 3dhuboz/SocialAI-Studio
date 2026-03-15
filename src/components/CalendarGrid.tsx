@@ -14,6 +14,7 @@ interface Props {
   hasApiKey: boolean;
   onDelete: (id: string) => void;
   onPublish: (post: SocialPost) => Promise<void>;
+  onRetry?: (post: SocialPost) => Promise<void>;
   onSave: (id: string, updates: Partial<SocialPost>) => Promise<void>;
   onRegenImage: (postId: string, prompt: string) => void;
   onUpload: (postId: string) => void;
@@ -30,7 +31,7 @@ function isSameDay(a: Date, b: Date) {
 
 export const CalendarGrid: React.FC<Props> = ({
   posts, calendarImages, calendarGenSet, fbConnected, hasApiKey,
-  onDelete, onPublish, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart,
+  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart,
 }) => {
   const today = new Date();
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -146,7 +147,7 @@ export const CalendarGrid: React.FC<Props> = ({
                 <div className="space-y-0.5">
                   {fbPosts.slice(0, 2).map(p => (
                     <div key={p.id} className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium
-                      ${p.status === 'Posted' ? 'bg-green-500/20 text-green-300' : 'bg-blue-500/20 text-blue-300'}
+                      ${p.status === 'Posted' ? 'bg-green-500/20 text-green-300' : p.status === 'Missed' ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'}
                     `}>
                       <Facebook size={8} className="inline mr-0.5" />
                       {new Date(p.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -154,7 +155,7 @@ export const CalendarGrid: React.FC<Props> = ({
                   ))}
                   {igPosts.slice(0, 2).map(p => (
                     <div key={p.id} className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium
-                      ${p.status === 'Posted' ? 'bg-green-500/20 text-green-300' : 'bg-pink-500/20 text-pink-300'}
+                      ${p.status === 'Posted' ? 'bg-green-500/20 text-green-300' : p.status === 'Missed' ? 'bg-red-500/20 text-red-300' : 'bg-pink-500/20 text-pink-300'}
                     `}>
                       <Instagram size={8} className="inline mr-0.5" />
                       {new Date(p.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -241,15 +242,25 @@ export const CalendarGrid: React.FC<Props> = ({
                         : <Facebook size={11} className="text-blue-400" />}
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
                         post.status === 'Posted' ? 'bg-green-500/15 text-green-300' :
+                        post.status === 'Missed' ? 'bg-red-500/20 text-red-300' :
                         post.status === 'Scheduled' ? 'bg-blue-500/15 text-blue-300' :
                         'bg-white/8 text-white/30'
-                      }`}>{post.status}</span>
+                      }`}>{post.status === 'Missed' ? '⚠ Missed' : post.status}</span>
                       <span className="text-[11px] text-white/25">
                         {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                     <p className="text-xs text-white/60 line-clamp-2 leading-relaxed">{post.content}</p>
                   </div>
+                  {post.status === 'Missed' && onRetry && (
+                    <button
+                      onClick={async (e) => { e.stopPropagation(); setPublishingId(post.id); try { await onRetry(post); } finally { setPublishingId(null); } }}
+                      disabled={publishingId === post.id}
+                      className="shrink-0 bg-red-500/20 hover:bg-red-500/30 border border-red-500/25 text-red-300 text-[10px] font-bold px-2 py-1 rounded-lg transition flex items-center gap-1"
+                    >
+                      {publishingId === post.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Retry
+                    </button>
+                  )}
                   <div className="text-white/15 group-hover:text-white/35 transition shrink-0 self-center text-xs">›</div>
                 </button>
               ))}

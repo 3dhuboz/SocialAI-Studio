@@ -4,7 +4,8 @@ export interface SocialPost {
   content: string;
   hashtags: string[];
   scheduledFor: string;
-  status: 'Draft' | 'Scheduled' | 'Posted';
+  status: 'Draft' | 'Scheduled' | 'Posted' | 'Missed';
+  latePostId?: string;
   image?: string;
   imagePrompt?: string;
   reasoning?: string;
