@@ -22,9 +22,9 @@ export const handler = async (event) => {
   }
 
   const apiKey =
+    process.env.ANTHROPIC_API_KEY ||
     event.headers?.['x-claude-key'] ||
     event.headers?.['X-Claude-Key'] ||
-    process.env.ANTHROPIC_API_KEY ||
     '';
 
   if (!apiKey) {

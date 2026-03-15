@@ -372,22 +372,26 @@ Return ONLY this exact JSON structure, no markdown:
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
 }`;
 
+    let claudeError: string | null = null;
     if (ClaudeService.isConfigured()) {
       try {
         const text = await ClaudeService.generate(prompt, { temperature: 0.4, maxTokens: 1500 });
         return parseInsightJson(text);
       } catch (e: any) {
-        const msg: string = e?.message || '';
-        if (msg.includes('401') || msg.includes('invalid') || msg.includes('Invalid') || msg.includes('API key')) {
-          throw new Error(`Claude key error: ${msg}`);
-        }
-        console.warn('Claude generateInsightReport failed, falling back to Gemini:', msg);
+        claudeError = e?.message || 'Unknown Claude error';
+        console.warn('Claude generateInsightReport failed, falling back to Gemini:', claudeError);
       }
     }
     const ai = getAI();
-    if (!ai) throw new Error('No AI configured.');
-    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.4 });
-    return parseInsightJson(response.text);
+    if (!ai) throw new Error(claudeError ? `Claude failed: ${claudeError}` : 'No AI configured.');
+    try {
+      const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.4 });
+      return parseInsightJson(response.text);
+    } catch (e: any) {
+      const geminiMsg = e?.message || String(e);
+      if (claudeError) throw new Error(`Claude error: ${claudeError} | Gemini error: ${geminiMsg}`);
+      throw new Error(geminiMsg);
+    }
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.warn('generateInsightReport failed:', msg);
@@ -452,22 +456,26 @@ Return ONLY this exact JSON, no markdown:
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
 }`;
 
+    let claudeError: string | null = null;
     if (ClaudeService.isConfigured()) {
       try {
         const text = await ClaudeService.generate(prompt, { temperature: 0.3, maxTokens: 1500 });
         return parseInsightJson(text);
       } catch (e: any) {
-        const msg: string = e?.message || '';
-        if (msg.includes('401') || msg.includes('invalid') || msg.includes('Invalid') || msg.includes('API key')) {
-          throw new Error(`Claude key error: ${msg}`);
-        }
-        console.warn('Claude generateInsightReportFromPosts failed, falling back to Gemini:', msg);
+        claudeError = e?.message || 'Unknown Claude error';
+        console.warn('Claude generateInsightReportFromPosts failed, falling back to Gemini:', claudeError);
       }
     }
     const ai = getAI();
-    if (!ai) throw new Error('No AI configured.');
-    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.3 });
-    return parseInsightJson(response.text);
+    if (!ai) throw new Error(claudeError ? `Claude failed: ${claudeError}` : 'No AI configured.');
+    try {
+      const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.3 });
+      return parseInsightJson(response.text);
+    } catch (e: any) {
+      const geminiMsg = e?.message || String(e);
+      if (claudeError) throw new Error(`Claude error: ${claudeError} | Gemini error: ${geminiMsg}`);
+      throw new Error(geminiMsg);
+    }
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.warn('generateInsightReportFromPosts failed:', msg);

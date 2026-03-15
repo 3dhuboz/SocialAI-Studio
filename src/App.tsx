@@ -712,16 +712,19 @@ const Dashboard: React.FC = () => {
       return result;
     } catch (e: any) {
       const msg: string = e?.message || String(e);
+      const primaryMsg = msg.includes('| Gemini error:') ? msg.split('| Gemini error:')[0].trim() : msg;
       const hasClaudeKey = !!localStorage.getItem('sai_claude_key');
-      if (msg.includes('Claude key error') || msg.includes('401') || msg.includes('Invalid') && msg.includes('Claude')) {
-        toast(`Claude key error — check your API key in Settings. (${msg.substring(0, 60)})`, 'error');
+      if (primaryMsg.includes('Claude error:') || primaryMsg.includes('Claude failed:') || primaryMsg.includes('Claude key error')) {
+        toast(primaryMsg.substring(0, 100), 'error');
+      } else if (primaryMsg.includes('401') || (primaryMsg.includes('Invalid') && primaryMsg.includes('Claude'))) {
+        toast(`Claude key error — check your API key in Settings. (${primaryMsg.substring(0, 60)})`, 'error');
       } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
         toast(hasClaudeKey
-          ? 'AI quota exceeded — Claude proxy may still be deploying. Try again in 1–2 min.'
+          ? 'AI quota exceeded — Claude failed and Gemini fallback is also out of quota.'
           : 'Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.',
           'error');
       } else {
-        toast(`AI error: ${msg.substring(0, 100)}`, 'error');
+        toast(`AI error: ${primaryMsg.substring(0, 100)}`, 'error');
       }
       return null;
     } finally {
@@ -1185,17 +1188,20 @@ const Dashboard: React.FC = () => {
       setInsightStale(false); 
       if (!silent) {
         const msg: string = e?.message || String(e);
+        const primaryMsg = msg.includes('| Gemini error:') ? msg.split('| Gemini error:')[0].trim() : msg;
         const hasClaudeKey = !!localStorage.getItem('sai_claude_key');
-        if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+        if (primaryMsg.includes('Claude error:') || primaryMsg.includes('Claude failed:') || primaryMsg.includes('Claude key error')) {
+          toast(`Insights failed: ${primaryMsg.substring(0, 80)}`, 'error');
+        } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
           toast(hasClaudeKey
-            ? 'AI quota exceeded — Claude proxy may still be deploying. Try again in 1–2 min.'
+            ? 'AI quota exceeded — Claude failed and Gemini fallback is also out of quota.'
             : 'Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.',
             'error');
         } else if (msg.includes('404') || msg.includes('not found') || msg.includes('Failed to fetch')) {
           toast('AI service unavailable — app is still deploying. Try again in 1–2 minutes.', 'error');
         } else {
-          toast(`Insights failed: ${msg.substring(0, 80)}`, 'error');
-        }  
+          toast(`Insights failed: ${primaryMsg.substring(0, 80)}`, 'error');
+        }
       }
     } finally {
       setIsAnalyzing(false);
@@ -1275,7 +1281,9 @@ const Dashboard: React.FC = () => {
         toast(`Scanned ${scanPosts.length} posts — insights updated!`, 'success');
       }
     } catch (e: any) {
-      toast(`Scan failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+      const msg: string = e?.message || String(e);
+      const primaryMsg = msg.includes('| Gemini error:') ? msg.split('| Gemini error:')[0].trim() : msg;
+      toast(`Scan failed: ${primaryMsg.substring(0, 80) || 'Unknown error'}`, 'error');
     }
     setIsScanningPosts(false);
   };
