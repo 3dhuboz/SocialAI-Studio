@@ -1179,13 +1179,17 @@ const Dashboard: React.FC = () => {
       setInsightStale(false); 
       if (!silent) {
         const msg: string = e?.message || String(e);
+        const hasClaudeKey = !!localStorage.getItem('sai_claude_key');
         if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-          toast('Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.', 'error');
-        } else if (msg.includes('404') || msg.includes('not found')) {
-          toast('AI service unavailable — the app may still be deploying. Try again in 1–2 minutes.', 'error');
+          toast(hasClaudeKey
+            ? 'AI quota exceeded — Claude proxy may still be deploying. Try again in 1–2 min.'
+            : 'Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.',
+            'error');
+        } else if (msg.includes('404') || msg.includes('not found') || msg.includes('Failed to fetch')) {
+          toast('AI service unavailable — app is still deploying. Try again in 1–2 minutes.', 'error');
         } else {
           toast(`Insights failed: ${msg.substring(0, 80)}`, 'error');
-        }
+        }  
       }
     } finally {
       setIsAnalyzing(false);
@@ -1852,7 +1856,7 @@ const Dashboard: React.FC = () => {
                         <ImageIcon size={14} /> Image <span className="text-[10px] ml-1 bg-white/5 px-1.5 py-0.5 rounded">Growth+</span>
                       </div>
                     )}
-                    {(effectivePlan === 'pro' || effectivePlan === 'agency' || isAdminMode) ? (
+                    {(effectivePlan === 'pro' || effectivePlan === 'agency' || (isAdminMode && !activeClientId)) ? (
                       <button onClick={() => setContentType('video')}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'video' ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'}`}>
                         <Play size={14} /> Text + Video Brief
