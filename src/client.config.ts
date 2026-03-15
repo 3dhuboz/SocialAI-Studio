@@ -9,7 +9,7 @@ export const CLIENT = {
   appName: 'SocialAI Studio',
   tagline: 'AI-powered social media — done for you',
 
-  defaultBusinessName: 'My Business',
+  defaultBusinessName: 'Penny Wise I.T',
   defaultBusinessType: 'small business',
   defaultLocation: 'Australia',
   defaultTone: 'Friendly and professional',

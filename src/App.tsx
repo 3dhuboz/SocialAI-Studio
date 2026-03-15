@@ -322,16 +322,30 @@ const Dashboard: React.FC = () => {
     loadClient();
   }, [activeClientId, user]);
 
-  // Restore own Late profile when switching back to own workspace
+  // Restore own workspace (profile, posts, Late profile) when switching back from a client
   useEffect(() => {
     if (!user || activeClientId !== null) return;
     const restoreOwn = async () => {
       const snap = await getDoc(doc(db, 'users', user.uid));
       if (snap.exists()) {
         const d = snap.data();
+        if (d.profile) { const p = { ...DEFAULT_PROFILE, ...d.profile }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
+        if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
         setLateProfileId(d.lateProfileId || '');
         setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
+        if (d.insightReport) {
+          setInsightReport(d.insightReport as InsightReport);
+          const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
+          setInsightStale(ageMs > 24 * 60 * 60 * 1000);
+        } else {
+          setInsightReport(null);
+          setInsightStale(true);
+        }
       }
+      const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
+      const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
+      setPosts(loaded);
+      localStorage.setItem('sai_posts', JSON.stringify(loaded));
     };
     restoreOwn().catch(() => {});
   }, [activeClientId, user]);
