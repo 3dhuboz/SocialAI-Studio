@@ -113,75 +113,131 @@ export const handler = async (event) => {
     }
 
     // ── Publish a post ──────────────────────────────────────────────────
-    // Late API requires: { content, publishNow|scheduledFor, platforms: [{ platform, accountId }] }
     if (action === 'post' && event.httpMethod === 'POST') {
-      const { profileId, platforms, text, mediaUrls, scheduleDate, mediaItems } = JSON.parse(event.body || '{}');
+      const { profileId, platforms, text, mediaUrls, scheduleDate, mediaItems, accountIds } = JSON.parse(event.body || '{}');
       if (!platforms?.length || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'platforms and text are required' }) };
 
-      // ── Fetch connected accounts scoped to THIS profile ──────────────
-      // IMPORTANT: /accounts returns ALL accounts across ALL profiles.
-      // We MUST scope to the profile so each workspace posts to its own page.
-      let allAccounts = [];
-      if (profileId) {
-        // Try profile-specific endpoint first
-        const profAccRes = await fetch(`${LATE_BASE}/profiles/${profileId}/accounts`, { headers: authHeader });
-        if (profAccRes.ok) {
-          const profAccData = await profAccRes.json();
-          allAccounts = profAccData.accounts || profAccData || [];
-          console.log(`[late-proxy] profile ${profileId} accounts:`, JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform, name: a.name }))));
-        }
-        // If profile-specific didn't work, try filtering global accounts by profileId
-        if (allAccounts.length === 0) {
-          const accRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
-          const accData = await accRes.json();
-          const global = accData.accounts || accData || [];
-          // Filter to only accounts belonging to this profile
-          allAccounts = global.filter(a => a.profileId === profileId || a.profile === profileId || a.profile_id === profileId);
-          console.log(`[late-proxy] filtered global accounts for profile ${profileId}:`, JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform, profileId: a.profileId || a.profile }))));
-          // Last resort: if no accounts match the profile filter, use all (legacy behavior)
-          if (allAccounts.length === 0 && global.length > 0) {
-            console.warn(`[late-proxy] WARNING: could not filter accounts by profileId ${profileId}, using all ${global.length} accounts`);
-            allAccounts = global;
+      const requestedPlatforms = platforms.map(p => p.toLowerCase());
+
+      // ── FAST PATH: If caller provides pre-resolved accountIds, skip all lookup ──
+      if (accountIds && typeof accountIds === 'object' && Object.keys(accountIds).length > 0) {
+        const platformObjs = requestedPlatforms
+          .filter(p => accountIds[p])
+          .map(p => ({ platform: p, accountId: accountIds[p] }));
+        if (platformObjs.length > 0) {
+          const postBody = {
+            content: text,
+            platforms: platformObjs,
+            ...(profileId ? { profileId } : {}),
+            ...(scheduleDate ? { scheduledFor: scheduleDate, timezone: 'UTC' } : { publishNow: true }),
+            ...(mediaItems?.length ? { mediaItems } : mediaUrls?.length ? { mediaUrls } : {}),
+          };
+          console.log('[late-proxy] FAST PATH with pre-resolved accountIds:', JSON.stringify(postBody));
+          const res = await fetch(`${LATE_BASE}/posts`, {
+            method: 'POST', headers: authHeader, body: JSON.stringify(postBody),
+          });
+          const rawText = await res.text();
+          let data;
+          try { data = JSON.parse(rawText); } catch { data = { error: rawText || `Late API HTTP ${res.status}` }; }
+          if (!res.ok) {
+            const errMsg = data?.message || data?.error || data?.detail || rawText || `Late API HTTP ${res.status}`;
+            console.log('[late-proxy] FAST PATH error:', errMsg);
+            return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg }) };
           }
+          return { statusCode: res.status, headers, body: JSON.stringify(data) };
         }
-      } else {
-        // No profileId — fall back to global (legacy)
+      }
+
+      // ── Strategy 1: Get profile details → extract its connected accounts ──
+      let profileAccounts = [];
+      if (profileId) {
+        try {
+          const profRes = await fetch(`${LATE_BASE}/profiles/${profileId}`, { headers: authHeader });
+          if (profRes.ok) {
+            const profData = await profRes.json();
+            const prof = profData.profile || profData;
+            // Late profiles may store connected accounts under various keys
+            const accs = prof.accounts || prof.connections || prof.socialAccounts || prof.connectedAccounts || [];
+            profileAccounts = Array.isArray(accs) ? accs : [];
+            console.log(`[late-proxy] profile ${profileId} details:`, JSON.stringify({ name: prof.name, accountCount: profileAccounts.length, accounts: profileAccounts.map(a => ({ id: a._id || a.id, platform: a.platform, name: a.name })) }));
+          }
+        } catch (e) {
+          console.warn('[late-proxy] failed to get profile details:', e.message);
+        }
+      }
+
+      // ── Strategy 2: If profile has accounts, use them directly ─────────
+      let platformObjs = [];
+      if (profileAccounts.length > 0) {
+        platformObjs = requestedPlatforms.map(p => {
+          const acc = profileAccounts.find(a => (a.platform || '').toLowerCase() === p);
+          const accId = acc?._id || acc?.id || acc?.accountId;
+          return acc && accId ? { platform: acc.platform || p, accountId: accId } : null;
+        }).filter(Boolean);
+        console.log(`[late-proxy] resolved from profile accounts:`, JSON.stringify(platformObjs));
+      }
+
+      // ── Strategy 3: Fall back to global /accounts (original approach) ──
+      if (platformObjs.length === 0) {
         const accRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
         const accData = await accRes.json();
-        allAccounts = accData.accounts || accData || [];
-      }
+        const allAccounts = accData.accounts || accData || [];
+        console.log('[late-proxy] ALL global accounts:', JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform, name: a.name, profileId: a.profileId || a.profile || '?' }))));
 
-      // Map requested platform strings → { platform, accountId } objects
-      const requestedPlatforms = platforms.map(p => p.toLowerCase());
-      const platformObjs = requestedPlatforms.map(p => {
-        const acc = allAccounts.find(a => (a.platform || '').toLowerCase() === p);
-        return acc ? { platform: acc.platform, accountId: acc._id } : null;
-      }).filter(Boolean);
+        // Try to filter by profileId if the accounts have that field
+        let filtered = profileId
+          ? allAccounts.filter(a => [a.profileId, a.profile, a.profile_id, a.profileid].includes(profileId))
+          : [];
+        const pool = filtered.length > 0 ? filtered : allAccounts;
+        if (filtered.length === 0 && profileId) {
+          console.warn(`[late-proxy] WARNING: cannot filter accounts by profileId ${profileId}. Using all ${allAccounts.length} accounts.`);
+        }
+
+        platformObjs = requestedPlatforms.map(p => {
+          const acc = pool.find(a => (a.platform || '').toLowerCase() === p);
+          return acc ? { platform: acc.platform, accountId: acc._id } : null;
+        }).filter(Boolean);
+      }
 
       if (platformObjs.length === 0) {
-        const available = allAccounts.map(a => `${a.platform}(${a.name || a._id})`).join(', ') || 'none';
-        return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}] on this workspace's profile. Available: ${available}. Please reconnect in Settings → Social Media Connection.` }) };
+        return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}]. Please reconnect in Settings.` }) };
       }
 
-      const body = {
+      // ── Try posting via profile-specific endpoint first ────────────────
+      const postBody = {
         content: text,
         platforms: platformObjs,
+        ...(profileId ? { profileId } : {}),
         ...(scheduleDate ? { scheduledFor: scheduleDate, timezone: 'UTC' } : { publishNow: true }),
         ...(mediaItems?.length ? { mediaItems } : mediaUrls?.length ? { mediaUrls } : {}),
       };
-      console.log('[late-proxy] POST /posts payload:', JSON.stringify(body));
 
+      // Attempt 1: POST /profiles/{id}/posts (profile-scoped)
+      if (profileId) {
+        console.log(`[late-proxy] Attempt 1: POST /profiles/${profileId}/posts`, JSON.stringify(postBody));
+        const res1 = await fetch(`${LATE_BASE}/profiles/${profileId}/posts`, {
+          method: 'POST', headers: authHeader, body: JSON.stringify(postBody),
+        });
+        if (res1.ok) {
+          const data = await res1.json();
+          console.log('[late-proxy] profile-scoped post SUCCESS');
+          return { statusCode: res1.status, headers, body: JSON.stringify(data) };
+        }
+        const err1 = await res1.text();
+        console.log(`[late-proxy] profile-scoped post failed (${res1.status}):`, err1.substring(0, 200));
+      }
+
+      // Attempt 2: POST /posts (global, with profileId in body)
+      console.log('[late-proxy] Attempt 2: POST /posts', JSON.stringify(postBody));
       const res = await fetch(`${LATE_BASE}/posts`, {
-        method: 'POST',
-        headers: authHeader,
-        body: JSON.stringify(body),
+        method: 'POST', headers: authHeader, body: JSON.stringify(postBody),
       });
       const rawText = await res.text();
       let data;
       try { data = JSON.parse(rawText); } catch { data = { error: rawText || `Late API HTTP ${res.status}` }; }
       if (!res.ok) {
         const errMsg = data?.message || data?.error || data?.detail || rawText || `Late API HTTP ${res.status}`;
-        console.log('[late-proxy] POST /posts error:', errMsg, JSON.stringify(data));
+        console.log('[late-proxy] POST /posts error:', errMsg);
         return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg }) };
       }
       return { statusCode: res.status, headers, body: JSON.stringify(data) };

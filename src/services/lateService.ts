@@ -100,9 +100,18 @@ export const LateService = {
     return { uploadUrl: data.uploadUrl, publicUrl: data.publicUrl };
   },
 
+  /** Fetch all connected accounts (used to resolve accountIds after connecting). */
+  getAccounts: async (): Promise<{ id: string; platform: string; name?: string; profileId?: string }[]> => {
+    const res = await fetch(`${PROXY}?action=list-accounts`);
+    const data = await safeJson(res);
+    const accs = data.accounts || data || [];
+    return accs.map((a: any) => ({ id: a._id || a.id, platform: (a.platform || '').toLowerCase(), name: a.name, profileId: a.profileId || a.profile }));
+  },
+
   /**
    * Publish a post to one or more platforms.
    * platforms: ['facebook'] | ['instagram'] | ['facebook','instagram']
+   * accountIds: optional { facebook: 'acc_id', instagram: 'acc_id' } for direct routing
    * mediaItems: [{ url, type: 'image'|'video' }]
    */
   post: async (
@@ -112,11 +121,12 @@ export const LateService = {
     mediaUrls?: string[],
     scheduleDate?: string,
     mediaItems?: { url: string; type: 'image' | 'video' }[],
+    accountIds?: Record<string, string>,
   ): Promise<LatePostResult> => {
     const res = await fetch(`${PROXY}?action=post`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profileId, platforms, text, mediaUrls, scheduleDate, mediaItems }),
+      body: JSON.stringify({ profileId, platforms, text, mediaUrls, scheduleDate, mediaItems, accountIds }),
     });
     const data = await safeJson(res);
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to publish post');

@@ -267,8 +267,9 @@ const Dashboard: React.FC = () => {
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [lateProfileId, setLateProfileId] = useState<string>('');
   const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
+  const [lateAccountIds, setLateAccountIds] = useState<Record<string, string>>({});
   // Cache agency's own Late profile + name so workspace switching is instant (no async race)
-  const agencyLateRef = useRef<{ profileId: string; platforms: string[]; profileName: string }>({ profileId: '', platforms: [], profileName: CLIENT.defaultBusinessName });
+  const agencyLateRef = useRef<{ profileId: string; platforms: string[]; profileName: string; accountIds: Record<string, string> }>({ profileId: '', platforms: [], profileName: CLIENT.defaultBusinessName, accountIds: {} });
   // Track workspace switches to prevent persistence writing client data to agency doc
   const prevClientIdRef = useRef<string | null | undefined>(undefined);
 
@@ -323,6 +324,7 @@ const Dashboard: React.FC = () => {
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
           if (d.lateProfileId) { setLateProfileId(d.lateProfileId); agencyLateRef.current.profileId = d.lateProfileId; }
           if (d.lateConnectedPlatforms) { setLateConnectedPlatforms(d.lateConnectedPlatforms); agencyLateRef.current.platforms = d.lateConnectedPlatforms; }
+          if (d.lateAccountIds) { setLateAccountIds(d.lateAccountIds); agencyLateRef.current.accountIds = d.lateAccountIds; }
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -412,9 +414,10 @@ const Dashboard: React.FC = () => {
           setProfile(p);
           if (d.stats) setStats({ ...DEFAULT_STATS, ...d.stats });
           else setStats(DEFAULT_STATS);
-          console.log(`[Workspace Switch] Client "${wsName}" lateProfileId:`, d.lateProfileId || '(none)', 'agency ref:', agencyLateRef.current.profileId);
+          console.log(`[Workspace Switch] Client "${wsName}" lateProfileId:`, d.lateProfileId || '(none)', 'accountIds:', JSON.stringify(d.lateAccountIds || {}), 'agency ref:', agencyLateRef.current.profileId);
           setLateProfileId(d.lateProfileId || '');
           setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
+          setLateAccountIds(d.lateAccountIds || {});
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -428,6 +431,7 @@ const Dashboard: React.FC = () => {
           setStats(DEFAULT_STATS);
           setLateProfileId('');
           setLateConnectedPlatforms([]);
+          setLateAccountIds({});
           setInsightReport(null);
           setInsightStale(true);
         }
@@ -444,6 +448,7 @@ const Dashboard: React.FC = () => {
     // IMMEDIATELY restore cached agency Late profile (prevents publishing to wrong page during async fetch)
     setLateProfileId(agencyLateRef.current.profileId);
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
+    setLateAccountIds(agencyLateRef.current.accountIds);
     const restoreOwn = async () => {
       const snap = await getDoc(doc(db, 'users', user.uid));
       if (snap.exists()) {
@@ -452,6 +457,7 @@ const Dashboard: React.FC = () => {
         if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
         setLateProfileId(d.lateProfileId || agencyLateRef.current.profileId);
         setLateConnectedPlatforms(d.lateConnectedPlatforms || agencyLateRef.current.platforms);
+        setLateAccountIds(d.lateAccountIds || agencyLateRef.current.accountIds);
         if (d.insightReport) {
           setInsightReport(d.insightReport as InsightReport);
           const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -843,7 +849,8 @@ const Dashboard: React.FC = () => {
         else toast('Image upload failed — posting text only.', 'warning');
       }
 
-      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems);
+      console.log('Publishing with accountIds:', JSON.stringify(lateAccountIds), 'profileId:', lateProfileId);
+      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems, lateAccountIds);
       setPublishSuccess(true);
       setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
@@ -4175,16 +4182,37 @@ const Dashboard: React.FC = () => {
                   profileId={lateProfileId}
                   connectedPlatforms={lateConnectedPlatforms}
                   businessName={profile.name}
-                  onConnected={(pid, platforms) => {
+                  onConnected={async (pid, platforms) => {
                     setLateProfileId(pid);
                     setLateConnectedPlatforms(platforms);
+                    // Resolve accountIds from Late.dev so we can route posts to the correct page
+                    let resolvedAccountIds: Record<string, string> = {};
+                    try {
+                      const accounts = await LateService.getAccounts();
+                      console.log('[onConnected] ALL accounts from Late:', JSON.stringify(accounts));
+                      for (const p of platforms) {
+                        const pl = p.toLowerCase();
+                        // Prefer account matching this profile, fall back to any
+                        const match = accounts.find(a => a.platform === pl && a.profileId === pid)
+                          || accounts.find(a => a.platform === pl);
+                        if (match) resolvedAccountIds[pl] = match.id;
+                      }
+                      console.log('[onConnected] Resolved accountIds for profile', pid, ':', JSON.stringify(resolvedAccountIds));
+                    } catch (e) { console.warn('[onConnected] Failed to resolve accountIds:', e); }
+                    setLateAccountIds(resolvedAccountIds);
                     if (user) {
                       const ref = activeClientId
                         ? doc(db, 'users', user.uid, 'clients', activeClientId)
                         : doc(db, 'users', user.uid);
-                      updateDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms }).catch(() =>
-                        setDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms }, { merge: true })
+                      updateDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() =>
+                        setDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }, { merge: true })
                       );
+                      // Also update agency cache if on own workspace
+                      if (!activeClientId) {
+                        agencyLateRef.current.profileId = pid;
+                        agencyLateRef.current.platforms = platforms;
+                        agencyLateRef.current.accountIds = resolvedAccountIds;
+                      }
                       if (activeClientId) {
                         setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: pid, lateConnectedPlatforms: platforms } : c));
                       }
@@ -4194,11 +4222,12 @@ const Dashboard: React.FC = () => {
                   onDisconnect={() => {
                     setLateProfileId('');
                     setLateConnectedPlatforms([]);
+                    setLateAccountIds({});
                     if (user) {
                       const ref = activeClientId
                         ? doc(db, 'users', user.uid, 'clients', activeClientId)
                         : doc(db, 'users', user.uid);
-                      updateDoc(ref, { lateProfileId: null, lateConnectedPlatforms: [] }).catch(() => {});
+                      updateDoc(ref, { lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {});
                       if (activeClientId) {
                         setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [] } : c));
                       }
