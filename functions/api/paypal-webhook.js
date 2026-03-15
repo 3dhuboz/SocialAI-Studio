@@ -10,8 +10,9 @@
 const PAYPAL_BASE = 'https://api-m.paypal.com';
 
 function getFirebaseBase(env) {
-  const project = env.FIREBASE_PROJECT_ID || 'socialai-e22c2';
-  const key = env.FIREBASE_WEB_API_KEY || 'AIzaSyDEBOsFhVSuP2jjDU6RR6IcNNmW4o8n6fA';
+  const project = env.FIREBASE_PROJECT_ID;
+  const key = env.FIREBASE_WEB_API_KEY;
+  if (!project || !key) throw new Error('FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY env vars are required');
   return { base: `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`, key };
 }
 

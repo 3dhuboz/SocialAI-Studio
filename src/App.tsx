@@ -348,6 +348,21 @@ const Dashboard: React.FC = () => {
             }
           }
         }
+        // Check for pending PayPal cancellation — downgrade user to free plan
+        if (!isAdmin) {
+          const cancelByUid = await getDoc(doc(db, 'pending_cancellations', user.uid));
+          const cancelByEmail = user.email ? await getDoc(doc(db, 'pending_cancellations', user.email)) : null;
+          const cancelSnap = cancelByUid.exists() ? cancelByUid : (cancelByEmail?.exists() ? cancelByEmail : null);
+          if (cancelSnap) {
+            const c = cancelSnap.data()!;
+            if (!c.consumed) {
+              setActivePlan(null);
+              setSetupStatus('cancelled');
+              await setDoc(doc(db, 'users', user.uid), { plan: null, setupStatus: 'cancelled' }, { merge: true });
+              await updateDoc(cancelSnap.ref, { consumed: true });
+            }
+          }
+        }
         // Load agency clients
         const clientsSnap = await getDocs(collection(db, 'users', user.uid, 'clients'));
         const loadedClients: ClientWorkspace[] = clientsSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClientWorkspace));
