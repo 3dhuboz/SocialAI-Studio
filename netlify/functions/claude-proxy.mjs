@@ -8,7 +8,7 @@
  */
 
 const CLAUDE_BASE = 'https://api.anthropic.com/v1';
-const DEFAULT_MODEL = 'claude-3-5-haiku-20241022';
+const DEFAULT_MODEL = 'claude-3-5-haiku-latest';
 
 export const handler = async (event) => {
   const headers = {
@@ -85,6 +85,21 @@ export const handler = async (event) => {
 
       const text = data?.content?.[0]?.text || '';
       return { statusCode: 200, headers, body: JSON.stringify({ text }) };
+    }
+
+    // ── Health check ──────────────────────────────────────────────────
+    if (action === 'health') {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          ok: true,
+          hasKey: !!apiKey,
+          keySource: process.env.ANTHROPIC_API_KEY ? 'env' : (event.headers?.['x-claude-key'] ? 'header' : 'none'),
+          keyPrefix: apiKey ? apiKey.substring(0, 10) + '...' : 'N/A',
+          model: DEFAULT_MODEL,
+        }),
+      };
     }
 
     return { statusCode: 400, headers, body: JSON.stringify({ error: `Unknown action: ${action}` }) };

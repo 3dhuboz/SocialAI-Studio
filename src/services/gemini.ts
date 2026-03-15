@@ -132,28 +132,29 @@ The content field must respect the character limits above. Do not pad with fille
   };
 
   // ── Claude first ────────────────────────────────────────────────────────
+  let claudeError: string | null = null;
   if (ClaudeService.isConfigured()) {
     try {
       const text = await ClaudeService.generate(prompt, { temperature: 0.8, maxTokens: 512 });
       return parseRaw(text);
     } catch (e: any) {
-      const msg: string = e?.message || '';
-      // Auth/key errors should surface immediately — don't silently fall back
-      if (msg.includes('401') || msg.includes('invalid') || msg.includes('Invalid') || msg.includes('API key')) {
-        throw new Error(`Claude key error: ${msg}`);
-      }
-      console.warn('Claude generateSocialPost failed, falling back to Gemini:', msg);
+      claudeError = e?.message || 'Unknown Claude error';
+      console.warn('Claude generateSocialPost failed, falling back to Gemini:', claudeError);
     }
   }
 
   // ── Gemini fallback ─────────────────────────────────────────────────────
   const ai = getAI();
-  if (!ai) throw new Error('No AI configured. Set a Claude or Gemini API key in Settings.');
+  if (!ai) throw new Error(claudeError ? `Claude failed: ${claudeError}` : 'No AI configured. Set a Claude or Gemini API key in Settings.');
   try {
     const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.8 });
     return parseRaw(response.text);
   } catch (error: any) {
     console.error('Gemini Text Error:', error);
+    // If Claude also failed, surface both errors so the user can see what went wrong
+    if (claudeError) {
+      throw new Error(`Claude error: ${claudeError} | Gemini error: ${error?.message || error}`);
+    }
     throw error;
   }
 };
