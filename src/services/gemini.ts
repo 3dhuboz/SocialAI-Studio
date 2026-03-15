@@ -81,7 +81,7 @@ export const generateSocialPost = async (
     location?: string;
   },
   contentFormat?: string
-) => {
+): Promise<{ content: string; hashtags: string[]; imagePrompt?: string }> => {
   const profileContext = profile ? [
     profile.description && `About: ${profile.description}`,
     profile.targetAudience && `Target audience: ${profile.targetAudience}`,

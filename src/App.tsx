@@ -819,7 +819,7 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Content Generation ──
-  const handleGenerate = async (): Promise<{ content: string; hashtags: string[] } | null> => {
+  const handleGenerate = async (): Promise<{ content: string; hashtags: string[]; imagePrompt?: string } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
     if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings first.', 'warning'); return null; }
     setIsGenerating(true);
@@ -2068,8 +2068,9 @@ const Dashboard: React.FC = () => {
                 <div className="flex flex-wrap gap-2">
                   {getQuickStarts(profile.type, profile.name).map(s => (
                     <button key={s.label}
-                      onClick={() => setTopic(s.text)}
-                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/8 bg-white/2 text-white/30 hover:text-white/60 hover:border-amber-500/30 hover:bg-amber-500/5 transition">
+                      onClick={() => { setTopic(s.text); setTimeout(() => { (document.querySelector('[data-auto-create]') as HTMLButtonElement)?.click(); }, 100); }}
+                      disabled={isGenerating || isGeneratingImage || isGeneratingVideo}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/8 bg-white/2 text-white/30 hover:text-white/60 hover:border-amber-500/30 hover:bg-amber-500/5 transition disabled:opacity-30 disabled:cursor-not-allowed">
                       <span>{s.icon}</span> {s.label}
                     </button>
                   ))}
@@ -2079,6 +2080,7 @@ const Dashboard: React.FC = () => {
               {/* Create button */}
               <div className="flex flex-wrap items-center gap-3">
                 <button
+                  data-auto-create
                   onClick={handleCreatePost}
                   disabled={isGenerating || isGeneratingImage || isGeneratingVideo || !topic.trim()}
                   className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-7 py-3 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20 text-sm"
@@ -2107,19 +2109,37 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Generation loading skeleton */}
+            {/* Generation loading skeleton with step progress */}
             {(isGenerating || isGeneratingImage || isGeneratingVideo) && !generatedContent && !generatedImage && (
-              <div className="rounded-2xl border border-white/10 overflow-hidden bg-white/2 p-5 space-y-4 animate-pulse">
-                <div className="flex items-center gap-2">
-                  <div className="w-5 h-5 rounded-full bg-amber-500/20" />
-                  <div className="h-3 w-32 bg-white/8 rounded-full" />
-                </div>
-                <div className="space-y-2.5">
+              <div className="rounded-2xl border border-white/10 overflow-hidden bg-white/2 p-5 space-y-4">
+                {/* Step progress for image posts */}
+                {contentType === 'image' && (
+                  <div className="flex items-center justify-center gap-3 pb-2">
+                    {[
+                      { label: 'Writing caption', active: isGenerating, done: !isGenerating && (isGeneratingImage || !!generatedContent) },
+                      { label: 'Generating image', active: isGeneratingImage, done: false },
+                    ].map((step, i) => (
+                      <div key={step.label} className="flex items-center gap-2">
+                        {i > 0 && <div className={`h-px w-8 ${step.done || step.active ? 'bg-amber-500/30' : 'bg-white/8'}`} />}
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                          step.done ? 'bg-green-500 text-black' : step.active ? 'bg-amber-500 text-black' : 'bg-white/8 text-white/25'
+                        }`}>
+                          {step.done ? <CheckCircle size={10} /> : step.active ? <Loader2 size={10} className="animate-spin" /> : i + 1}
+                        </div>
+                        <span className={`text-[11px] font-medium ${step.done ? 'text-green-400' : step.active ? 'text-amber-300' : 'text-white/25'}`}>
+                          {step.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Shimmer skeleton */}
+                <div className="space-y-2.5 animate-pulse">
                   <div className="h-3 bg-white/6 rounded-full w-full" />
                   <div className="h-3 bg-white/6 rounded-full w-4/5" />
                   <div className="h-3 bg-white/6 rounded-full w-3/5" />
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 animate-pulse">
                   <div className="h-5 w-16 bg-white/5 rounded-full" />
                   <div className="h-5 w-20 bg-white/5 rounded-full" />
                   <div className="h-5 w-14 bg-white/5 rounded-full" />
