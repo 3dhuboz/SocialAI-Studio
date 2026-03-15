@@ -84,7 +84,7 @@ export const CLIENT = {
    * 6. Add your Client ID and Client Secret to Netlify env vars:
    *    PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET
    * 7. Set up a PayPal Webhook (developer.paypal.com → Webhooks) pointing to:
-   *    https://YOUR_APP_URL/.netlify/functions/paypal-webhook
+   *    https://YOUR_APP_URL/api/paypal-webhook
    *    Subscribe to: BILLING.SUBSCRIPTION.ACTIVATED, BILLING.SUBSCRIPTION.CANCELLED
    *    Copy the Webhook ID into PAYPAL_WEBHOOK_ID Netlify env var
    * Leave paypalClientId as empty string to hide PayPal checkout and fall back to salesUrl.

@@ -55,7 +55,7 @@ export const FacebookService = {
    * Page tokens derived from a long-lived user token never expire.
    */
   exchangeForLongLivedPages: async (shortLivedToken: string): Promise<ExchangeResult> => {
-    const res = await fetch('/.netlify/functions/facebook-exchange-token', {
+    const res = await fetch('/api/facebook-exchange-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ access_token: shortLivedToken }),

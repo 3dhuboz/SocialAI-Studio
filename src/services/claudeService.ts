@@ -1,4 +1,4 @@
-const PROXY = '/.netlify/functions/claude-proxy';
+const PROXY = '/api/claude-proxy';
 
 const proxyHeaders = (): Record<string, string> => {
   const key = localStorage.getItem('sai_claude_key') || '';

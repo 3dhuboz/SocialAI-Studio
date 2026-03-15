@@ -1,4 +1,4 @@
-const PROXY = '/.netlify/functions/runway-proxy';
+const PROXY = '/api/runway-proxy';
 
 const proxyHeaders = () => {
   const key = localStorage.getItem('sai_runway_key');

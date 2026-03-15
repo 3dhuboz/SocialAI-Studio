@@ -1,4 +1,4 @@
-const PROXY = '/.netlify/functions/fal-proxy';
+const PROXY = '/api/fal-proxy';
 
 const proxyHeaders = () => {
   const key = localStorage.getItem('sai_fal_key');

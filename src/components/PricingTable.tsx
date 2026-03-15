@@ -56,7 +56,7 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
     setActivating(true);
     setActivationError(null);
     try {
-      const res = await fetch('/.netlify/functions/paypal-verify', {
+      const res = await fetch('/api/paypal-verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscriptionId, uid: userId || null, planId }),

@@ -727,8 +727,8 @@ const Dashboard: React.FC = () => {
       setCreditsLoading(true);
       try {
         const [falRes, lateRes] = await Promise.allSettled([
-          fetch('/.netlify/functions/fal-proxy?action=get-credits').then(r => r.json()),
-          fetch('/.netlify/functions/late-proxy?action=get-credits').then(r => r.json()),
+          fetch('/api/fal-proxy?action=get-credits').then(r => r.json()),
+          fetch('/api/late-proxy?action=get-credits').then(r => r.json()),
         ]);
         if (cancelled) return;
         if (falRes.status === 'fulfilled' && falRes.value?.balance != null) {
@@ -1399,7 +1399,7 @@ const Dashboard: React.FC = () => {
       // Path 1 — Late list-posts (published posts via Late's managed OAuth)
       if (scanPosts === appPosts && lateProfileId) {
         try {
-          const res = await fetch(`/.netlify/functions/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
+          const res = await fetch(`/api/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
           const lateData = await res.json();
           const rawPosts: any[] = lateData?.posts ?? lateData?.data ?? lateData?.items ?? (Array.isArray(lateData) ? lateData : []);
           if (rawPosts.length) {
