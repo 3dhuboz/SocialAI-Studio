@@ -2918,7 +2918,7 @@ const Dashboard: React.FC = () => {
             {!hasApiKey && (
               <div className="bg-amber-500/8 border border-amber-500/20 rounded-2xl p-6 text-center space-y-3">
                 <Sparkles size={28} className="text-amber-400 mx-auto" />
-                <p className="text-white/60 font-semibold">Set your Gemini API key in Settings to enable AI Insights</p>
+                <p className="text-white/60 font-semibold">Set a Claude or Gemini API key in Settings to enable AI Insights</p>
                 <button onClick={() => setActiveTab('settings')} className="text-xs text-amber-400 underline hover:text-amber-300 transition">Go to Settings →</button>
               </div>
             )}
@@ -2936,7 +2936,7 @@ const Dashboard: React.FC = () => {
                       <p className="text-sm font-bold text-white">
                         {isScanningPosts ? 'Scanning Past Posts…' : 'Generating AI Insights…'}
                       </p>
-                      <p className="text-xs text-white/40">Powered by Gemini</p>
+                      <p className="text-xs text-white/40">Powered by Claude AI</p>
                     </div>
                   </div>
 
@@ -3563,7 +3563,7 @@ const Dashboard: React.FC = () => {
               <p className="text-xs text-white/30 leading-relaxed">
                 Get a key from{' '}
                 <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-orange-400/70 hover:text-orange-400 underline transition">console.anthropic.com</a>
-                {' '}— starts at ~$5 credit, no quota walls. Use <span className="text-white/50 font-mono">claude-3-5-haiku</span> for fast & cheap generation.
+                {' '}— starts at ~$5 credit, no quota walls. Uses <span className="text-white/50 font-mono">claude-sonnet-4-6</span> for premium quality generation.
               </p>
               <div className="flex gap-2 max-w-lg">
                 <input
