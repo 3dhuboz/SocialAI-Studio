@@ -773,21 +773,26 @@ const Dashboard: React.FC = () => {
     if (!result) return;
     if (contentType === 'image') await handleGenerateImage(result.imagePrompt);
     if (contentType === 'video') {
-      // Step 1: Generate text brief
+      // Step 1: Generate text brief with full business context
       setIsGeneratingVideo(true);
-      const brief = await generateVideoScript(topic, platform, profile.name, profile.type, profile.tone, result.content);
+      const brief = await generateVideoScript(
+        topic, platform, profile.name, profile.type, profile.tone, result.content,
+        profile, result.hashtags, contentFormat
+      );
       setGeneratedVideoScript(brief);
       setShowVideoBriefDetail(false);
       setIsGeneratingVideo(false);
 
-      // Step 2: Generate thumbnail image (base64 — passed directly to Runway ML)
-      if (hasApiKey) {
+      // Step 2: Generate thumbnail image using AI-tailored visual description
+      const thumbPrompt = brief.thumbnailPrompt || result.imagePrompt || `${profile.type}: ${topic}`;
+      console.log('Video thumbnail prompt:', thumbPrompt);
+      if (hasApiKey || FalService.isConfigured()) {
         setIsGeneratingImage(true);
         let thumbnailBase64: string | null = null;
         try {
-          const img = await generateMarketingImage(`${profile.type}: ${topic}, cinematic frame, professional`);
+          const img = await generateImage(thumbPrompt);
           if (img) {
-            thumbnailBase64 = img; // Runway ML accepts base64 data URLs natively — don't expose as post image
+            thumbnailBase64 = img;
           } else {
             toast('Thumbnail image generation failed — video will be skipped.', 'warning');
           }
@@ -796,14 +801,17 @@ const Dashboard: React.FC = () => {
         }
         setIsGeneratingImage(false);
 
-        // Step 3: Generate actual Reel video via Runway ML (base64 thumbnail as starting frame)
+        // Step 3: Generate Reel via fal.ai Kling using AI-crafted motion prompt
         if (thumbnailBase64) {
+          const videoMotionPrompt = brief.videoPrompt
+            || `${brief.hook} — ${brief.shots?.[0] || topic}. Cinematic motion, professional quality.`;
+          console.log('Video motion prompt:', videoMotionPrompt);
           setIsGeneratingReel(true);
           setVideoProgress(0.05);
           toast('Generating your Reel via fal.ai (Kling) — this takes 1–3 minutes…', 'info');
           try {
             const videoUrl = await FalService.generateVideo(
-              `${brief.hook} — ${topic}. Cinematic, professional, social media marketing video.`,
+              videoMotionPrompt,
               thumbnailBase64,
               5,
               p => setVideoProgress(p),

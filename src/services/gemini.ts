@@ -308,7 +308,11 @@ export interface VideoScript {
   mood: string;
   duration: string;
   hook: string;
+  thumbnailPrompt: string;
+  videoPrompt: string;
 }
+
+const DEFAULT_VIDEO_SCRIPT: VideoScript = { script: '', shots: [], mood: '', duration: '', hook: '', thumbnailPrompt: '', videoPrompt: '' };
 
 export const generateVideoScript = async (
   topic: string,
@@ -316,23 +320,65 @@ export const generateVideoScript = async (
   businessName: string,
   businessType: string,
   tone: string,
-  caption: string
+  caption: string,
+  profile?: {
+    description?: string;
+    targetAudience?: string;
+    uniqueValue?: string;
+    productsServices?: string;
+    socialGoal?: string;
+    contentTopics?: string;
+    location?: string;
+  },
+  hashtags?: string[],
+  contentFormat?: string
 ): Promise<VideoScript> => {
   const ai = getAI();
-  if (!ai) return { script: 'API Key missing.', shots: [], mood: '', duration: '', hook: '' };
+  if (!ai) return { ...DEFAULT_VIDEO_SCRIPT, script: 'API Key missing.' };
+
+  // Build rich business context
+  const profileLines: string[] = [];
+  if (profile?.description) profileLines.push(`Business description: ${profile.description}`);
+  if (profile?.targetAudience) profileLines.push(`Target audience: ${profile.targetAudience}`);
+  if (profile?.productsServices) profileLines.push(`Products/services: ${profile.productsServices}`);
+  if (profile?.uniqueValue) profileLines.push(`Unique value: ${profile.uniqueValue}`);
+  if (profile?.socialGoal) profileLines.push(`Social media goal: ${profile.socialGoal}`);
+  if (profile?.location) profileLines.push(`Location: ${profile.location}`);
+  const profileContext = profileLines.length > 0 ? `\nBUSINESS CONTEXT:\n${profileLines.join('\n')}` : '';
+  const hashtagContext = hashtags?.length ? `\nHashtags for this post: ${hashtags.join(', ')}` : '';
+  const formatContext = contentFormat && contentFormat !== 'standard' ? `\nPost style: ${contentFormat} (match the video energy to this style)` : '';
+
   try {
-    const prompt = `You are a video content strategist for "${businessName}", a ${businessType}.
-Create a short-form video brief for a ${platform} Reel/video post about: "${topic}".
-The accompanying caption is: "${caption}"
-Tone: ${tone}.
+    const prompt = `You are a senior video content strategist and creative director for "${businessName}", a ${businessType}.
+Your job: create a COMPELLING short-form video brief for a ${platform} Reel that will stop the scroll and drive engagement.
+${profileContext}
+
+TOPIC: "${topic}"
+ACCOMPANYING CAPTION: "${caption}"
+TONE: ${tone}${hashtagContext}${formatContext}
+
+DEEP THINKING REQUIRED:
+- WHO is watching this? Consider the target audience and what visually grabs their attention
+- WHAT action/scene would make this topic feel real, not abstract?
+- WHERE should this video feel like it's set? (office, café, workshop, outdoors — pick something specific to this business)
+- WHY would someone watch past the first 2 seconds? The hook must be irresistible
+- Reference specific products, services, or scenarios from the business context above
+
+ANTI-GENERIC RULES:
+- No stock-video-looking scenes. Every shot must feel specific to THIS business
+- Never describe "a person smiling at camera" — describe WHAT they're doing, WITH what, WHERE
+- The hook must provoke curiosity or emotion — not just state the topic
+- Shots should show real action, not talking heads
 
 Return ONLY raw JSON, no markdown:
 {
-  "hook": "Opening 1-2 seconds hook line — the very first thing said or shown on screen",
-  "script": "Full spoken script / voiceover (30–60 seconds when read aloud). Natural, conversational tone.",
-  "shots": ["Scene 1 description (what camera sees, action, angle)", "Scene 2...", "Scene 3...", "Scene 4...", "Scene 5..."],
-  "mood": "Music mood — e.g. Upbeat & energetic, Calm & trustworthy, Inspirational",
-  "duration": "Recommended video length, e.g. 30 seconds, 45 seconds"
+  "hook": "Opening 1-2 second hook — bold text overlay or dramatic visual that stops the scroll. Be specific.",
+  "script": "Full spoken script / voiceover (30-60 seconds). Natural, conversational, matches the ${tone} tone. Reference specific products/services.",
+  "shots": ["Shot 1: precise visual — camera angle, subject, action, setting, lighting", "Shot 2...", "Shot 3...", "Shot 4...", "Shot 5..."],
+  "mood": "Music mood — specific genre + energy level, e.g. 'Lo-fi chill beats, medium tempo' or 'Upbeat indie pop, high energy'",
+  "duration": "Recommended length, e.g. '30 seconds' or '45 seconds'",
+  "thumbnailPrompt": "A 15-20 word vivid description of the perfect FIRST FRAME of this video. Must be visually striking, set the scene, and be specific to this business. Describe: subject, action, setting, lighting, colors, camera angle.",
+  "videoPrompt": "A 20-30 word cinematic motion description for AI video generation. Describe: what moves, camera motion (pan/zoom/track), lighting changes, the key visual transition. Must match the first shot and be specific to this business topic."
 }`;
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -340,9 +386,10 @@ Return ONLY raw JSON, no markdown:
       config: { responseMimeType: 'application/json', temperature: 0.85 } as any,
     });
     const raw = (response.text || '').trim();
-    return raw ? JSON.parse(raw) : { script: 'Error generating brief.', shots: [], mood: '', duration: '', hook: '' };
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed ? { ...DEFAULT_VIDEO_SCRIPT, ...parsed } : { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
   } catch (error: any) {
-    return { script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}`, shots: [], mood: '', duration: '', hook: '' };
+    return { ...DEFAULT_VIDEO_SCRIPT, script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}` };
   }
 };
 
