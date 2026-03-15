@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import emailjs from '@emailjs/browser';
 import { CLIENT } from '../client.config';
 import { X, Send, Facebook, CheckCircle, ChevronRight } from 'lucide-react';
 
@@ -34,54 +33,46 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
   const handleSend = async () => {
     setIsSending(true);
     setSendError('');
-
-    const templateParams = {
-      from_name: form.contactName,
-      from_email: userEmail,
-      phone: form.phone || 'Not provided',
-      business_name: form.businessName,
-      business_type: form.businessType || 'Not provided',
-      location: form.location || 'Not provided',
-      facebook_page_url: form.facebookPageUrl,
-      facebook_page_name: form.facebookPageName || 'Not provided',
-      facebook_page_id: form.facebookPageId || 'Not provided',
-      instagram_handle: form.instagramHandle || 'Not provided',
-      followers: form.followers || 'Unknown',
-      chosen_plan: form.chosenPlan,
-      notes: form.notes || 'None',
-      to_email: CLIENT.supportEmail,
-    };
-
-    const hasEmailJs = CLIENT.emailJsServiceId && CLIENT.emailJsTemplateId && CLIENT.emailJsPublicKey;
-
-    if (hasEmailJs) {
-      try {
-        await emailjs.send(
-          CLIENT.emailJsServiceId,
-          CLIENT.emailJsTemplateId,
-          templateParams,
-          CLIENT.emailJsPublicKey
-        );
-        setStep('sent');
-        onSubmitted();
-      } catch (e: any) {
-        console.error('EmailJS error:', e);
-        setSendError('Email send failed — opening your email app as fallback.');
-        fallbackMailto(templateParams);
-        setStep('sent');
-        onSubmitted();
-      }
-    } else {
-      fallbackMailto(templateParams);
+    try {
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'intake-notify',
+          name: form.contactName,
+          email: userEmail,
+          phone: form.phone || '',
+          businessName: form.businessName,
+          businessType: form.businessType || '',
+          plan: form.chosenPlan,
+          message: [
+            form.location ? `Location: ${form.location}` : '',
+            form.facebookPageUrl ? `Facebook: ${form.facebookPageUrl}` : '',
+            form.facebookPageName ? `Page name: ${form.facebookPageName}` : '',
+            form.facebookPageId ? `Page ID: ${form.facebookPageId}` : '',
+            form.instagramHandle ? `Instagram: ${form.instagramHandle}` : '',
+            form.followers ? `Followers: ${form.followers}` : '',
+            form.notes ? `Notes: ${form.notes}` : '',
+          ].filter(Boolean).join('\n'),
+        }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'Send failed');
       setStep('sent');
       onSubmitted();
+    } catch (e: any) {
+      console.warn('send-email failed, using mailto fallback:', e.message);
+      fallbackMailto();
+      setStep('sent');
+      onSubmitted();
+    } finally {
+      setIsSending(false);
     }
-    setIsSending(false);
   };
 
-  const fallbackMailto = (p: Record<string, string>) => {
-    const body = `NEW CLIENT SETUP REQUEST — SocialAI Studio\n\nContact: ${p.from_name}\nEmail: ${p.from_email}\nPhone: ${p.phone}\n\nBusiness: ${p.business_name}\nType: ${p.business_type}\nLocation: ${p.location}\n\nFacebook URL: ${p.facebook_page_url}\nFacebook Page Name: ${p.facebook_page_name}\nFacebook Page ID: ${p.facebook_page_id}\nInstagram: ${p.instagram_handle}\nFollowers: ${p.followers}\n\nChosen Plan: ${p.chosen_plan}\n\nNotes:\n${p.notes}`;
-    const subject = encodeURIComponent(`New Client Setup Request — ${p.business_name}`);
+  const fallbackMailto = () => {
+    const body = `NEW CLIENT SETUP REQUEST — SocialAI Studio\n\nContact: ${form.contactName}\nEmail: ${userEmail}\nPhone: ${form.phone || 'Not provided'}\n\nBusiness: ${form.businessName}\nType: ${form.businessType || 'Not provided'}\nLocation: ${form.location || 'Not provided'}\n\nFacebook URL: ${form.facebookPageUrl}\nFacebook Page Name: ${form.facebookPageName || 'Not provided'}\nFacebook Page ID: ${form.facebookPageId || 'Not provided'}\nInstagram: ${form.instagramHandle || 'Not provided'}\nFollowers: ${form.followers || 'Unknown'}\n\nChosen Plan: ${form.chosenPlan}\n\nNotes:\n${form.notes || 'None'}`;
+    const subject = encodeURIComponent(`New Client Setup Request — ${form.businessName}`);
     window.open(`mailto:${CLIENT.supportEmail}?subject=${subject}&body=${encodeURIComponent(body)}`, '_blank');
   };
 
