@@ -90,13 +90,17 @@ const Dashboard: React.FC = () => {
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
+  const autoLoginConfigured = CLIENT.clientMode && !!CLIENT.autoLoginEmail && !!CLIENT.autoLoginPassword;
+  const [autoLoginPending, setAutoLoginPending] = useState(autoLoginConfigured);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
   useEffect(() => {
-    if (CLIENT.clientMode && CLIENT.autoLoginEmail && CLIENT.autoLoginPassword && !user) {
-      logIn(CLIENT.autoLoginEmail, CLIENT.autoLoginPassword).catch(() => {});
-    }
+    if (!autoLoginConfigured) return;
+    if (user) { setAutoLoginPending(false); return; }
+    logIn(CLIENT.autoLoginEmail, CLIENT.autoLoginPassword)
+      .catch((e: any) => toast(`Auto-login failed: ${e?.message || e}`, 'error'))
+      .finally(() => setAutoLoginPending(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1208,6 +1212,16 @@ const Dashboard: React.FC = () => {
 
   // Auth gate
   if (!user) {
+    if (autoLoginPending) {
+      return (
+        <div className="min-h-screen bg-black flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-white/40">
+            <Loader2 size={28} className="animate-spin text-amber-400" />
+            <span className="text-sm">Signing in…</span>
+          </div>
+        </div>
+      );
+    }
     if (showLanding && !CLIENT.clientMode) {
       return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} />;
     }
