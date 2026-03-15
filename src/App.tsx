@@ -1831,55 +1831,71 @@ const Dashboard: React.FC = () => {
         />
       )}
       {/* Header */}
-      <header className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <AppLogo size={72} />
-            <div className="flex items-center gap-2 flex-wrap">
-              {planCfg && !CLIENT.clientMode && (
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
-                  {planCfg.name}
-                </span>
-              )}
-              {activePlan === 'agency' && !CLIENT.clientMode && (
-                <ClientSwitcher
-                  clients={clients}
-                  activeClientId={activeClientId}
-                  onSwitch={setActiveClientId}
-                  onAdd={addClient}
-                  onRename={renameClient}
-                  onDelete={deleteClient}
-                  agencyName={profile.name}
-                  clientLimit={agencyClientLimit}
-                />
-              )}
-              {activePlan !== 'agency' && profile.name && profile.name !== 'My Business' && (
-                <span className="text-xs text-white/30 hidden sm:inline">{profile.name}</span>
-              )}
-            </div>
+      <header id="app-header" className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3 min-h-[56px]">
+          <div className="flex items-center gap-3 min-w-0">
+            {CLIENT.clientMode ? (
+              <div className="flex items-center gap-3 min-w-0">
+                <AppLogo size={38} />
+                <div className="min-w-0">
+                  <h1 className="text-sm font-black text-white truncate">{CLIENT.appName}</h1>
+                  <p className="text-[10px] text-white/30 truncate">{profile.type || CLIENT.defaultBusinessType}</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <AppLogo size={72} />
+                <div className="flex items-center gap-2 flex-wrap">
+                  {planCfg && (
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
+                      {planCfg.name}
+                    </span>
+                  )}
+                  {activePlan === 'agency' && (
+                    <ClientSwitcher
+                      clients={clients}
+                      activeClientId={activeClientId}
+                      onSwitch={setActiveClientId}
+                      onAdd={addClient}
+                      onRename={renameClient}
+                      onDelete={deleteClient}
+                      agencyName={profile.name}
+                      clientLimit={agencyClientLimit}
+                    />
+                  )}
+                  {activePlan !== 'agency' && profile.name && profile.name !== 'My Business' && (
+                    <span className="text-xs text-white/30 hidden sm:inline">{profile.name}</span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
-          <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
+          <div className="flex items-center gap-2 text-xs flex-shrink-0">
             {fbConnected ? (
-              <span className="flex items-center gap-1.5 text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full border border-blue-500/20">
-                <Link2 size={12} /> Facebook Connected
+              <span className="flex items-center gap-1.5 text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full border border-blue-500/20 whitespace-nowrap">
+                <Link2 size={12} /> {CLIENT.clientMode ? 'Connected' : 'Facebook Connected'}
               </span>
             ) : (
-              <span className="flex items-center gap-1.5 text-gray-500 bg-white/5 px-2.5 py-1 rounded-full border border-white/10">
-                <Link2Off size={12} /> Facebook Not Connected
+              <span className="flex items-center gap-1.5 text-gray-500 bg-white/5 px-2.5 py-1 rounded-full border border-white/10 whitespace-nowrap">
+                <Link2Off size={12} /> {CLIENT.clientMode ? 'Not Connected' : 'Facebook Not Connected'}
               </span>
             )}
-            {hasApiKey ? (
-              <span className="flex items-center gap-1.5 text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full border border-green-500/20">
-                <CheckCircle size={12} /> AI Active
-              </span>
-            ) : (
-              <span className="text-yellow-400 bg-yellow-500/10 px-2.5 py-1 rounded-full border border-yellow-500/20">No API Key</span>
+            {!CLIENT.clientMode && (
+              <>
+                {hasApiKey ? (
+                  <span className="flex items-center gap-1.5 text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full border border-green-500/20 whitespace-nowrap">
+                    <CheckCircle size={12} /> AI Active
+                  </span>
+                ) : (
+                  <span className="text-yellow-400 bg-yellow-500/10 px-2.5 py-1 rounded-full border border-yellow-500/20 whitespace-nowrap">No API Key</span>
+                )}
+              </>
             )}
             {fbConnected && (
               <button
                 onClick={() => handlePullStats()}
                 disabled={isPullingStats}
-                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white px-2.5 py-1 rounded-full transition disabled:opacity-40 text-xs"
+                className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white px-2.5 py-1 rounded-full transition disabled:opacity-40 text-xs whitespace-nowrap"
                 title="Pull live stats from Facebook"
               >
                 <RefreshCw size={11} className={isPullingStats ? 'animate-spin' : ''} />
@@ -1889,7 +1905,7 @@ const Dashboard: React.FC = () => {
             {isProfileBlank && !showOnboarding && (
               <button
                 onClick={() => setShowOnboarding(true)}
-                className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full transition text-xs font-semibold"
+                className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full transition text-xs font-semibold whitespace-nowrap"
               >
                 <ClipboardList size={11} /> Complete Setup
               </button>
@@ -1906,7 +1922,7 @@ const Dashboard: React.FC = () => {
             <button
               onClick={() => setShowAccount(true)}
               title="My Account"
-              className={`w-8 h-8 rounded-xl bg-gradient-to-br ${planCfg?.color ?? 'from-white/10 to-white/5'} flex items-center justify-center text-white text-xs font-black hover:opacity-80 transition shadow`}
+              className={`w-8 h-8 rounded-xl bg-gradient-to-br ${planCfg?.color ?? 'from-white/10 to-white/5'} flex items-center justify-center text-white text-xs font-black hover:opacity-80 transition shadow flex-shrink-0`}
             >
               {user?.email?.charAt(0).toUpperCase() ?? '?'}
             </button>
@@ -1926,7 +1942,7 @@ const Dashboard: React.FC = () => {
       </header>
 
       {/* Tab Nav */}
-      <nav className="border-b border-white/10 bg-black/10 sticky top-[73px] z-30">
+      <nav className="border-b border-white/10 bg-black/10 sticky top-[56px] z-30">
         <div className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
@@ -1949,7 +1965,7 @@ const Dashboard: React.FC = () => {
       {activeClientId && activePlan === 'agency' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
-          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[121px] z-20">
+          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[101px] z-20">
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/25 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
