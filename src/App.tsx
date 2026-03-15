@@ -1825,7 +1825,7 @@ const Dashboard: React.FC = () => {
                         <ImageIcon size={14} /> Image <span className="text-[10px] ml-1 bg-white/5 px-1.5 py-0.5 rounded">Growth+</span>
                       </div>
                     )}
-                    {(activePlan === 'pro' || activePlan === 'agency' || isAdminMode) ? (
+                    {(effectivePlan === 'pro' || effectivePlan === 'agency' || isAdminMode) ? (
                       <button onClick={() => setContentType('video')}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'video' ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'}`}>
                         <Play size={14} /> Text + Video Brief
