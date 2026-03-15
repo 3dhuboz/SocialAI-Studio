@@ -249,15 +249,26 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
       `Professional social media marketing photo: ${prompt}. Cinematic lighting, vibrant, commercial quality, no text, no watermarks`
     );
     const url = `https://image.pollinations.ai/prompt/${pollinationsPrompt}?width=1024&height=1024&nologo=true`;
-    const res = await fetch(url);
+    console.log('Pollinations.ai request:', url.substring(0, 120) + '…');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    console.log('Pollinations.ai response:', res.status, res.headers.get('content-type'));
     if (res.ok) {
       const blob = await res.blob();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
-      });
+      if (blob.size < 1000) { console.warn('Pollinations.ai returned tiny blob:', blob.size); }
+      else {
+        const dataUrl: string | null = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
+        if (dataUrl) return await compressImage(dataUrl, 700, 0.65);
+      }
+    } else {
+      console.warn('Pollinations.ai HTTP error:', res.status, res.statusText);
     }
   } catch (error: any) {
     console.warn('Pollinations.ai fallback:', error?.message ?? error);

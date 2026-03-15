@@ -141,7 +141,16 @@ const Dashboard: React.FC = () => {
 
   // Profile & Posts — init from localStorage cache for instant render
   const [profile, setProfile] = useState<BusinessProfile>(() => {
-    try { const s = localStorage.getItem('sai_profile'); return s ? { ...DEFAULT_PROFILE, ...JSON.parse(s) } : DEFAULT_PROFILE; } catch { return DEFAULT_PROFILE; }
+    try {
+      const s = localStorage.getItem('sai_profile');
+      if (s) {
+        const p = { ...DEFAULT_PROFILE, ...JSON.parse(s) };
+        // Migrate old default name to current default
+        if (p.name === 'My Business') { p.name = CLIENT.defaultBusinessName; localStorage.setItem('sai_profile', JSON.stringify(p)); }
+        return p;
+      }
+      return DEFAULT_PROFILE;
+    } catch { return DEFAULT_PROFILE; }
   });
   const [posts, setPosts] = useState<SocialPost[]>(() => {
     try { const s = localStorage.getItem('sai_posts'); return s ? JSON.parse(s) : []; } catch { return []; }
@@ -203,7 +212,14 @@ const Dashboard: React.FC = () => {
         const snap = await getDoc(doc(db, 'users', user.uid));
         if (snap.exists()) {
           const d = snap.data();
-          if (d.profile) { const p = { ...DEFAULT_PROFILE, ...d.profile }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
+          if (d.profile) {
+            const p = { ...DEFAULT_PROFILE, ...d.profile };
+            // Migrate old default name
+            if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
+            setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p));
+            // Persist migration back to Firestore
+            if (d.profile.name === 'My Business') updateDoc(doc(db, 'users', user.uid), { 'profile.name': CLIENT.defaultBusinessName }).catch(() => {});
+          }
           if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
           if (!isAdmin && d.plan) setActivePlan(d.plan);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
@@ -809,7 +825,6 @@ const Dashboard: React.FC = () => {
 
   const handleGenerateImage = async () => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return; }
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     setIsGeneratingImage(true);
     try {
       const img = await generateMarketingImage(`${profile.type}: ${topic}`);
