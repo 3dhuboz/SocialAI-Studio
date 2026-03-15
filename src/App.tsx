@@ -359,11 +359,18 @@ const Dashboard: React.FC = () => {
   };
 
   // Set plan tier for a client workspace
+  const [savingClientPlan, setSavingClientPlan] = useState<string | null>(null);
   const setClientPlan = async (clientId: string, plan: PlanTier) => {
     if (!user) return;
-    await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { plan });
-    setClients(prev => prev.map(c => c.id === clientId ? { ...c, plan } : c));
-    toast(`Plan updated to ${plan}.`, 'success');
+    setSavingClientPlan(plan);
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { plan });
+      setClients(prev => prev.map(c => c.id === clientId ? { ...c, plan } : c));
+      toast(`Client plan updated to ${plan.charAt(0).toUpperCase() + plan.slice(1)}!`, 'success');
+    } catch (e: any) {
+      toast(`Failed to update plan: ${e?.message || 'Unknown error'}`, 'error');
+    }
+    setSavingClientPlan(null);
   };
 
   // Delete a client workspace (including all posts)
@@ -3209,117 +3216,180 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* ── Plan & Billing ── */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
-                    <ShoppingCart size={16} className="text-amber-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-white">Plan &amp; Billing</h3>
-                    <p className="text-xs text-white/30 mt-0.5">
-                      {activePlan ? <>Currently on <span className={`font-bold bg-gradient-to-r ${CLIENT.plans.find(p => p.id === activePlan)?.color ?? 'from-white to-white'} bg-clip-text text-transparent`}>{CLIENT.plans.find(p => p.id === activePlan)?.name}</span> plan</> : 'No active plan'}
-                    </p>
-                  </div>
-                </div>
-                {CLIENT.paypalManageUrl && (
-                  <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer"
-                    className="text-xs text-white/40 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5">
-                    <Link2 size={12} /> Manage Billing
-                  </a>
-                )}
-              </div>
+            {(() => {
+              const activeClient = activeClientId ? clients.find(c => c.id === activeClientId) : null;
+              const clientPlan = activeClient?.plan ?? null;
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {CLIENT.plans.map(plan => {
-                  const isCurrent = activePlan === plan.id;
-                  const planOrder = ['starter', 'growth', 'pro', 'agency'];
-                  const currentIdx = planOrder.indexOf(activePlan ?? '');
-                  const planIdx = planOrder.indexOf(plan.id);
-                  const isUpgrade = planIdx > currentIdx;
-                  const isNew = !activePlan;
-                  return (
-                    <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
-                      isCurrent
-                        ? 'border-amber-500/40 bg-amber-500/8'
-                        : 'border-white/8 bg-white/2 hover:border-white/15'
-                    }`}>
-                      {plan.badge && (
-                        <span className="absolute -top-2 left-3 text-[9px] font-black bg-amber-500 text-black px-2 py-0.5 rounded-full">{plan.badge}</span>
-                      )}
-                      {isCurrent && (
-                        <span className="absolute -top-2 right-3 text-[9px] font-black bg-green-500 text-black px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle size={8} /> Current</span>
-                      )}
-                      <div>
-                        <p className={`text-sm font-black bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>{plan.name}</p>
-                        <p className="text-xl font-black text-white mt-0.5">${plan.price}<span className="text-xs text-white/30 font-normal">/mo</span></p>
-                        {isNew && <p className="text-[9px] text-amber-400/70 mt-0.5">+ ${CLIENT.setupFee} setup fee</p>}
+              // ── Client workspace plan management (agency admin only) ──
+              if (activeClientId && isSuperAdmin && activeClient) {
+                const planOrder: PlanTier[] = ['starter', 'growth', 'pro', 'agency'];
+                const currentIdx = planOrder.indexOf(clientPlan ?? 'starter');
+                return (
+                  <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
+                        <ShoppingCart size={16} className="text-amber-400" />
                       </div>
-                      <ul className="space-y-1">
-                        {plan.features.slice(0, 3).map((f, i) => (
-                          <li key={i} className="text-[10px] text-white/45 flex items-start gap-1.5">
-                            <CheckCircle size={9} className="text-green-400/60 shrink-0 mt-0.5" />
-                            {f}
-                          </li>
-                        ))}
-                      </ul>
-                      {!isCurrent && (
-                        isNew ? (
-                          <button
-                            onClick={() => setShowIntakeForm(true)}
-                            className={`w-full text-center text-xs font-bold py-2 rounded-xl transition bg-gradient-to-r ${plan.color} text-white hover:opacity-90`}
-                          >
-                            Get Started
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => setShowPricing(true)}
-                            className={`w-full text-center text-xs font-bold py-2 rounded-xl transition ${
-                              isUpgrade
-                                ? `bg-gradient-to-r ${plan.color} text-white hover:opacity-90`
-                                : 'bg-white/8 hover:bg-white/12 text-white/60'
-                            }`}
-                          >
-                            {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'}
-                          </button>
-                        )
-                      )}
-                      {isCurrent && (
-                        <div className="text-center text-[10px] text-green-400/60 font-semibold py-1">✓ Active</div>
-                      )}
+                      <div>
+                        <h3 className="font-bold text-white">Client Plan — <span className="text-amber-300">{activeClient.name}</span></h3>
+                        <p className="text-xs text-white/30 mt-0.5">
+                          {clientPlan
+                            ? <>Currently on <span className={`font-bold bg-gradient-to-r ${CLIENT.plans.find(p => p.id === clientPlan)?.color ?? 'from-white to-white'} bg-clip-text text-transparent`}>{CLIENT.plans.find(p => p.id === clientPlan)?.name ?? clientPlan}</span> plan</>
+                            : 'No plan assigned yet'}
+                        </p>
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              {/* New client intake form prompt */}
-              {!activePlan && !intakeFormDone && (
-                <div className="bg-blue-500/8 border border-blue-500/20 rounded-2xl px-4 py-4 flex items-start gap-3">
-                  <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
-                    <span className="text-sm">📋</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {CLIENT.plans.map(plan => {
+                        const isCurrent = clientPlan === plan.id;
+                        const planIdx = planOrder.indexOf(plan.id as PlanTier);
+                        const isUpgrade = planIdx > currentIdx;
+                        const isSaving = savingClientPlan === plan.id;
+                        return (
+                          <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
+                            isCurrent ? 'border-amber-500/40 bg-amber-500/8' : 'border-white/8 bg-white/2 hover:border-white/15'
+                          }`}>
+                            {plan.badge && (
+                              <span className="absolute -top-2 left-3 text-[9px] font-black bg-amber-500 text-black px-2 py-0.5 rounded-full">{plan.badge}</span>
+                            )}
+                            {isCurrent && (
+                              <span className="absolute -top-2 right-3 text-[9px] font-black bg-green-500 text-black px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle size={8} /> Current</span>
+                            )}
+                            <div>
+                              <p className={`text-sm font-black bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>{plan.name}</p>
+                              <p className="text-xl font-black text-white mt-0.5">${plan.price}<span className="text-xs text-white/30 font-normal">/mo</span></p>
+                            </div>
+                            <ul className="space-y-1">
+                              {plan.features.slice(0, 3).map((f, i) => (
+                                <li key={i} className="text-[10px] text-white/45 flex items-start gap-1.5">
+                                  <CheckCircle size={9} className="text-green-400/60 shrink-0 mt-0.5" />{f}
+                                </li>
+                              ))}
+                            </ul>
+                            {isCurrent ? (
+                              <div className="text-center text-[10px] text-green-400/60 font-semibold py-1">✓ Active</div>
+                            ) : (
+                              <button
+                                onClick={() => setClientPlan(activeClientId, plan.id as PlanTier)}
+                                disabled={!!savingClientPlan}
+                                className={`w-full flex items-center justify-center gap-1.5 text-xs font-bold py-2 rounded-xl transition disabled:opacity-40 ${
+                                  isUpgrade
+                                    ? `bg-gradient-to-r ${plan.color} text-white hover:opacity-90`
+                                    : 'bg-white/8 hover:bg-white/12 text-white/60'
+                                }`}
+                              >
+                                {isSaving ? <Loader2 size={11} className="animate-spin" /> : isUpgrade ? '↑ Upgrade' : '↓ Downgrade'}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-white/20 text-center">Billing is handled externally — changing the plan here updates the client's permissions immediately.</p>
                   </div>
-                  <div className="flex-1">
-                    <p className="text-xs font-bold text-blue-300 mb-0.5">New to SocialAI Studio?</p>
-                    <p className="text-xs text-white/45 leading-relaxed">Choose a plan above, then complete our quick setup form so we can connect your Facebook Page. A one-time <span className="text-amber-300 font-semibold">${CLIENT.setupFee} setup fee</span> applies to new accounts.</p>
+                );
+              }
+
+              // ── Normal owner Plan & Billing ──
+              return (
+                <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
+                        <ShoppingCart size={16} className="text-amber-400" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-white">Plan &amp; Billing</h3>
+                        <p className="text-xs text-white/30 mt-0.5">
+                          {activePlan ? <>Currently on <span className={`font-bold bg-gradient-to-r ${CLIENT.plans.find(p => p.id === activePlan)?.color ?? 'from-white to-white'} bg-clip-text text-transparent`}>{CLIENT.plans.find(p => p.id === activePlan)?.name}</span> plan</> : 'No active plan'}
+                        </p>
+                      </div>
+                    </div>
+                    {CLIENT.paypalManageUrl && (
+                      <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-white/40 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5">
+                        <Link2 size={12} /> Manage Billing
+                      </a>
+                    )}
                   </div>
-                  <button
-                    onClick={() => setShowIntakeForm(true)}
-                    className="shrink-0 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/25 text-blue-300 text-xs font-bold px-3 py-2 rounded-xl transition"
-                  >
-                    Fill Setup Form
-                  </button>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {CLIENT.plans.map(plan => {
+                      const isCurrent = activePlan === plan.id;
+                      const planOrder = ['starter', 'growth', 'pro', 'agency'];
+                      const currentIdx = planOrder.indexOf(activePlan ?? '');
+                      const planIdx = planOrder.indexOf(plan.id);
+                      const isUpgrade = planIdx > currentIdx;
+                      const isNew = !activePlan;
+                      return (
+                        <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
+                          isCurrent ? 'border-amber-500/40 bg-amber-500/8' : 'border-white/8 bg-white/2 hover:border-white/15'
+                        }`}>
+                          {plan.badge && (
+                            <span className="absolute -top-2 left-3 text-[9px] font-black bg-amber-500 text-black px-2 py-0.5 rounded-full">{plan.badge}</span>
+                          )}
+                          {isCurrent && (
+                            <span className="absolute -top-2 right-3 text-[9px] font-black bg-green-500 text-black px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle size={8} /> Current</span>
+                          )}
+                          <div>
+                            <p className={`text-sm font-black bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>{plan.name}</p>
+                            <p className="text-xl font-black text-white mt-0.5">${plan.price}<span className="text-xs text-white/30 font-normal">/mo</span></p>
+                            {isNew && <p className="text-[9px] text-amber-400/70 mt-0.5">+ ${CLIENT.setupFee} setup fee</p>}
+                          </div>
+                          <ul className="space-y-1">
+                            {plan.features.slice(0, 3).map((f, i) => (
+                              <li key={i} className="text-[10px] text-white/45 flex items-start gap-1.5">
+                                <CheckCircle size={9} className="text-green-400/60 shrink-0 mt-0.5" />{f}
+                              </li>
+                            ))}
+                          </ul>
+                          {!isCurrent && (
+                            isNew ? (
+                              <button onClick={() => setShowIntakeForm(true)}
+                                className={`w-full text-center text-xs font-bold py-2 rounded-xl transition bg-gradient-to-r ${plan.color} text-white hover:opacity-90`}>
+                                Get Started
+                              </button>
+                            ) : (
+                              <button onClick={() => setShowPricing(true)}
+                                className={`w-full text-center text-xs font-bold py-2 rounded-xl transition ${
+                                  isUpgrade ? `bg-gradient-to-r ${plan.color} text-white hover:opacity-90` : 'bg-white/8 hover:bg-white/12 text-white/60'
+                                }`}>
+                                {isUpgrade ? '↑ Upgrade' : '↓ Downgrade'}
+                              </button>
+                            )
+                          )}
+                          {isCurrent && <div className="text-center text-[10px] text-green-400/60 font-semibold py-1">✓ Active</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {!activePlan && !intakeFormDone && (
+                    <div className="bg-blue-500/8 border border-blue-500/20 rounded-2xl px-4 py-4 flex items-start gap-3">
+                      <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5"><span className="text-sm">📋</span></div>
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-blue-300 mb-0.5">New to SocialAI Studio?</p>
+                        <p className="text-xs text-white/45 leading-relaxed">Choose a plan above, then complete our quick setup form so we can connect your Facebook Page. A one-time <span className="text-amber-300 font-semibold">${CLIENT.setupFee} setup fee</span> applies to new accounts.</p>
+                      </div>
+                      <button onClick={() => setShowIntakeForm(true)}
+                        className="shrink-0 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/25 text-blue-300 text-xs font-bold px-3 py-2 rounded-xl transition">
+                        Fill Setup Form
+                      </button>
+                    </div>
+                  )}
+                  {intakeFormDone && !activePlan && (
+                    <div className="bg-green-500/8 border border-green-500/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+                      <CheckCircle size={14} className="text-green-400 shrink-0" />
+                      <p className="text-xs text-green-300">Setup form submitted — our team will contact you within 1 business day with your payment link.</p>
+                    </div>
+                  )}
+                  <p className="text-xs text-white/20 text-center">
+                    To cancel or update payment details, visit <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer" className="text-amber-400/60 hover:text-amber-400 underline transition">PayPal autopay</a> or contact <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 hover:text-amber-400 underline transition">{CLIENT.supportEmail}</a>
+                  </p>
                 </div>
-              )}
-              {intakeFormDone && !activePlan && (
-                <div className="bg-green-500/8 border border-green-500/20 rounded-2xl px-4 py-3 flex items-center gap-3">
-                  <CheckCircle size={14} className="text-green-400 shrink-0" />
-                  <p className="text-xs text-green-300">Setup form submitted — our team will contact you within 1 business day with your payment link.</p>
-                </div>
-              )}
-              <p className="text-xs text-white/20 text-center">
-                To cancel or update payment details, visit <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer" className="text-amber-400/60 hover:text-amber-400 underline transition">PayPal autopay</a> or contact <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 hover:text-amber-400 underline transition">{CLIENT.supportEmail}</a>
-              </p>
-            </div>
+              );
+            })()}
 
             {/* ── SECTION: AI & Keys (super-admin / owner only) ── */}
             {isSuperAdmin && (
