@@ -243,36 +243,60 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
     }
   }
 
-  // ── 2. Pollinations.ai — free, no key needed, always works ──────────
+  // ── 2. Pollinations.ai — free, no key needed ────────────────────────
+  const pollinationsFetch = async (shortPrompt: string): Promise<string | null> => {
+    const encoded = encodeURIComponent(shortPrompt);
+    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
+    console.log('Pollinations.ai →', shortPrompt.substring(0, 60));
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 45000);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(t);
+    console.log('Pollinations.ai:', res.status, res.headers.get('content-type'));
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (blob.size < 1000 || !blob.type.startsWith('image')) return null;
+    const dataUrl: string | null = await new Promise(r => {
+      const reader = new FileReader();
+      reader.onloadend = () => r(reader.result as string);
+      reader.onerror = () => r(null);
+      reader.readAsDataURL(blob);
+    });
+    return dataUrl ? await compressImage(dataUrl, 700, 0.65) : null;
+  };
+
+  // Extract just the core topic — keep prompt SHORT to avoid 500 errors
+  const corePrompt = prompt.replace(/^.*?:\s*/, '').substring(0, 80).trim();
   try {
-    const pollinationsPrompt = encodeURIComponent(
-      `Professional social media marketing photo: ${prompt}. Cinematic lighting, vibrant, commercial quality, no text, no watermarks`
-    );
-    const url = `https://image.pollinations.ai/prompt/${pollinationsPrompt}?width=1024&height=1024&nologo=true`;
-    console.log('Pollinations.ai request:', url.substring(0, 120) + '…');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
-    console.log('Pollinations.ai response:', res.status, res.headers.get('content-type'));
-    if (res.ok) {
-      const blob = await res.blob();
-      if (blob.size < 1000) { console.warn('Pollinations.ai returned tiny blob:', blob.size); }
-      else {
-        const dataUrl: string | null = await new Promise((resolve) => {
+    const img = await pollinationsFetch(`${corePrompt}, professional photo, vibrant`);
+    if (img) return img;
+  } catch (e: any) { console.warn('Pollinations attempt 1:', e?.message); }
+
+  // Retry with even simpler prompt
+  try {
+    const simplePrompt = corePrompt.split(/[,\-–—.]/).slice(0, 2).join(' ').trim().substring(0, 40);
+    const img = await pollinationsFetch(`${simplePrompt} photo`);
+    if (img) return img;
+  } catch (e: any) { console.warn('Pollinations attempt 2:', e?.message); }
+
+  // ── 3. Picsum — random quality photo as absolute last resort ────────
+  try {
+    console.log('Falling back to Picsum (random stock photo)…');
+    const seed = encodeURIComponent(corePrompt.substring(0, 20));
+    const picRes = await fetch(`https://picsum.photos/seed/${seed}/1024/1024`);
+    if (picRes.ok) {
+      const blob = await picRes.blob();
+      if (blob.size > 1000) {
+        const dataUrl: string | null = await new Promise(r => {
           const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = () => resolve(null);
+          reader.onloadend = () => r(reader.result as string);
+          reader.onerror = () => r(null);
           reader.readAsDataURL(blob);
         });
         if (dataUrl) return await compressImage(dataUrl, 700, 0.65);
       }
-    } else {
-      console.warn('Pollinations.ai HTTP error:', res.status, res.statusText);
     }
-  } catch (error: any) {
-    console.warn('Pollinations.ai fallback:', error?.message ?? error);
-  }
+  } catch (e: any) { console.warn('Picsum fallback:', e?.message); }
 
   return null;
 };
