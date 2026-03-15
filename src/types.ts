@@ -57,4 +57,6 @@ export interface ClientWorkspace {
   plan?: PlanTier;
   lastPostAt?: string;
   scheduledPostCount?: number;
+  /** Vite CLIENT_ID slug for the branded site, e.g. "streetmeats" */
+  clientSlug?: string;
 }

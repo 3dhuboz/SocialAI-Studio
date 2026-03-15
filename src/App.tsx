@@ -29,7 +29,8 @@ import {
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
-  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink
+  Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
+  Key, EyeOff
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -90,17 +91,36 @@ const Dashboard: React.FC = () => {
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
-  const autoLoginConfigured = CLIENT.clientMode && !!CLIENT.autoLoginEmail && !!CLIENT.autoLoginPassword;
-  const [autoLoginPending, setAutoLoginPending] = useState(autoLoginConfigured);
+  const [autoLoginPending, setAutoLoginPending] = useState(CLIENT.clientMode);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
   useEffect(() => {
-    if (!autoLoginConfigured) return;
+    if (!CLIENT.clientMode) { setAutoLoginPending(false); return; }
     if (user) { setAutoLoginPending(false); return; }
-    logIn(CLIENT.autoLoginEmail, CLIENT.autoLoginPassword)
-      .catch((e: any) => toast(`Auto-login failed: ${e?.message || e}`, 'error'))
-      .finally(() => setAutoLoginPending(false));
+    const clientId = (import.meta.env.VITE_CLIENT_ID as string) || '';
+    const tryLogin = async (email: string, pw: string) => {
+      await logIn(email, pw);
+    };
+    const run = async () => {
+      try {
+        if (clientId) {
+          const snap = await getDoc(doc(db, 'portal', clientId));
+          if (snap.exists()) {
+            const { email, password } = snap.data() as { email: string; password: string };
+            if (email && password) { await tryLogin(email, password); return; }
+          }
+        }
+        if (CLIENT.autoLoginEmail && CLIENT.autoLoginPassword) {
+          await tryLogin(CLIENT.autoLoginEmail, CLIENT.autoLoginPassword);
+        }
+      } catch (e: any) {
+        toast(`Auto-login failed: ${e?.message || e}`, 'error');
+      } finally {
+        setAutoLoginPending(false);
+      }
+    };
+    run();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -153,6 +173,7 @@ const Dashboard: React.FC = () => {
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [clientHealthMap, setClientHealthMap] = useState<Record<string, { scheduledCount: number; lastPostAt: string | null }>>({});
+  const [portalInputs, setPortalInputs] = useState<Record<string, { slug: string; email: string; password: string; showPw: boolean; saving: boolean }>>({});
 
   // Returns the Firestore doc ref for the active workspace (own or client)
   const dataRef = () => activeClientId && user
@@ -1200,6 +1221,26 @@ const Dashboard: React.FC = () => {
       toast('All settings saved!', 'success');
     } catch { toast('Failed to save settings.', 'error'); }
     setIsSavingAll(false);
+  };
+
+  // ── Portal auto-login credentials ──
+  const savePortalCredentials = async (clientId: string) => {
+    const inp = portalInputs[clientId];
+    if (!inp?.slug?.trim()) { toast('Enter the client slug first (e.g. "streetmeats").', 'warning'); return; }
+    if (!inp?.email?.trim()) { toast('Enter the auto-login email.', 'warning'); return; }
+    if (!inp?.password?.trim()) { toast('Enter the auto-login password.', 'warning'); return; }
+    if (!user) return;
+    setPortalInputs(prev => ({ ...prev, [clientId]: { ...prev[clientId], saving: true } }));
+    try {
+      const slug = inp.slug.trim().toLowerCase();
+      await setDoc(doc(db, 'portal', slug), { email: inp.email.trim(), password: inp.password });
+      await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { clientSlug: slug }).catch(() => {});
+      setClients(prev => prev.map(c => c.id === clientId ? { ...c, clientSlug: slug } : c));
+      toast(`Portal credentials saved for "${slug}"! The branded site will auto-login on next load.`, 'success');
+    } catch (e: any) {
+      toast(`Save failed: ${e?.message || 'Unknown error'}`, 'error');
+    }
+    setPortalInputs(prev => ({ ...prev, [clientId]: { ...prev[clientId], saving: false } }));
   };
 
   // ── Delete Post ──
@@ -2907,6 +2948,65 @@ const Dashboard: React.FC = () => {
                           )}
                         </div>
                       </div>
+
+                      {/* Portal auto-login */}
+                      {isSuperAdmin && (
+                        <div className="space-y-1.5">
+                          <button
+                            onClick={() => setPortalInputs(prev => ({
+                              ...prev,
+                              [client.id]: prev[client.id] ?? { slug: client.clientSlug ?? '', email: '', password: '', showPw: false, saving: false }
+                            }))}
+                            className="text-[10px] font-semibold text-white/30 uppercase tracking-wider flex items-center gap-1 hover:text-white/60 transition"
+                          >
+                            <Key size={10} /> Portal Auto-Login {portalInputs[client.id] ? '▲' : '▼'}
+                          </button>
+                          {portalInputs[client.id] && (
+                            <div className="space-y-2 pt-1">
+                              <input
+                                type="text"
+                                placeholder="Client slug (e.g. streetmeats)"
+                                value={portalInputs[client.id].slug}
+                                onChange={e => setPortalInputs(prev => ({ ...prev, [client.id]: { ...prev[client.id], slug: e.target.value } }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-white/25 outline-none focus:border-amber-500/50"
+                              />
+                              <input
+                                type="email"
+                                placeholder="Auto-login email"
+                                value={portalInputs[client.id].email}
+                                onChange={e => setPortalInputs(prev => ({ ...prev, [client.id]: { ...prev[client.id], email: e.target.value } }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-white/25 outline-none focus:border-amber-500/50"
+                              />
+                              <div className="relative">
+                                <input
+                                  type={portalInputs[client.id].showPw ? 'text' : 'password'}
+                                  placeholder="Auto-login password"
+                                  value={portalInputs[client.id].password}
+                                  onChange={e => setPortalInputs(prev => ({ ...prev, [client.id]: { ...prev[client.id], password: e.target.value } }))}
+                                  className="w-full bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 pr-8 text-xs text-white placeholder-white/25 outline-none focus:border-amber-500/50"
+                                />
+                                <button
+                                  onClick={() => setPortalInputs(prev => ({ ...prev, [client.id]: { ...prev[client.id], showPw: !prev[client.id].showPw } }))}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+                                >
+                                  {portalInputs[client.id].showPw ? <EyeOff size={11} /> : <Eye size={11} />}
+                                </button>
+                              </div>
+                              <button
+                                onClick={() => savePortalCredentials(client.id)}
+                                disabled={portalInputs[client.id].saving}
+                                className="w-full flex items-center justify-center gap-1.5 text-[10px] font-bold bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/25 text-amber-300 py-1.5 rounded-lg transition disabled:opacity-40"
+                              >
+                                {portalInputs[client.id].saving ? <Loader2 size={10} className="animate-spin" /> : <Key size={10} />}
+                                {portalInputs[client.id].saving ? 'Saving…' : 'Save Portal Login'}
+                              </button>
+                              {client.clientSlug && (
+                                <p className="text-[9px] text-white/25 text-center">Active slug: <span className="text-amber-400/60">{client.clientSlug}</span></p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Actions */}
                       <div className="flex gap-2 pt-1">

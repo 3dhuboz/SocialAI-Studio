@@ -2,6 +2,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Portal auto-login credentials — public read, authenticated write only
+    match /portal/{clientSlug} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
     // A user can only read/write their own top-level doc and all subcollections
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
