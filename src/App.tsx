@@ -816,11 +816,7 @@ const Dashboard: React.FC = () => {
     setIsPullingStats(false);
   };
 
-  // Auto-fetch stats on login when Late is connected
-  useEffect(() => {
-    if (lateProfileId && user) handlePullStats(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lateProfileId, user]);
+  // Stats are fetched manually via Refresh Stats button only — auto-fetch removed (was firing on every workspace switch)
 
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
@@ -835,31 +831,9 @@ const Dashboard: React.FC = () => {
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
-      // ── RESOLVE accountIds: fetch ALL accounts, find the one for THIS profile ──
-      let resolvedAccountIds: Record<string, string> = { ...lateAccountIds };
-      try {
-        const allAccounts = await LateService.getAccounts();
-        // DIAGNOSTIC: dump complete raw data for every account
-        console.log('[Publish] ALL accounts raw dump:', JSON.stringify(allAccounts, null, 2));
-        if (allAccounts.length > 0) {
-          console.log('[Publish] Account field names:', Object.keys(allAccounts[0]));
-        }
-        // Try to find the account that belongs to THIS profile
-        for (const acc of allAccounts) {
-          const profField = acc.profile || acc.profileId || acc.profile_id || '';
-          const profStr = typeof profField === 'object' ? (profField._id || profField.id || '') : String(profField);
-          if (profStr === lateProfileId) {
-            const plat = (acc.platform || '').toLowerCase();
-            const accId = acc._id || acc.id;
-            if (plat && accId) {
-              resolvedAccountIds[plat] = accId;
-              console.log(`[Publish] Matched account ${accId} (${acc.name}) to profile ${lateProfileId} via profile field`);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('[Publish] Failed to fetch accounts:', e);
-      }
+      // Pass stored accountIds to proxy — proxy handles account lookup fallbacks server-side
+      const resolvedAccountIds: Record<string, string> = { ...lateAccountIds };
+      console.log('[Publish] accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
 
       const fullText = generatedHashtags.length > 0
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
