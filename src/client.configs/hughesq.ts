@@ -6,10 +6,10 @@
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
-  appName: "Uzi's Q Social",
-  tagline: "AI-powered social media — smoke, fire and flavour online",
+  appName: 'Hugheseys Que Social',
+  tagline: 'AI-powered social media — smoke, fire and flavour online',
 
-  defaultBusinessName: "Uzi's Q",
+  defaultBusinessName: 'Hugheseys Que',
   defaultBusinessType: 'BBQ restaurant & catering',
   defaultLocation: 'Australia',
   defaultTone: 'Warm, authentic and passionate about BBQ',
