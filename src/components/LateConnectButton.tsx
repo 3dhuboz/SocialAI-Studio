@@ -55,7 +55,21 @@ export const LateConnectButton: React.FC<Props> = ({
       // must have its own Late profile so it can connect to its own FB page.
       let pid = profileId;
       if (!pid) {
-        pid = await LateService.createProfile(businessName || 'SocialAI Client');
+        const name = businessName || 'SocialAI Client';
+        try {
+          pid = await LateService.createProfile(name);
+        } catch (createErr: any) {
+          // Late.dev rejects duplicate names — find the existing profile instead
+          if (createErr?.message?.toLowerCase().includes('already exists')) {
+            console.log('Profile name exists, looking up existing profile for:', name);
+            const existing = await LateService.listProfiles();
+            const match = existing.find(p => p.name === name) || existing[0];
+            if (match) pid = match.id;
+            else throw createErr; // truly no profile found
+          } else {
+            throw createErr;
+          }
+        }
       }
 
       // ── Standard mode: Late hosts page selection UI ───────────────────
