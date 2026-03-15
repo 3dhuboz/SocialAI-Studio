@@ -3,12 +3,15 @@ const PROXY = '/.netlify/functions/late-proxy';
 const safeJson = async (res: Response) => {
   const text = await res.text();
   if (!text || !text.trim()) {
-    throw new Error('Social connection service is not available on localhost. Open the deployed Netlify site to use this feature, or run `netlify dev` locally.');
+    throw new Error('Social connection service is not available. If running locally, use `netlify dev`. Otherwise check the Netlify deploy status.');
   }
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error('Social connection service returned an unexpected response. Make sure LATE_API_KEY is set in Netlify environment variables.');
+    // Likely got an HTML error page instead of JSON
+    const snippet = text.substring(0, 120).replace(/<[^>]*>/g, '').trim();
+    console.error('[lateService] Non-JSON response:', text.substring(0, 300));
+    throw new Error(`Social connection service error: ${snippet || 'unexpected response'}. Try refreshing the page.`);
   }
 };
 
@@ -45,7 +48,7 @@ export const LateService = {
       body: JSON.stringify({ title }),
     });
     const data = await safeJson(res);
-    if (!res.ok || data.error) throw new Error(data.error || 'Failed to create profile');
+    if (!res.ok || data.error || data.message) throw new Error(data.error || data.message || 'Failed to create profile');
     return data.id as string;
   },
 
