@@ -1108,18 +1108,14 @@ const Dashboard: React.FC = () => {
     try {
       const recentTopics = posts.slice(0, 10).map(p => p.topic || p.content.substring(0, 40));
       const report = await generateInsightReport(profile.name, profile.type, profile.location || 'Australia', stats, recentTopics);
-      if (report) {
-        setInsightReport(report);
-        setInsightStale(false);
-        if (user) {
-          updateDoc(dataRef(), { insightReport: report }).catch(() =>
-            setDoc(dataRef(), { insightReport: report }, { merge: true })
-          );
-        }
-        toast('AI insights updated!', 'success');
-      } else {
-        toast('AI returned no report — check your Gemini API key.', 'error');
+      setInsightReport(report);
+      setInsightStale(false);
+      if (user) {
+        updateDoc(dataRef(), { insightReport: report }).catch(() =>
+          setDoc(dataRef(), { insightReport: report }, { merge: true })
+        );
       }
+      toast('AI insights updated!', 'success');
     } catch (e: any) {
       toast(`Insights failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
     } finally {

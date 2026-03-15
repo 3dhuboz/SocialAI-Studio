@@ -337,9 +337,10 @@ Return ONLY this exact JSON structure, no markdown:
     const parsed = JSON.parse(raw) as InsightReport;
     parsed.generatedAt = new Date().toISOString();
     return parsed;
-  } catch (e) {
-    console.warn('generateInsightReport failed:', e);
-    return null;
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    console.warn('generateInsightReport failed:', msg);
+    throw new Error(msg);
   }
 };
 
@@ -410,9 +411,10 @@ Return ONLY this exact JSON, no markdown:
     const parsed = JSON.parse(raw) as InsightReport;
     parsed.generatedAt = new Date().toISOString();
     return parsed;
-  } catch (e) {
-    console.warn('generateInsightReportFromPosts failed:', e);
-    return null;
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    console.warn('generateInsightReportFromPosts failed:', msg);
+    throw new Error(msg);
   }
 };
 
