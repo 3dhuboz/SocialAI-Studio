@@ -1580,7 +1580,7 @@ const Dashboard: React.FC = () => {
                   {planCfg.name}
                 </span>
               )}
-              {activePlan === 'agency' && (
+              {activePlan === 'agency' && !CLIENT.clientMode && (
                 <ClientSwitcher
                   clients={clients}
                   activeClientId={activeClientId}
