@@ -61,6 +61,92 @@ const DEFAULT_STATS: ContentCalendarStats = {
   postsLast30Days: 8
 };
 
+// ── Dynamic Quick Starts based on business type ─────────
+const getQuickStarts = (businessType: string, businessName: string) => {
+  const t = (businessType || '').toLowerCase();
+  const name = businessName || 'our business';
+
+  // Food / Restaurant / Café / Food Truck / Catering / BBQ
+  if (/food|restaurant|café|cafe|bistro|bakery|pizza|burger|bbq|barbecue|grill|meat|kitchen|catering|food.?truck|bar\b|pub\b|diner|sushi|taco|wing|fried|smoke/i.test(t)) return [
+    { icon: '🔥', label: "Today's special", text: `Today's special at ${name} — here's what's on the grill right now and why you need to try it before it's gone.` },
+    { icon: '📍', label: 'Where to find us', text: `Here's where you can find ${name} today — our location, hours, and what's on the menu.` },
+    { icon: '🍖', label: 'Menu spotlight', text: `Let's talk about our most popular menu item — what makes it special and why customers keep coming back for it.` },
+    { icon: '🎬', label: 'Behind the grill', text: `A look behind the scenes at ${name} — how we prep, cook, and serve up our signature dishes.` },
+    { icon: '⭐', label: 'Customer fave', text: `One of our regulars just said this about ${name} — here's what they love and why they keep coming back.` },
+    { icon: '🎉', label: 'Catering / events', text: `Did you know ${name} does catering? Here's how we can make your next event unforgettable.` },
+  ];
+
+  // Tech / IT / Software / Web / Digital
+  if (/tech|it\b|software|web|digital|computer|cyber|cloud|data|network|repair|support|managed|saas|app\b|developer/i.test(t)) return [
+    { icon: '🛡️', label: 'Security tip', text: `A quick cybersecurity tip that could protect your business today — most people overlook this.` },
+    { icon: '💡', label: 'Tech tip', text: `Here's a tech tip that saves our clients hours every week — and it only takes 2 minutes to set up.` },
+    { icon: '🔧', label: 'Problem solved', text: `A client came to us with a tech issue that was costing them time and money — here's how we fixed it.` },
+    { icon: '📊', label: 'Did you know?', text: `Most small businesses don't realise this about their IT setup — here's what we see all the time.` },
+    { icon: '⭐', label: 'Client story', text: `One of our clients just had a huge win after we helped them with their tech setup — here's what happened.` },
+    { icon: '📣', label: 'New service', text: `We just added a new service at ${name} — and it's going to be a game-changer for small businesses.` },
+  ];
+
+  // Beauty / Hair / Salon / Spa / Nails
+  if (/beauty|hair|salon|spa|nail|lash|brow|skin|facial|barber|makeup|cosmetic|aesthetic|wax/i.test(t)) return [
+    { icon: '✨', label: 'Transformation', text: `Before and after — check out this incredible transformation we did at ${name} this week.` },
+    { icon: '💇', label: 'Style trend', text: `This style is trending right now and our clients are loving it — here's why you should try it.` },
+    { icon: '🎉', label: 'Special offer', text: `Book this week and get something special — here's our current offer at ${name}.` },
+    { icon: '💡', label: 'Care tip', text: `A quick tip to keep your look fresh between appointments — most people get this wrong.` },
+    { icon: '⭐', label: 'Happy client', text: `One of our clients just left us the nicest review — here's what they said about their experience at ${name}.` },
+    { icon: '🎬', label: 'Behind the chair', text: `A peek behind the scenes at ${name} — watch this process from start to finish.` },
+  ];
+
+  // Fitness / Gym / Personal Training / Health
+  if (/fitness|gym|train|workout|yoga|pilates|crossfit|health|wellness|coach|sport|martial|boxing|physio/i.test(t)) return [
+    { icon: '💪', label: 'Workout tip', text: `Try this simple exercise change — it makes a massive difference and most people don't know about it.` },
+    { icon: '🏆', label: 'Member win', text: `One of our members just hit an incredible milestone — here's their story and what they did differently.` },
+    { icon: '🎬', label: 'Quick demo', text: `Watch this quick form breakdown — doing this exercise wrong is the #1 mistake we see.` },
+    { icon: '🔥', label: 'Challenge', text: `Here's a quick fitness challenge you can do right now — tag a mate who needs this.` },
+    { icon: '📅', label: 'Class schedule', text: `Here's what's on this week at ${name} — these classes are filling up fast.` },
+    { icon: '💡', label: 'Nutrition tip', text: `A simple nutrition hack that our members swear by — it takes 5 minutes and changes everything.` },
+  ];
+
+  // Retail / Shop / Store / E-commerce
+  if (/retail|shop|store|boutique|e.?commerce|online.?store|fashion|cloth|apparel|jewel|gift|home.?decor|furniture/i.test(t)) return [
+    { icon: '🔥', label: 'Flash sale', text: `Flash sale at ${name} — these deals won't last. Here's what's on offer right now.` },
+    { icon: '🆕', label: 'New arrival', text: `Just landed at ${name} — our newest arrivals are here and they're selling fast.` },
+    { icon: '⭐', label: 'Best seller', text: `Our #1 best seller this month — here's why customers can't stop buying it.` },
+    { icon: '🎁', label: 'Gift guide', text: `Looking for the perfect gift? Here are our top picks from ${name} that people actually love.` },
+    { icon: '📣', label: 'Restock alert', text: `It's back in stock! This sold out last time — grab it before it's gone again.` },
+    { icon: '🎬', label: 'Unboxing', text: `Unboxing our latest shipment at ${name} — here's a first look at what just arrived.` },
+  ];
+
+  // Trades / Construction / Plumbing / Electrical / Building
+  if (/trade|plumb|electric|build|construct|roofing|painting|carpenter|handyman|landscap|clean|mow|hvac|air.?con|solar|renovat/i.test(t)) return [
+    { icon: '🔧', label: 'Job spotlight', text: `Check out this job we just completed — before and after photos that speak for themselves.` },
+    { icon: '💡', label: 'DIY tip', text: `Here's a quick DIY tip from our team — this could save you a call-out fee.` },
+    { icon: '⭐', label: 'Customer review', text: `Another 5-star review for ${name} — here's what our latest customer had to say.` },
+    { icon: '📸', label: 'Before & after', text: `Before and after — look at the difference. This is what we do at ${name}.` },
+    { icon: '⚠️', label: 'Common mistake', text: `The most common mistake homeowners make with this — and how to avoid costly repairs.` },
+    { icon: '📣', label: 'Availability', text: `We have availability this week — if you've been putting off that job, now's the time. Book with ${name}.` },
+  ];
+
+  // Real Estate / Property
+  if (/real.?estate|property|agent|rental|mortgage|home.?loan|invest|land|house|apartment|realty/i.test(t)) return [
+    { icon: '🏠', label: 'New listing', text: `Just listed — check out this property and what makes it stand out in the current market.` },
+    { icon: '📈', label: 'Market update', text: `Here's what's happening in the local property market right now — and what it means for buyers and sellers.` },
+    { icon: '💡', label: 'Buyer tip', text: `A tip for anyone looking to buy — most people miss this and it costs them thousands.` },
+    { icon: '🔑', label: 'Just sold', text: `Another one SOLD by ${name} — congratulations to the new owners!` },
+    { icon: '⭐', label: 'Client story', text: `Our clients just found their dream home — here's how we helped them through the process.` },
+    { icon: '📣', label: 'Open home', text: `Open for inspection this weekend — here's what's available and when you can come through.` },
+  ];
+
+  // Default / General — still contextual with business name
+  return [
+    { icon: '🔥', label: 'Special offer', text: `We've got something special on right now at ${name} — here's the deal and why you should jump on it.` },
+    { icon: '🆕', label: 'What\'s new', text: `Exciting things happening at ${name} — here's what we've been working on and what's coming next.` },
+    { icon: '🎬', label: 'Behind the scenes', text: `A behind-the-scenes look at how we do things at ${name} — here's what a typical day looks like.` },
+    { icon: '⭐', label: 'Customer story', text: `A recent customer experience at ${name} — here's what happened and what they said about it.` },
+    { icon: '💡', label: 'Quick tip', text: `Here's a useful tip related to what we do at ${name} — most people don't know this.` },
+    { icon: '📣', label: 'Reminder', text: `A friendly reminder from ${name} — here's what you need to know this week.` },
+  ];
+};
+
 // ── Autopilot draft persistence ─────────────────────────
 const DRAFT_KEY = 'sai_autopilot_draft';
 const DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
@@ -1976,18 +2062,11 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Quick-start starters */}
+              {/* Quick-start starters — dynamic based on business type */}
               <div className="space-y-2">
                 <p className="text-[10px] font-semibold text-white/20 uppercase tracking-widest">Quick starts — click to use</p>
                 <div className="flex flex-wrap gap-2">
-                  {[
-                    { icon: '🔥', label: 'Flash sale', text: `Flash sale this weekend — 20% off everything in store. Don't miss out!` },
-                    { icon: '🎉', label: 'New product', text: `We just launched something new — and you're going to love it. Come check it out!` },
-                    { icon: '🎬', label: 'Behind the scenes', text: `Ever wonder what goes on behind the scenes here? Here's a quick look at how we do what we do.` },
-                    { icon: '⭐', label: 'Customer win', text: `A customer came to us with a problem — here's how we helped them and what they said.` },
-                    { icon: '💡', label: 'Top tip', text: `Here's a quick tip that could save you time and money this week.` },
-                    { icon: '📣', label: 'Event / reminder', text: `Don't forget — we're open this public holiday! Pop in and see us.` },
-                  ].map(s => (
+                  {getQuickStarts(profile.type, profile.name).map(s => (
                     <button key={s.label}
                       onClick={() => setTopic(s.text)}
                       className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/8 bg-white/2 text-white/30 hover:text-white/60 hover:border-amber-500/30 hover:bg-amber-500/5 transition">
