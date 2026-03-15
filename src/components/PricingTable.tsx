@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { CLIENT } from '../client.config';
-import { CheckCircle, Zap, ArrowRight, X, Loader2, Shield, Lock } from 'lucide-react';
+import { CheckCircle, Zap, ArrowRight, X, Loader2, Shield, Lock, Tag } from 'lucide-react';
+
+const promo = CLIENT.setupFeePromo;
+const setupFeeDisplay = promo?.active
+  ? (promo.amount === 0 ? 'FREE' : `$${promo.amount}`)
+  : `$${CLIENT.setupFee}`;
 
 interface Props {
   onClose?: () => void;
@@ -108,7 +113,16 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-black text-white">Choose your plan</h2>
-            <p className="text-white/35 text-sm mt-1">One-time ${CLIENT.setupFee} setup · Cancel anytime · No lock-in</p>
+            {promo?.active ? (
+              <div className="flex items-center gap-2 mt-1">
+                <span className="flex items-center gap-1.5 bg-green-500/15 border border-green-500/30 text-green-400 text-xs font-bold px-2.5 py-1 rounded-full">
+                  <Tag size={10} /> {promo.label}
+                </span>
+                <span className="text-white/30 text-sm line-through">${CLIENT.setupFee} setup</span>
+              </div>
+            ) : (
+              <p className="text-white/35 text-sm mt-1">One-time ${CLIENT.setupFee} setup · Cancel anytime · No lock-in</p>
+            )}
           </div>
           {onClose && (
             <button
@@ -154,7 +168,14 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                     <span className="text-4xl font-black text-white">${plan.price}</span>
                     <span className="text-white/35 text-sm">/mo</span>
                   </div>
-                  <p className="text-xs text-white/25 mb-6">+ ${CLIENT.setupFee} one-time setup</p>
+                  {promo?.active ? (
+                    <p className="text-xs mb-6 flex items-center gap-1.5">
+                      <span className="text-white/25 line-through">${CLIENT.setupFee} setup</span>
+                      <span className="text-green-400 font-bold">{setupFeeDisplay} setup</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-white/25 mb-6">+ ${CLIENT.setupFee} one-time setup</p>
+                  )}
 
                   <ul className="space-y-2.5 mb-8 flex-1">
                     {plan.features.map((f, i) => (
@@ -197,7 +218,9 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                   {selectedPlan.name} — ${selectedPlan.price}/mo
                 </h3>
                 <p className="text-xs text-white/35 mt-0.5">
-                  Includes ${CLIENT.setupFee} one-time setup fee · Cancel anytime
+                  {promo?.active
+                    ? <><span className="line-through">${CLIENT.setupFee} setup fee</span> <span className="text-green-400 font-semibold">{setupFeeDisplay}</span> · Cancel anytime</>
+                    : <>Includes ${CLIENT.setupFee} one-time setup fee · Cancel anytime</>}
                 </p>
               </div>
               <button

@@ -72,6 +72,22 @@ export const CLIENT = {
   setupFee: 99,
 
   /**
+   * SETUP FEE PROMO:
+   * To run a promotion (reduce or waive the setup fee), set active: true and
+   * set amount to the discounted price (0 = completely free).
+   * Change label to whatever you want displayed on the pricing page.
+   * Set active: false to return to normal pricing.
+   * NOTE: This controls the UI only. If PayPal charges the fee automatically
+   * on subscription, refund it manually from your PayPal dashboard — or create
+   * a second set of paypalPlanIds without a setup fee and swap them in below.
+   */
+  setupFeePromo: {
+    active: false,
+    amount: 0,
+    label: 'Limited time — setup fee waived!',
+  },
+
+  /**
    * PAYPAL SETUP:
    * 1. Go to developer.paypal.com → My Apps & Credentials → Create App (Live)
    * 2. Copy your Client ID and paste into paypalClientId below
