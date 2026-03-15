@@ -137,7 +137,12 @@ The content field must respect the character limits above. Do not pad with fille
       const text = await ClaudeService.generate(prompt, { temperature: 0.8, maxTokens: 512 });
       return parseRaw(text);
     } catch (e: any) {
-      console.warn('Claude generateSocialPost failed, falling back to Gemini:', e?.message);
+      const msg: string = e?.message || '';
+      // Auth/key errors should surface immediately — don't silently fall back
+      if (msg.includes('401') || msg.includes('invalid') || msg.includes('Invalid') || msg.includes('API key')) {
+        throw new Error(`Claude key error: ${msg}`);
+      }
+      console.warn('Claude generateSocialPost failed, falling back to Gemini:', msg);
     }
   }
 
@@ -371,7 +376,11 @@ Return ONLY this exact JSON structure, no markdown:
         const text = await ClaudeService.generate(prompt, { temperature: 0.4, maxTokens: 1500 });
         return parseInsightJson(text);
       } catch (e: any) {
-        console.warn('Claude generateInsightReport failed, falling back to Gemini:', e?.message);
+        const msg: string = e?.message || '';
+        if (msg.includes('401') || msg.includes('invalid') || msg.includes('Invalid') || msg.includes('API key')) {
+          throw new Error(`Claude key error: ${msg}`);
+        }
+        console.warn('Claude generateInsightReport failed, falling back to Gemini:', msg);
       }
     }
     const ai = getAI();
@@ -447,7 +456,11 @@ Return ONLY this exact JSON, no markdown:
         const text = await ClaudeService.generate(prompt, { temperature: 0.3, maxTokens: 1500 });
         return parseInsightJson(text);
       } catch (e: any) {
-        console.warn('Claude generateInsightReportFromPosts failed, falling back to Gemini:', e?.message);
+        const msg: string = e?.message || '';
+        if (msg.includes('401') || msg.includes('invalid') || msg.includes('Invalid') || msg.includes('API key')) {
+          throw new Error(`Claude key error: ${msg}`);
+        }
+        console.warn('Claude generateInsightReportFromPosts failed, falling back to Gemini:', msg);
       }
     }
     const ai = getAI();

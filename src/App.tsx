@@ -712,8 +712,14 @@ const Dashboard: React.FC = () => {
       return result;
     } catch (e: any) {
       const msg: string = e?.message || String(e);
-      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-        toast('Gemini quota exceeded — wait a minute and try again, or check your API key in Settings.', 'error');
+      const hasClaudeKey = !!localStorage.getItem('sai_claude_key');
+      if (msg.includes('Claude key error') || msg.includes('401') || msg.includes('Invalid') && msg.includes('Claude')) {
+        toast(`Claude key error — check your API key in Settings. (${msg.substring(0, 60)})`, 'error');
+      } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+        toast(hasClaudeKey
+          ? 'AI quota exceeded — Claude proxy may still be deploying. Try again in 1–2 min.'
+          : 'Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.',
+          'error');
       } else {
         toast(`AI error: ${msg.substring(0, 100)}`, 'error');
       }
