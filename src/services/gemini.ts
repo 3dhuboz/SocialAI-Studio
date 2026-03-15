@@ -14,6 +14,31 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: key });
 };
 
+const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
+/** Try generateContent across model fallbacks on 429/quota errors. */
+const generateWithFallback = async (
+  ai: GoogleGenAI,
+  contents: string,
+  config?: Record<string, unknown>
+): Promise<{ text: string }> => {
+  let lastErr: unknown;
+  for (const model of FLASH_MODELS) {
+    try {
+      const res = await ai.models.generateContent({ model, contents, config } as any);
+      return { text: res.text || '' };
+    } catch (e: any) {
+      const msg: string = e?.message || String(e);
+      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+        lastErr = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+};
+
 const compressImage = (base64Str: string, maxWidth = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -98,13 +123,9 @@ Return JSON with "content" (post body text only — NO hashtags in content) and 
 The content field must respect the character limits above. Do not pad with filler.
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', temperature: 0.8 } as any,
-    });
+    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.8 });
 
-    const raw = (response.text || '').trim();
+    const raw = response.text.trim();
     try {
       return raw ? JSON.parse(raw) : { content: 'Error generating content.', hashtags: [] };
     } catch {
@@ -328,12 +349,8 @@ Return ONLY this exact JSON structure, no markdown:
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', temperature: 0.4 } as any,
-    });
-    const raw = (response.text || '').trim();
+    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.4 });
+    const raw = response.text.trim();
     const parsed = JSON.parse(raw) as InsightReport;
     parsed.generatedAt = new Date().toISOString();
     return parsed;
@@ -402,12 +419,8 @@ Return ONLY this exact JSON, no markdown:
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', temperature: 0.3 } as any,
-    });
-    const raw = (response.text || '').trim();
+    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.3 });
+    const raw = response.text.trim();
     const parsed = JSON.parse(raw) as InsightReport;
     parsed.generatedAt = new Date().toISOString();
     return parsed;
