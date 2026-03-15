@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CheckCircle, Loader2, X, Zap, Facebook, Instagram, AlertCircle } from 'lucide-react';
 import { LateService } from '../services/lateService';
 
@@ -21,8 +21,30 @@ export const LateConnectButton: React.FC<Props> = ({
 }) => {
   const [step, setStep] = useState<Step>('idle');
   const [error, setError] = useState('');
+  const [connectedPageName, setConnectedPageName] = useState<string | null>(null);
 
   const isConnected = !!profileId && connectedPlatforms.length > 0;
+
+  useEffect(() => {
+    if (!isConnected || !profileId) return;
+    let cancelled = false;
+    LateService.getProfileInfo(profileId)
+      .then((data: any) => {
+        if (cancelled) return;
+        const name =
+          data?.accounts?.[0]?.name ||
+          data?.connections?.[0]?.name ||
+          data?.pages?.[0]?.name ||
+          data?.facebook?.pageName ||
+          data?.facebook?.name ||
+          data?.name ||
+          null;
+        setConnectedPageName(name);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId, isConnected]);
 
   const handleConnect = async () => {
     setStep('creating');
@@ -97,10 +119,11 @@ export const LateConnectButton: React.FC<Props> = ({
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <CheckCircle size={11} /> Auto-publishing active
             </p>
-            <div className="flex gap-1.5 mt-1.5">
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
               {connectedPlatforms.includes('facebook') && (
                 <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Facebook size={9} /> Facebook
+                  <Facebook size={9} />
+                  {connectedPageName ? connectedPageName : 'Facebook'}
                 </span>
               )}
               {connectedPlatforms.includes('instagram') && (
