@@ -1158,7 +1158,7 @@ const Dashboard: React.FC = () => {
 
   // ── Insights ──
   const runInsightReport = async (forceRefresh = false) => {
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings to enable insights.', 'warning'); return; }
     if (!forceRefresh && insightReport) return;
     setIsAnalyzing(true);
     try {
@@ -1173,14 +1173,21 @@ const Dashboard: React.FC = () => {
       }
       toast('AI insights updated!', 'success');
     } catch (e: any) {
-      toast(`Insights failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+      const msg: string = e?.message || String(e);
+      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+        toast('Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.', 'error');
+      } else if (msg.includes('404') || msg.includes('not found')) {
+        toast('AI service unavailable — the app may still be deploying. Try again in 1–2 minutes.', 'error');
+      } else {
+        toast(`Insights failed: ${msg.substring(0, 80)}`, 'error');
+      }
     } finally {
       setIsAnalyzing(false);
     }
   };
 
   const handleScanPastPosts = async () => {
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings to enable insights.', 'warning'); return; }
     setIsScanningPosts(true);
     try {
       // Path 0 — App's own posts (always available, no external API needed)
