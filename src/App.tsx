@@ -209,6 +209,7 @@ const Dashboard: React.FC = () => {
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
           if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
+          if (d.claudeApiKey) { localStorage.setItem('sai_claude_key', d.claudeApiKey); setClaudeApiKey(d.claudeApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
@@ -546,7 +547,7 @@ const Dashboard: React.FC = () => {
   }, [isAnalyzing, isScanningPosts]);
   const [insightStale, setInsightStale] = useState(false);
 
-  const hasApiKey = !!localStorage.getItem('sai_gemini_key');
+  const hasApiKey = !!localStorage.getItem('sai_claude_key') || !!localStorage.getItem('sai_gemini_key');
   const fbConnected = !!lateProfileId;
 
   // Auto-run daily insight analysis when stale
@@ -702,7 +703,7 @@ const Dashboard: React.FC = () => {
   // ── Content Generation ──
   const handleGenerate = async (): Promise<{ content: string; hashtags: string[] } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return null; }
+    if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings first.', 'warning'); return null; }
     setIsGenerating(true);
     try {
       const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile);
@@ -1306,6 +1307,19 @@ const Dashboard: React.FC = () => {
       toast('fal.ai key saved — AI video generation is now active!', 'success');
     } catch { toast('Failed to save fal.ai key.', 'error'); }
     setIsSavingFalKey(false);
+  };
+
+  const [claudeApiKey, setClaudeApiKey] = useState(() => localStorage.getItem('sai_claude_key') || '');
+  const [isSavingClaudeKey, setIsSavingClaudeKey] = useState(false);
+  const handleSaveClaudeKey = async () => {
+    if (!claudeApiKey.trim()) { toast('Enter your Claude API key first.', 'warning'); return; }
+    setIsSavingClaudeKey(true);
+    try {
+      localStorage.setItem('sai_claude_key', claudeApiKey.trim());
+      if (user) await updateDoc(doc(db, 'users', user.uid), { claudeApiKey: claudeApiKey.trim() });
+      toast('Claude key saved — AI features now use Claude!', 'success');
+    } catch { toast('Failed to save Claude key.', 'error'); }
+    setIsSavingClaudeKey(false);
   };
 
   const handleSaveProfile = async () => {
@@ -3410,7 +3424,45 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* API Key — super-admin only */}
+            {/* Claude API Key — super-admin only, primary text engine */}
+            {isSuperAdmin && (
+            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 bg-orange-500/15 border border-orange-500/20 rounded-xl flex items-center justify-center">
+                  <Brain size={16} className="text-orange-400" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white">Claude AI Key <span className="text-[10px] bg-orange-500/20 text-orange-300 border border-orange-500/20 px-2 py-0.5 rounded-full ml-1 font-semibold">Recommended</span></h3>
+                  <p className="text-xs text-white/30 mt-0.5">Primary text engine — no quota limits, pay-as-you-go. Gemini used as fallback if not set.</p>
+                </div>
+                {!!localStorage.getItem('sai_claude_key') && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1 whitespace-nowrap"><CheckCircle size={11} /> Active</span>}
+              </div>
+              <p className="text-xs text-white/30 leading-relaxed">
+                Get a key from{' '}
+                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-orange-400/70 hover:text-orange-400 underline transition">console.anthropic.com</a>
+                {' '}— starts at ~$5 credit, no quota walls. Use <span className="text-white/50 font-mono">claude-3-5-haiku</span> for fast & cheap generation.
+              </p>
+              <div className="flex gap-2 max-w-lg">
+                <input
+                  type="password"
+                  value={claudeApiKey}
+                  onChange={e => setClaudeApiKey(e.target.value)}
+                  placeholder="sk-ant-..."
+                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20"
+                />
+                <button
+                  onClick={handleSaveClaudeKey}
+                  disabled={isSavingClaudeKey}
+                  className="bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
+                >
+                  {isSavingClaudeKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {isSavingClaudeKey ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+            )}
+
+            {/* Gemini API Key — super-admin only, fallback text + image engine */}
             {isSuperAdmin ? (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
@@ -3418,15 +3470,15 @@ const Dashboard: React.FC = () => {
                   <Sparkles size={16} className="text-amber-400" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white">Gemini AI Key <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded-full ml-1 font-semibold">Admin only</span></h3>
-                  <p className="text-xs text-white/30 mt-0.5">Powers all AI content generation features</p>
+                  <h3 className="font-bold text-white">Gemini AI Key <span className="text-[10px] bg-white/10 text-white/40 border border-white/10 px-2 py-0.5 rounded-full ml-1 font-semibold">Fallback + Images</span></h3>
+                  <p className="text-xs text-white/30 mt-0.5">Used for image generation (Imagen) and as text fallback when Claude is not set</p>
                 </div>
-                {hasApiKey && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
+                {!!localStorage.getItem('sai_gemini_key') && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
               </div>
               <p className="text-xs text-white/30 leading-relaxed">
                 Get a free key from{' '}
                 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400/70 hover:text-amber-400 underline transition">Google AI Studio</a>
-                {' '}— it takes 30 seconds and is free to use.
+                {' '}— required for AI image generation even if Claude is set.
               </p>
               <div className="flex gap-2 max-w-lg">
                 <input

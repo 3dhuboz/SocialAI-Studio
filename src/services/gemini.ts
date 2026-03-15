@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { ClaudeService } from './claudeService';
 
 const getApiKey = () => {
   if (typeof window !== 'undefined') {
@@ -80,9 +81,6 @@ export const generateSocialPost = async (
     location?: string;
   }
 ) => {
-  const ai = getAI();
-  if (!ai) return { content: "API Key missing. Go to Settings to configure.", hashtags: [] };
-
   const profileContext = profile ? [
     profile.description && `About the business: ${profile.description}`,
     profile.targetAudience && `Target audience: ${profile.targetAudience}`,
@@ -110,8 +108,7 @@ export const generateSocialPost = async (
 - CTA: prioritise saves ("Save this ✓"), shares ("Tag someone"), or comments (open question).
 - Avoid: hashtag dumps >10 (penalised), generic captions, posting without a scroll-stopping hook.`;
 
-  try {
-    const prompt = `
+  const prompt = `
 You are an expert social media manager for "${businessName}", a ${businessType}.
 Tone: ${tone}.
 ${profileContext ? `\nBusiness context:\n${profileContext}` : ''}
@@ -121,20 +118,37 @@ ${platformRules}
 Write a ${platform} post about: "${topic}".
 Return JSON with "content" (post body text only — NO hashtags in content) and "hashtags" (array of strings without # prefix).
 The content field must respect the character limits above. Do not pad with filler.
-    `;
+  `;
 
-    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.8 });
-
-    const raw = response.text.trim();
+  const parseRaw = (raw: string) => {
+    const trimmed = raw.trim();
     try {
-      return raw ? JSON.parse(raw) : { content: 'Error generating content.', hashtags: [] };
+      return trimmed ? JSON.parse(trimmed) : { content: 'Error generating content.', hashtags: [] };
     } catch {
-      const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+      const stripped = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
       const match = stripped.match(/\{[\s\S]*\}/);
       return match ? JSON.parse(match[0]) : { content: stripped || 'Could not parse AI response.', hashtags: [] };
     }
+  };
+
+  // ── Claude first ────────────────────────────────────────────────────────
+  if (ClaudeService.isConfigured()) {
+    try {
+      const text = await ClaudeService.generate(prompt, { temperature: 0.8, maxTokens: 512 });
+      return parseRaw(text);
+    } catch (e: any) {
+      console.warn('Claude generateSocialPost failed, falling back to Gemini:', e?.message);
+    }
+  }
+
+  // ── Gemini fallback ─────────────────────────────────────────────────────
+  const ai = getAI();
+  if (!ai) throw new Error('No AI configured. Set a Claude or Gemini API key in Settings.');
+  try {
+    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.8 });
+    return parseRaw(response.text);
   } catch (error: any) {
-    console.error("Gemini Text Error:", error);
+    console.error('Gemini Text Error:', error);
     throw error;
   }
 };
@@ -308,6 +322,14 @@ export interface InsightReport {
   generatedAt: string;
 }
 
+const parseInsightJson = (raw: string): InsightReport => {
+  const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const match = trimmed.match(/\{[\s\S]*\}/);
+  const parsed = JSON.parse(match ? match[0] : trimmed) as InsightReport;
+  parsed.generatedAt = new Date().toISOString();
+  return parsed;
+};
+
 export const generateInsightReport = async (
   businessName: string,
   businessType: string,
@@ -315,8 +337,7 @@ export const generateInsightReport = async (
   stats: { followers: number; reach: number; engagement: number; postsLast30Days: number },
   recentTopics: string[]
 ): Promise<InsightReport | null> => {
-  const ai = getAI();
-  if (!ai) return null;
+  if (!ClaudeService.isConfigured() && !getAI()) throw new Error('No AI configured. Set a Claude or Gemini API key in Settings.');
   try {
     const prompt = `You are a senior social media strategist. Analyse this business and return a structured JSON insight report.
 
@@ -345,11 +366,18 @@ Return ONLY this exact JSON structure, no markdown:
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
 }`;
 
+    if (ClaudeService.isConfigured()) {
+      try {
+        const text = await ClaudeService.generate(prompt, { temperature: 0.4, maxTokens: 1500 });
+        return parseInsightJson(text);
+      } catch (e: any) {
+        console.warn('Claude generateInsightReport failed, falling back to Gemini:', e?.message);
+      }
+    }
+    const ai = getAI();
+    if (!ai) throw new Error('No AI configured.');
     const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.4 });
-    const raw = response.text.trim();
-    const parsed = JSON.parse(raw) as InsightReport;
-    parsed.generatedAt = new Date().toISOString();
-    return parsed;
+    return parseInsightJson(response.text);
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.warn('generateInsightReport failed:', msg);
@@ -363,8 +391,7 @@ export const generateInsightReportFromPosts = async (
   location: string,
   posts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }>
 ): Promise<InsightReport | null> => {
-  const ai = getAI();
-  if (!ai) return null;
+  if (!ClaudeService.isConfigured() && !getAI()) throw new Error('No AI configured. Set a Claude or Gemini API key in Settings.');
   try {
     const totalLikes = posts.reduce((s, p) => s + p.likes, 0);
     const totalComments = posts.reduce((s, p) => s + p.comments, 0);
@@ -415,11 +442,18 @@ Return ONLY this exact JSON, no markdown:
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
 }`;
 
+    if (ClaudeService.isConfigured()) {
+      try {
+        const text = await ClaudeService.generate(prompt, { temperature: 0.3, maxTokens: 1500 });
+        return parseInsightJson(text);
+      } catch (e: any) {
+        console.warn('Claude generateInsightReportFromPosts failed, falling back to Gemini:', e?.message);
+      }
+    }
+    const ai = getAI();
+    if (!ai) throw new Error('No AI configured.');
     const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.3 });
-    const raw = response.text.trim();
-    const parsed = JSON.parse(raw) as InsightReport;
-    parsed.generatedAt = new Date().toISOString();
-    return parsed;
+    return parseInsightJson(response.text);
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.warn('generateInsightReportFromPosts failed:', msg);
