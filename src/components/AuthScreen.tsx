@@ -177,9 +177,8 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding }) => {
         </div>
 
         <p className="text-center text-xs text-white/15 mt-5">
-          Powered by{' '}
           <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="hover:text-white/30 transition">
-            {CLIENT.poweredBy || 'Penny Wise I.T'}
+            {CLIENT.poweredBy || 'Powered by Penny Wise I.T'}
           </a>
         </p>
       </div>
