@@ -118,11 +118,38 @@ export const handler = async (event) => {
       const { profileId, platforms, text, mediaUrls, scheduleDate, mediaItems } = JSON.parse(event.body || '{}');
       if (!platforms?.length || !text) return { statusCode: 400, headers, body: JSON.stringify({ error: 'platforms and text are required' }) };
 
-      // ── Fetch all connected accounts to resolve accountIds ──────────────
-      const accRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
-      const accData = await accRes.json();
-      const allAccounts = accData.accounts || accData || [];
-      console.log('[late-proxy] available accounts:', JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform }))));
+      // ── Fetch connected accounts scoped to THIS profile ──────────────
+      // IMPORTANT: /accounts returns ALL accounts across ALL profiles.
+      // We MUST scope to the profile so each workspace posts to its own page.
+      let allAccounts = [];
+      if (profileId) {
+        // Try profile-specific endpoint first
+        const profAccRes = await fetch(`${LATE_BASE}/profiles/${profileId}/accounts`, { headers: authHeader });
+        if (profAccRes.ok) {
+          const profAccData = await profAccRes.json();
+          allAccounts = profAccData.accounts || profAccData || [];
+          console.log(`[late-proxy] profile ${profileId} accounts:`, JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform, name: a.name }))));
+        }
+        // If profile-specific didn't work, try filtering global accounts by profileId
+        if (allAccounts.length === 0) {
+          const accRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
+          const accData = await accRes.json();
+          const global = accData.accounts || accData || [];
+          // Filter to only accounts belonging to this profile
+          allAccounts = global.filter(a => a.profileId === profileId || a.profile === profileId || a.profile_id === profileId);
+          console.log(`[late-proxy] filtered global accounts for profile ${profileId}:`, JSON.stringify(allAccounts.map(a => ({ id: a._id, platform: a.platform, profileId: a.profileId || a.profile }))));
+          // Last resort: if no accounts match the profile filter, use all (legacy behavior)
+          if (allAccounts.length === 0 && global.length > 0) {
+            console.warn(`[late-proxy] WARNING: could not filter accounts by profileId ${profileId}, using all ${global.length} accounts`);
+            allAccounts = global;
+          }
+        }
+      } else {
+        // No profileId — fall back to global (legacy)
+        const accRes = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
+        const accData = await accRes.json();
+        allAccounts = accData.accounts || accData || [];
+      }
 
       // Map requested platform strings → { platform, accountId } objects
       const requestedPlatforms = platforms.map(p => p.toLowerCase());
@@ -132,8 +159,8 @@ export const handler = async (event) => {
       }).filter(Boolean);
 
       if (platformObjs.length === 0) {
-        const available = allAccounts.map(a => a.platform).join(', ') || 'none';
-        return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}]. Available: ${available}. Please reconnect in Settings → Social Media Connection.` }) };
+        const available = allAccounts.map(a => `${a.platform}(${a.name || a._id})`).join(', ') || 'none';
+        return { statusCode: 422, headers, body: JSON.stringify({ error: `No connected accounts found for [${requestedPlatforms.join(', ')}] on this workspace's profile. Available: ${available}. Please reconnect in Settings → Social Media Connection.` }) };
       }
 
       const body = {
