@@ -105,10 +105,14 @@ const Dashboard: React.FC = () => {
     const run = async () => {
       try {
         if (clientId) {
-          const snap = await getDoc(doc(db, 'portal', clientId));
-          if (snap.exists()) {
-            const { email, password } = snap.data() as { email: string; password: string };
-            if (email && password) { await tryLogin(email, password); return; }
+          try {
+            const snap = await getDoc(doc(db, 'portal', clientId));
+            if (snap.exists()) {
+              const { email, password } = snap.data() as { email: string; password: string };
+              if (email && password) { await tryLogin(email, password); return; }
+            }
+          } catch {
+            // Portal read failed (rules not deployed yet) — fall through to env-var credentials
           }
         }
         if (CLIENT.autoLoginEmail && CLIENT.autoLoginPassword) {
@@ -1082,21 +1086,29 @@ const Dashboard: React.FC = () => {
 
   // ── Insights ──
   const runInsightReport = async (forceRefresh = false) => {
-    if (!hasApiKey) return;
+    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
     if (!forceRefresh && insightReport) return;
     setIsAnalyzing(true);
-    const recentTopics = posts.slice(0, 10).map(p => p.topic || p.content.substring(0, 40));
-    const report = await generateInsightReport(profile.name, profile.type, profile.location || 'Australia', stats, recentTopics);
-    if (report) {
-      setInsightReport(report);
-      setInsightStale(false);
-      if (user) {
-        updateDoc(dataRef(), { insightReport: report }).catch(() =>
-          setDoc(dataRef(), { insightReport: report }, { merge: true })
-        );
+    try {
+      const recentTopics = posts.slice(0, 10).map(p => p.topic || p.content.substring(0, 40));
+      const report = await generateInsightReport(profile.name, profile.type, profile.location || 'Australia', stats, recentTopics);
+      if (report) {
+        setInsightReport(report);
+        setInsightStale(false);
+        if (user) {
+          updateDoc(dataRef(), { insightReport: report }).catch(() =>
+            setDoc(dataRef(), { insightReport: report }, { merge: true })
+          );
+        }
+        toast('AI insights updated!', 'success');
+      } else {
+        toast('AI returned no report — check your Gemini API key.', 'error');
       }
+    } catch (e: any) {
+      toast(`Insights failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+    } finally {
+      setIsAnalyzing(false);
     }
-    setIsAnalyzing(false);
   };
 
   const handleScanPastPosts = async () => {
