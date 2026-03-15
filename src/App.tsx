@@ -1632,7 +1632,7 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex flex-col flex-1">
+    <div className="min-h-full bg-[#0a0a0f] flex flex-col">
       {/* Onboarding Wizard */}
       {showIntakeForm && user && (
         <ClientIntakeForm
@@ -2015,7 +2015,7 @@ const Dashboard: React.FC = () => {
       })()}
 
       {/* Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
+      <main className={`max-w-6xl mx-auto px-4 flex-1 w-full ${CLIENT.clientMode ? 'py-4' : 'py-8'}`}>
         {!CLIENT.clientMode && (
         <SetupBanner
           status={setupStatus}
@@ -4182,23 +4182,11 @@ const Dashboard: React.FC = () => {
                   profileId={lateProfileId}
                   connectedPlatforms={lateConnectedPlatforms}
                   businessName={profile.name}
-                  onConnected={async (pid, platforms) => {
+                  onConnected={async (pid, platforms, accountIds) => {
                     setLateProfileId(pid);
                     setLateConnectedPlatforms(platforms);
-                    // Resolve accountIds from Late.dev so we can route posts to the correct page
-                    let resolvedAccountIds: Record<string, string> = {};
-                    try {
-                      const accounts = await LateService.getAccounts();
-                      console.log('[onConnected] ALL accounts from Late:', JSON.stringify(accounts));
-                      for (const p of platforms) {
-                        const pl = p.toLowerCase();
-                        // Prefer account matching this profile, fall back to any
-                        const match = accounts.find(a => a.platform === pl && a.profileId === pid)
-                          || accounts.find(a => a.platform === pl);
-                        if (match) resolvedAccountIds[pl] = match.id;
-                      }
-                      console.log('[onConnected] Resolved accountIds for profile', pid, ':', JSON.stringify(resolvedAccountIds));
-                    } catch (e) { console.warn('[onConnected] Failed to resolve accountIds:', e); }
+                    const resolvedAccountIds = accountIds || {};
+                    console.log('[onConnected] profileId:', pid, 'platforms:', platforms, 'accountIds:', JSON.stringify(resolvedAccountIds));
                     setLateAccountIds(resolvedAccountIds);
                     if (user) {
                       const ref = activeClientId

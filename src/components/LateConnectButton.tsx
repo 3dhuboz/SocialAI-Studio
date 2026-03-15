@@ -5,7 +5,7 @@ import { LateService } from '../services/lateService';
 interface Props {
   profileId?: string;
   connectedPlatforms?: string[];
-  onConnected: (profileId: string, platforms: string[]) => void;
+  onConnected: (profileId: string, platforms: string[], accountIds?: Record<string, string>) => void;
   onDisconnect: () => void;
   businessName?: string;
 }
@@ -77,6 +77,13 @@ export const LateConnectButton: React.FC<Props> = ({
       const redirectUrl = `${window.location.origin}${window.location.pathname}?late_cb=1`;
       const authUrl = await LateService.getConnectUrl(pid, 'facebook', redirectUrl);
 
+      // Snapshot accounts BEFORE connecting so we can diff after
+      let accountsBefore: { id: string; platform: string; name?: string }[] = [];
+      try {
+        accountsBefore = await LateService.getAccounts();
+        console.log('[Connect] Accounts BEFORE:', JSON.stringify(accountsBefore.map(a => ({ id: a.id, platform: a.platform, name: a.name }))));
+      } catch (e) { console.warn('[Connect] Failed to snapshot accounts before:', e); }
+
       // Open popup — Late handles page selection, redirects back when done
       const popup = window.open(authUrl, 'late_oauth', 'width=640,height=720,scrollbars=yes,resizable=yes');
       if (!popup) {
@@ -88,21 +95,66 @@ export const LateConnectButton: React.FC<Props> = ({
       setStep('waiting');
 
       const finalPid = pid;
+      const beforeIds = new Set(accountsBefore.map(a => a.id));
+
+      const resolveAccountIds = async (platform: string, urlAccountId?: string): Promise<Record<string, string>> => {
+        const resolved: Record<string, string> = {};
+        // Method 1: accountId from redirect URL
+        if (urlAccountId) {
+          console.log('[Connect] Got accountId from redirect URL:', urlAccountId);
+          resolved[platform.toLowerCase()] = urlAccountId;
+          return resolved;
+        }
+        // Method 2: diff accounts before/after to find the NEW one
+        try {
+          const accountsAfter = await LateService.getAccounts();
+          console.log('[Connect] Accounts AFTER:', JSON.stringify(accountsAfter.map(a => ({ id: a.id, platform: a.platform, name: a.name }))));
+          const newAccounts = accountsAfter.filter(a => !beforeIds.has(a.id));
+          console.log('[Connect] NEW accounts (diff):', JSON.stringify(newAccounts));
+          if (newAccounts.length > 0) {
+            for (const acc of newAccounts) {
+              resolved[acc.platform.toLowerCase()] = acc.id;
+            }
+            return resolved;
+          }
+          // Method 3: no new accounts found — take the LAST account for each platform
+          // (most recently connected = last in array)
+          for (const p of [platform.toLowerCase()]) {
+            const matches = accountsAfter.filter(a => a.platform.toLowerCase() === p);
+            if (matches.length > 0) {
+              resolved[p] = matches[matches.length - 1].id;
+              console.log(`[Connect] Using last ${p} account:`, resolved[p]);
+            }
+          }
+        } catch (e) { console.warn('[Connect] Failed to resolve accountIds:', e); }
+        return resolved;
+      };
+
       const poll = setInterval(() => {
         try {
           if (popup.closed) {
             clearInterval(poll);
+            // Popup closed without redirect — try to resolve anyway
+            resolveAccountIds('facebook').then(accIds => {
+              if (Object.keys(accIds).length > 0) {
+                onConnected(finalPid, Object.keys(accIds), accIds);
+              }
+            });
             setStep('idle');
             return;
           }
           const href = popup.location.href;
-          // Late standard mode redirects back with ?connected={platform}&profileId=X&accountId=Y
           if (href.includes('late_cb=1') || href.includes('connected=')) {
             const params = new URL(href).searchParams;
             const platform = params.get('connected') || 'facebook';
+            const urlAccountId = params.get('accountId') || params.get('account_id') || '';
             popup.close();
             clearInterval(poll);
-            onConnected(finalPid, [platform]);
+            // Resolve accountIds then call onConnected
+            resolveAccountIds(platform, urlAccountId || undefined).then(accIds => {
+              console.log('[Connect] Final resolved accountIds:', JSON.stringify(accIds));
+              onConnected(finalPid, [platform], accIds);
+            });
             setStep('idle');
           }
         } catch {
