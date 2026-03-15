@@ -831,10 +831,36 @@ const Dashboard: React.FC = () => {
       toast('Workspace was out of sync — please try publishing again.', 'warning');
       return;
     }
-    console.log('Publishing to Late profile:', lateProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
+    console.log('[Publish] Profile:', lateProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
+      // ── RESOLVE accountIds from this profile's connected accounts ────
+      // This is the DEFINITIVE fix: ask Late.dev which accounts are on THIS profile
+      let resolvedAccountIds: Record<string, string> = { ...lateAccountIds };
+      try {
+        const profileInfo = await LateService.getProfileInfo(lateProfileId);
+        console.log('[Publish] Raw profile info:', JSON.stringify(profileInfo));
+        // Extract accounts from profile — try every possible field name
+        const pi: any = profileInfo;
+        const prof = pi.profile || pi;
+        const accounts = prof.accounts || prof.connections || prof.socialAccounts || prof.connectedAccounts || [];
+        if (Array.isArray(accounts) && accounts.length > 0) {
+          for (const acc of accounts) {
+            const plat = (acc.platform || '').toLowerCase();
+            const accId = acc._id || acc.id || acc.accountId;
+            if (plat && accId) {
+              resolvedAccountIds[plat] = accId;
+            }
+          }
+          console.log('[Publish] Resolved accountIds from profile:', JSON.stringify(resolvedAccountIds));
+        } else {
+          console.warn('[Publish] No accounts found in profile response. Keys:', Object.keys(prof));
+        }
+      } catch (e) {
+        console.warn('[Publish] Failed to resolve accountIds from profile:', e);
+      }
+
       const fullText = generatedHashtags.length > 0
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : generatedContent;
@@ -849,8 +875,8 @@ const Dashboard: React.FC = () => {
         else toast('Image upload failed — posting text only.', 'warning');
       }
 
-      console.log('Publishing with accountIds:', JSON.stringify(lateAccountIds), 'profileId:', lateProfileId);
-      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems, lateAccountIds);
+      console.log('[Publish] Final accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
+      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems, resolvedAccountIds);
       setPublishSuccess(true);
       setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
