@@ -86,10 +86,10 @@ export const CLIENT = {
    * 7. Set up a PayPal Webhook (developer.paypal.com → Webhooks) pointing to:
    *    https://YOUR_APP_URL/api/paypal-webhook
    *    Subscribe to: BILLING.SUBSCRIPTION.ACTIVATED, BILLING.SUBSCRIPTION.CANCELLED
-   *    Copy the Webhook ID into PAYPAL_WEBHOOK_ID Netlify env var
+   *    Copy the Webhook ID into PAYPAL_WEBHOOK_ID CF Pages env var
    * Leave paypalClientId as empty string to hide PayPal checkout and fall back to salesUrl.
    */
-  paypalClientId: '',
+  paypalClientId: 'AbpGXFs7ZM-jJInXOHQTCD-grOswjEkCaElRuchGsNHEeV9cMJd3jkvuIBL3R9siQ3dBs0qyq5oPOo4i',
 
   /**
    * PAYPAL SUBSCRIPTION PLAN IDs (each starts with P-):
@@ -98,10 +98,10 @@ export const CLIENT = {
    * Leave as empty string to fall back to the generic salesUrl.
    */
   paypalPlanIds: {
-    starter: '',
-    growth: '',
-    pro: '',
-    agency: '',
+    starter: 'P-1AB09838JG575723YNG3TKPY',
+    growth:  'P-5JX42118D0152071LNG3TLDY',
+    pro:     'P-0MN86219YF921874FNG3TLRY',
+    agency:  'P-5VB80462AU714124YNG3TL7Q',
   },
 
   /**
