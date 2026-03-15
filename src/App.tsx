@@ -392,11 +392,19 @@ const Dashboard: React.FC = () => {
     if (!user || activeClientId === null) return;
     const loadClient = async () => {
       try {
+        // Get workspace metadata (name + businessType) to seed profile defaults
+        const ws = clients.find(c => c.id === activeClientId);
+        const wsName = ws?.name || CLIENT.defaultBusinessName;
+        const wsType = ws?.businessType || CLIENT.defaultBusinessType;
+
         const snap = await getDoc(doc(db, 'users', user.uid, 'clients', activeClientId));
         if (snap.exists()) {
           const d = snap.data();
-          if (d.profile) setProfile({ ...DEFAULT_PROFILE, ...d.profile });
-          else setProfile(DEFAULT_PROFILE);
+          const p = { ...DEFAULT_PROFILE, name: wsName, type: wsType, ...(d.profile || {}) };
+          // Always ensure name/type come from workspace if profile has defaults
+          if (!d.profile?.name || d.profile.name === CLIENT.defaultBusinessName || d.profile.name === 'My Business') p.name = wsName;
+          if (!d.profile?.type || d.profile.type === CLIENT.defaultBusinessType) p.type = wsType;
+          setProfile(p);
           if (d.stats) setStats({ ...DEFAULT_STATS, ...d.stats });
           else setStats(DEFAULT_STATS);
           setLateProfileId(d.lateProfileId || '');
@@ -410,7 +418,7 @@ const Dashboard: React.FC = () => {
             setInsightStale(true);
           }
         } else {
-          setProfile(DEFAULT_PROFILE);
+          setProfile({ ...DEFAULT_PROFILE, name: wsName, type: wsType });
           setStats(DEFAULT_STATS);
           setLateProfileId('');
           setLateConnectedPlatforms([]);
@@ -2516,7 +2524,7 @@ const Dashboard: React.FC = () => {
           const now = new Date();
           const upcomingPosts = posts.filter(p => new Date(p.scheduledFor) > now).sort((a,b) => new Date(a.scheduledFor).getTime() - new Date(b.scheduledFor).getTime());
           const nextPost = upcomingPosts[0];
-          const canUseVideos = activePlan === 'pro' || activePlan === 'agency';
+          const canUseVideos = effectivePlan === 'pro' || effectivePlan === 'agency';
           return (
           <div className="space-y-5">
             <input ref={uploadFileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
@@ -4065,7 +4073,7 @@ const Dashboard: React.FC = () => {
                   <div>
                     <h3 className="font-bold text-white flex items-center gap-2">
                       Short Video / Reels
-                      {!(activePlan === 'pro' || activePlan === 'agency') && (
+                      {!(effectivePlan === 'pro' || effectivePlan === 'agency') && (
                         <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">Pro</span>
                       )}
                     </h3>
@@ -4074,22 +4082,22 @@ const Dashboard: React.FC = () => {
                 </div>
                 <button
                   onClick={() => {
-                    if (!(activePlan === 'pro' || activePlan === 'agency')) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
+                    if (!(effectivePlan === 'pro' || effectivePlan === 'agency')) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
                     setProfile(prev => ({ ...prev, videoEnabled: !prev.videoEnabled }));
                     setIncludeVideos(prev => !prev);
                   }}
                   className={`relative w-12 h-6 rounded-full transition flex-shrink-0 ${
-                    profile.videoEnabled && (activePlan === 'pro' || activePlan === 'agency')
+                    profile.videoEnabled && (effectivePlan === 'pro' || effectivePlan === 'agency')
                       ? 'bg-purple-500'
                       : 'bg-white/15'
-                  } ${!(activePlan === 'pro' || activePlan === 'agency') ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                  } ${!(effectivePlan === 'pro' || effectivePlan === 'agency') ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
                   <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${
-                    profile.videoEnabled && (activePlan === 'pro' || activePlan === 'agency') ? 'left-7' : 'left-1'
+                    profile.videoEnabled && (effectivePlan === 'pro' || effectivePlan === 'agency') ? 'left-7' : 'left-1'
                   }`} />
                 </button>
               </div>
-              {profile.videoEnabled && (activePlan === 'pro' || activePlan === 'agency') && (
+              {profile.videoEnabled && (effectivePlan === 'pro' || effectivePlan === 'agency') && (
                 <div className="mt-4 bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
                   <p className="text-xs text-purple-300">🎬 Short videos are now included in your AI content calendar. Each Reel post includes a full script, shot-by-shot brief, and music recommendation that you can film with your phone.</p>
                 </div>
