@@ -2107,6 +2107,28 @@ const Dashboard: React.FC = () => {
                           ))}
                         </div>
                       )}
+                      {/* Action buttons */}
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          onClick={() => {
+                            const full = generatedHashtags.length
+                              ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
+                              : generatedContent;
+                            navigator.clipboard.writeText(full);
+                            toast('Copied to clipboard!', 'success');
+                          }}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 hover:text-white/70 hover:border-white/20 transition"
+                        >
+                          <ClipboardList size={11} /> Copy
+                        </button>
+                        <button
+                          onClick={handleCreatePost}
+                          disabled={isGenerating}
+                          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/40 hover:text-amber-300 hover:border-amber-500/30 transition"
+                        >
+                          <RefreshCw size={11} /> Regenerate
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
