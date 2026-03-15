@@ -8,7 +8,7 @@
  */
 
 const CLAUDE_BASE = 'https://api.anthropic.com/v1';
-const DEFAULT_MODEL = 'claude-3-5-haiku-latest';
+const DEFAULT_MODEL = 'claude-3-5-haiku-20241022';
 
 export const handler = async (event) => {
   const headers = {
