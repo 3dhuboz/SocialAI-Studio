@@ -272,11 +272,21 @@ const Dashboard: React.FC = () => {
           else setStats(DEFAULT_STATS);
           setLateProfileId(d.lateProfileId || '');
           setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
+          if (d.insightReport) {
+            setInsightReport(d.insightReport as InsightReport);
+            const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
+            setInsightStale(ageMs > 24 * 60 * 60 * 1000);
+          } else {
+            setInsightReport(null);
+            setInsightStale(true);
+          }
         } else {
           setProfile(DEFAULT_PROFILE);
           setStats(DEFAULT_STATS);
           setLateProfileId('');
           setLateConnectedPlatforms([]);
+          setInsightReport(null);
+          setInsightStale(true);
         }
         const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'clients', activeClientId, 'posts'), orderBy('scheduledFor', 'asc')));
         setPosts(pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost)));
@@ -1094,7 +1104,9 @@ const Dashboard: React.FC = () => {
       }
 
       if (!scanPosts.length) {
-        toast('No posts found — create a few posts in the Create tab first, then scan.', 'warning');
+        // No external posts found — fall back to generating insights from profile data alone
+        toast('No published posts found — generating insights from your profile & stats.', 'info');
+        await runInsightReport(true);
         setIsScanningPosts(false);
         return;
       }
