@@ -188,6 +188,17 @@ export const handler = async (event) => {
       return { statusCode: res.status, headers, body: JSON.stringify(data) };
     }
 
+    // ── Get Late.dev account / credit info ───────────────────────────────
+    if (action === 'get-credits' && event.httpMethod === 'GET') {
+      const res = await fetch(`${LATE_BASE}/user/me`, { headers: authHeader });
+      let data;
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) return { statusCode: res.status, headers, body: JSON.stringify({ error: data?.message || `HTTP ${res.status}` }) };
+      const credits = data?.credits ?? data?.balance ?? data?.quota ?? data?.postsRemaining ?? null;
+      const plan = data?.plan ?? data?.subscription?.plan ?? null;
+      return { statusCode: 200, headers, body: JSON.stringify({ credits, plan, raw: data }) };
+    }
+
     return { statusCode: 400, headers, body: JSON.stringify({ error: `Unknown action: ${action}` }) };
 
   } catch (err) {

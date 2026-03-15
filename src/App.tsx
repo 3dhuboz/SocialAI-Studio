@@ -558,6 +558,43 @@ const Dashboard: React.FC = () => {
   // isAdminMode may be broadened to client admins in future; isSuperAdmin never will be.
   const isSuperAdmin = !CLIENT.clientMode && !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
 
+  // Live credit balances
+  const [falCredits, setFalCredits] = useState<string | null>(null);
+  const [lateCredits, setLateCredits] = useState<string | null>(null);
+  const [creditsLoading, setCreditsLoading] = useState(false);
+  useEffect(() => {
+    if (!isSuperAdmin || activeTab !== 'settings') return;
+    let cancelled = false;
+    const fetchCredits = async () => {
+      setCreditsLoading(true);
+      try {
+        const [falRes, lateRes] = await Promise.allSettled([
+          fetch('/.netlify/functions/fal-proxy?action=get-credits').then(r => r.json()),
+          fetch('/.netlify/functions/late-proxy?action=get-credits').then(r => r.json()),
+        ]);
+        if (cancelled) return;
+        if (falRes.status === 'fulfilled' && falRes.value?.balance != null) {
+          const b = falRes.value.balance;
+          setFalCredits(typeof b === 'number' ? `$${b.toFixed(2)}` : String(b));
+        } else {
+          setFalCredits(null);
+        }
+        if (lateRes.status === 'fulfilled' && !lateRes.value?.error) {
+          const d = lateRes.value;
+          const label = d.plan ? `${d.plan}${d.credits != null ? ` · ${d.credits} posts` : ''}` : d.credits != null ? `${d.credits} posts` : null;
+          setLateCredits(label);
+        } else {
+          setLateCredits(null);
+        }
+      } catch { /* ignore */ } finally {
+        if (!cancelled) setCreditsLoading(false);
+      }
+    };
+    fetchCredits();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, activeTab]);
+
   // Persist plan/setupStatus to Firestore
   useEffect(() => {
     if (!user || !activePlan) return;
@@ -3593,15 +3630,17 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-white">fal.ai Credits</p>
-                    <p className="text-xs text-white/30">Video generation usage &amp; balance</p>
+                    {creditsLoading
+                      ? <p className="text-xs text-white/30 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Loading…</p>
+                      : falCredits
+                        ? <p className="text-xs font-bold text-purple-300">{falCredits}</p>
+                        : <p className="text-xs text-white/30">Image &amp; video generation balance</p>
+                    }
                   </div>
-                  <a
-                    href="https://fal.ai/dashboard/billing"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-shrink-0 flex items-center gap-1.5 text-xs font-bold text-purple-300 bg-purple-500/12 hover:bg-purple-500/20 border border-purple-500/20 px-3 py-1.5 rounded-xl transition"
-                  >
-                    View <ExternalLink size={11} />
+                  <a href="https://fal.ai/dashboard/billing" target="_blank" rel="noopener noreferrer"
+                    className="flex-shrink-0 text-white/20 hover:text-white/50 transition p-1.5 rounded-lg hover:bg-white/5"
+                    title="Open fal.ai billing">
+                    <ExternalLink size={13} />
                   </a>
                 </div>
                 {/* Late.dev Credits */}
@@ -3611,15 +3650,17 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-white">Late.dev Credits</p>
-                    <p className="text-xs text-white/30">Social scheduling usage &amp; balance</p>
+                    {creditsLoading
+                      ? <p className="text-xs text-white/30 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Loading…</p>
+                      : lateCredits
+                        ? <p className="text-xs font-bold text-blue-300">{lateCredits}</p>
+                        : <p className="text-xs text-white/30">Social scheduling usage &amp; balance</p>
+                    }
                   </div>
-                  <a
-                    href="https://app.late.dev/billing"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-shrink-0 flex items-center gap-1.5 text-xs font-bold text-blue-300 bg-blue-500/12 hover:bg-blue-500/20 border border-blue-500/20 px-3 py-1.5 rounded-xl transition"
-                  >
-                    View <ExternalLink size={11} />
+                  <a href="https://app.late.dev/billing" target="_blank" rel="noopener noreferrer"
+                    className="flex-shrink-0 text-white/20 hover:text-white/50 transition p-1.5 rounded-lg hover:bg-white/5"
+                    title="Open Late.dev billing">
+                    <ExternalLink size={13} />
                   </a>
                 </div>
               </div>

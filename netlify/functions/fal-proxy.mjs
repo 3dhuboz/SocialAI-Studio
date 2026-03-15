@@ -40,6 +40,18 @@ export const handler = async (event) => {
   const action = qs.action;
 
   try {
+    // ── Get fal.ai credit balance ─────────────────────────────────────────
+    if (action === 'get-credits' && event.httpMethod === 'GET') {
+      const res = await fetch('https://fal.ai/api/users/me', {
+        headers: { Authorization: `Key ${API_KEY}` },
+      });
+      let data;
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) return { statusCode: res.status, headers, body: JSON.stringify({ error: data?.message || `HTTP ${res.status}` }) };
+      const balance = data?.balance ?? data?.credits ?? data?.account?.balance ?? null;
+      return { statusCode: 200, headers, body: JSON.stringify({ balance }) };
+    }
+
     // ── Generate image via FLUX (synchronous) ─────────────────────────────
     if (action === 'generate-image' && event.httpMethod === 'POST') {
       const { prompt } = JSON.parse(event.body || '{}');
