@@ -267,6 +267,8 @@ const Dashboard: React.FC = () => {
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [lateProfileId, setLateProfileId] = useState<string>('');
   const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
+  // Cache agency's own Late profile so workspace switching is instant (no async race)
+  const agencyLateRef = useRef<{ profileId: string; platforms: string[] }>({ profileId: '', platforms: [] });
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -316,8 +318,8 @@ const Dashboard: React.FC = () => {
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
-          if (d.lateProfileId) setLateProfileId(d.lateProfileId);
-          if (d.lateConnectedPlatforms) setLateConnectedPlatforms(d.lateConnectedPlatforms);
+          if (d.lateProfileId) { setLateProfileId(d.lateProfileId); agencyLateRef.current.profileId = d.lateProfileId; }
+          if (d.lateConnectedPlatforms) { setLateConnectedPlatforms(d.lateConnectedPlatforms); agencyLateRef.current.platforms = d.lateConnectedPlatforms; }
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -435,14 +437,17 @@ const Dashboard: React.FC = () => {
   // Restore own workspace (profile, posts, Late profile) when switching back from a client
   useEffect(() => {
     if (!user || activeClientId !== null) return;
+    // IMMEDIATELY restore cached agency Late profile (prevents publishing to wrong page during async fetch)
+    setLateProfileId(agencyLateRef.current.profileId);
+    setLateConnectedPlatforms(agencyLateRef.current.platforms);
     const restoreOwn = async () => {
       const snap = await getDoc(doc(db, 'users', user.uid));
       if (snap.exists()) {
         const d = snap.data();
         if (d.profile) { const p = { ...DEFAULT_PROFILE, ...d.profile }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
         if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
-        setLateProfileId(d.lateProfileId || '');
-        setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
+        setLateProfileId(d.lateProfileId || agencyLateRef.current.profileId);
+        setLateConnectedPlatforms(d.lateConnectedPlatforms || agencyLateRef.current.platforms);
         if (d.insightReport) {
           setInsightReport(d.insightReport as InsightReport);
           const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
@@ -800,6 +805,14 @@ const Dashboard: React.FC = () => {
 
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
+    // Safety: warn if Late profile doesn't match expected workspace
+    if (!activeClientId && agencyLateRef.current.profileId && lateProfileId !== agencyLateRef.current.profileId) {
+      console.warn('Publish safety: lateProfileId mismatch — forcing restore from agency cache');
+      setLateProfileId(agencyLateRef.current.profileId);
+      toast('Workspace was out of sync — please try publishing again.', 'warning');
+      return;
+    }
+    console.log('Publishing to Late profile:', lateProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
@@ -1932,27 +1945,33 @@ const Dashboard: React.FC = () => {
         </div>
       </nav>
 
-      {/* Agency active-client banner */}
+      {/* Agency active-client banner — PROMINENT so you always know which account you're working on */}
       {activeClientId && activePlan === 'agency' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
-          <div className="bg-emerald-950/60 border-b border-emerald-500/25 backdrop-blur-sm sticky top-[121px] z-20">
-            <div className="max-w-6xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="w-5 h-5 rounded-md bg-emerald-500/30 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
-                  <Users size={11} className="text-emerald-400" />
+          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[121px] z-20">
+            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/25 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
+                  <Users size={15} className="text-emerald-400" />
                 </div>
-                <span className="text-xs text-emerald-300/60">Editing workspace for</span>
-                <span className="text-sm font-bold text-emerald-300 truncate">{activeClient.name}</span>
-                {activeClient.businessType && (
-                  <span className="text-xs text-emerald-400/40 hidden sm:inline">· {activeClient.businessType}</span>
-                )}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-emerald-300 truncate">{activeClient.name}</span>
+                    {activeClient.plan && (
+                      <span className="text-[9px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase">{activeClient.plan}</span>
+                    )}
+                  </div>
+                  {activeClient.businessType && (
+                    <span className="text-[11px] text-emerald-400/50">{activeClient.businessType}</span>
+                  )}
+                </div>
               </div>
               <button
                 onClick={() => setActiveClientId(null)}
-                className="flex items-center gap-1.5 text-xs text-emerald-400/60 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-3 py-1.5 rounded-lg transition whitespace-nowrap flex-shrink-0"
+                className="flex items-center gap-1.5 text-xs font-bold text-emerald-300 hover:text-white bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 px-4 py-2 rounded-xl transition whitespace-nowrap flex-shrink-0"
               >
-                <X size={11} /> Back to my workspace
+                <X size={12} /> Back to my workspace
               </button>
             </div>
           </div>
