@@ -14,7 +14,7 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: key });
 };
 
-const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
 
 /** Try generateContent across model fallbacks on 429/quota errors. */
 const generateWithFallback = async (
@@ -135,11 +135,7 @@ The content field must respect the character limits above. Do not pad with fille
     }
   } catch (error: any) {
     console.error("Gemini Text Error:", error);
-    const msg = error?.message || error?.statusText || String(error);
-    if (msg.includes('API_KEY_INVALID') || msg.includes('401')) {
-      return { content: "Invalid API Key. Check your key in Settings.", hashtags: [] };
-    }
-    return { content: `AI Error: ${msg.substring(0, 120)}`, hashtags: [] };
+    throw error;
   }
 };
 

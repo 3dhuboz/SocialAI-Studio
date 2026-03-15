@@ -704,11 +704,22 @@ const Dashboard: React.FC = () => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
     if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return null; }
     setIsGenerating(true);
-    const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile);
-    setGeneratedContent(result.content);
-    setGeneratedHashtags(result.hashtags || []);
-    setIsGenerating(false);
-    return result;
+    try {
+      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile);
+      setGeneratedContent(result.content);
+      setGeneratedHashtags(result.hashtags || []);
+      return result;
+    } catch (e: any) {
+      const msg: string = e?.message || String(e);
+      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+        toast('Gemini quota exceeded — wait a minute and try again, or check your API key in Settings.', 'error');
+      } else {
+        toast(`AI error: ${msg.substring(0, 100)}`, 'error');
+      }
+      return null;
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleCreatePost = async () => {
