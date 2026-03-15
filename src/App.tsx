@@ -550,13 +550,13 @@ const Dashboard: React.FC = () => {
   const hasApiKey = !!localStorage.getItem('sai_claude_key') || !!localStorage.getItem('sai_gemini_key');
   const fbConnected = !!lateProfileId;
 
-  // Auto-run daily insight analysis when stale (silent — no error toasts for background runs)
+  // Auto-run daily insight analysis when stale — only in own workspace, never in client workspaces
   useEffect(() => {
-    if (insightStale && hasApiKey && user) {
+    if (insightStale && hasApiKey && user && !activeClientId) {
       runInsightReport(false, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insightStale, user]);
+  }, [insightStale, user, activeClientId]);
 
   // Plan & setup state (sourced from Firestore via userDoc)
   const [activePlan, setActivePlan] = useState<PlanTier | null>(null);
