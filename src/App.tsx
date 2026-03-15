@@ -267,8 +267,10 @@ const Dashboard: React.FC = () => {
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [lateProfileId, setLateProfileId] = useState<string>('');
   const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
-  // Cache agency's own Late profile so workspace switching is instant (no async race)
-  const agencyLateRef = useRef<{ profileId: string; platforms: string[] }>({ profileId: '', platforms: [] });
+  // Cache agency's own Late profile + name so workspace switching is instant (no async race)
+  const agencyLateRef = useRef<{ profileId: string; platforms: string[]; profileName: string }>({ profileId: '', platforms: [], profileName: CLIENT.defaultBusinessName });
+  // Track workspace switches to prevent persistence writing client data to agency doc
+  const prevClientIdRef = useRef<string | null | undefined>(undefined);
 
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
@@ -305,6 +307,7 @@ const Dashboard: React.FC = () => {
             // Migrate old default name
             if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
             setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p));
+            agencyLateRef.current.profileName = p.name; // Cache agency name for ClientSwitcher
             // Persist migration back to Firestore
             if (d.profile.name === 'My Business') updateDoc(doc(db, 'users', user.uid), { 'profile.name': CLIENT.defaultBusinessName }).catch(() => {});
           }
@@ -516,16 +519,25 @@ const Dashboard: React.FC = () => {
     } catch (e) { toast('Failed to delete client.', 'error'); }
   };
 
-  // Persist profile to Firestore (debounced)
+  // Persist profile to Firestore (debounced) — SKIP during workspace switches to prevent contamination
   useEffect(() => {
     if (!user || !firestoreLoaded) return;
-    const t = setTimeout(() => updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true })), 1000);
+    // When activeClientId changes, skip this persist cycle — profile hasn't been restored yet
+    if (prevClientIdRef.current !== activeClientId) {
+      prevClientIdRef.current = activeClientId;
+      return;
+    }
+    const t = setTimeout(() => {
+      console.log('Persisting profile to', activeClientId ? `client:${activeClientId}` : 'agency', profile.name);
+      updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true }));
+    }, 1500);
     return () => clearTimeout(t);
   }, [profile, user, firestoreLoaded, activeClientId]);
 
-  // Persist stats to Firestore
+  // Persist stats to Firestore — same workspace-switch guard
   useEffect(() => {
     if (!user || !firestoreLoaded) return;
+    if (prevClientIdRef.current !== activeClientId) return;
     updateDoc(dataRef(), { stats }).catch(() => setDoc(dataRef(), { stats }, { merge: true }));
   }, [stats, user, firestoreLoaded, activeClientId]);
 
@@ -1859,7 +1871,7 @@ const Dashboard: React.FC = () => {
                       onAdd={addClient}
                       onRename={renameClient}
                       onDelete={deleteClient}
-                      agencyName={profile.name}
+                      agencyName={agencyLateRef.current.profileName || profile.name}
                       clientLimit={agencyClientLimit}
                     />
                   )}
