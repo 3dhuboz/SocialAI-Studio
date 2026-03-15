@@ -1625,7 +1625,7 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f]">
+    <div className="min-h-screen bg-[#0a0a0f] flex flex-col flex-1">
       {/* Onboarding Wizard */}
       {showIntakeForm && user && (
         <ClientIntakeForm
@@ -1845,14 +1845,14 @@ const Dashboard: React.FC = () => {
       )}
       {/* Header */}
       <header id="app-header" className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3 min-h-[56px]">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
           <div className="flex items-center gap-3 min-w-0">
             {CLIENT.clientMode ? (
               <div className="flex items-center gap-3 min-w-0">
-                <AppLogo size={38} />
+                <AppLogo size={48} />
                 <div className="min-w-0">
-                  <h1 className="text-sm font-black text-white truncate">{CLIENT.appName}</h1>
-                  <p className="text-[10px] text-white/30 truncate">{profile.type || CLIENT.defaultBusinessType}</p>
+                  <h1 className="text-base font-black text-white truncate leading-tight">{CLIENT.appName}</h1>
+                  <p className="text-[11px] text-white/30 truncate">{profile.type || CLIENT.defaultBusinessType}</p>
                 </div>
               </div>
             ) : (
@@ -1955,7 +1955,7 @@ const Dashboard: React.FC = () => {
       </header>
 
       {/* Tab Nav */}
-      <nav className="border-b border-white/10 bg-black/10 sticky top-[56px] z-30">
+      <nav className="border-b border-white/10 bg-black/10 sticky top-[64px] z-30">
         <div className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
@@ -1978,7 +1978,7 @@ const Dashboard: React.FC = () => {
       {activeClientId && activePlan === 'agency' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
-          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[101px] z-20">
+          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[109px] z-20">
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/25 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
@@ -2008,7 +2008,7 @@ const Dashboard: React.FC = () => {
       })()}
 
       {/* Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-8 flex-1 w-full">
         {!CLIENT.clientMode && (
         <SetupBanner
           status={setupStatus}
