@@ -832,7 +832,7 @@ const Dashboard: React.FC = () => {
     const imageDesc = aiImagePrompt || lastImagePrompt || `${profile.type}: ${topic}`;
     console.log('Image prompt:', imageDesc);
     try {
-      const img = await generateMarketingImage(imageDesc);
+      const img = await generateImage(imageDesc);
       if (img) setGeneratedImage(img);
       else toast('Image generation failed — check browser console for details.', 'error');
     } catch (e: any) {
