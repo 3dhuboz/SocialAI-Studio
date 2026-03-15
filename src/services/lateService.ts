@@ -100,9 +100,10 @@ export const LateService = {
     return { uploadUrl: data.uploadUrl, publicUrl: data.publicUrl };
   },
 
-  /** Fetch all connected accounts (used to resolve accountIds after connecting). */
-  getAccounts: async (): Promise<{ id: string; platform: string; name?: string; profileId?: string }[]> => {
-    const res = await fetch(`${PROXY}?action=list-accounts`);
+  /** Fetch connected accounts, optionally scoped to a specific Late profile. */
+  getAccounts: async (profileId?: string): Promise<{ id: string; platform: string; name?: string; profileId?: string }[]> => {
+    const params = profileId ? `?action=list-accounts&profileId=${encodeURIComponent(profileId)}` : `?action=list-accounts`;
+    const res = await fetch(`${PROXY}${params}`);
     const data = await safeJson(res);
     const accs = data.accounts || data || [];
     return accs.map((a: any) => ({ id: a._id || a.id, platform: (a.platform || '').toLowerCase(), name: a.name, profileId: a.profileId || a.profile }));

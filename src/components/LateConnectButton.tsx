@@ -105,10 +105,11 @@ export const LateConnectButton: React.FC<Props> = ({
           resolved[platform.toLowerCase()] = urlAccountId;
           return resolved;
         }
-        // Method 2: diff accounts before/after to find the NEW one
+        // Method 2: diff accounts before/after — scoped to THIS profile only
         try {
-          const accountsAfter = await LateService.getAccounts();
-          console.log('[Connect] Accounts AFTER:', JSON.stringify(accountsAfter.map(a => ({ id: a.id, platform: a.platform, name: a.name }))));
+          // Always filter by finalPid so we never pick up another workspace's accounts
+          const accountsAfter = await LateService.getAccounts(finalPid);
+          console.log('[Connect] Accounts AFTER (profile-scoped):', JSON.stringify(accountsAfter.map(a => ({ id: a.id, platform: a.platform, name: a.name }))));
           const newAccounts = accountsAfter.filter(a => !beforeIds.has(a.id));
           console.log('[Connect] NEW accounts (diff):', JSON.stringify(newAccounts));
           if (newAccounts.length > 0) {
@@ -117,13 +118,12 @@ export const LateConnectButton: React.FC<Props> = ({
             }
             return resolved;
           }
-          // Method 3: no new accounts found — take the LAST account for each platform
-          // (most recently connected = last in array)
+          // Method 3: no new accounts found — take any account for this platform scoped to this profile
           for (const p of [platform.toLowerCase()]) {
             const matches = accountsAfter.filter(a => a.platform.toLowerCase() === p);
             if (matches.length > 0) {
               resolved[p] = matches[matches.length - 1].id;
-              console.log(`[Connect] Using last ${p} account:`, resolved[p]);
+              console.log(`[Connect] Using profile-scoped ${p} account:`, resolved[p]);
             }
           }
         } catch (e) { console.warn('[Connect] Failed to resolve accountIds:', e); }

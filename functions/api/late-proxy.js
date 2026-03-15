@@ -119,7 +119,11 @@ export async function onRequest(context) {
 
     // ── List / get connected accounts ──────────────────────────────────
     if ((action === 'list-accounts' || action === 'get-accounts') && request.method === 'GET') {
-      const res = await fetch(`${LATE_BASE}/accounts`, { headers: authHeader });
+      const profileId = qs.get('profileId');
+      const accountsUrl = profileId
+        ? `${LATE_BASE}/accounts?profileId=${encodeURIComponent(profileId)}`
+        : `${LATE_BASE}/accounts`;
+      const res = await fetch(accountsUrl, { headers: authHeader });
       return json(await res.json(), res.status);
     }
 
