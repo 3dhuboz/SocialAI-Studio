@@ -1049,7 +1049,7 @@ const Dashboard: React.FC = () => {
           [platform.toLowerCase() as 'facebook' | 'instagram'],
           fullText,
           undefined,
-          scheduleDate,
+          new Date(scheduleDate).toISOString(),
           mediaItems
         );
         if (lateResult?.id) await updateDoc(ref, { latePostId: lateResult.id });
@@ -1333,7 +1333,7 @@ const Dashboard: React.FC = () => {
                 [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
                 text,
                 undefined,
-                sp.scheduledFor,
+                new Date(sp.scheduledFor).toISOString(),
                 mediaItems
               );
               if (lateResult?.id) await updateDoc(ref, { latePostId: lateResult.id });

@@ -76,7 +76,8 @@ export const DateTimePicker: React.FC<Props> = ({ value, onChange }) => {
     d.setHours(parseInt(hour, 10));
     d.setMinutes(parseInt(minute, 10));
     d.setSeconds(0);
-    onChange(d.toISOString().slice(0, 16));
+    const localISO = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    onChange(localISO);
     setOpen(false);
   };
 
