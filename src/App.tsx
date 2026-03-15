@@ -192,7 +192,8 @@ const Dashboard: React.FC = () => {
     if (!user) return;
     const sync = async () => {
       try {
-        const isAdmin = !!user.email && CLIENT.adminEmails.some(e => e === user.email);
+        // In clientMode, never grant agency/admin powers — the branded site is a locked-down client view
+        const isAdmin = !CLIENT.clientMode && !!user.email && CLIENT.adminEmails.some(e => e === user.email);
         if (isAdmin) {
           localStorage.setItem('sai_admin', '1');
           setActivePlan('agency');
@@ -555,7 +556,7 @@ const Dashboard: React.FC = () => {
   const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
   // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai/Late credits, API keys).
   // isAdminMode may be broadened to client admins in future; isSuperAdmin never will be.
-  const isSuperAdmin = !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
+  const isSuperAdmin = !CLIENT.clientMode && !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
 
   // Persist plan/setupStatus to Firestore
   useEffect(() => {
