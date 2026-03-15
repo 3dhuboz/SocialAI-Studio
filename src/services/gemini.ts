@@ -15,7 +15,7 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: key });
 };
 
-const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'];
+const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro'];
 
 /** Try generateContent across model fallbacks on 429/quota errors. */
 const generateWithFallback = async (
@@ -167,7 +167,7 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   const imagePrompt = `Professional social media marketing photograph: ${prompt}. Shot on high-end DSLR, cinematic lighting, vibrant colours, sharp focus, depth of field, commercial quality. No text, no watermarks, no logos.`;
 
   // Try Imagen models via generateImages (correct API for @google/genai v1.x)
-  const imagenModels = ['imagen-4.0-generate-001', 'imagen-3.0-generate-001'];
+  const imagenModels = ['imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001'];
   for (const model of imagenModels) {
     try {
       const response = await (ai.models as any).generateImages({
@@ -189,7 +189,7 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   try {
     const betaAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
     const response = await betaAI.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.5-flash',
       contents: imagePrompt,
       config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
     });
