@@ -550,10 +550,10 @@ const Dashboard: React.FC = () => {
   const hasApiKey = !!localStorage.getItem('sai_claude_key') || !!localStorage.getItem('sai_gemini_key');
   const fbConnected = !!lateProfileId;
 
-  // Auto-run daily insight analysis when stale
+  // Auto-run daily insight analysis when stale (silent — no error toasts for background runs)
   useEffect(() => {
     if (insightStale && hasApiKey && user) {
-      runInsightReport(false);
+      runInsightReport(false, true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insightStale, user]);
@@ -1157,8 +1157,11 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Insights ──
-  const runInsightReport = async (forceRefresh = false) => {
-    if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings to enable insights.', 'warning'); return; }
+  const runInsightReport = async (forceRefresh = false, silent = false) => {
+    if (!hasApiKey) {
+      if (!silent) toast('Set a Claude or Gemini API key in Settings to enable insights.', 'warning');
+      return;
+    }
     if (!forceRefresh && insightReport) return;
     setIsAnalyzing(true);
     try {
@@ -1171,15 +1174,18 @@ const Dashboard: React.FC = () => {
           setDoc(dataRef(), { insightReport: report }, { merge: true })
         );
       }
-      toast('AI insights updated!', 'success');
+      if (!silent) toast('AI insights updated!', 'success');
     } catch (e: any) {
-      const msg: string = e?.message || String(e);
-      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-        toast('Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.', 'error');
-      } else if (msg.includes('404') || msg.includes('not found')) {
-        toast('AI service unavailable — the app may still be deploying. Try again in 1–2 minutes.', 'error');
-      } else {
-        toast(`Insights failed: ${msg.substring(0, 80)}`, 'error');
+      setInsightStale(false); 
+      if (!silent) {
+        const msg: string = e?.message || String(e);
+        if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+          toast('Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.', 'error');
+        } else if (msg.includes('404') || msg.includes('not found')) {
+          toast('AI service unavailable — the app may still be deploying. Try again in 1–2 minutes.', 'error');
+        } else {
+          toast(`Insights failed: ${msg.substring(0, 80)}`, 'error');
+        }
       }
     } finally {
       setIsAnalyzing(false);
