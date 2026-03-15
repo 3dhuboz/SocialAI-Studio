@@ -60,5 +60,21 @@ export const FalService = {
     throw new Error('Video generation timed out — try again');
   },
 
+  /**
+   * Generate a marketing image via fal.ai FLUX/schnell.
+   * Returns a public image URL, or throws on failure.
+   */
+  generateImage: async (prompt: string): Promise<string> => {
+    const res = await fetch(`${PROXY}?action=generate-image`, {
+      method: 'POST',
+      headers: proxyHeaders(),
+      body: JSON.stringify({ prompt }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');
+    if (!data.imageUrl) throw new Error('No image URL returned from fal.ai');
+    return data.imageUrl;
+  },
+
   isConfigured: () => !!localStorage.getItem('sai_fal_key'),
 };

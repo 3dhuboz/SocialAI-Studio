@@ -40,6 +40,35 @@ export const handler = async (event) => {
   const action = qs.action;
 
   try {
+    // ── Generate image via FLUX (synchronous) ─────────────────────────────
+    if (action === 'generate-image' && event.httpMethod === 'POST') {
+      const { prompt } = JSON.parse(event.body || '{}');
+      if (!prompt) return { statusCode: 400, headers, body: JSON.stringify({ error: 'prompt is required' }) };
+
+      const res = await fetch('https://fal.run/fal-ai/flux/schnell', {
+        method: 'POST',
+        headers: authHeader,
+        body: JSON.stringify({
+          prompt,
+          image_size: 'square_hd',
+          num_inference_steps: 4,
+          num_images: 1,
+          enable_safety_checker: true,
+        }),
+      });
+
+      let data;
+      try { data = await res.json(); } catch { data = {}; }
+
+      if (!res.ok) {
+        const errMsg = data?.detail || data?.message || data?.error || `fal.ai HTTP ${res.status}`;
+        return { statusCode: res.status, headers, body: JSON.stringify({ error: errMsg }) };
+      }
+
+      const imageUrl = data?.images?.[0]?.url || null;
+      return { statusCode: 200, headers, body: JSON.stringify({ imageUrl }) };
+    }
+
     // ── Submit video generation job ──────────────────────────────────────
     if (action === 'generate-video' && event.httpMethod === 'POST') {
       const { promptText, promptImage, duration = 5 } = JSON.parse(event.body || '{}');

@@ -801,7 +801,7 @@ const Dashboard: React.FC = () => {
 
   // ── Auto-generate images for all smart posts ──
   const autoGenerateAllImages = async (posts: SmartScheduledPost[]) => {
-    if (!localStorage.getItem('sai_gemini_key')) return;
+    if (!localStorage.getItem('sai_gemini_key') && !FalService.isConfigured()) return;
     const allIdxs = new Set(posts.map((_, i) => i));
     setAutoGenSet(allIdxs);
     setImgGenDone(0);
@@ -814,7 +814,7 @@ const Dashboard: React.FC = () => {
         continue;
       }
       try {
-        const img = await generateMarketingImage(prompt);
+        const img = await generateImage(prompt);
         if (img) setSmartPostImages(prev => ({ ...prev, [i]: img }));
       } catch { /* silently skip */ }
       setAutoGenSet(prev => { const s = new Set(prev); s.delete(i); return s; });
@@ -936,16 +936,31 @@ const Dashboard: React.FC = () => {
     if (!prompt) return;
     setAutoGenSet(prev => new Set(prev).add(idx));
     try {
-      const img = await generateMarketingImage(prompt);
+      const img = await generateImage(prompt);
       if (img) setSmartPostImages(prev => ({ ...prev, [idx]: img }));
-      else toast('Image generation failed — check console for details, or upload an image instead.', 'warning');
+      else toast('Image generation failed — try uploading instead.', 'warning');
     } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
     setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
   };
 
+  // ── Image generation: fal.ai FLUX first, Gemini Imagen fallback ──
+  const generateImage = async (prompt: string): Promise<string | null> => {
+    if (FalService.isConfigured()) {
+      try {
+        const url = await FalService.generateImage(
+          `Professional social media marketing photograph: ${prompt}. Cinematic lighting, vibrant colours, sharp focus, commercial quality. No text, no watermarks, no logos.`
+        );
+        if (url) return url;
+      } catch (e: any) {
+        console.warn('fal.ai image gen failed, trying Gemini:', e?.message ?? e);
+      }
+    }
+    return generateMarketingImage(prompt);
+  };
+
   // ── Auto-generate images for calendar posts that have imagePrompt but no image ──
   useEffect(() => {
-    if (!hasApiKey) return;
+    if (!hasApiKey && !FalService.isConfigured()) return;
     const missing = posts.filter(p =>
       p.imagePrompt &&
       !p.image &&
@@ -958,7 +973,7 @@ const Dashboard: React.FC = () => {
       for (const post of missing) {
         setCalendarGenSet(prev => new Set(prev).add(post.id));
         try {
-          const img = await generateMarketingImage(post.imagePrompt!);
+          const img = await generateImage(post.imagePrompt!);
           if (img) setCalendarImages(prev => ({ ...prev, [post.id]: img }));
         } catch { /* silently skip */ }
         setCalendarGenSet(prev => { const s = new Set(prev); s.delete(post.id); return s; });
@@ -971,7 +986,7 @@ const Dashboard: React.FC = () => {
   const handleCalendarRegenImage = async (postId: string, prompt: string) => {
     setCalendarGenSet(prev => new Set(prev).add(postId));
     try {
-      const img = await generateMarketingImage(prompt);
+      const img = await generateImage(prompt);
       if (img) setCalendarImages(prev => ({ ...prev, [postId]: img }));
       else toast('Image generation failed — try uploading instead.', 'warning');
     } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
