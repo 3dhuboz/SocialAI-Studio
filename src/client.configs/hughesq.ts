@@ -1,8 +1,9 @@
+/// <reference types="vite/client" />
 /**
  * ─────────────────────────────────────────────────────────
  *  CLIENT CONFIG  —  Hughes Q (Uzi's Q)
  *  Deployed at: social.hugheseysque.au
- *  Netlify env: VITE_CLIENT_ID=hughesq
+ *  CF Pages env: VITE_CLIENT_ID=hughesq
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {

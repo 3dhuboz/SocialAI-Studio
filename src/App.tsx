@@ -401,7 +401,7 @@ const Dashboard: React.FC = () => {
       } catch { /* silent */ }
     });
     setPosts(prev => prev.map(p => overdue.find(o => o.id === p.id) ? { ...p, status: 'Missed' as const } : p));
-  }, [posts.length, user, activeClientId]);
+  }, [posts, user, activeClientId]);
 
   // Load health metrics (last post + scheduled count) when Clients tab is active
   useEffect(() => {

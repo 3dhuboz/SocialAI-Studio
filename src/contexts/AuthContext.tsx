@@ -12,7 +12,7 @@ import { auth, db } from '../firebase';
 
 interface UserDoc {
   email: string;
-  plan: 'starter' | 'growth' | 'pro' | null;
+  plan: 'starter' | 'growth' | 'pro' | 'agency' | null;
   setupStatus: 'ordered' | 'form_sent' | 'in_progress' | 'live' | null;
   createdAt?: any;
 }

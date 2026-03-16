@@ -44,14 +44,16 @@ export const HomeDashboard: React.FC<Props> = ({
   activePlan, planName, businessName,
   onGoCalendar, onGoCreate, onGoSchedule, onGoInsights, onGoSettings,
 }) => {
-  const now = new Date();
+  // Stable snapshot of 'now' — recalculates only when component mounts, not every render
+  const now = useMemo(() => new Date(), []);
   const hour = now.getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 
+  const nowTime = now.getTime();
   const upcomingPosts = useMemo(() =>
-    posts.filter(p => p.status === 'Scheduled' && new Date(p.scheduledFor) > now)
+    posts.filter(p => p.status === 'Scheduled' && new Date(p.scheduledFor).getTime() > nowTime)
          .sort((a, b) => new Date(a.scheduledFor).getTime() - new Date(b.scheduledFor).getTime()),
-    [posts]
+    [posts, nowTime]
   );
   const nextPost = upcomingPosts[0] ?? null;
   const missedPosts = posts.filter(p => p.status === 'Missed');
