@@ -2600,11 +2600,29 @@ const Dashboard: React.FC = () => {
                 <h2 className="text-2xl font-bold flex items-center gap-2.5"><Calendar className="text-amber-400" size={22} /> Content Calendar</h2>
                 <p className="text-sm text-white/40 mt-1">{posts.length} post{posts.length !== 1 ? 's' : ''} scheduled</p>
               </div>
-              {posts.length > 0 && (
-                <span className="text-xs text-white/25 bg-white/5 border border-white/8 px-3 py-1.5 rounded-xl">
-                  {posts.filter(p => p.status === 'Scheduled').length} scheduled · {posts.filter(p => p.status === 'Posted').length} posted
-                </span>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                {posts.some(p => p.status === 'Missed') && (
+                  <button
+                    onClick={async () => {
+                      const missed = posts.filter(p => p.status === 'Missed');
+                      const postsCol = activeClientId
+                        ? collection(db, 'users', user!.uid, 'clients', activeClientId, 'posts')
+                        : collection(db, 'users', user!.uid, 'posts');
+                      await Promise.all(missed.map(p => updateDoc(doc(postsCol, p.id), { status: 'Draft' })));
+                      setPosts(prev => prev.map(p => p.status === 'Missed' ? { ...p, status: 'Draft' as const } : p));
+                      toast(`${missed.length} missed post${missed.length > 1 ? 's' : ''} reset to Draft.`);
+                    }}
+                    className="flex items-center gap-1.5 text-xs font-bold text-red-300 hover:text-white bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 px-3 py-1.5 rounded-xl transition"
+                  >
+                    <RefreshCw size={11} /> Clear {posts.filter(p => p.status === 'Missed').length} missed
+                  </button>
+                )}
+                {posts.length > 0 && (
+                  <span className="text-xs text-white/25 bg-white/5 border border-white/8 px-3 py-1.5 rounded-xl">
+                    {posts.filter(p => p.status === 'Scheduled').length} scheduled · {posts.filter(p => p.status === 'Posted').length} posted
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Tip — only show when no social account connected */}
