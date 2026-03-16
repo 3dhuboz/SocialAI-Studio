@@ -134,12 +134,17 @@ export const CLIENT = {
    * CLIENT MODE: set true on white-label sites deployed for end-clients.
    * Hides billing, upgrade prompts, plan badges, agency/client-switcher,
    * and setup banners — shows only the core Create/Calendar/Insights/Settings tabs.
+   * Set VITE_CLIENT_MODE=true in CF Pages env vars to enable for a specific deployment.
    */
-  clientMode: false,
+  clientMode: (import.meta as any).env?.VITE_CLIENT_MODE === 'true',
 
-  /** Auto-login credentials for clientMode deployments (leave empty on main agency site) */
-  autoLoginEmail: '',
-  autoLoginPassword: '',
+  /**
+   * Auto-login credentials for clientMode deployments (leave empty on main agency site).
+   * Set VITE_AUTO_LOGIN_EMAIL and VITE_AUTO_LOGIN_PASSWORD in CF Pages env vars.
+   * Each client deployment should have its own dedicated Firebase Auth account.
+   */
+  autoLoginEmail: (import.meta as any).env?.VITE_AUTO_LOGIN_EMAIL || '',
+  autoLoginPassword: (import.meta as any).env?.VITE_AUTO_LOGIN_PASSWORD || '',
 
   plans: [
     {
