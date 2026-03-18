@@ -4,14 +4,8 @@ import {
   CheckCircle, AlertTriangle, Loader2, ExternalLink, Crown, Zap,
   ShieldCheck, User,
 } from 'lucide-react';
-import {
-  updatePassword,
-  reauthenticateWithCredential,
-  EmailAuthProvider,
-  deleteUser,
-} from 'firebase/auth';
-import { deleteDoc, doc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { useUser } from '@clerk/react';
+import { useDb } from '../hooks/useDb';
 import { CLIENT } from '../client.config';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -43,6 +37,8 @@ export const AccountPanel: React.FC<Props> = ({
   activePlan, userEmail, onClose, onUpgrade, onSignOut,
 }) => {
   const { user } = useAuth();
+  const { user: clerkUser } = useUser();
+  const db = useDb();
   const planCfg = CLIENT.plans.find(p => p.id === activePlan);
   const color = planColors[activePlan] || 'from-white/10 to-white/5';
   const border = planBorders[activePlan] || 'border-white/10';
@@ -61,18 +57,14 @@ export const AccountPanel: React.FC<Props> = ({
     setPwError('');
     if (newPw.length < 8) { setPwError('New password must be at least 8 characters.'); return; }
     if (newPw !== confirmPw) { setPwError('Passwords do not match.'); return; }
-    if (!user?.email) return;
+    if (!clerkUser) return;
     setPwLoading(true);
     try {
-      const cred = EmailAuthProvider.credential(user.email, oldPw);
-      await reauthenticateWithCredential(user, cred);
-      await updatePassword(user, newPw);
+      await clerkUser.updatePassword({ currentPassword: oldPw, newPassword: newPw });
       setPwSuccess(true);
       setOldPw(''); setNewPw(''); setConfirmPw('');
     } catch (e: any) {
-      const msg = e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential'
-        ? 'Current password is incorrect.'
-        : e?.message || 'Failed to update password.';
+      const msg = e?.errors?.[0]?.message || e?.message || 'Failed to update password.';
       setPwError(msg);
     } finally {
       setPwLoading(false);
@@ -80,7 +72,6 @@ export const AccountPanel: React.FC<Props> = ({
   };
 
   // ── Delete account ───────────────────────────────────────
-  const [deletePw, setDeletePw] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -88,17 +79,13 @@ export const AccountPanel: React.FC<Props> = ({
   const handleDeleteAccount = async () => {
     setDeleteError('');
     if (deleteConfirm !== 'DELETE') { setDeleteError('Type DELETE to confirm.'); return; }
-    if (!user?.email) return;
+    if (!clerkUser || !user) return;
     setDeleteLoading(true);
     try {
-      const cred = EmailAuthProvider.credential(user.email, deletePw);
-      await reauthenticateWithCredential(user, cred);
-      await deleteDoc(doc(db, 'users', user.uid));
-      await deleteUser(user);
+      await db.deleteUser().catch(() => {});
+      await clerkUser.delete();
     } catch (e: any) {
-      const msg = e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential'
-        ? 'Incorrect password.'
-        : e?.message || 'Failed to delete account.';
+      const msg = e?.errors?.[0]?.message || e?.message || 'Failed to delete account.';
       setDeleteError(msg);
       setDeleteLoading(false);
     }
@@ -203,7 +190,7 @@ export const AccountPanel: React.FC<Props> = ({
                   <ChevronRight size={14} className="text-white/20" />
                 </button>
                 <button
-                  onClick={() => { setSection('delete'); setDeleteError(''); setDeleteConfirm(''); setDeletePw(''); }}
+                  onClick={() => { setSection('delete'); setDeleteError(''); setDeleteConfirm(''); }}
                   className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-red-400/70 hover:text-red-400 hover:bg-red-500/5 transition"
                 >
                   <span className="flex items-center gap-2.5"><Trash2 size={14} className="text-red-500/40" /> Delete Account</span>
@@ -213,7 +200,7 @@ export const AccountPanel: React.FC<Props> = ({
 
               {/* Trust footer */}
               <p className="flex items-center justify-center gap-1.5 text-[11px] text-white/15">
-                <ShieldCheck size={11} /> Secured with Firebase + Stripe
+                <ShieldCheck size={11} /> Secured with Clerk + Stripe
               </p>
             </div>
           )}
@@ -225,7 +212,7 @@ export const AccountPanel: React.FC<Props> = ({
                 ← Back
               </button>
               <h3 className="text-base font-black text-white mb-1">Change Password</h3>
-              <p className="text-xs text-white/35 mb-5">Enter your current password to confirm, then choose a new one.</p>
+              <p className="text-xs text-white/35 mb-5">Enter your current password to verify, then set a new one.</p>
 
               {pwSuccess ? (
                 <div className="flex flex-col items-center gap-3 py-8">
@@ -305,14 +292,6 @@ export const AccountPanel: React.FC<Props> = ({
 
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs text-white/40 mb-1 block">Your password</label>
-                  <input
-                    type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)}
-                    placeholder="Confirm your password"
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/20 focus:outline-none focus:border-red-500/40"
-                  />
-                </div>
-                <div>
                   <label className="text-xs text-white/40 mb-1 block">Type <span className="text-red-400 font-mono font-bold">DELETE</span> to confirm</label>
                   <input
                     type="text" value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)}
@@ -327,7 +306,7 @@ export const AccountPanel: React.FC<Props> = ({
                 )}
                 <button
                   onClick={handleDeleteAccount}
-                  disabled={deleteLoading || !deletePw || deleteConfirm !== 'DELETE'}
+                  disabled={deleteLoading || deleteConfirm !== 'DELETE'}
                   className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl disabled:opacity-40 transition text-sm"
                 >
                   {deleteLoading ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={14} />}

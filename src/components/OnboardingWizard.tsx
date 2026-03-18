@@ -4,8 +4,8 @@ import { BusinessProfile } from '../types';
 import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
 import {
-  CheckCircle, ArrowRight, Sparkles, Loader2, Eye, EyeOff,
-  Building2, MapPin, Zap, Facebook, PartyPopper, X, ExternalLink,
+  CheckCircle, ArrowRight, Sparkles, Loader2,
+  Building2, MapPin, Facebook, PartyPopper, X,
 } from 'lucide-react';
 
 interface Props {
@@ -16,14 +16,13 @@ interface Props {
   userEmail?: string;
 }
 
-type Step = 'welcome' | 'business' | 'ai_key' | 'facebook' | 'done';
+type Step = 'welcome' | 'business' | 'facebook' | 'done';
 
-const STEPS: Step[] = ['welcome', 'business', 'ai_key', 'facebook', 'done'];
+const STEPS: Step[] = ['welcome', 'business', 'facebook', 'done'];
 
 const stepLabel: Record<Step, string> = {
   welcome: 'Welcome',
   business: 'Your Business',
-  ai_key: 'AI Setup',
   facebook: 'Facebook',
   done: 'Done',
 };
@@ -32,9 +31,7 @@ export const OnboardingWizard: React.FC<Props> = ({
   profile, onUpdateProfile, onSave, onDismiss, userEmail,
 }) => {
   const [step, setStep] = useState<Step>('welcome');
-  const [showKey, setShowKey] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [localKey, setLocalKey] = useState(profile.geminiApiKey || '');
 
   const stepIdx = STEPS.indexOf(step);
   const progress = Math.round((stepIdx / (STEPS.length - 1)) * 100);
@@ -42,10 +39,6 @@ export const OnboardingWizard: React.FC<Props> = ({
   const next = async (skip = false) => {
     if (!skip) {
       setIsSaving(true);
-      if (step === 'ai_key' && localKey.trim()) {
-        localStorage.setItem('sai_gemini_key', localKey.trim());
-        onUpdateProfile({ geminiApiKey: localKey.trim() });
-      }
       await onSave().catch(() => {});
       setIsSaving(false);
     }
@@ -123,7 +116,7 @@ export const OnboardingWizard: React.FC<Props> = ({
               <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-left space-y-3">
                 {[
                   { icon: Building2, label: 'Your business profile', sub: 'So the AI writes in your voice' },
-                  { icon: Sparkles, label: 'Gemini AI key (free)', sub: 'Powers all content generation' },
+                  { icon: Sparkles, label: 'AI content generation', sub: 'Powered by OpenRouter — included' },
                   { icon: Facebook, label: 'Facebook page (optional)', sub: 'For one-click publishing' },
                 ].map(({ icon: Icon, label, sub }) => (
                   <div key={label} className="flex items-center gap-3">
@@ -215,69 +208,6 @@ export const OnboardingWizard: React.FC<Props> = ({
                 <button
                   onClick={() => next(false)}
                   disabled={!canAdvanceBusiness || isSaving}
-                  className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
-                >
-                  {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
-                  {isSaving ? 'Saving…' : <>Save & Continue <ArrowRight size={16} /></>}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ── AI KEY ── */}
-          {step === 'ai_key' && (
-            <div className="space-y-5">
-              <div>
-                <h2 className="text-xl font-black text-white mb-1 flex items-center gap-2">
-                  <Sparkles className="text-amber-400" size={20} /> Connect your AI
-                </h2>
-                <p className="text-xs text-white/35 leading-relaxed">
-                  A free Gemini API key powers all content generation. It takes 30 seconds to get.
-                </p>
-              </div>
-              <div className="bg-amber-500/8 border border-amber-500/15 rounded-2xl p-4 space-y-2">
-                <p className="text-xs font-bold text-amber-300">How to get your free key:</p>
-                <ol className="text-xs text-white/40 space-y-1 list-decimal list-inside leading-relaxed">
-                  <li>Go to{' '}
-                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
-                      className="text-amber-400 hover:text-amber-300 underline inline-flex items-center gap-0.5">
-                      aistudio.google.com <ExternalLink size={10} />
-                    </a>
-                  </li>
-                  <li>Sign in with any Google account</li>
-                  <li>Click <strong className="text-white/60">Get API Key → Create API key</strong></li>
-                  <li>Copy and paste it below</li>
-                </ol>
-              </div>
-              <div className="relative">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={localKey}
-                  onChange={e => setLocalKey(e.target.value)}
-                  placeholder="AIza…"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 pr-12"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowKey(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60 transition"
-                >
-                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-              {localKey.trim().length > 10 && (
-                <p className="text-xs text-green-400 flex items-center gap-1.5"><CheckCircle size={12} /> Key looks good!</p>
-              )}
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => next(true)}
-                  className="text-white/30 hover:text-white/60 text-sm transition px-4"
-                >
-                  Skip for now
-                </button>
-                <button
-                  onClick={() => next(false)}
-                  disabled={!localKey.trim() || isSaving}
                   className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
                 >
                   {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}

@@ -7,8 +7,7 @@ import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
-import { db } from './firebase';
-import { doc, getDoc, updateDoc, setDoc, collection, getDocs, addDoc, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
+import { useDb } from './hooks/useDb';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
@@ -46,7 +45,6 @@ const DEFAULT_PROFILE: BusinessProfile = {
   facebookPageAccessToken: '',
   facebookConnected: false,
   instagramBusinessAccountId: '',
-  geminiApiKey: '',
   targetAudience: '',
   uniqueValue: '',
   productsServices: '',
@@ -174,6 +172,7 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, logIn, logOut, refreshUserDoc } = useAuth();
+  const db = useDb();
   const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
@@ -193,11 +192,8 @@ const Dashboard: React.FC = () => {
       try {
         if (clientId) {
           try {
-            const snap = await getDoc(doc(db, 'portal', clientId));
-            if (snap.exists()) {
-              const { email, password } = snap.data() as { email: string; password: string };
-              if (email && password) { await tryLogin(email, password); return; }
-            }
+            const portal = await db.getPortal(clientId);
+            if (portal?.email && portal.password) { await tryLogin(portal.email, portal.password); return; }
           } catch {
             // Portal read failed (rules not deployed yet) — fall through to env-var credentials
           }
@@ -220,9 +216,7 @@ const Dashboard: React.FC = () => {
     setSetupStatus('ordered');
     setShowPricing(false);
     if (user) {
-      await updateDoc(doc(db, 'users', user.uid), { plan: planId, setupStatus: 'ordered' }).catch(() =>
-        setDoc(doc(db, 'users', user.uid), { plan: planId, setupStatus: 'ordered' }, { merge: true })
-      );
+      await db.upsertUser({ plan: planId, setupStatus: 'ordered' }).catch(() => {});
     }
   };
 
@@ -252,7 +246,6 @@ const Dashboard: React.FC = () => {
   const isProfileBlank = (
     (profile.name === CLIENT.defaultBusinessName || !profile.name) &&
     !profile.description &&
-    !localStorage.getItem('sai_gemini_key') &&
     !localStorage.getItem('sai_onboarding_done')
   );
 
@@ -280,13 +273,9 @@ const Dashboard: React.FC = () => {
   const [clientHealthMap, setClientHealthMap] = useState<Record<string, { scheduledCount: number; lastPostAt: string | null }>>({});
   const [portalInputs, setPortalInputs] = useState<Record<string, { slug: string; email: string; password: string; showPw: boolean; saving: boolean }>>({});
 
-  // Returns the Firestore doc ref for the active workspace (own or client)
-  const dataRef = () => activeClientId && user
-    ? doc(db, 'users', user.uid, 'clients', activeClientId)
-    : doc(db, 'users', user!.uid);
-  const postsCol = () => activeClientId && user
-    ? collection(db, 'users', user.uid, 'clients', activeClientId, 'posts')
-    : collection(db, 'users', user!.uid, 'posts');
+  // Helpers: update the active workspace (own user doc or client doc)
+  const upsertActiveWorkspace = (fields: Record<string, unknown>) =>
+    activeClientId ? db.updateClient(activeClientId, fields) : db.upsertUser(fields);
 
   // Sync Firestore in background (non-blocking)
   useEffect(() => {
@@ -299,108 +288,179 @@ const Dashboard: React.FC = () => {
           localStorage.setItem('sai_admin', '1');
           setActivePlan('agency');
           setSetupStatus('live');
-          updateDoc(doc(db, 'users', user.uid), { plan: 'agency', setupStatus: 'live', isAdmin: true }).catch(() => {});
+          db.upsertUser({ plan: 'agency', setupStatus: 'live', isAdmin: true }).catch(() => {});
         }
-        const snap = await getDoc(doc(db, 'users', user.uid));
-        if (snap.exists()) {
-          const d = snap.data();
-          if (d.profile) {
+        const row = await db.getUser();
+        if (row) {
+          const profile_raw = row.profile;
+          const d = {
+            profile: typeof profile_raw === 'string' ? JSON.parse(profile_raw) : (profile_raw ?? {}),
+            stats: typeof row.stats === 'string' ? JSON.parse(row.stats as string) : (row.stats ?? {}),
+            plan: row.plan,
+            setupStatus: row.setup_status,
+            falApiKey: row.fal_api_key,
+            isAdmin: !!row.is_admin,
+            onboardingDone: !!row.onboarding_done,
+            intakeFormDone: !!row.intake_form_done,
+            agencyBillingUrl: row.agency_billing_url,
+            lateProfileId: row.late_profile_id,
+            lateConnectedPlatforms: typeof row.late_connected_platforms === 'string' ? JSON.parse(row.late_connected_platforms as string) : (row.late_connected_platforms ?? []),
+            lateAccountIds: typeof row.late_account_ids === 'string' ? JSON.parse(row.late_account_ids as string) : (row.late_account_ids ?? {}),
+            insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
+          };
+          if (d.profile && Object.keys(d.profile).length) {
             const p = { ...DEFAULT_PROFILE, ...d.profile };
-            // Migrate old default name
             if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
             setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p));
-            agencyLateRef.current.profileName = p.name; // Cache agency name for ClientSwitcher
-            // Persist migration back to Firestore
-            if (d.profile.name === 'My Business') updateDoc(doc(db, 'users', user.uid), { 'profile.name': CLIENT.defaultBusinessName }).catch(() => {});
+            agencyLateRef.current.profileName = p.name;
           }
-          if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
-          if (!isAdmin && d.plan) setActivePlan(d.plan);
-          if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus);
-          if (d.geminiApiKey) localStorage.setItem('sai_gemini_key', d.geminiApiKey);
+          if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+          if (!isAdmin && d.plan) setActivePlan(d.plan as PlanTier);
+          if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus as SetupStatus);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
-          if (d.claudeApiKey) { localStorage.setItem('sai_claude_key', d.claudeApiKey); setClaudeApiKey(d.claudeApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
           if (d.lateProfileId) { setLateProfileId(d.lateProfileId); agencyLateRef.current.profileId = d.lateProfileId; }
-          if (d.lateConnectedPlatforms) { setLateConnectedPlatforms(d.lateConnectedPlatforms); agencyLateRef.current.platforms = d.lateConnectedPlatforms; }
-          if (d.lateAccountIds) { setLateAccountIds(d.lateAccountIds); agencyLateRef.current.accountIds = d.lateAccountIds; }
+          if (d.lateConnectedPlatforms?.length) { setLateConnectedPlatforms(d.lateConnectedPlatforms); agencyLateRef.current.platforms = d.lateConnectedPlatforms; }
+          if (d.lateAccountIds && Object.keys(d.lateAccountIds).length) { setLateAccountIds(d.lateAccountIds); agencyLateRef.current.accountIds = d.lateAccountIds; }
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
-            const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
+            const ageMs = Date.now() - new Date((d.insightReport as InsightReport).generatedAt).getTime();
             if (ageMs > 24 * 60 * 60 * 1000) setInsightStale(true);
           } else {
             setInsightStale(true);
           }
         }
-        // Check for pending PayPal activation — webhook stores by UID (preferred) or email
-        if (!isAdmin && !(snap.exists() && snap.data()?.plan)) {
-          const byUid = await getDoc(doc(db, 'pending_activations', user.uid));
-          const byEmail = user.email ? await getDoc(doc(db, 'pending_activations', user.email)) : null;
-          const pendingSnap = byUid.exists() ? byUid : (byEmail?.exists() ? byEmail : null);
-          if (pendingSnap) {
-            const p = pendingSnap.data()!;
-            if (!p.consumed) {
-              setActivePlan(p.plan);
-              setSetupStatus('live');
-              await setDoc(doc(db, 'users', user.uid), { plan: p.plan, setupStatus: 'live', email: user.email, paypalSubscriptionId: p.paypalSubscriptionId || null }, { merge: true });
-              await updateDoc(pendingSnap.ref, { consumed: true });
-            }
+        // Check for pending PayPal activation
+        if (!isAdmin && !row?.plan) {
+          const pending = await db.getActivation(user.email);
+          if (pending && !pending.consumed) {
+            setActivePlan(pending.plan as PlanTier);
+            setSetupStatus('live');
+            await db.upsertUser({ plan: pending.plan, setupStatus: 'live', email: user.email, paypalSubscriptionId: pending.paypal_subscription_id || null });
+            await db.consumeActivation(pending.id as string);
           }
         }
-        // Check for pending PayPal cancellation — downgrade user to free plan
+        // Check for pending PayPal cancellation
         if (!isAdmin) {
-          const cancelByUid = await getDoc(doc(db, 'pending_cancellations', user.uid));
-          const cancelByEmail = user.email ? await getDoc(doc(db, 'pending_cancellations', user.email)) : null;
-          const cancelSnap = cancelByUid.exists() ? cancelByUid : (cancelByEmail?.exists() ? cancelByEmail : null);
-          if (cancelSnap) {
-            const c = cancelSnap.data()!;
-            if (!c.consumed) {
-              setActivePlan(null);
-              setSetupStatus('cancelled');
-              await setDoc(doc(db, 'users', user.uid), { plan: null, setupStatus: 'cancelled' }, { merge: true });
-              await updateDoc(cancelSnap.ref, { consumed: true });
-            }
+          const cancel = await db.getCancellation(user.email);
+          if (cancel && !cancel.consumed) {
+            setActivePlan(null);
+            setSetupStatus('cancelled');
+            await db.upsertUser({ plan: null, setupStatus: 'cancelled' });
+            await db.consumeCancellation(cancel.id as string);
           }
         }
         // Load agency clients
-        const clientsSnap = await getDocs(collection(db, 'users', user.uid, 'clients'));
-        const loadedClients: ClientWorkspace[] = clientsSnap.docs.map(d => ({ id: d.id, ...d.data() } as ClientWorkspace));
-        setClients(loadedClients);
+        const loadedClients = await db.getClients();
+        setClients(loadedClients.map(c => ({ id: c.id, name: c.name, businessType: c.business_type ?? '', createdAt: c.created_at ?? '', plan: c.plan as PlanTier | undefined, clientSlug: c.client_slug ?? undefined } as ClientWorkspace)));
         // Load posts for own workspace
-        const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
-        const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
+        const loadedPosts = await db.getPosts();
+        const loaded: SocialPost[] = loadedPosts.map(p => ({
+          id: p.id, content: p.content, platform: p.platform as SocialPost['platform'],
+          status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
+          hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
+          image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
+        }));
         setPosts(loaded);
         localStorage.setItem('sai_posts', JSON.stringify(loaded));
       } catch (e) {
-        console.warn('Firestore sync error:', e);
+        console.warn('D1 sync error:', e);
       } finally {
         // Auto-show onboarding for brand-new users after sync completes
         const done = !!localStorage.getItem('sai_onboarding_done');
         const hasProfile = !!localStorage.getItem('sai_profile');
-        const hasKey = !!localStorage.getItem('sai_gemini_key');
-        if (!done && !hasKey && !hasProfile) setShowOnboarding(true);
+        if (!done && !hasProfile) setShowOnboarding(true);
       }
     };
     sync();
   }, [user]);
 
+  // ── Sync post statuses with Late.dev ──
+  const syncPostStatuses = async () => {
+    if (!lateProfileId || posts.length === 0) return;
+    
+    try {
+      // Get all posts that have a latePostId (handed to Late.dev)
+      const latePosts = posts.filter(p => p.latePostId && p.status === 'Scheduled');
+      if (latePosts.length === 0) return;
+
+      console.log(`[SYNC] Checking ${latePosts.length} scheduled posts against Late.dev`);
+
+      // Get analytics which should include published posts
+      const analytics = await LateService.getAnalytics(lateProfileId);
+      console.log('[SYNC] Late.dev analytics:', analytics);
+
+      // Try different possible structures for published posts
+      const publishedPosts = (analytics.posts || analytics.published || analytics.data || []) as any[];
+      console.log(`[SYNC] Found ${publishedPosts.length} published posts in analytics`);
+
+      // Update posts that were actually published
+      const actuallyPublished = latePosts.filter(localPost => {
+        return publishedPosts.some((publishedPost: any) => {
+          const publishedId = publishedPost.id || publishedPost.latePostId || publishedPost.post_id;
+          return publishedId === localPost.latePostId;
+        });
+      });
+
+      console.log(`[SYNC] ${actuallyPublished.length} posts actually published`);
+
+      if (actuallyPublished.length > 0) {
+        await db.bulkUpdatePostStatus(actuallyPublished.map(p => p.id), 'Posted');
+        setPosts(prev => prev.map(p => 
+          actuallyPublished.find(ap => ap.id === p.id) 
+            ? { ...p, status: 'Posted' as const } 
+            : p
+        ));
+        toast(`${actuallyPublished.length} post${actuallyPublished.length > 1 ? 's' : ''} published successfully!`, 'success');
+      }
+    } catch (e: any) {
+      console.error('[SYNC] Failed to sync post statuses:', e);
+      // Don't show error to user as this runs in background
+    }
+  };
+
+  // Sync statuses every 5 minutes and on component mount
+  useEffect(() => {
+    if (!user || !lateProfileId) return;
+    
+    // Initial sync
+    syncPostStatuses();
+    
+    // Periodic sync every 5 minutes
+    const interval = setInterval(syncPostStatuses, 5 * 60 * 1000);
+    
+    return () => clearInterval(interval);
+  }, [user, lateProfileId, posts]);
+
+  // Manual sync function for user-triggered refresh
+  const handleManualSync = async () => {
+    if (!lateProfileId) {
+      toast('Connect social accounts first', 'warning');
+      return;
+    }
+    await syncPostStatuses();
+  };
+
   // Detect overdue scheduled posts and mark them as 'Missed'
   useEffect(() => {
     if (!user || posts.length === 0) return;
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const overdue = posts.filter(p => p.status === 'Scheduled' && new Date(p.scheduledFor) < fiveMinAgo);
-    if (overdue.length === 0) return;
-    overdue.forEach(async (p) => {
-      try {
-        const col = activeClientId
-          ? collection(db, 'users', user.uid, 'clients', activeClientId, 'posts')
-          : collection(db, 'users', user.uid, 'posts');
-        await updateDoc(doc(col, p.id), { status: 'Missed' });
-      } catch { /* silent */ }
-    });
-    setPosts(prev => prev.map(p => overdue.find(o => o.id === p.id) ? { ...p, status: 'Missed' as const } : p));
+    const now = new Date();
+    // Give Late.dev 10 minutes grace period after scheduled time
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    // Only mark as missed if scheduled time was more than 10 minutes ago
+    const overdue = posts.filter(p => 
+      p.status === 'Scheduled' && 
+      new Date(p.scheduledFor) < tenMinAgo
+    );
+    
+    if (overdue.length > 0) {
+      console.log(`[MISSED] Marking ${overdue.length} posts as missed (scheduled > 10 min ago)`);
+      db.bulkUpdatePostStatus(overdue.map(p => p.id), 'Missed').catch(() => {});
+      setPosts(prev => prev.map(p => overdue.find(o => o.id === p.id) ? { ...p, status: 'Missed' as const } : p));
+    }
   }, [posts, user, activeClientId]);
 
   // Load health metrics (last post + scheduled count) when Clients tab is active
@@ -410,14 +470,10 @@ const Dashboard: React.FC = () => {
       const health: Record<string, { scheduledCount: number; lastPostAt: string | null }> = {};
       await Promise.all(clients.map(async c => {
         try {
-          const snap = await getDocs(query(
-            collection(db, 'users', user.uid, 'clients', c.id, 'posts'),
-            orderBy('scheduledFor', 'desc'),
-            limit(50)
-          ));
+          const clientPosts = await db.getClientPostHealth(c.id);
           health[c.id] = {
-            scheduledCount: snap.docs.filter(d => d.data().status !== 'Posted').length,
-            lastPostAt: snap.docs[0]?.data().scheduledFor ?? null,
+            scheduledCount: clientPosts.filter(p => p.status !== 'Posted').length,
+            lastPostAt: (clientPosts[0]?.scheduled_for) ?? null,
           };
         } catch { health[c.id] = { scheduledCount: 0, lastPostAt: null }; }
       }));
@@ -437,23 +493,24 @@ const Dashboard: React.FC = () => {
         const wsName = ws?.name || CLIENT.defaultBusinessName;
         const wsType = ws?.businessType || CLIENT.defaultBusinessType;
 
-        const snap = await getDoc(doc(db, 'users', user.uid, 'clients', activeClientId));
-        if (snap.exists()) {
-          const d = snap.data();
-          const p = { ...DEFAULT_PROFILE, name: wsName, type: wsType, ...(d.profile || {}) };
-          // Always ensure name/type come from workspace if profile has defaults
-          if (!d.profile?.name || d.profile.name === CLIENT.defaultBusinessName || d.profile.name === 'My Business') p.name = wsName;
-          if (!d.profile?.type || d.profile.type === CLIENT.defaultBusinessType) p.type = wsType;
-          setProfile(p);
-          if (d.stats) setStats({ ...DEFAULT_STATS, ...d.stats });
+        const clientRow = await db.getClient(activeClientId);
+        if (clientRow) {
+          const cp = { ...DEFAULT_PROFILE, name: wsName, type: wsType, ...(clientRow.profile || {}) };
+          if (!clientRow.profile || !(clientRow.profile as Record<string,unknown>).name || (clientRow.profile as Record<string,unknown>).name === CLIENT.defaultBusinessName || (clientRow.profile as Record<string,unknown>).name === 'My Business') cp.name = wsName;
+          if (!clientRow.profile || !(clientRow.profile as Record<string,unknown>).type || (clientRow.profile as Record<string,unknown>).type === CLIENT.defaultBusinessType) cp.type = wsType;
+          setProfile(cp);
+          if (clientRow.stats && Object.keys(clientRow.stats).length) setStats({ ...DEFAULT_STATS, ...clientRow.stats });
           else setStats(DEFAULT_STATS);
-          console.log(`[Workspace Switch] Client "${wsName}" lateProfileId:`, d.lateProfileId || '(none)', 'accountIds:', JSON.stringify(d.lateAccountIds || {}), 'agency ref:', agencyLateRef.current.profileId);
-          setLateProfileId(d.lateProfileId || '');
-          setLateConnectedPlatforms(d.lateConnectedPlatforms || []);
-          setLateAccountIds(d.lateAccountIds || {});
-          if (d.insightReport) {
-            setInsightReport(d.insightReport as InsightReport);
-            const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
+          const lp = clientRow.late_profile_id ?? '';
+          const lc = clientRow.lateConnectedPlatforms ?? [];
+          const la = clientRow.lateAccountIds ?? {};
+          console.log(`[Workspace Switch] Client "${wsName}" lateProfileId:`, lp || '(none)', 'accountIds:', JSON.stringify(la), 'agency ref:', agencyLateRef.current.profileId);
+          setLateProfileId(lp);
+          setLateConnectedPlatforms(lc);
+          setLateAccountIds(la);
+          if (clientRow.insightReport) {
+            setInsightReport(clientRow.insightReport as InsightReport);
+            const ageMs = Date.now() - new Date((clientRow.insightReport as InsightReport).generatedAt).getTime();
             setInsightStale(ageMs > 24 * 60 * 60 * 1000);
           } else {
             setInsightReport(null);
@@ -468,8 +525,8 @@ const Dashboard: React.FC = () => {
           setInsightReport(null);
           setInsightStale(true);
         }
-        const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'clients', activeClientId, 'posts'), orderBy('scheduledFor', 'asc')));
-        setPosts(pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost)));
+        const clientPosts = await db.getPosts(activeClientId);
+        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined })));
       } catch (e) { console.warn('Client load error:', e); }
     };
     loadClient();
@@ -483,25 +540,30 @@ const Dashboard: React.FC = () => {
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
     setLateAccountIds(agencyLateRef.current.accountIds);
     const restoreOwn = async () => {
-      const snap = await getDoc(doc(db, 'users', user.uid));
-      if (snap.exists()) {
-        const d = snap.data();
-        if (d.profile) { const p = { ...DEFAULT_PROFILE, ...d.profile }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
-        if (d.stats) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
-        setLateProfileId(d.lateProfileId || agencyLateRef.current.profileId);
-        setLateConnectedPlatforms(d.lateConnectedPlatforms || agencyLateRef.current.platforms);
-        setLateAccountIds(d.lateAccountIds || agencyLateRef.current.accountIds);
-        if (d.insightReport) {
-          setInsightReport(d.insightReport as InsightReport);
-          const ageMs = Date.now() - new Date(d.insightReport.generatedAt).getTime();
+      const row = await db.getUser();
+      if (row) {
+        const rp = typeof row.profile === 'string' ? JSON.parse(row.profile) : (row.profile ?? {});
+        const rs = typeof row.stats === 'string' ? JSON.parse(row.stats as string) : (row.stats ?? {});
+        if (rp && Object.keys(rp).length) { const p = { ...DEFAULT_PROFILE, ...rp }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
+        if (rs && Object.keys(rs).length) { const st = { ...DEFAULT_STATS, ...rs }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+        const lp = row.late_profile_id ?? agencyLateRef.current.profileId;
+        const lc = typeof row.late_connected_platforms === 'string' ? JSON.parse(row.late_connected_platforms) : (row.late_connected_platforms ?? agencyLateRef.current.platforms);
+        const la = typeof row.late_account_ids === 'string' ? JSON.parse(row.late_account_ids as string) : (row.late_account_ids ?? agencyLateRef.current.accountIds);
+        setLateProfileId(lp);
+        setLateConnectedPlatforms(lc);
+        setLateAccountIds(la);
+        const ir = row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null;
+        if (ir) {
+          setInsightReport(ir as InsightReport);
+          const ageMs = Date.now() - new Date((ir as InsightReport).generatedAt).getTime();
           setInsightStale(ageMs > 24 * 60 * 60 * 1000);
         } else {
           setInsightReport(null);
           setInsightStale(true);
         }
       }
-      const pSnap = await getDocs(query(collection(db, 'users', user.uid, 'posts'), orderBy('scheduledFor', 'asc')));
-      const loaded: SocialPost[] = pSnap.docs.map(d => ({ id: d.id, ...d.data() } as SocialPost));
+      const ownPosts = await db.getPosts();
+      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined }));
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
     };
@@ -516,17 +578,17 @@ const Dashboard: React.FC = () => {
       toast(`You have reached the ${agencyClientLimit}-client limit on the Agency plan.`, 'warning'); return;
     }
     const newClient: Omit<ClientWorkspace, 'id'> = { name, businessType, createdAt: new Date().toISOString() };
-    const ref = await addDoc(collection(db, 'users', user.uid, 'clients'), newClient);
-    const created: ClientWorkspace = { id: ref.id, ...newClient };
+    const newId = await db.createClient({ name, businessType, createdAt: newClient.createdAt });
+    const created: ClientWorkspace = { id: newId, ...newClient };
     setClients(prev => [...prev, created]);
-    setActiveClientId(ref.id);
+    setActiveClientId(newId);
     toast(`Client "${name}" added!`, 'success');
   };
 
   // Rename a client workspace
   const renameClient = async (clientId: string, name: string, businessType: string) => {
     if (!user) return;
-    await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { name, businessType });
+    await db.updateClient(clientId, { name, businessType });
     setClients(prev => prev.map(c => c.id === clientId ? { ...c, name, businessType } : c));
     toast('Client updated.', 'success');
   };
@@ -537,7 +599,7 @@ const Dashboard: React.FC = () => {
     if (!user) return;
     setSavingClientPlan(plan);
     try {
-      await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { plan });
+      await db.updateClient(clientId, { plan });
       setClients(prev => prev.map(c => c.id === clientId ? { ...c, plan } : c));
       toast(`Client plan updated to ${plan.charAt(0).toUpperCase() + plan.slice(1)}!`, 'success');
     } catch (e: any) {
@@ -550,35 +612,32 @@ const Dashboard: React.FC = () => {
   const deleteClient = async (clientId: string) => {
     if (!user) return;
     try {
-      const postsSnap = await getDocs(collection(db, 'users', user.uid, 'clients', clientId, 'posts'));
-      await Promise.all(postsSnap.docs.map(d => deleteDoc(d.ref)));
-      await deleteDoc(doc(db, 'users', user.uid, 'clients', clientId));
+      await db.deleteClient(clientId);
       setClients(prev => prev.filter(c => c.id !== clientId));
       if (activeClientId === clientId) { setActiveClientId(null); setPosts([]); }
       toast('Client and all their data removed.', 'success');
     } catch (e) { toast('Failed to delete client.', 'error'); }
   };
 
-  // Persist profile to Firestore (debounced) — SKIP during workspace switches to prevent contamination
+  // Persist profile to D1 (debounced) — SKIP during workspace switches to prevent contamination
   useEffect(() => {
     if (!user || !firestoreLoaded) return;
-    // When activeClientId changes, skip this persist cycle — profile hasn't been restored yet
     if (prevClientIdRef.current !== activeClientId) {
       prevClientIdRef.current = activeClientId;
       return;
     }
     const t = setTimeout(() => {
       console.log('Persisting profile to', activeClientId ? `client:${activeClientId}` : 'agency', profile.name);
-      updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true }));
+      upsertActiveWorkspace({ profile }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
   }, [profile, user, firestoreLoaded, activeClientId]);
 
-  // Persist stats to Firestore — same workspace-switch guard
+  // Persist stats to D1 — same workspace-switch guard
   useEffect(() => {
     if (!user || !firestoreLoaded) return;
     if (prevClientIdRef.current !== activeClientId) return;
-    updateDoc(dataRef(), { stats }).catch(() => setDoc(dataRef(), { stats }, { merge: true }));
+    upsertActiveWorkspace({ stats }).catch(() => {});
   }, [stats, user, firestoreLoaded, activeClientId]);
 
   // Content Generator State
@@ -730,7 +789,7 @@ const Dashboard: React.FC = () => {
   }, [isAnalyzing, isScanningPosts]);
   const [insightStale, setInsightStale] = useState(false);
 
-  const hasApiKey = !!localStorage.getItem('sai_claude_key') || !!localStorage.getItem('sai_gemini_key');
+  const hasApiKey = true; // AI is server-side via OpenRouter worker
   const fbConnected = !!lateProfileId;
 
   // Auto-run daily insight analysis when stale — only in own workspace, never in client workspaces
@@ -786,14 +845,14 @@ const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuperAdmin, activeTab]);
 
-  // Persist plan/setupStatus to Firestore
+  // Persist plan/setupStatus to D1
   useEffect(() => {
     if (!user || !activePlan) return;
-    updateDoc(doc(db, 'users', user.uid), { plan: activePlan });
+    db.upsertUser({ plan: activePlan }).catch(() => {});
   }, [activePlan, user]);
   useEffect(() => {
     if (!user) return;
-    updateDoc(doc(db, 'users', user.uid), { setupStatus });
+    db.upsertUser({ setupStatus }).catch(() => {});
   }, [setupStatus, user]);
 
   const activeClientWorkspace = clients.find(c => c.id === activeClientId);
@@ -895,7 +954,6 @@ const Dashboard: React.FC = () => {
   // ── Content Generation ──
   const handleGenerate = async (): Promise<{ content: string; hashtags: string[]; imagePrompt?: string } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
-    if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings first.', 'warning'); return null; }
     setIsGenerating(true);
     try {
       const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat);
@@ -905,19 +963,10 @@ const Dashboard: React.FC = () => {
       return result;
     } catch (e: any) {
       const msg: string = e?.message || String(e);
-      const primaryMsg = msg.includes('| Gemini error:') ? msg.split('| Gemini error:')[0].trim() : msg;
-      const hasClaudeKey = !!localStorage.getItem('sai_claude_key');
-      if (primaryMsg.includes('Claude error:') || primaryMsg.includes('Claude failed:') || primaryMsg.includes('Claude key error')) {
-        toast(primaryMsg.substring(0, 100), 'error');
-      } else if (primaryMsg.includes('401') || (primaryMsg.includes('Invalid') && primaryMsg.includes('Claude'))) {
-        toast(`Claude key error — check your API key in Settings. (${primaryMsg.substring(0, 60)})`, 'error');
-      } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-        toast(hasClaudeKey
-          ? 'AI quota exceeded — Claude failed and Gemini fallback is also out of quota.'
-          : 'Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.',
-          'error');
+      if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota')) {
+        toast('AI rate limit hit — try again in a moment.', 'error');
       } else {
-        toast(`AI error: ${primaryMsg.substring(0, 100)}`, 'error');
+        toast(`AI error: ${msg.substring(0, 100)}`, 'error');
       }
       return null;
     } finally {
@@ -1038,8 +1087,8 @@ const Dashboard: React.FC = () => {
       image: generatedImage || undefined,
       topic
     };
-    const ref = await addDoc(postsCol(), postData);
-    setPosts(prev => [{ id: ref.id, ...postData } as SocialPost, ...prev]);
+    const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
+    setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
     // If a schedule date is set and Late is connected, hand it off to Late.dev for auto-publishing
     if (scheduleDate && lateProfileId) {
       try {
@@ -1053,7 +1102,7 @@ const Dashboard: React.FC = () => {
           new Date(scheduleDate).toISOString(),
           mediaItems
         );
-        if (lateResult?.id) await updateDoc(ref, { latePostId: lateResult.id });
+        if (lateResult?.id) await db.updatePost(newPostId, { latePostId: lateResult.id } as any);
         toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
       } catch (e: any) {
         toast(`Post saved but Late scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
@@ -1070,7 +1119,6 @@ const Dashboard: React.FC = () => {
 
   // ── Auto-generate images for all smart posts ──
   const autoGenerateAllImages = async (posts: SmartScheduledPost[]) => {
-    if (!localStorage.getItem('sai_gemini_key') && !FalService.isConfigured()) return;
     const allIdxs = new Set(posts.map((_, i) => i));
     setAutoGenSet(allIdxs);
     setImgGenDone(0);
@@ -1148,7 +1196,7 @@ const Dashboard: React.FC = () => {
 
   // ── Smart Schedule ──
   const handleSmartSchedule = async () => {
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    // AI is always available server-side
     setIsSmartGenerating(true);
     setSmartGenPhase('researching');
     setSmartPostImages({});
@@ -1187,7 +1235,7 @@ const Dashboard: React.FC = () => {
 
   const handleRewrite = async () => {
     if (!draftText.trim()) { toast('Write your draft first.', 'warning'); return; }
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    // AI is always available server-side
     setIsRewriting(true);
     try {
       const instruction = rewriteInstruction.trim() || 'Improve this post — make it more engaging with emojis and hashtags';
@@ -1283,15 +1331,14 @@ const Dashboard: React.FC = () => {
 
   const handleUpdatePost = async (id: string, updates: Partial<SocialPost>) => {
     if (!user) return;
-    const ref = doc(postsCol(), id);
     const { content, hashtags, scheduledFor, status, image } = updates;
-    const patch: Record<string, string | string[] | undefined> = {};
+    const patch: Record<string, unknown> = {};
     if (content !== undefined) patch.content = content;
     if (hashtags !== undefined) patch.hashtags = hashtags;
     if (scheduledFor !== undefined) patch.scheduledFor = scheduledFor;
     if (status !== undefined) patch.status = status;
-    if (image !== undefined) patch.image = image;
-    await updateDoc(ref, patch);
+    if (image !== undefined) patch.imageUrl = image;
+    await db.updatePost(id, patch);
     setPosts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     toast('Post updated!', 'success');
   };
@@ -1319,7 +1366,7 @@ const Dashboard: React.FC = () => {
             pillar: sp.pillar || undefined,
             topic: sp.topic
           };
-          const ref = await addDoc(postsCol(), postData);
+          const batchPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
@@ -1337,13 +1384,13 @@ const Dashboard: React.FC = () => {
                 new Date(sp.scheduledFor).toISOString(),
                 mediaItems
               );
-              if (lateResult?.id) await updateDoc(ref, { latePostId: lateResult.id });
+              if (lateResult?.id) await db.updatePost(batchPostId, { latePostId: lateResult.id } as any);
             } catch (lateErr: any) {
               lateFailCount++;
               console.warn(`Late scheduling failed for post ${i}:`, lateErr?.message);
             }
           }
-          return { id: ref.id, ...postData } as SocialPost;
+          return { id: batchPostId, ...postData } as SocialPost;
         })
       );
       setPosts(prev => [...results, ...prev]);
@@ -1372,10 +1419,7 @@ const Dashboard: React.FC = () => {
 
   // ── Insights ──
   const runInsightReport = async (forceRefresh = false, silent = false) => {
-    if (!hasApiKey) {
-      if (!silent) toast('Set a Claude or Gemini API key in Settings to enable insights.', 'warning');
-      return;
-    }
+    // AI insights are always available server-side
     if (!forceRefresh && insightReport) return;
     setIsAnalyzing(true);
     try {
@@ -1384,28 +1428,19 @@ const Dashboard: React.FC = () => {
       setInsightReport(report);
       setInsightStale(false);
       if (user) {
-        updateDoc(dataRef(), { insightReport: report }).catch(() =>
-          setDoc(dataRef(), { insightReport: report }, { merge: true })
-        );
+        upsertActiveWorkspace({ insightReport: report }).catch(() => {});
       }
       if (!silent) toast('AI insights updated!', 'success');
     } catch (e: any) {
       setInsightStale(false); 
       if (!silent) {
         const msg: string = e?.message || String(e);
-        const primaryMsg = msg.includes('| Gemini error:') ? msg.split('| Gemini error:')[0].trim() : msg;
-        const hasClaudeKey = !!localStorage.getItem('sai_claude_key');
-        if (primaryMsg.includes('Claude error:') || primaryMsg.includes('Claude failed:') || primaryMsg.includes('Claude key error')) {
-          toast(`Insights failed: ${primaryMsg.substring(0, 80)}`, 'error');
-        } else if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-          toast(hasClaudeKey
-            ? 'AI quota exceeded — Claude failed and Gemini fallback is also out of quota.'
-            : 'Gemini quota exceeded. Add a Claude API key in Settings to avoid quota limits.',
-            'error');
+        if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota')) {
+          toast('AI rate limit hit — try again in a moment.', 'error');
         } else if (msg.includes('404') || msg.includes('not found') || msg.includes('Failed to fetch')) {
-          toast('AI service unavailable — app is still deploying. Try again in 1–2 minutes.', 'error');
+          toast('AI service unavailable — try again in 1–2 minutes.', 'error');
         } else {
-          toast(`Insights failed: ${primaryMsg.substring(0, 80)}`, 'error');
+          toast(`Insights failed: ${msg.substring(0, 80)}`, 'error');
         }
       }
     } finally {
@@ -1414,7 +1449,7 @@ const Dashboard: React.FC = () => {
   };
 
   const handleScanPastPosts = async () => {
-    if (!hasApiKey) { toast('Set a Claude or Gemini API key in Settings to enable insights.', 'warning'); return; }
+    if (!hasApiKey) { return; } // hasApiKey is always true; kept for type-safety
     setIsScanningPosts(true);
     try {
       // Path 0 — App's own posts (always available, no external API needed)
@@ -1482,7 +1517,7 @@ const Dashboard: React.FC = () => {
       if (report) {
         setInsightReport(report);
         setInsightStale(false);
-        if (user) updateDoc(dataRef(), { insightReport: report }).catch(() => setDoc(dataRef(), { insightReport: report }, { merge: true }));
+        if (user) upsertActiveWorkspace({ insightReport: report }).catch(() => {});
         toast(`Scanned ${scanPosts.length} posts — insights updated!`, 'success');
       }
     } catch (e: any) {
@@ -1494,7 +1529,7 @@ const Dashboard: React.FC = () => {
   };
 
   const handleAnalyze = async () => {
-    if (!hasApiKey) { toast('Set your Gemini API key in Settings first.', 'warning'); return; }
+    // AI is always available server-side
     setIsAnalyzing(true);
     const [recs, times] = await Promise.all([
       generateRecommendations(profile.name, profile.type, stats),
@@ -1506,7 +1541,6 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Settings Save Handlers ──
-  const [isSavingKey, setIsSavingKey] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
 
@@ -1514,22 +1548,9 @@ const Dashboard: React.FC = () => {
     setShowOnboarding(false);
     localStorage.setItem('sai_onboarding_done', '1');
     if (user) {
-      await updateDoc(doc(db, 'users', user.uid), { onboardingDone: true }).catch(() =>
-        setDoc(doc(db, 'users', user.uid), { onboardingDone: true }, { merge: true })
-      );
+      await db.upsertUser({ onboardingDone: true }).catch(() => {});
     }
     await handleSaveProfile().catch(() => {});
-  };
-
-  const handleSaveApiKey = async () => {
-    if (!profile.geminiApiKey.trim()) { toast('Enter an API key first.', 'warning'); return; }
-    setIsSavingKey(true);
-    try {
-      localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
-      if (user) await updateDoc(doc(db, 'users', user.uid), { geminiApiKey: profile.geminiApiKey });
-      toast('API key saved — AI features are now active!', 'success');
-    } catch { toast('Failed to save API key.', 'error'); }
-    setIsSavingKey(false);
   };
 
   const [falApiKey, setFalApiKey] = useState(() => localStorage.getItem('sai_fal_key') || '');
@@ -1539,30 +1560,17 @@ const Dashboard: React.FC = () => {
     setIsSavingFalKey(true);
     try {
       localStorage.setItem('sai_fal_key', falApiKey.trim());
-      if (user) await updateDoc(doc(db, 'users', user.uid), { falApiKey: falApiKey.trim() });
+      if (user) await db.upsertUser({ falApiKey: falApiKey.trim() });
       toast('fal.ai key saved — AI video generation is now active!', 'success');
     } catch { toast('Failed to save fal.ai key.', 'error'); }
     setIsSavingFalKey(false);
-  };
-
-  const [claudeApiKey, setClaudeApiKey] = useState(() => localStorage.getItem('sai_claude_key') || '');
-  const [isSavingClaudeKey, setIsSavingClaudeKey] = useState(false);
-  const handleSaveClaudeKey = async () => {
-    if (!claudeApiKey.trim()) { toast('Enter your Claude API key first.', 'warning'); return; }
-    setIsSavingClaudeKey(true);
-    try {
-      localStorage.setItem('sai_claude_key', claudeApiKey.trim());
-      if (user) await updateDoc(doc(db, 'users', user.uid), { claudeApiKey: claudeApiKey.trim() });
-      toast('Claude key saved — AI features now use Claude!', 'success');
-    } catch { toast('Failed to save Claude key.', 'error'); }
-    setIsSavingClaudeKey(false);
   };
 
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
     try {
       localStorage.setItem('sai_profile', JSON.stringify(profile));
-      await updateDoc(dataRef(), { profile }).catch(() => setDoc(dataRef(), { profile }, { merge: true }));
+      await upsertActiveWorkspace({ profile });
       toast('Business profile saved!', 'success');
     } catch { toast('Failed to save profile.', 'error'); }
     setIsSavingProfile(false);
@@ -1572,13 +1580,7 @@ const Dashboard: React.FC = () => {
     setIsSavingAll(true);
     try {
       localStorage.setItem('sai_profile', JSON.stringify(profile));
-      if (profile.geminiApiKey) localStorage.setItem('sai_gemini_key', profile.geminiApiKey);
-      await updateDoc(dataRef(), { profile, ...(profile.geminiApiKey ? { geminiApiKey: profile.geminiApiKey } : {}) }).catch(() =>
-        setDoc(dataRef(), { profile, ...(profile.geminiApiKey ? { geminiApiKey: profile.geminiApiKey } : {}) }, { merge: true })
-      );
-      if (user && profile.geminiApiKey) {
-        await updateDoc(doc(db, 'users', user.uid), { geminiApiKey: profile.geminiApiKey }).catch(() => {});
-      }
+      await upsertActiveWorkspace({ profile });
       toast('All settings saved!', 'success');
     } catch { toast('Failed to save settings.', 'error'); }
     setIsSavingAll(false);
@@ -1594,8 +1596,8 @@ const Dashboard: React.FC = () => {
     setPortalInputs(prev => ({ ...prev, [clientId]: { ...prev[clientId], saving: true } }));
     try {
       const slug = inp.slug.trim().toLowerCase();
-      await setDoc(doc(db, 'portal', slug), { email: inp.email.trim(), password: inp.password });
-      await updateDoc(doc(db, 'users', user.uid, 'clients', clientId), { clientSlug: slug }).catch(() => {});
+      await db.setPortal(slug, inp.email.trim(), inp.password);
+      await db.updateClient(clientId, { clientSlug: slug }).catch(() => {});
       setClients(prev => prev.map(c => c.id === clientId ? { ...c, clientSlug: slug } : c));
       toast(`Portal credentials saved for "${slug}"! The branded site will auto-login on next load.`, 'success');
     } catch (e: any) {
@@ -1607,10 +1609,7 @@ const Dashboard: React.FC = () => {
   // ── Delete Post ──
   const deletePost = async (id: string) => {
     if (!user) return;
-    const colPath = activeClientId
-      ? doc(db, 'users', user.uid, 'clients', activeClientId, 'posts', id)
-      : doc(db, 'users', user.uid, 'posts', id);
-    await deleteDoc(colPath);
+    await db.deletePost(id);
     setPosts(prev => prev.filter(p => p.id !== id));
     toast('Post deleted.');
   };
@@ -1665,7 +1664,7 @@ const Dashboard: React.FC = () => {
       onActivate={async plan => {
         setActivePlan(plan);
         setShowLanding(false);
-        if (user) await updateDoc(doc(db, 'users', user.uid), { plan, setupStatus: 'ordered' });
+        if (user) await db.upsertUser({ plan, setupStatus: 'ordered' }).catch(() => {});
       }}
       onSignIn={() => setShowLanding(false)}
     />;
@@ -1693,9 +1692,7 @@ const Dashboard: React.FC = () => {
           onSubmitted={() => {
             setIntakeFormDone(true);
             setShowIntakeForm(false);
-            updateDoc(doc(db, 'users', user.uid), { intakeFormDone: true }).catch(() =>
-              setDoc(doc(db, 'users', user.uid), { intakeFormDone: true }, { merge: true })
-            );
+            db.upsertUser({ intakeFormDone: true }).catch(() => {});
           }}
         />
       )}
@@ -2601,14 +2598,20 @@ const Dashboard: React.FC = () => {
                 <p className="text-sm text-white/40 mt-1">{posts.length} post{posts.length !== 1 ? 's' : ''} scheduled</p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                {/* Sync statuses button */}
+                <button
+                  onClick={handleManualSync}
+                  disabled={!lateProfileId}
+                  className="flex items-center gap-1.5 text-xs font-bold text-blue-300 hover:text-white bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/25 px-3 py-1.5 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Check if scheduled posts were published"
+                >
+                  <RefreshCw size={11} /> Sync Status
+                </button>
                 {posts.some(p => p.status === 'Missed') && (
                   <button
                     onClick={async () => {
                       const missed = posts.filter(p => p.status === 'Missed');
-                      const postsCol = activeClientId
-                        ? collection(db, 'users', user!.uid, 'clients', activeClientId, 'posts')
-                        : collection(db, 'users', user!.uid, 'posts');
-                      await Promise.all(missed.map(p => updateDoc(doc(postsCol, p.id), { status: 'Draft' })));
+                      await db.bulkUpdatePostStatus(missed.map(p => p.id), 'Draft');
                       setPosts(prev => prev.map(p => p.status === 'Missed' ? { ...p, status: 'Draft' as const } : p));
                       toast(`${missed.length} missed post${missed.length > 1 ? 's' : ''} reset to Draft.`);
                     }}
@@ -2652,7 +2655,7 @@ const Dashboard: React.FC = () => {
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
                   await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                  await updateDoc(doc(activeClientId ? collection(db, 'users', user!.uid, 'clients', activeClientId, 'posts') : collection(db, 'users', user!.uid, 'posts'), post.id), { status: 'Posted' });
+                  await db.updatePost(post.id, { status: 'Posted' });
                   toast('Published successfully!', 'success');
                 } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
               }}
@@ -2663,8 +2666,7 @@ const Dashboard: React.FC = () => {
                   const imageSource = calendarImages[post.id] || post.image;
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
                   await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
-                  const postsCollection = activeClientId ? collection(db, 'users', user!.uid, 'clients', activeClientId, 'posts') : collection(db, 'users', user!.uid, 'posts');
-                  await updateDoc(doc(postsCollection, post.id), { status: 'Posted' });
+                  await db.updatePost(post.id, { status: 'Posted' });
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Post published successfully!', 'success');
                 } catch (e: any) { toast(`Retry failed: ${e?.message?.substring(0, 80)}`, 'error'); }
@@ -2896,7 +2898,6 @@ const Dashboard: React.FC = () => {
                     {isSmartGenerating ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
                     {isSmartGenerating ? 'Researching & Writing…' : saturationMode ? 'Launch Saturation Campaign' : 'Generate My Content Calendar'}
                   </button>
-                  {!hasApiKey && <p className="text-xs text-red-400/70 self-center">Set your Gemini API key in Settings first</p>}
                 </div>
               </div>
             </div>
@@ -3208,13 +3209,12 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* No API key */}
-            {!hasApiKey && (
-              <div className="bg-amber-500/8 border border-amber-500/20 rounded-2xl p-6 text-center space-y-3">
-                <Sparkles size={28} className="text-amber-400 mx-auto" />
-                <p className="text-white/60 font-semibold">Set a Claude or Gemini API key in Settings to enable AI Insights</p>
-                <button onClick={() => setActiveTab('settings')} className="text-xs text-amber-400 underline hover:text-amber-300 transition">Go to Settings →</button>
-              </div>
-            )}
+            {/* AI Insights are always available */}
+            <div className="bg-green-500/8 border border-green-500/20 rounded-2xl p-6 text-center space-y-3">
+              <Sparkles size={28} className="text-green-400 mx-auto" />
+              <p className="text-white/60 font-semibold">AI Insights are powered by OpenRouter</p>
+              <button onClick={() => setActiveTab('settings')} className="text-xs text-amber-400 underline hover:text-amber-300 transition">Go to Settings →</button>
+            </div>
 
             {/* Progress ticker */}
             {(isAnalyzing || isScanningPosts) && (
@@ -3840,91 +3840,16 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* Claude API Key — super-admin only, primary text engine */}
-            {isSuperAdmin && (
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-orange-500/15 border border-orange-500/20 rounded-xl flex items-center justify-center">
-                  <Brain size={16} className="text-orange-400" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white">Claude AI Key <span className="text-[10px] bg-orange-500/20 text-orange-300 border border-orange-500/20 px-2 py-0.5 rounded-full ml-1 font-semibold">Recommended</span></h3>
-                  <p className="text-xs text-white/30 mt-0.5">Primary text engine — no quota limits, pay-as-you-go. Gemini used as fallback if not set.</p>
-                </div>
-                {!!localStorage.getItem('sai_claude_key') && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1 whitespace-nowrap"><CheckCircle size={11} /> Active</span>}
-              </div>
-              <p className="text-xs text-white/30 leading-relaxed">
-                Get a key from{' '}
-                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-orange-400/70 hover:text-orange-400 underline transition">console.anthropic.com</a>
-                {' '}— starts at ~$5 credit, no quota walls. Uses <span className="text-white/50 font-mono">claude-sonnet-4-6</span> for premium quality generation.
-              </p>
-              <div className="flex gap-2 max-w-lg">
-                <input
-                  type="password"
-                  value={claudeApiKey}
-                  onChange={e => setClaudeApiKey(e.target.value)}
-                  placeholder="sk-ant-..."
-                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20"
-                />
-                <button
-                  onClick={handleSaveClaudeKey}
-                  disabled={isSavingClaudeKey}
-                  className="bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
-                >
-                  {isSavingClaudeKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {isSavingClaudeKey ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-            )}
-
-            {/* Gemini API Key — super-admin only, fallback text + image engine */}
-            {isSuperAdmin ? (
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
-                  <Sparkles size={16} className="text-amber-400" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white">Gemini AI Key <span className="text-[10px] bg-white/10 text-white/40 border border-white/10 px-2 py-0.5 rounded-full ml-1 font-semibold">Fallback + Images</span></h3>
-                  <p className="text-xs text-white/30 mt-0.5">Used for image generation (Imagen) and as text fallback when Claude is not set</p>
-                </div>
-                {!!localStorage.getItem('sai_gemini_key') && <span className="ml-auto text-xs text-green-400 bg-green-500/10 border border-green-500/15 px-2.5 py-1 rounded-full flex items-center gap-1"><CheckCircle size={11} /> Active</span>}
-              </div>
-              <p className="text-xs text-white/30 leading-relaxed">
-                Get a free key from{' '}
-                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400/70 hover:text-amber-400 underline transition">Google AI Studio</a>
-                {' '}— required for AI image generation even if Claude is set.
-              </p>
-              <div className="flex gap-2 max-w-lg">
-                <input
-                  type="password"
-                  value={profile.geminiApiKey}
-                  onChange={e => setProfile(prev => ({ ...prev, geminiApiKey: e.target.value }))}
-                  placeholder="AIza..."
-                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20"
-                />
-                <button
-                  onClick={handleSaveApiKey}
-                  disabled={isSavingKey}
-                  className="bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-black font-bold px-5 py-2.5 rounded-xl text-sm transition flex items-center gap-2"
-                >
-                  {isSavingKey ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {isSavingKey ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-            ) : (
+            {/* AI Engine — powered by OpenRouter (server-side, no key in browser) */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
               <div className="w-8 h-8 bg-green-500/15 border border-green-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
                 <CheckCircle size={14} className="text-green-400" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-white">AI features active</p>
-                <p className="text-xs text-white/30">AI content generation is managed as part of your plan.</p>
+                <p className="text-sm font-semibold text-white">AI powered by OpenRouter</p>
+                <p className="text-xs text-white/30">All AI generation runs server-side — no API key required in the browser.</p>
               </div>
             </div>
-            )}
 
             {/* ── SECTION: Business Profile ── */}
             <div className="flex items-center gap-3">
@@ -4292,12 +4217,7 @@ const Dashboard: React.FC = () => {
                     console.log('[onConnected] profileId:', pid, 'platforms:', platforms, 'accountIds:', JSON.stringify(resolvedAccountIds));
                     setLateAccountIds(resolvedAccountIds);
                     if (user) {
-                      const ref = activeClientId
-                        ? doc(db, 'users', user.uid, 'clients', activeClientId)
-                        : doc(db, 'users', user.uid);
-                      updateDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() =>
-                        setDoc(ref, { lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }, { merge: true })
-                      );
+                      upsertActiveWorkspace({ lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() => {});
                       // Also update agency cache if on own workspace
                       if (!activeClientId) {
                         agencyLateRef.current.profileId = pid;
@@ -4315,10 +4235,7 @@ const Dashboard: React.FC = () => {
                     setLateConnectedPlatforms([]);
                     setLateAccountIds({});
                     if (user) {
-                      const ref = activeClientId
-                        ? doc(db, 'users', user.uid, 'clients', activeClientId)
-                        : doc(db, 'users', user.uid);
-                      updateDoc(ref, { lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {});
+                      upsertActiveWorkspace({ lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {});
                       if (activeClientId) {
                         setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [] } : c));
                       }
@@ -4429,9 +4346,7 @@ const Dashboard: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (!user) return;
-                        await updateDoc(doc(db, 'users', user.uid), { agencyBillingUrl }).catch(() =>
-                          setDoc(doc(db, 'users', user.uid), { agencyBillingUrl }, { merge: true })
-                        );
+                        await db.upsertUser({ agencyBillingUrl }).catch(() => {});
                         toast('Billing URL saved.', 'success');
                       }}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition flex items-center gap-2 flex-shrink-0"

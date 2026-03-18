@@ -29,7 +29,6 @@ export interface BusinessProfile {
   facebookPageAccessToken: string;
   facebookConnected: boolean;
   instagramBusinessAccountId: string;
-  geminiApiKey: string;
   targetAudience: string;
   uniqueValue: string;
   productsServices: string;
@@ -46,7 +45,7 @@ export interface ContentCalendarStats {
 }
 
 export type PlanTier = 'starter' | 'growth' | 'pro' | 'agency';
-export type SetupStatus = 'ordered' | 'form_sent' | 'in_progress' | 'live';
+export type SetupStatus = 'ordered' | 'form_sent' | 'in_progress' | 'live' | 'cancelled';
 
 export interface ClientWorkspace {
   id: string;

@@ -256,11 +256,11 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                   <PayPalButtons
                     style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'subscribe' }}
                     createSubscription={(_data, actions) =>
-                      actions.subscriptions.create({ plan_id: selectedPayPalPlanId })
+                      actions.subscription.create({ plan_id: selectedPayPalPlanId })
                     }
-                    onApprove={(data) => {
+                    onApprove={async (data) => {
                       if (data.subscriptionID) {
-                        handleApprove(data.subscriptionID, selectedPlan.id);
+                        await handleApprove(data.subscriptionID, selectedPlan.id);
                       }
                     }}
                     onError={() => setActivationError('PayPal encountered an error. Please try again or contact support.')}

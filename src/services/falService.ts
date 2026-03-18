@@ -76,5 +76,5 @@ export const FalService = {
     return data.imageUrl;
   },
 
-  isConfigured: () => !!localStorage.getItem('sai_fal_key'),
+  isConfigured: () => true, // FAL_API_KEY is configured server-side in Cloudflare env
 };

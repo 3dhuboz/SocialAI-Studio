@@ -1,24 +1,22 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-  User,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-  sendPasswordResetEmail,
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { useUser, useClerk, useAuth as useClerkAuth } from '@clerk/react';
+import { createDb } from '../services/db';
 
 interface UserDoc {
   email: string;
   plan: 'starter' | 'growth' | 'pro' | 'agency' | null;
-  setupStatus: 'ordered' | 'form_sent' | 'in_progress' | 'live' | null;
+  setupStatus: 'ordered' | 'form_sent' | 'in_progress' | 'live' | 'cancelled' | null;
   createdAt?: any;
 }
 
+export interface AppUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+}
+
 interface AuthContextType {
-  user: User | null;
+  user: AppUser | null;
   userDoc: UserDoc | null;
   loading: boolean;
   signUp: (email: string, password: string) => Promise<void>;
@@ -37,58 +35,58 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const { user: clerkUser, isLoaded } = useUser();
+  const { signOut } = useClerk();
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const fetchUserDoc = async (uid: string) => {
-    const snap = await getDoc(doc(db, 'users', uid));
-    if (snap.exists()) {
-      setUserDoc(snap.data() as UserDoc);
+  const user: AppUser | null = clerkUser
+    ? {
+        uid: clerkUser.id,
+        email: clerkUser.primaryEmailAddress?.emailAddress ?? null,
+        displayName: clerkUser.fullName,
+      }
+    : null;
+
+  const loading = !isLoaded;
+
+  const { getToken } = useClerkAuth();
+
+  const fetchUserDoc = async (uid: string, email: string | null) => {
+    const dbClient = createDb(getToken);
+    const row = await dbClient.getUser();
+    if (row) {
+      setUserDoc({
+        email: row.email ?? '',
+        plan: (row.plan as UserDoc['plan']) ?? null,
+        setupStatus: (row.setup_status as UserDoc['setupStatus']) ?? null,
+      });
     } else {
-      setUserDoc(null);
+      const newDoc: UserDoc = { email: email ?? '', plan: null, setupStatus: null };
+      await dbClient.upsertUser({ email: email ?? '', plan: null, setupStatus: null });
+      setUserDoc(newDoc);
     }
   };
 
   const refreshUserDoc = async () => {
-    if (user) await fetchUserDoc(user.uid);
+    if (user) await fetchUserDoc(user.uid, user.email);
   };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false); // unblock immediately — don't wait for Firestore
-      if (u) {
-        fetchUserDoc(u.uid).catch(() => {}); // sync in background
-      } else {
-        setUserDoc(null);
-      }
-    });
-    return unsub;
-  }, []);
+    if (!isLoaded) return;
+    if (clerkUser) {
+      fetchUserDoc(clerkUser.id, clerkUser.primaryEmailAddress?.emailAddress ?? null).catch(() => {});
+    } else {
+      setUserDoc(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clerkUser?.id, isLoaded]);
 
-  const signUp = async (email: string, password: string) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await setDoc(doc(db, 'users', cred.user.uid), {
-      email,
-      plan: null,
-      setupStatus: null,
-      createdAt: serverTimestamp(),
-    });
-    await fetchUserDoc(cred.user.uid);
-  };
+  const logOut = async () => { await signOut(); };
 
-  const logIn = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
-  };
-
-  const logOut = async () => {
-    await signOut(auth);
-  };
-
-  const resetPassword = async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
-  };
+  // Auth UI is now handled by Clerk — these stubs keep the existing interface intact
+  const signUp = async (_e: string, _p: string) => {};
+  const logIn = async (_e: string, _p: string) => {};
+  const resetPassword = async (_e: string) => {};
 
   return (
     <AuthContext.Provider value={{ user, userDoc, loading, signUp, logIn, logOut, resetPassword, refreshUserDoc }}>

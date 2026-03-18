@@ -1,6 +1,6 @@
 # SocialAI Studio
 
-AI-powered social media content generator and scheduler for small businesses. Generate posts, images, and full content calendars using Google Gemini AI.
+AI-powered social media content generator and scheduler for small businesses. Generate posts, images, and full content calendars using AI.
 
 ## Features
 
@@ -14,7 +14,7 @@ AI-powered social media content generator and scheduler for small businesses. Ge
 
 ## Tech Stack
 
-React 19 · TypeScript · TailwindCSS 4 · Vite 6 · Google Gemini 2.5
+React 19 · TypeScript · TailwindCSS 4 · Vite 6 · Cloudflare Workers · D1 Database · Clerk Authentication
 
 ## Quick Start
 
@@ -23,9 +23,17 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5174` → Go to **Settings** → Paste your [Gemini API key](https://aistudio.google.com/apikey) → Start creating.
+Open `http://localhost:5174` → Sign up with Clerk → Start creating content.
 
-No backend, no database, no accounts required. All data is stored in your browser's localStorage.
+**Note**: AI features are powered by OpenRouter via Cloudflare Workers. No API keys required on the client.
+
+## Architecture
+
+- **Frontend**: React app deployed on Cloudflare Pages
+- **Authentication**: Clerk (JWT-based)
+- **Database**: Cloudflare D1 (SQLite)
+- **AI**: OpenRouter API proxied through Cloudflare Workers
+- **Social Media**: Late.dev integration for scheduling
 
 ## Deploy
 
@@ -33,7 +41,9 @@ No backend, no database, no accounts required. All data is stored in your browse
 npm run build
 ```
 
-Deploy the `dist/` folder to any static host (Vercel, Netlify, GitHub Pages).
+Deploy to Cloudflare Pages with environment variables:
+- `VITE_AI_WORKER_URL`: Your Cloudflare Worker URL
+- `VITE_CLERK_PUBLISHABLE_KEY`: Clerk publishable key
 
 ## License
 

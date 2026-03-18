@@ -380,9 +380,9 @@ export const DashboardStats: React.FC<Props> = ({
             <Info size={11} className="text-white/15 group-hover:text-white/40 transition" />
           </div>
           <div className="space-y-1.5 mt-1">
-            <div className={`flex items-center gap-1.5 text-xs font-semibold ${hasApiKey ? 'text-green-400' : 'text-red-400/80'}`}>
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${hasApiKey ? 'bg-green-400 animate-pulse' : 'bg-red-400/80'}`} />
-              {hasApiKey ? 'AI Active' : 'No API Key'}
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-green-400">
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
+              AI Active
             </div>
             <div className={`flex items-center gap-1.5 text-xs font-semibold ${fbConnected ? 'text-blue-400' : 'text-white/25'}`}>
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${fbConnected ? 'bg-blue-400' : 'bg-white/15'}`} />
@@ -411,22 +411,15 @@ export const DashboardStats: React.FC<Props> = ({
             </div>
             <div className="p-4 space-y-2.5">
               {/* AI Key status */}
-              <div className={`flex items-start gap-3 p-3 rounded-xl border ${hasApiKey ? 'bg-emerald-500/8 border-emerald-500/20' : 'bg-red-500/8 border-red-500/20'}`}>
-                <Brain size={15} className={hasApiKey ? 'text-emerald-400 mt-0.5 flex-shrink-0' : 'text-red-400 mt-0.5 flex-shrink-0'} />
+              <div className="flex items-start gap-3 p-3 rounded-xl border bg-emerald-500/8 border-emerald-500/20">
+                <Brain size={15} className="text-emerald-400 mt-0.5 flex-shrink-0" />
                 <div>
-                  <p className={`text-xs font-black ${hasApiKey ? 'text-emerald-300' : 'text-red-300'}`}>
-                    Gemini AI — {hasApiKey ? 'Active' : 'Not configured'}
+                  <p className="text-xs font-black text-emerald-300">
+                    AI — Powered by OpenRouter
                   </p>
                   <p className="text-[11px] text-white/35 mt-0.5 leading-relaxed">
-                    {hasApiKey
-                      ? 'AI is generating captions, hashtags, and images for your posts.'
-                      : 'Add your free Gemini API key in Settings to unlock AI content generation.'}
+                    AI is generating captions, hashtags, and images for your posts.
                   </p>
-                  {!hasApiKey && (
-                    <button onClick={onGoToSettings} className="mt-1.5 text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1 font-bold transition">
-                      Go to Settings <ArrowRight size={9} />
-                    </button>
-                  )}
                 </div>
               </div>
 

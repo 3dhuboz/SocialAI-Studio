@@ -87,7 +87,7 @@ export const HomeDashboard: React.FC<Props> = ({
       color: 'from-amber-600/30 to-amber-900/20',
       border: 'border-amber-500/25 hover:border-amber-500/50',
       iconBg: 'bg-amber-500/20 text-amber-400',
-      badge: !hasApiKey ? 'Setup needed' : null,
+      badge: null,
       badgeColor: 'bg-amber-500/15 text-amber-300',
       onClick: onGoCreate,
     },
@@ -141,8 +141,8 @@ export const HomeDashboard: React.FC<Props> = ({
             <span className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${fbConnected ? 'bg-green-500/10 border-green-500/25 text-green-400' : 'bg-white/5 border-white/10 text-white/30'}`}>
               <Facebook size={10} /> {fbConnected ? 'Facebook connected' : 'Facebook not connected'}
             </span>
-            <span className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border ${hasApiKey ? 'bg-purple-500/10 border-purple-500/25 text-purple-400' : 'bg-white/5 border-white/10 text-white/30'}`}>
-              <Brain size={10} /> {hasApiKey ? 'AI ready' : 'AI key needed'}
+            <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border bg-purple-500/10 border-purple-500/25 text-purple-400">
+              <Brain size={10} /> AI Ready
             </span>
             {activePlan && (
               <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border bg-amber-500/10 border-amber-500/25 text-amber-400">
@@ -276,19 +276,15 @@ export const HomeDashboard: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* ── Setup nudge if not fully set up ── */}
-      {(!hasApiKey || !fbConnected) && (
+      {/* ── Setup nudge if Facebook not connected ── */}
+      {!fbConnected && (
         <div className="bg-gradient-to-r from-amber-950/40 to-amber-900/20 border border-amber-500/20 rounded-2xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <Settings size={16} className="text-amber-400 shrink-0" />
             <div>
               <p className="text-sm font-bold text-amber-300">Finish your setup</p>
               <p className="text-xs text-white/35 mt-0.5">
-                {!hasApiKey && !fbConnected
-                  ? 'Add your Gemini API key and connect Facebook to unlock AI generation and auto-publishing.'
-                  : !hasApiKey
-                  ? 'Add your Gemini API key in Settings to enable AI content generation.'
-                  : 'Connect your Facebook page in Settings to enable auto-publishing.'}
+                Connect your Facebook page in Settings to enable auto-publishing.
               </p>
             </div>
           </div>

@@ -1,43 +1,22 @@
-import { GoogleGenAI } from "@google/genai";
-import { ClaudeService } from './claudeService';
+const WORKER_URL = ((typeof import.meta !== 'undefined' && (import.meta.env as any)?.VITE_AI_WORKER_URL) as string | undefined) || 'https://socialai-api.workers.dev';
 
-const getApiKey = () => {
-  if (typeof window !== 'undefined') {
-    const stored = localStorage.getItem('sai_gemini_key');
-    if (stored) return stored;
-  }
-  return '';
-};
-
-const getAI = () => {
-  const key = getApiKey();
-  if (!key) return null;
-  return new GoogleGenAI({ apiKey: key });
-};
-
-const FLASH_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro'];
-
-/** Try generateContent across model fallbacks on 429/quota errors. */
-const generateWithFallback = async (
-  ai: GoogleGenAI,
-  contents: string,
-  config?: Record<string, unknown>
-): Promise<{ text: string }> => {
-  let lastErr: unknown;
-  for (const model of FLASH_MODELS) {
-    try {
-      const res = await ai.models.generateContent({ model, contents, config } as any);
-      return { text: res.text || '' };
-    } catch (e: any) {
-      const msg: string = e?.message || String(e);
-      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
-        lastErr = e;
-        continue;
-      }
-      throw e;
-    }
-  }
-  throw lastErr;
+const callAI = async (
+  prompt: string,
+  options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
+): Promise<string> => {
+  const res = await fetch(`${WORKER_URL}/api/ai/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      temperature: options?.temperature ?? 0.8,
+      maxTokens: options?.maxTokens ?? 2048,
+      responseFormat: options?.responseFormat ?? 'text',
+    }),
+  });
+  const data = await res.json() as { text?: string; error?: string };
+  if (!res.ok || data.error) throw new Error(data.error || `AI request failed (${res.status})`);
+  return data.text || '';
 };
 
 const compressImage = (base64Str: string, maxWidth = 800, quality = 0.7): Promise<string> => {
@@ -167,83 +146,14 @@ Content must respect the character limits above. No padding. No filler.`;
     }
   };
 
-  // ── Claude first ────────────────────────────────────────────────────────
-  let claudeError: string | null = null;
-  if (ClaudeService.isConfigured()) {
-    try {
-      const text = await ClaudeService.generate(prompt, { temperature: 0.8, maxTokens: 512 });
-      return parseRaw(text);
-    } catch (e: any) {
-      claudeError = e?.message || 'Unknown Claude error';
-      console.warn('Claude generateSocialPost failed, falling back to Gemini:', claudeError);
-    }
-  }
-
-  // ── Gemini fallback ─────────────────────────────────────────────────────
-  const ai = getAI();
-  if (!ai) throw new Error(claudeError ? `Claude failed: ${claudeError}` : 'No AI configured. Set a Claude or Gemini API key in Settings.');
-  try {
-    const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.8 });
-    return parseRaw(response.text);
-  } catch (error: any) {
-    console.error('Gemini Text Error:', error);
-    // If Claude also failed, surface both errors so the user can see what went wrong
-    if (claudeError) {
-      throw new Error(`Claude error: ${claudeError} | Gemini error: ${error?.message || error}`);
-    }
-    throw error;
-  }
+  const text = await callAI(prompt, { temperature: 0.8, maxTokens: 512, responseFormat: 'json' });
+  return parseRaw(text);
 };
 
 export const generateMarketingImage = async (prompt: string): Promise<string | null> => {
-  const key = getApiKey();
   const imagePrompt = `Professional social media marketing photograph: ${prompt}. Shot on high-end DSLR, cinematic lighting, vibrant colours, sharp focus, depth of field, commercial quality. No text, no watermarks, no logos.`;
 
-  // ── 1. Gemini Imagen (if key available) ──────────────────────────────
-  if (key) {
-    const ai = new GoogleGenAI({ apiKey: key });
-    const imagenModels = ['imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001'];
-    for (const model of imagenModels) {
-      try {
-        const response = await (ai.models as any).generateImages({
-          model,
-          prompt: imagePrompt,
-          config: { numberOfImages: 1, outputMimeType: 'image/jpeg' },
-        });
-        const imgBytes: string | undefined = response?.generatedImages?.[0]?.image?.imageBytes;
-        if (imgBytes) {
-          const raw = `data:image/jpeg;base64,${imgBytes}`;
-          return await compressImage(raw, 700, 0.65);
-        }
-      } catch (error: any) {
-        console.warn(`Imagen (${model}):`, error?.message ?? error);
-      }
-    }
-
-    // Gemini native image generation via v1beta responseModalities
-    try {
-      const betaAI = new GoogleGenAI({ apiKey: key, httpOptions: { apiVersion: 'v1beta' } });
-      const response = await betaAI.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: imagePrompt,
-        config: { responseModalities: ['IMAGE', 'TEXT'] } as any,
-      });
-      const parts = (response as any)?.candidates?.[0]?.content?.parts;
-      if (parts) {
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            const mimeType = part.inlineData.mimeType || 'image/png';
-            const raw = `data:${mimeType};base64,${part.inlineData.data}`;
-            return await compressImage(raw, 700, 0.65);
-          }
-        }
-      }
-    } catch (error: any) {
-      console.warn('Gemini image fallback:', error?.message ?? error);
-    }
-  }
-
-  // ── 2. Pollinations.ai — free, no key needed ────────────────────────
+  // ── 1. Pollinations.ai — free, no key needed ────────────────────────
   const pollinationsFetch = async (shortPrompt: string): Promise<string | null> => {
     const encoded = encodeURIComponent(shortPrompt);
     const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
@@ -333,9 +243,6 @@ export const generateVideoScript = async (
   hashtags?: string[],
   contentFormat?: string
 ): Promise<VideoScript> => {
-  const ai = getAI();
-  if (!ai) return { ...DEFAULT_VIDEO_SCRIPT, script: 'API Key missing.' };
-
   // Build rich business context
   const profileLines: string[] = [];
   if (profile?.description) profileLines.push(`Business description: ${profile.description}`);
@@ -380,12 +287,7 @@ Return ONLY raw JSON, no markdown:
   "thumbnailPrompt": "A 15-20 word vivid description of the perfect FIRST FRAME of this video. Must be visually striking, set the scene, and be specific to this business. Describe: subject, action, setting, lighting, colors, camera angle.",
   "videoPrompt": "A 20-30 word cinematic motion description for AI video generation. Describe: what moves, camera motion (pan/zoom/track), lighting changes, the key visual transition. Must match the first shot and be specific to this business topic."
 }`;
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', temperature: 0.85 } as any,
-    });
-    const raw = (response.text || '').trim();
+    const raw = (await callAI(prompt, { temperature: 0.85, responseFormat: 'json' })).trim();
     const parsed = raw ? JSON.parse(raw) : null;
     return parsed ? { ...DEFAULT_VIDEO_SCRIPT, ...parsed } : { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
   } catch (error: any) {
@@ -401,8 +303,6 @@ export const rewritePost = async (
   businessType: string,
   tone: string
 ): Promise<{ content: string; hashtags: string[] }> => {
-  const ai = getAI();
-  if (!ai) return { content: 'API Key missing. Go to Settings to configure.', hashtags: [] };
   try {
     const prompt = `You are an expert social media manager for "${businessName}", a ${businessType}. Tone: ${tone}.
 The user wants to post on ${platform}.
@@ -410,12 +310,7 @@ Their draft or idea: "${draft}"
 Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', temperature: 0.8 } as any,
-    });
-    const raw = (response.text || '').trim();
+    const raw = (await callAI(prompt, { temperature: 0.8, responseFormat: 'json' })).trim();
     return raw ? JSON.parse(raw) : { content: 'Error rewriting post.', hashtags: [] };
   } catch (error: any) {
     const msg = error?.message || String(error);
@@ -424,35 +319,21 @@ Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashta
 };
 
 export const analyzePostTimes = async (businessType: string, location: string) => {
-  const ai = getAI();
-  if (!ai) return "API Key missing.";
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `What are the best times to post on Instagram and Facebook for a ${businessType} in ${location}? Give a concise bulleted list of 3 best time slots for the upcoming week.`
-    });
-    return response.text;
-  } catch (error) {
+    return await callAI(`What are the best times to post on Instagram and Facebook for a ${businessType} in ${location}? Give a concise bulleted list of 3 best time slots for the upcoming week.`);
+  } catch {
     return "Could not analyze times.";
   }
 };
 
 export const generateRecommendations = async (businessName: string, businessType: string, stats: any) => {
-  const ai = getAI();
-  if (!ai) return "API Key missing.";
-
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `
+    return (await callAI(`
         You are a social media strategist for "${businessName}", a ${businessType}.
         Stats: Followers: ${stats.followers}, Reach: ${stats.reach}, Engagement: ${stats.engagement}%, Posts: ${stats.postsLast30Days}.
         Provide 3 specific, high-impact recommendations. Format as a concise bulleted list.
-      `
-    });
-    return response.text || "No recommendations generated.";
-  } catch (error) {
+      `)) || "No recommendations generated.";
+  } catch {
     return "Unable to analyze stats at this time.";
   }
 };
@@ -482,7 +363,6 @@ export const generateInsightReport = async (
   stats: { followers: number; reach: number; engagement: number; postsLast30Days: number },
   recentTopics: string[]
 ): Promise<InsightReport | null> => {
-  if (!ClaudeService.isConfigured() && !getAI()) throw new Error('No AI configured. Set a Claude or Gemini API key in Settings.');
   try {
     const prompt = `You are a senior social media strategist. Analyse this business and return a structured JSON insight report.
 
@@ -511,26 +391,8 @@ Return ONLY this exact JSON structure, no markdown:
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
 }`;
 
-    let claudeError: string | null = null;
-    if (ClaudeService.isConfigured()) {
-      try {
-        const text = await ClaudeService.generate(prompt, { temperature: 0.4, maxTokens: 1500 });
-        return parseInsightJson(text);
-      } catch (e: any) {
-        claudeError = e?.message || 'Unknown Claude error';
-        console.warn('Claude generateInsightReport failed, falling back to Gemini:', claudeError);
-      }
-    }
-    const ai = getAI();
-    if (!ai) throw new Error(claudeError ? `Claude failed: ${claudeError}` : 'No AI configured.');
-    try {
-      const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.4 });
-      return parseInsightJson(response.text);
-    } catch (e: any) {
-      const geminiMsg = e?.message || String(e);
-      if (claudeError) throw new Error(`Claude error: ${claudeError} | Gemini error: ${geminiMsg}`);
-      throw new Error(geminiMsg);
-    }
+    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 1500, responseFormat: 'json' });
+    return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.warn('generateInsightReport failed:', msg);
@@ -544,7 +406,6 @@ export const generateInsightReportFromPosts = async (
   location: string,
   posts: Array<{ message: string; created_time: string; likes: number; comments: number; shares: number }>
 ): Promise<InsightReport | null> => {
-  if (!ClaudeService.isConfigured() && !getAI()) throw new Error('No AI configured. Set a Claude or Gemini API key in Settings.');
   try {
     const totalLikes = posts.reduce((s, p) => s + p.likes, 0);
     const totalComments = posts.reduce((s, p) => s + p.comments, 0);
@@ -595,26 +456,8 @@ Return ONLY this exact JSON, no markdown:
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
 }`;
 
-    let claudeError: string | null = null;
-    if (ClaudeService.isConfigured()) {
-      try {
-        const text = await ClaudeService.generate(prompt, { temperature: 0.3, maxTokens: 1500 });
-        return parseInsightJson(text);
-      } catch (e: any) {
-        claudeError = e?.message || 'Unknown Claude error';
-        console.warn('Claude generateInsightReportFromPosts failed, falling back to Gemini:', claudeError);
-      }
-    }
-    const ai = getAI();
-    if (!ai) throw new Error(claudeError ? `Claude failed: ${claudeError}` : 'No AI configured.');
-    try {
-      const response = await generateWithFallback(ai, prompt, { responseMimeType: 'application/json', temperature: 0.3 });
-      return parseInsightJson(response.text);
-    } catch (e: any) {
-      const geminiMsg = e?.message || String(e);
-      if (claudeError) throw new Error(`Claude error: ${claudeError} | Gemini error: ${geminiMsg}`);
-      throw new Error(geminiMsg);
-    }
+    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 1500, responseFormat: 'json' });
+    return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.warn('generateInsightReportFromPosts failed:', msg);
@@ -623,51 +466,33 @@ Return ONLY this exact JSON, no markdown:
 };
 
 export const getPostingAdvice = async (platform: string) => {
-  const ai = getAI();
-  if (!ai) return "API Key missing.";
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `Best times to post on ${platform} for a small business to maximize engagement. Keep it brief and return a short 1-sentence tip.`
-    });
-    return response.text;
+    return await callAI(`Best times to post on ${platform} for a small business to maximize engagement. Keep it brief and return a short 1-sentence tip.`);
   } catch {
     return "Could not retrieve advice.";
   }
 };
 
 export const researchSocialTopic = async (query: string) => {
-  const ai = getAI();
-  if (!ai) return "API Key missing.";
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `
+    return await callAI(`
         As a social media expert for a small business brand, research and provide specific advice on: "${query}".
         Provide 3 actionable bullet points.
         Keep the tone professional yet creative.
-      `
-    });
-    return response.text;
+      `);
   } catch {
     return "Could not research topic.";
   }
 };
 
 export const analyzeSocialMetrics = async (metricName: string, value: string | number, businessType: string) => {
-  const ai = getAI();
-  if (!ai) return "API Key missing.";
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `
+    return await callAI(`
         I run a ${businessType}. My social media page has a ${metricName} of ${value}.
         1. Is this good, average, or poor for this type of business?
         2. Give me 2 specific strategies to improve this number next week.
         Keep the answer concise and encouraging.
-      `
-    });
-    return response.text;
+      `);
   } catch {
     return "Could not analyze metric.";
   }
@@ -708,9 +533,6 @@ export const generateSmartSchedule = async (
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
   onPhase?: (phase: 'researching' | 'writing') => void
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
-  const ai = getAI();
-  if (!ai) return { posts: [], strategy: "API Key missing." };
-
   try {
     const now = new Date();
     const isQuick24h = scheduleMode === 'quick24h';
@@ -837,12 +659,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     let research: any = {};
     onPhase?.('researching');
     try {
-      const researchRes = await withTimeout(ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: researchPrompt,
-        config: { responseMimeType: 'application/json', temperature: 0.5 } as any,
-      }), 90000);
-      const researchRaw = (researchRes.text || '').trim()
+      const researchRaw = (await withTimeout(callAI(researchPrompt, { temperature: 0.5, responseFormat: 'json' }), 90000)).trim()
         .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
       if (researchRaw) research = JSON.parse(researchRaw);
     } catch {
@@ -991,13 +808,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 }`;
 
     onPhase?.('writing');
-    const response = await withTimeout(ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', temperature: 0.75 } as any,
-    }), 90000);
-
-    const raw = (response.text || '').trim();
+    const raw = (await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000)).trim();
     const data = raw ? JSON.parse(raw) : { posts: [], strategy: '' };
     return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
   } catch (error: any) {
