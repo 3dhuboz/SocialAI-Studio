@@ -4484,6 +4484,40 @@ const SplashScreen: React.FC = () => {
 // ── Auth Loading Gate ──
 const AuthGate: React.FC = () => {
   const { loading } = useAuth();
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setTimedOut(true), 10_000);
+    return () => clearTimeout(t);
+  }, [loading]);
+
+  if (loading && timedOut) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex flex-col items-center justify-center gap-6 px-6">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(245,158,11,0.08),transparent_65%)] pointer-events-none" />
+        <AppLogo size={100} />
+        <div className="text-center space-y-3 max-w-sm">
+          <p className="text-red-400 font-bold text-base">Authentication not configured</p>
+          <p className="text-white/40 text-sm leading-relaxed">
+            <code className="text-amber-300/80 bg-white/5 px-1.5 py-0.5 rounded text-xs">VITE_CLERK_PUBLISHABLE_KEY</code> is missing from your Cloudflare Pages environment variables.
+          </p>
+          <p className="text-white/25 text-xs">
+            Add it in Cloudflare Pages → Settings → Environment Variables, then redeploy.
+          </p>
+        </div>
+        <a
+          href="https://dashboard.clerk.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-amber-400/60 hover:text-amber-400 underline transition"
+        >
+          Open Clerk Dashboard →
+        </a>
+      </div>
+    );
+  }
+
   if (loading) return <SplashScreen />;
   return <Dashboard />;
 };
