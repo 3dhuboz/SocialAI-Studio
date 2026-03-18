@@ -24,6 +24,7 @@ import { CalendarGrid } from './components/CalendarGrid';
 import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
 import { LivePostPreview } from './components/LivePostPreview';
+import { AiEnginePanel } from './components/AiEnginePanel';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -3840,16 +3841,8 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* AI Engine — powered by OpenRouter (server-side, no key in browser) */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
-              <div className="w-8 h-8 bg-green-500/15 border border-green-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CheckCircle size={14} className="text-green-400" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-white">AI powered by OpenRouter</p>
-                <p className="text-xs text-white/30">All AI generation runs server-side — no API key required in the browser.</p>
-              </div>
-            </div>
+            {/* AI Engine Panel — agents + live OpenRouter stats */}
+            <AiEnginePanel isSuperAdmin={isSuperAdmin} />
 
             {/* ── SECTION: Business Profile ── */}
             <div className="flex items-center gap-3">
