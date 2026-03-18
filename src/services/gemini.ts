@@ -1,10 +1,8 @@
-const WORKER_URL = ((typeof import.meta !== 'undefined' && (import.meta.env as any)?.VITE_AI_WORKER_URL) as string | undefined) || 'https://socialai-api.workers.dev';
-
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
 ): Promise<string> => {
-  const res = await fetch(`${WORKER_URL}/api/ai/generate`, {
+  const res = await fetch(`/api/ai/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
