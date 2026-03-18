@@ -314,6 +314,12 @@ const Dashboard: React.FC = () => {
             if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
             setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p));
             agencyLateRef.current.profileName = p.name;
+          } else if (isAdmin) {
+            // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
+            const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
+            setProfile(fresh);
+            localStorage.setItem('sai_profile', JSON.stringify(fresh));
+            agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
           }
           if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
           if (!isAdmin && d.plan) setActivePlan(d.plan as PlanTier);
