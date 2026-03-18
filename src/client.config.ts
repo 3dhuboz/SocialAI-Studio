@@ -141,7 +141,7 @@ export const CLIENT = {
   /**
    * Auto-login credentials for clientMode deployments (leave empty on main agency site).
    * Set VITE_AUTO_LOGIN_EMAIL and VITE_AUTO_LOGIN_PASSWORD in CF Pages env vars.
-   * Each client deployment should have its own dedicated Firebase Auth account.
+   * Each client deployment should have its own dedicated Clerk account.
    */
   autoLoginEmail: (import.meta as any).env?.VITE_AUTO_LOGIN_EMAIL || '',
   autoLoginPassword: (import.meta as any).env?.VITE_AUTO_LOGIN_PASSWORD || '',

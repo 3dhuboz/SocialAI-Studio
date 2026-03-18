@@ -240,7 +240,7 @@ const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<ContentCalendarStats>(() => {
     try { const s = localStorage.getItem('sai_stats'); return s ? { ...DEFAULT_STATS, ...JSON.parse(s) } : DEFAULT_STATS; } catch { return DEFAULT_STATS; }
   });
-  const [firestoreLoaded, setFirestoreLoaded] = useState(true);
+  const [dbLoaded] = useState(true);
 
   // Onboarding wizard — auto-show for new users who haven't set up their profile
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -370,6 +370,10 @@ const Dashboard: React.FC = () => {
           status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
           hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
           image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
+          latePostId: p.late_post_id ?? undefined,
+          imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined,
+          postType: p.post_type as SocialPost['postType'] ?? undefined,
+          videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined,
         }));
         setPosts(loaded);
         localStorage.setItem('sai_posts', JSON.stringify(loaded));
@@ -570,7 +574,7 @@ const Dashboard: React.FC = () => {
         }
       }
       const ownPosts = await db.getPosts();
-      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined }));
+      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined }));
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
     };
@@ -628,7 +632,7 @@ const Dashboard: React.FC = () => {
 
   // Persist profile to D1 (debounced) — SKIP during workspace switches to prevent contamination
   useEffect(() => {
-    if (!user || !firestoreLoaded) return;
+    if (!user || !dbLoaded) return;
     if (prevClientIdRef.current !== activeClientId) {
       prevClientIdRef.current = activeClientId;
       return;
@@ -638,14 +642,14 @@ const Dashboard: React.FC = () => {
       upsertActiveWorkspace({ profile }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
-  }, [profile, user, firestoreLoaded, activeClientId]);
+  }, [profile, user, dbLoaded, activeClientId]);
 
   // Persist stats to D1 — same workspace-switch guard
   useEffect(() => {
-    if (!user || !firestoreLoaded) return;
+    if (!user || !dbLoaded) return;
     if (prevClientIdRef.current !== activeClientId) return;
     upsertActiveWorkspace({ stats }).catch(() => {});
-  }, [stats, user, firestoreLoaded, activeClientId]);
+  }, [stats, user, dbLoaded, activeClientId]);
 
   // Content Generator State
   const [topic, setTopic] = useState('');
@@ -1666,7 +1670,7 @@ const Dashboard: React.FC = () => {
   }
 
   // Show landing page (logged-in user without a plan, or explicitly navigated) — skip in clientMode
-  if (!CLIENT.clientMode && (showLanding || (!activePlan && firestoreLoaded))) {
+  if (!CLIENT.clientMode && (showLanding || (!activePlan && dbLoaded))) {
     return <LandingPage
       onActivate={async plan => {
         setActivePlan(plan);
@@ -1677,8 +1681,8 @@ const Dashboard: React.FC = () => {
     />;
   }
 
-  // Still loading Firestore data
-  if (!firestoreLoaded) {
+  // Still loading D1 data
+  if (!dbLoaded) {
     return (
       <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-white/30">

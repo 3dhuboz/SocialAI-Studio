@@ -54,6 +54,13 @@ export interface DbPost {
   image_url?: string | null;
   topic?: string | null;
   pillar?: string | null;
+  late_post_id?: string | null;
+  image_prompt?: string | null;
+  reasoning?: string | null;
+  post_type?: string | null;
+  video_script?: string | null;
+  video_shots?: string | null;
+  video_mood?: string | null;
 }
 
 export interface DbClient {

@@ -232,13 +232,15 @@ app.post('/api/db/posts', async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
   const id = uuid();
   await c.env.DB.prepare(
-    `INSERT INTO posts (id, user_id, client_id, content, platform, status, scheduled_for, hashtags, image_url, topic, pillar)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO posts (id, user_id, client_id, content, platform, status, scheduled_for, hashtags, image_url, topic, pillar, late_post_id, image_prompt, reasoning, post_type, video_script, video_shots, video_mood)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     id, uid, body.clientId ?? null,
     body.content ?? '', body.platform ?? null, body.status ?? null,
     body.scheduledFor ?? null, JSON.stringify(body.hashtags ?? []),
-    body.imageUrl ?? null, body.topic ?? null, body.pillar ?? null
+    body.imageUrl ?? null, body.topic ?? null, body.pillar ?? null,
+    body.latePostId ?? null, body.imagePrompt ?? null, body.reasoning ?? null,
+    body.postType ?? null, body.videoScript ?? null, body.videoShots ?? null, body.videoMood ?? null
   ).run();
   return c.json({ id });
 });
@@ -254,6 +256,8 @@ app.put('/api/db/posts/:id', async (c) => {
     content: 'content', platform: 'platform', status: 'status',
     scheduledFor: 'scheduled_for', hashtags: 'hashtags',
     imageUrl: 'image_url', topic: 'topic', pillar: 'pillar',
+    latePostId: 'late_post_id', imagePrompt: 'image_prompt', reasoning: 'reasoning',
+    postType: 'post_type', videoScript: 'video_script', videoShots: 'video_shots', videoMood: 'video_mood',
   };
   for (const [k, col] of Object.entries(colMap)) {
     if (!(k in body)) continue;
@@ -406,7 +410,7 @@ app.get('/api/db/activations', async (c) => {
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const email = c.req.query('email') ?? null;
   const byUid = await c.env.DB.prepare('SELECT * FROM pending_activations WHERE id = ? AND consumed = 0').bind(uid).first();
-  const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_activations WHERE id = ? AND consumed = 0').bind(email).first() : null;
+  const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_activations WHERE email = ? AND consumed = 0').bind(email).first() : null;
   const row = byUid ?? byEmail ?? null;
   return c.json({ activation: row });
 });
@@ -424,7 +428,7 @@ app.get('/api/db/cancellations', async (c) => {
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const email = c.req.query('email') ?? null;
   const byUid = await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE id = ? AND consumed = 0').bind(uid).first();
-  const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE id = ? AND consumed = 0').bind(email).first() : null;
+  const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE email = ? AND consumed = 0').bind(email).first() : null;
   const row = byUid ?? byEmail ?? null;
   return c.json({ cancellation: row });
 });
