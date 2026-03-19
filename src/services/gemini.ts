@@ -1,3 +1,13 @@
+// Sanitise raw AI JSON output — replaces literal control chars inside string values
+// so JSON.parse doesn't throw "Bad control character" errors
+const sanitizeJson = (raw: string): string =>
+  raw.replace(/[\u0000-\u001f\u007f]/g, (c) => {
+    if (c === '\n') return '\\n';
+    if (c === '\r') return '\\r';
+    if (c === '\t') return '\\t';
+    return ''; // strip other control chars
+  });
+
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
@@ -136,11 +146,11 @@ Content must respect the character limits above. No padding. No filler.`;
   const parseRaw = (raw: string) => {
     const trimmed = raw.trim();
     try {
-      return trimmed ? JSON.parse(trimmed) : { content: 'Error generating content.', hashtags: [] };
+      return trimmed ? JSON.parse(sanitizeJson(trimmed)) : { content: 'Error generating content.', hashtags: [] };
     } catch {
       const stripped = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
       const match = stripped.match(/\{[\s\S]*\}/);
-      return match ? JSON.parse(match[0]) : { content: stripped || 'Could not parse AI response.', hashtags: [] };
+      return match ? JSON.parse(sanitizeJson(match[0])) : { content: stripped || 'Could not parse AI response.', hashtags: [] };
     }
   };
 
@@ -286,7 +296,7 @@ Return ONLY raw JSON, no markdown:
   "videoPrompt": "A 20-30 word cinematic motion description for AI video generation. Describe: what moves, camera motion (pan/zoom/track), lighting changes, the key visual transition. Must match the first shot and be specific to this business topic."
 }`;
     const raw = (await callAI(prompt, { temperature: 0.85, responseFormat: 'json' })).trim();
-    const parsed = raw ? JSON.parse(raw) : null;
+    const parsed = raw ? JSON.parse(sanitizeJson(raw)) : null;
     return parsed ? { ...DEFAULT_VIDEO_SCRIPT, ...parsed } : { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
   } catch (error: any) {
     return { ...DEFAULT_VIDEO_SCRIPT, script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}` };
@@ -309,7 +319,7 @@ Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
     const raw = (await callAI(prompt, { temperature: 0.8, responseFormat: 'json' })).trim();
-    return raw ? JSON.parse(raw) : { content: 'Error rewriting post.', hashtags: [] };
+    return raw ? JSON.parse(sanitizeJson(raw)) : { content: 'Error rewriting post.', hashtags: [] };
   } catch (error: any) {
     const msg = error?.message || String(error);
     return { content: `AI Error: ${msg.substring(0, 120)}`, hashtags: [] };
@@ -349,7 +359,7 @@ export interface InsightReport {
 const parseInsightJson = (raw: string): InsightReport => {
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
   const match = trimmed.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(match ? match[0] : trimmed) as InsightReport;
+  const parsed = JSON.parse(sanitizeJson(match ? match[0] : trimmed)) as InsightReport;
   parsed.generatedAt = new Date().toISOString();
   return parsed;
 };
@@ -659,7 +669,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     try {
       const researchRaw = (await withTimeout(callAI(researchPrompt, { temperature: 0.5, responseFormat: 'json' }), 90000)).trim()
         .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-      if (researchRaw) research = JSON.parse(researchRaw);
+      if (researchRaw) research = JSON.parse(sanitizeJson(researchRaw));
     } catch {
       research = saturationMode ? saturationFallback : normalFallback;
     }
@@ -807,7 +817,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 
     onPhase?.('writing');
     const raw = (await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000)).trim();
-    const data = raw ? JSON.parse(raw) : { posts: [], strategy: '' };
+    const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
     return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
   } catch (error: any) {
     console.error("Smart Schedule Error:", error);
