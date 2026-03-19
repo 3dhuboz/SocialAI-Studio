@@ -86,7 +86,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Auth UI is now handled by Clerk
   const signUp = async (_e: string, _p: string) => {};
   const logIn = async (email: string, password: string) => {
-    const result = await clerk.client!.signIn.create({ identifier: email, password });
+    if (!clerk.client) throw new Error('Clerk not initialized');
+    const result = await clerk.client.signIn.create({ identifier: email, password });
     if (result.status === 'complete') {
       await clerk.setActive({ session: result.createdSessionId });
     }
