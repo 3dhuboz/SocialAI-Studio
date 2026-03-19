@@ -467,6 +467,30 @@ app.put('/api/db/cancellations/:id/consume', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Internal: Create pending activation (called from Pages Function PayPal webhook) ──
+// No Clerk auth — protected by the fact it only creates "pending" rows,
+// which require a valid authenticated user to consume.
+app.post('/api/internal/activation', async (c) => {
+  const { plan, email, paypalSubscriptionId, paypalCustomerId, activatedAt } = await c.req.json<Record<string, string>>();
+  if (!plan || !email) return c.json({ error: 'plan and email required' }, 400);
+  const id = uuid();
+  await c.env.DB.prepare(
+    `INSERT INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
+     VALUES (?,?,?,?,?,?,0)`
+  ).bind(id, plan, email, paypalSubscriptionId ?? null, paypalCustomerId ?? null, activatedAt ?? new Date().toISOString()).run();
+  return c.json({ ok: true, id });
+});
+
+app.post('/api/internal/cancellation', async (c) => {
+  const { email, paypalSubscriptionId, cancelledAt } = await c.req.json<Record<string, string>>();
+  const id = uuid();
+  await c.env.DB.prepare(
+    `INSERT INTO pending_cancellations (id, email, paypal_subscription_id, cancelled_at, consumed)
+     VALUES (?,?,?,?,0)`
+  ).bind(id, email ?? null, paypalSubscriptionId ?? null, cancelledAt ?? new Date().toISOString()).run();
+  return c.json({ ok: true, id });
+});
+
 // ── Late API Proxy ─────────────────────────────────────────────────────────────
 app.all('/api/late-proxy/*', async (c) => {
   const apiKey = c.env.LATE_API_KEY;

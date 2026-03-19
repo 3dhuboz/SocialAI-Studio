@@ -3,9 +3,11 @@
  * Available at: /api/paypal-webhook
  *
  * Required env vars: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID,
- *                    PAYPAL_PLAN_STARTER, PAYPAL_PLAN_GROWTH, PAYPAL_PLAN_PRO, PAYPAL_PLAN_AGENCY,
- *                    FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY
+ *                    PAYPAL_PLAN_STARTER, PAYPAL_PLAN_GROWTH, PAYPAL_PLAN_PRO, PAYPAL_PLAN_AGENCY
+ * Optional env vars: RESEND_API_KEY (for confirmation emails), VITE_AI_WORKER_URL
  */
+
+const WORKER_URL = 'https://socialai-api.steve-700.workers.dev';
 
 const PAYPAL_BASE = 'https://api-m.paypal.com';
 const FROM = 'Social AI Studio <noreply@socialaistudio.au>';
@@ -70,11 +72,26 @@ function cancellationHtml(email) {
 </body></html>`;
 }
 
-function getFirebaseBase(env) {
-  const project = env.FIREBASE_PROJECT_ID;
-  const key = env.FIREBASE_WEB_API_KEY;
-  if (!project || !key) throw new Error('FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY env vars are required');
-  return { base: `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`, key };
+async function storeActivation(env, data) {
+  const workerUrl = env.VITE_AI_WORKER_URL || WORKER_URL;
+  try {
+    await fetch(`${workerUrl}/api/internal/activation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch (e) { console.error('Failed to store activation in D1:', e.message); }
+}
+
+async function storeCancellation(env, data) {
+  const workerUrl = env.VITE_AI_WORKER_URL || WORKER_URL;
+  try {
+    await fetch(`${workerUrl}/api/internal/cancellation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch (e) { console.error('Failed to store cancellation in D1:', e.message); }
 }
 
 async function getPayPalToken(env) {
@@ -108,30 +125,6 @@ async function verifyWebhookSignature(request, rawBody, token, env) {
   return data.verification_status === 'SUCCESS';
 }
 
-function toFields(obj) {
-  const fields = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === null || v === undefined) fields[k] = { nullValue: null };
-    else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
-    else if (typeof v === 'number') fields[k] = { integerValue: String(v) };
-    else fields[k] = { stringValue: String(v) };
-  }
-  return { fields };
-}
-
-async function fsSet(env, collection, docId, data) {
-  const { base, key } = getFirebaseBase(env);
-  const mask = Object.keys(data).map(f => `updateMask.fieldPaths=${encodeURIComponent(f)}`).join('&');
-  const url = `${base}/${collection}/${encodeURIComponent(docId)}?key=${key}&${mask}`;
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(toFields(data)),
-  });
-  const json = await res.json();
-  if (json.error) console.error('Firestore write error:', json.error);
-  return json;
-}
 
 function planFromPayPalId(planId, env) {
   const map = {
@@ -179,15 +172,8 @@ export async function onRequest(context) {
       return new Response('No plan matched — skipped.', { status: 200 });
     }
 
-    const docId = email || subscriptionId;
-    await fsSet(env, 'pending_activations', docId, {
-      plan, email,
-      paypalSubscriptionId: subscriptionId,
-      paypalCustomerId: payerId,
-      activatedAt: new Date().toISOString(),
-      consumed: false,
-    });
-    console.log(`PayPal activation stored for ${docId} → plan: ${plan}`);
+    await storeActivation(env, { plan, email, paypalSubscriptionId: subscriptionId, paypalCustomerId: payerId, activatedAt: new Date().toISOString() });
+    console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan}`);
     if (email) {
       await sendEmail(env, { to: email, subject: `Welcome to Social AI Studio — your ${plan} plan is active!`, html: welcomeHtml(email, plan) });
       await sendEmail(env, { to: ADMIN_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
@@ -197,14 +183,9 @@ export async function onRequest(context) {
   if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
     const subscriptionId = resource.id;
     const email          = resource.subscriber?.email_address || '';
-    const docId          = email || subscriptionId;
 
-    await fsSet(env, 'pending_cancellations', docId, {
-      paypalSubscriptionId: subscriptionId,
-      cancelledAt: new Date().toISOString(),
-      consumed: false,
-    });
-    console.log(`PayPal cancellation stored for ${docId}`);
+    await storeCancellation(env, { email, paypalSubscriptionId: subscriptionId, cancelledAt: new Date().toISOString() });
+    console.log(`PayPal cancellation stored for ${email || subscriptionId}`);
     if (email) {
       await sendEmail(env, { to: email, subject: 'Your Social AI Studio subscription has been cancelled', html: cancellationHtml(email) });
       await sendEmail(env, { to: ADMIN_EMAIL, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
