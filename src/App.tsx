@@ -298,6 +298,7 @@ const Dashboard: React.FC = () => {
           setSetupStatus('live');
           db.upsertUser({ plan: 'agency', setupStatus: 'live', isAdmin: true }).catch(() => {});
         }
+        setD1SyncError(null); // Clear any previous error — Worker is reachable
         const row = await db.getUser();
         if (!row && isAdmin) {
           // Brand-new D1 row — clear any stale localStorage profile contamination
