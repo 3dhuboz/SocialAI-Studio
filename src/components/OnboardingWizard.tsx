@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CLIENT } from '../client.config';
-import { BusinessProfile } from '../types';
+import { BusinessProfile, SocialTokens, DEFAULT_SOCIAL_TOKENS } from '../types';
 import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
 import {
@@ -14,6 +14,8 @@ interface Props {
   onSave: () => Promise<void>;
   onDismiss: () => void;
   userEmail?: string;
+  socialTokens?: SocialTokens;
+  onSaveSocialTokens?: (tokens: SocialTokens) => void;
 }
 
 type Step = 'welcome' | 'business' | 'facebook' | 'done';
@@ -29,7 +31,10 @@ const stepLabel: Record<Step, string> = {
 
 export const OnboardingWizard: React.FC<Props> = ({
   profile, onUpdateProfile, onSave, onDismiss, userEmail,
+  socialTokens: socialTokensProp,
+  onSaveSocialTokens,
 }) => {
+  const socialTokens = socialTokensProp ?? DEFAULT_SOCIAL_TOKENS;
   const [step, setStep] = useState<Step>('welcome');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -229,14 +234,18 @@ export const OnboardingWizard: React.FC<Props> = ({
                 </p>
               </div>
               <FacebookConnectButton
-                connectedPageId={profile.facebookPageId}
+                connectedPageId={socialTokens.facebookPageId}
                 connectedPageName={profile.name}
                 onConnected={(pageId, pageAccessToken, pageName) => {
-                  onUpdateProfile({ facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true });
+                  const updated = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
+                  if (onSaveSocialTokens) onSaveSocialTokens(updated);
+                  else onUpdateProfile({ facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true });
                   void onSave();
                 }}
                 onDisconnect={() => {
-                  onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
+                  const cleared = { ...DEFAULT_SOCIAL_TOKENS };
+                  if (onSaveSocialTokens) onSaveSocialTokens(cleared);
+                  else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
                 }}
               />
               <div className="flex gap-3 pt-2">
@@ -247,12 +256,12 @@ export const OnboardingWizard: React.FC<Props> = ({
                   Skip for now
                 </button>
                 <button
-                  onClick={() => next(!profile.facebookPageId)}
+                  onClick={() => next(!socialTokens.facebookPageId)}
                   disabled={isSaving}
                   className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
                 >
                   {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
-                  {profile.facebookPageId ? 'Continue' : 'Skip'} <ArrowRight size={16} />
+                  {socialTokens.facebookPageId ? 'Continue' : 'Skip'} <ArrowRight size={16} />
                 </button>
               </div>
             </div>

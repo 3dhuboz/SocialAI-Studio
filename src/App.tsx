@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
-import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace } from './types';
+import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS } from './types';
 import { LandingPage } from './components/LandingPage';
 import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
@@ -42,10 +42,6 @@ const DEFAULT_PROFILE: BusinessProfile = {
   location: CLIENT.defaultLocation,
   logoUrl: '',
   facebookAppId: '',
-  facebookPageId: '',
-  facebookPageAccessToken: '',
-  facebookConnected: false,
-  instagramBusinessAccountId: '',
   targetAudience: '',
   uniqueValue: '',
   productsServices: '',
@@ -268,6 +264,13 @@ const Dashboard: React.FC = () => {
   // Track workspace switches to prevent persistence writing client data to agency doc
   const prevClientIdRef = useRef<string | null | undefined>(undefined);
 
+  // Social tokens — loaded from D1, NEVER cached in localStorage
+  const [socialTokens, setSocialTokens] = useState<SocialTokens>(DEFAULT_SOCIAL_TOKENS);
+  const saveSocialTokens = (tokens: SocialTokens) => {
+    setSocialTokens(tokens);
+    db.setSocialTokens(tokens as unknown as Record<string, unknown>, activeClientId).catch(() => {});
+  };
+
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
@@ -312,7 +315,9 @@ const Dashboard: React.FC = () => {
           if (d.profile && Object.keys(d.profile).length) {
             const p = { ...DEFAULT_PROFILE, ...d.profile };
             if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
-            setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p));
+            // Strip deprecated token fields before caching in localStorage
+            const { facebookPageId: _fpid, facebookPageAccessToken: _fpat, facebookConnected: _fc, instagramBusinessAccountId: _ig, ...safeProfile } = p;
+            setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(safeProfile));
             agencyLateRef.current.profileName = p.name;
           } else if (isAdmin) {
             // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
@@ -321,6 +326,13 @@ const Dashboard: React.FC = () => {
             localStorage.setItem('sai_profile', JSON.stringify(fresh));
             agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
           }
+          // Load social tokens from dedicated D1 column (separate from profile blob)
+          try {
+            const rawTokens = await db.getSocialTokens(null);
+            if (rawTokens && Object.keys(rawTokens).length) {
+              setSocialTokens({ ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens);
+            }
+          } catch { /* tokens will remain as defaults */ }
           if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
           if (!isAdmin && d.plan) setActivePlan(d.plan as PlanTier);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus as SetupStatus);
@@ -536,8 +548,13 @@ const Dashboard: React.FC = () => {
           setInsightReport(null);
           setInsightStale(true);
         }
+        // Load social tokens for this client workspace
+        try {
+          const rawTokens = await db.getSocialTokens(activeClientId);
+          setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
+        } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
         const clientPosts = await db.getPosts(activeClientId);
-        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined })));
+        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
       } catch (e) { console.warn('Client load error:', e); }
     };
     loadClient();
@@ -550,6 +567,7 @@ const Dashboard: React.FC = () => {
     setLateProfileId(agencyLateRef.current.profileId);
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
     setLateAccountIds(agencyLateRef.current.accountIds);
+    setSocialTokens(DEFAULT_SOCIAL_TOKENS); // Reset tokens until own workspace loads from D1
     const restoreOwn = async () => {
       const row = await db.getUser();
       if (row) {
@@ -573,6 +591,11 @@ const Dashboard: React.FC = () => {
           setInsightStale(true);
         }
       }
+      // Restore own social tokens from dedicated D1 column
+      try {
+        const rawTokens = await db.getSocialTokens(null);
+        setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
+      } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
       const ownPosts = await db.getPosts();
       const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined }));
       setPosts(loaded);
@@ -1784,6 +1807,8 @@ const Dashboard: React.FC = () => {
           onSave={handleSaveProfile}
           onDismiss={handleDismissOnboarding}
           userEmail={user?.email ?? undefined}
+          socialTokens={socialTokens}
+          onSaveSocialTokens={saveSocialTokens}
         />
       )}
       {/* ── Publishing overlay ── */}

@@ -195,6 +195,20 @@ export function createDb(getToken: GetToken) {
     async deleteUser(): Promise<void> {
       await f('/api/db/user', del());
     },
+
+    // ── Social Tokens ─────────────────────────────────────────────────────────
+    // Stored in dedicated D1 column — never cached in localStorage
+    async getSocialTokens(clientId?: string | null): Promise<Record<string, unknown>> {
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/db/social-tokens${qs}`);
+      const data = await res.json() as { tokens: Record<string, unknown> };
+      return data.tokens ?? {};
+    },
+
+    async setSocialTokens(tokens: Record<string, unknown>, clientId?: string | null): Promise<void> {
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      await f(`/api/db/social-tokens${qs}`, put(tokens));
+    },
   };
 }
 

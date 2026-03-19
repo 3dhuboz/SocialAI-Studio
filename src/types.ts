@@ -17,6 +17,27 @@ export interface SocialPost {
   videoMood?: string;
 }
 
+/** Social platform tokens — stored in dedicated D1 column, never cached in localStorage */
+export interface SocialTokens {
+  facebookPageId: string;
+  facebookPageAccessToken: string;
+  facebookConnected: boolean;
+  instagramBusinessAccountId: string;
+  /** ISO timestamp when the Facebook connection was granted */
+  connectedAt?: string;
+  /** Name of the connected page, for display only */
+  facebookPageName?: string;
+}
+
+export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
+  facebookPageId: '',
+  facebookPageAccessToken: '',
+  facebookConnected: false,
+  instagramBusinessAccountId: '',
+  connectedAt: undefined,
+  facebookPageName: undefined,
+};
+
 export interface BusinessProfile {
   name: string;
   type: string;
@@ -24,11 +45,16 @@ export interface BusinessProfile {
   tone: string;
   location: string;
   logoUrl: string;
-  facebookAppId: string;
-  facebookPageId: string;
-  facebookPageAccessToken: string;
-  facebookConnected: boolean;
-  instagramBusinessAccountId: string;
+  /** @deprecated use SocialTokens state instead — kept for backwards compat during migration */
+  facebookAppId?: string;
+  /** @deprecated use SocialTokens state instead */
+  facebookPageId?: string;
+  /** @deprecated use SocialTokens state instead */
+  facebookPageAccessToken?: string;
+  /** @deprecated use SocialTokens state instead */
+  facebookConnected?: boolean;
+  /** @deprecated use SocialTokens state instead */
+  instagramBusinessAccountId?: string;
   targetAudience: string;
   uniqueValue: string;
   productsServices: string;

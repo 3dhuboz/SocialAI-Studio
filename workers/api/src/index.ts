@@ -383,6 +383,34 @@ app.delete('/api/db/clients/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── DB: Social Tokens ─────────────────────────────────────────────────────────
+// Stored in dedicated column — never mixed into profile blob, never cached client-side
+
+app.get('/api/db/social-tokens', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId') ?? null;
+  const raw = clientId
+    ? await c.env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
+    : await c.env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
+  const tokens = raw?.social_tokens ? JSON.parse(raw.social_tokens) : {};
+  return c.json({ tokens });
+});
+
+app.put('/api/db/social-tokens', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId') ?? null;
+  const body = await c.req.json<Record<string, unknown>>();
+  const json = JSON.stringify(body);
+  if (clientId) {
+    await c.env.DB.prepare('UPDATE clients SET social_tokens = ? WHERE id = ? AND user_id = ?').bind(json, clientId, uid).run();
+  } else {
+    await c.env.DB.prepare('UPDATE users SET social_tokens = ? WHERE id = ?').bind(json, uid).run();
+  }
+  return c.json({ ok: true });
+});
+
 // ── DB: Portal ────────────────────────────────────────────────────────────────
 
 // Public — used for auto-login before auth is established
