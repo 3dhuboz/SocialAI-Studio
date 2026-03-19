@@ -4322,7 +4322,7 @@ const Dashboard: React.FC = () => {
                         toast('Could not save disconnection to database.', 'error');
                       });
                       if (activeClientId) {
-                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [] } : c));
+                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [], lateAccountIds: {} } : c));
                       }
                     }
                     toast('Social accounts disconnected.', 'warning');
