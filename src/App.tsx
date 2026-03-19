@@ -531,12 +531,11 @@ const Dashboard: React.FC = () => {
     if (!user || activeClientId === null) return;
     const loadClient = async () => {
       isSyncingRef.current = true;
+      // Resolve workspace name/type before try so catch block can use them
+      const ws = clients.find(c => c.id === activeClientId);
+      const wsName = ws?.name || CLIENT.defaultBusinessName;
+      const wsType = ws?.businessType || CLIENT.defaultBusinessType;
       try {
-        // Get workspace metadata (name + businessType) to seed profile defaults
-        const ws = clients.find(c => c.id === activeClientId);
-        const wsName = ws?.name || CLIENT.defaultBusinessName;
-        const wsType = ws?.businessType || CLIENT.defaultBusinessType;
-
         const clientRow = await db.getClient(activeClientId);
         if (clientRow) {
           const cp = { ...DEFAULT_PROFILE, name: wsName, type: wsType, ...(clientRow.profile || {}) };
@@ -576,7 +575,18 @@ const Dashboard: React.FC = () => {
         } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
         const clientPosts = await db.getPosts(activeClientId);
         setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
-      } catch (e) { console.warn('Client load error:', e); }
+      } catch (e) {
+        console.warn('Client load error:', e);
+        // Reset to empty state so user sees 'not connected' rather than stale agency data
+        setProfile({ ...DEFAULT_PROFILE, name: wsName, type: wsType });
+        setStats(DEFAULT_STATS);
+        setLateProfileId('');
+        setLateConnectedPlatforms([]);
+        setLateAccountIds({});
+        setSocialTokens(DEFAULT_SOCIAL_TOKENS);
+        setPosts([]);
+        if (isSuperAdmin) toast('Could not load client workspace — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
+      }
       finally { isSyncingRef.current = false; }
     };
     loadClient();
@@ -4279,7 +4289,9 @@ const Dashboard: React.FC = () => {
                     console.log('[onConnected] profileId:', pid, 'platforms:', platforms, 'accountIds:', JSON.stringify(resolvedAccountIds));
                     setLateAccountIds(resolvedAccountIds);
                     if (user) {
-                      upsertActiveWorkspace({ lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() => {});
+                      upsertActiveWorkspace({ lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() => {
+                        toast('Facebook connection could not be saved to database. Check that VITE_AI_WORKER_URL is set in CF Pages.', 'error');
+                      });
                       // Also update agency cache if on own workspace
                       if (!activeClientId) {
                         agencyLateRef.current.profileId = pid;
