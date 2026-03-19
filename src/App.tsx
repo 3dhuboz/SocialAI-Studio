@@ -1715,20 +1715,7 @@ const Dashboard: React.FC = () => {
       );
     }
     if (CLIENT.clientMode) {
-      return (
-        <div className="min-h-screen bg-black flex items-center justify-center">
-          <div className="flex flex-col items-center gap-4 text-white/40 max-w-sm text-center px-6">
-            <Loader2 size={28} className="text-amber-400/60" />
-            <p className="text-sm">Unable to sign in automatically. Please contact support.</p>
-            <button
-              className="text-xs text-white/20 hover:text-white/40 underline transition"
-              onClick={() => window.location.reload()}
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      );
+      return <AuthScreen onShowLanding={() => {}} loginOnly />;
     }
     if (showLanding && !CLIENT.clientMode) {
       return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} />;

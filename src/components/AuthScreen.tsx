@@ -39,9 +39,10 @@ const clerkAppearance = {
 
 interface Props {
   onShowLanding: () => void;
+  loginOnly?: boolean;
 }
 
-export const AuthScreen: React.FC<Props> = ({ onShowLanding }) => {
+export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
 
   return (
@@ -69,27 +70,29 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding }) => {
           />
         )}
 
-        <div className="mt-4 text-center">
-          {mode === 'login' ? (
-            <p className="text-xs text-white/25">
-              Don't have an account?{' '}
-              <button onClick={() => setMode('signup')} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
-                Sign Up
-              </button>
-              {' · '}
-              <button onClick={onShowLanding} className="text-white/20 hover:text-white/40 transition">
-                View plans
-              </button>
-            </p>
-          ) : (
-            <p className="text-xs text-white/25">
-              Already have an account?{' '}
-              <button onClick={() => setMode('login')} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
-                Sign in
-              </button>
-            </p>
-          )}
-        </div>
+        {!loginOnly && (
+          <div className="mt-4 text-center">
+            {mode === 'login' ? (
+              <p className="text-xs text-white/25">
+                Don't have an account?{' '}
+                <button onClick={() => setMode('signup')} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
+                  Sign Up
+                </button>
+                {' · '}
+                <button onClick={onShowLanding} className="text-white/20 hover:text-white/40 transition">
+                  View plans
+                </button>
+              </p>
+            ) : (
+              <p className="text-xs text-white/25">
+                Already have an account?{' '}
+                <button onClick={() => setMode('login')} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
+                  Sign in
+                </button>
+              </p>
+            )}
+          </div>
+        )}
 
         <p className="text-center text-xs text-white/15 mt-5">
           <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="hover:text-white/30 transition">
