@@ -36,7 +36,7 @@ export const useAuth = () => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user: clerkUser, isLoaded } = useUser();
-  const { signOut } = useClerk();
+  const clerk = useClerk();
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
 
   const user: AppUser | null = clerkUser
@@ -81,11 +81,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clerkUser?.id, isLoaded]);
 
-  const logOut = async () => { await signOut(); };
+  const logOut = async () => { await clerk.signOut(); };
 
-  // Auth UI is now handled by Clerk — these stubs keep the existing interface intact
+  // Auth UI is now handled by Clerk
   const signUp = async (_e: string, _p: string) => {};
-  const logIn = async (_e: string, _p: string) => {};
+  const logIn = async (email: string, password: string) => {
+    const result = await clerk.client!.signIn.create({ identifier: email, password });
+    if (result.status === 'complete') {
+      await clerk.setActive({ session: result.createdSessionId });
+    }
+  };
   const resetPassword = async (_e: string) => {};
 
   return (
