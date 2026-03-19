@@ -4309,7 +4309,9 @@ const Dashboard: React.FC = () => {
                     setLateConnectedPlatforms([]);
                     setLateAccountIds({});
                     if (user) {
-                      upsertActiveWorkspace({ lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {});
+                      upsertActiveWorkspace({ lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {
+                        toast('Could not save disconnection to database.', 'error');
+                      });
                       if (activeClientId) {
                         setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [] } : c));
                       }
