@@ -271,7 +271,9 @@ const Dashboard: React.FC = () => {
   const [socialTokens, setSocialTokens] = useState<SocialTokens>(DEFAULT_SOCIAL_TOKENS);
   const saveSocialTokens = (tokens: SocialTokens) => {
     setSocialTokens(tokens);
-    db.setSocialTokens(tokens as unknown as Record<string, unknown>, activeClientId).catch(() => {});
+    db.setSocialTokens(tokens as unknown as Record<string, unknown>, activeClientId).catch(() => {
+      toast('Facebook token could not be saved — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
+    });
   };
 
   // Agency client workspaces
