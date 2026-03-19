@@ -31,7 +31,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home
+  Key, EyeOff, Home, AlertCircle
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -237,6 +237,7 @@ const Dashboard: React.FC = () => {
     try { const s = localStorage.getItem('sai_stats'); return s ? { ...DEFAULT_STATS, ...JSON.parse(s) } : DEFAULT_STATS; } catch { return DEFAULT_STATS; }
   });
   const [dbLoaded] = useState(true);
+  const [d1SyncError, setD1SyncError] = useState<string | null>(null);
 
   // Onboarding wizard — auto-show for new users who haven't set up their profile
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -400,8 +401,14 @@ const Dashboard: React.FC = () => {
         }));
         setPosts(loaded);
         localStorage.setItem('sai_posts', JSON.stringify(loaded));
-      } catch (e) {
-        console.warn('D1 sync error:', e);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn('D1 sync error:', msg);
+        if (msg.includes('localhost') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          setD1SyncError('Cannot reach the API Worker. Check that VITE_AI_WORKER_URL is set in Cloudflare Pages env vars.');
+        } else {
+          setD1SyncError(msg);
+        }
       } finally {
         isSyncingRef.current = false;
         // Auto-show onboarding for brand-new users after sync completes
@@ -3706,6 +3713,17 @@ const Dashboard: React.FC = () => {
               <h2 className="text-2xl font-bold flex items-center gap-2.5"><Settings className="text-amber-400" size={22} /> Settings</h2>
               <p className="text-sm text-white/40 mt-1">Configure your AI key, brand profile, and integrations.</p>
             </div>
+
+            {isSuperAdmin && d1SyncError && (
+              <div className="bg-red-500/10 border border-red-500/25 rounded-2xl p-4 flex items-start gap-3">
+                <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-red-400 mb-1">D1 sync failed — data not persisted</p>
+                  <p className="text-xs text-red-300/70 leading-relaxed">{d1SyncError}</p>
+                  <p className="text-xs text-white/30 mt-2">Fix: Cloudflare Pages → socialai-studio → Settings → Environment variables → add <code className="bg-white/10 px-1 rounded">VITE_AI_WORKER_URL = https://socialai-api.steve-700.workers.dev</code></p>
+                </div>
+              </div>
+            )}
 
             {/* ── Plan & Billing ── */}
             {(() => {
