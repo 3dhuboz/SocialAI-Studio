@@ -46,10 +46,12 @@ async function getAuthUserId(req: Request, secretKey: string, jwtKey?: string): 
   if (!auth?.startsWith('Bearer ')) return null;
   const token = auth.slice(7);
   try {
-    const opts: Record<string, string> = jwtKey ? { jwtKey } : { secretKey };
+    const normalizedKey = jwtKey?.replace(/\\n/g, '\n');
+    const opts: Record<string, string> = normalizedKey ? { jwtKey: normalizedKey, secretKey } : { secretKey };
     const payload = await verifyToken(token, opts as any);
     return (payload as any).sub ?? null;
-  } catch {
+  } catch (e) {
+    console.error('[auth] verifyToken failed:', String(e));
     return null;
   }
 }
