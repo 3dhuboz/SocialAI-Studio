@@ -2,18 +2,11 @@
  * Cloudflare Pages Function — PayPal subscription verification
  * Available at: /api/paypal-verify
  *
- * Required env vars: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET,
- *                    FIREBASE_PROJECT_ID, FIREBASE_WEB_API_KEY
+ * Required env vars: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, VITE_AI_WORKER_URL
  */
 
+const WORKER_URL = 'https://socialai-api.steve-700.workers.dev';
 const PAYPAL_BASE = 'https://api-m.paypal.com';
-
-function getFirebaseBase(env) {
-  const project = env.FIREBASE_PROJECT_ID;
-  const key = env.FIREBASE_WEB_API_KEY;
-  if (!project || !key) throw new Error('FIREBASE_PROJECT_ID and FIREBASE_WEB_API_KEY env vars are required');
-  return { base: `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`, key };
-}
 
 async function getPayPalToken(env) {
   // btoa() works in CF Workers (no Buffer available)
@@ -28,30 +21,6 @@ async function getPayPalToken(env) {
   return json.access_token;
 }
 
-function toFields(obj) {
-  const fields = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === null || v === undefined) fields[k] = { nullValue: null };
-    else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
-    else if (typeof v === 'number') fields[k] = { integerValue: String(v) };
-    else fields[k] = { stringValue: String(v) };
-  }
-  return { fields };
-}
-
-async function fsSet(env, collection, docId, data) {
-  const { base, key } = getFirebaseBase(env);
-  const mask = Object.keys(data).map(f => `updateMask.fieldPaths=${encodeURIComponent(f)}`).join('&');
-  const url = `${base}/${collection}/${encodeURIComponent(docId)}?key=${key}&${mask}`;
-  const res = await fetch(url, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(toFields(data)),
-  });
-  const json = await res.json();
-  if (json.error) console.error('Firestore write error:', json.error);
-  return json;
-}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -90,14 +59,12 @@ export async function onRequest(context) {
     const payerId = subscription.subscriber?.payer_id || '';
     const docId = uid || customerEmail || subscriptionId;
 
-    await fsSet(env, 'pending_activations', docId, {
-      plan: planId,
-      email: customerEmail,
-      paypalSubscriptionId: subscriptionId,
-      paypalCustomerId: payerId,
-      activatedAt: new Date().toISOString(),
-      consumed: false,
-    });
+    const workerUrl = env.VITE_AI_WORKER_URL || WORKER_URL;
+    await fetch(`${workerUrl}/api/internal/activation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: planId, email: customerEmail, paypalSubscriptionId: subscriptionId, paypalCustomerId: payerId, activatedAt: new Date().toISOString() }),
+    }).catch(e => console.error('D1 activation store failed:', e.message));
 
     return jsonRes({ success: true, plan: planId });
   } catch (err) {
