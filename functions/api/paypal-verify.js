@@ -57,7 +57,6 @@ export async function onRequest(context) {
 
     const customerEmail = subscription.subscriber?.email_address || '';
     const payerId = subscription.subscriber?.payer_id || '';
-    const docId = uid || customerEmail || subscriptionId;
 
     const workerUrl = env.VITE_AI_WORKER_URL || WORKER_URL;
     await fetch(`${workerUrl}/api/internal/activation`, {
