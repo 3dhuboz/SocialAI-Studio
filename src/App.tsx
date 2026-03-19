@@ -389,7 +389,13 @@ const Dashboard: React.FC = () => {
         }
         // Load agency clients
         const loadedClients = await db.getClients();
-        setClients(loadedClients.map(c => ({ id: c.id, name: c.name, businessType: c.business_type ?? '', createdAt: c.created_at ?? '', plan: c.plan as PlanTier | undefined, clientSlug: c.client_slug ?? undefined } as ClientWorkspace)));
+        setClients(loadedClients.map(c => ({
+          id: c.id, name: c.name, businessType: c.business_type ?? '', createdAt: c.created_at ?? '',
+          plan: c.plan as PlanTier | undefined, clientSlug: c.client_slug ?? undefined,
+          lateProfileId: (c as any).late_profile_id ?? undefined,
+          lateConnectedPlatforms: c.lateConnectedPlatforms ?? [],
+          lateAccountIds: c.lateAccountIds ?? {},
+        } as ClientWorkspace)));
         // Load posts for own workspace
         const loadedPosts = await db.getPosts();
         const loaded: SocialPost[] = loadedPosts.map(p => ({
@@ -579,15 +585,16 @@ const Dashboard: React.FC = () => {
         setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
       } catch (e) {
         console.warn('Client load error:', e);
-        // Reset to empty state so user sees 'not connected' rather than stale agency data
+        // Fall back to in-memory clients cache for Late.dev data (survives D1 outage within same session)
+        const cached = clients.find(c => c.id === activeClientId);
         setProfile({ ...DEFAULT_PROFILE, name: wsName, type: wsType });
         setStats(DEFAULT_STATS);
-        setLateProfileId('');
-        setLateConnectedPlatforms([]);
-        setLateAccountIds({});
+        setLateProfileId(cached?.lateProfileId ?? '');
+        setLateConnectedPlatforms(cached?.lateConnectedPlatforms ?? []);
+        setLateAccountIds(cached?.lateAccountIds ?? {});
         setSocialTokens(DEFAULT_SOCIAL_TOKENS);
         setPosts([]);
-        if (isSuperAdmin) toast('Could not load client workspace — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
+        if (isSuperAdmin) toast('Could not load client workspace from database — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
       }
       finally { isSyncingRef.current = false; }
     };
@@ -4301,7 +4308,7 @@ const Dashboard: React.FC = () => {
                         agencyLateRef.current.accountIds = resolvedAccountIds;
                       }
                       if (activeClientId) {
-                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: pid, lateConnectedPlatforms: platforms } : c));
+                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds } : c));
                       }
                     }
                     toast(`Connected to ${platforms.join(' & ')} successfully!`, 'success');

@@ -80,6 +80,7 @@ export interface ClientWorkspace {
   createdAt: string;
   lateProfileId?: string;
   lateConnectedPlatforms?: string[];
+  lateAccountIds?: Record<string, string>;
   plan?: PlanTier;
   lastPostAt?: string;
   scheduledPostCount?: number;
