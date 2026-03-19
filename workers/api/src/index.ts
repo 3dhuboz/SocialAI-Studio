@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createClerkClient } from '@clerk/backend';
+import { verifyToken } from '@clerk/backend';
 
 // ── D1 type shim (provided by Cloudflare runtime) ───────────────────────────
 interface D1PreparedStatement {
@@ -17,7 +17,6 @@ interface D1Database {
 type Env = {
   OPENROUTER_API_KEY: string;
   CLERK_SECRET_KEY: string;
-  CLERK_PUBLISHABLE_KEY: string;
   DB: D1Database;
   LATE_API_KEY?: string;
   FACEBOOK_APP_ID?: string;
@@ -46,9 +45,8 @@ async function getAuthUserId(req: Request, secretKey: string): Promise<string | 
   if (!auth?.startsWith('Bearer ')) return null;
   const token = auth.slice(7);
   try {
-    const clerk = createClerkClient({ secretKey });
-    const { payload } = await clerk.verifyJwt(token);
-    return payload.sub ?? null;
+    const payload = await verifyToken(token, { secretKey });
+    return (payload as any).sub ?? null;
   } catch {
     return null;
   }

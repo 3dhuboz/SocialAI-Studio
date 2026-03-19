@@ -263,6 +263,8 @@ const Dashboard: React.FC = () => {
   const agencyLateRef = useRef<{ profileId: string; platforms: string[]; profileName: string; accountIds: Record<string, string> }>({ profileId: '', platforms: [], profileName: CLIENT.defaultBusinessName, accountIds: {} });
   // Track workspace switches to prevent persistence writing client data to agency doc
   const prevClientIdRef = useRef<string | null | undefined>(undefined);
+  // Block profile/stats persistence until D1 initial sync + workspace loads have completed
+  const isSyncingRef = useRef(true);
 
   // Social tokens — loaded from D1, NEVER cached in localStorage
   const [socialTokens, setSocialTokens] = useState<SocialTokens>(DEFAULT_SOCIAL_TOKENS);
@@ -281,9 +283,10 @@ const Dashboard: React.FC = () => {
   const upsertActiveWorkspace = (fields: Record<string, unknown>) =>
     activeClientId ? db.updateClient(activeClientId, fields) : db.upsertUser(fields);
 
-  // Sync Firestore in background (non-blocking)
+  // Sync D1 in background (non-blocking)
   useEffect(() => {
     if (!user) return;
+    isSyncingRef.current = true;
     const sync = async () => {
       try {
         // In clientMode, never grant agency/admin powers — the branded site is a locked-down client view
@@ -295,6 +298,14 @@ const Dashboard: React.FC = () => {
           db.upsertUser({ plan: 'agency', setupStatus: 'live', isAdmin: true }).catch(() => {});
         }
         const row = await db.getUser();
+        if (!row && isAdmin) {
+          // Brand-new D1 row — clear any stale localStorage profile contamination
+          const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
+          setProfile(fresh);
+          localStorage.setItem('sai_profile', JSON.stringify(fresh));
+          localStorage.removeItem('sai_posts');
+          setPosts([]);
+        }
         if (row) {
           const profile_raw = row.profile;
           const d = {
@@ -392,6 +403,7 @@ const Dashboard: React.FC = () => {
       } catch (e) {
         console.warn('D1 sync error:', e);
       } finally {
+        isSyncingRef.current = false;
         // Auto-show onboarding for brand-new users after sync completes
         const done = !!localStorage.getItem('sai_onboarding_done');
         const hasProfile = !!localStorage.getItem('sai_profile');
@@ -510,6 +522,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!user || activeClientId === null) return;
     const loadClient = async () => {
+      isSyncingRef.current = true;
       try {
         // Get workspace metadata (name + businessType) to seed profile defaults
         const ws = clients.find(c => c.id === activeClientId);
@@ -556,6 +569,7 @@ const Dashboard: React.FC = () => {
         const clientPosts = await db.getPosts(activeClientId);
         setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
       } catch (e) { console.warn('Client load error:', e); }
+      finally { isSyncingRef.current = false; }
     };
     loadClient();
   }, [activeClientId, user]);
@@ -568,6 +582,7 @@ const Dashboard: React.FC = () => {
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
     setLateAccountIds(agencyLateRef.current.accountIds);
     setSocialTokens(DEFAULT_SOCIAL_TOKENS); // Reset tokens until own workspace loads from D1
+    isSyncingRef.current = true;
     const restoreOwn = async () => {
       const row = await db.getUser();
       if (row) {
@@ -601,7 +616,7 @@ const Dashboard: React.FC = () => {
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
     };
-    restoreOwn().catch(() => {});
+    restoreOwn().catch(() => {}).finally(() => { isSyncingRef.current = false; });
   }, [activeClientId, user]);
 
   // Add a new client workspace
@@ -653,23 +668,23 @@ const Dashboard: React.FC = () => {
     } catch (e) { toast('Failed to delete client.', 'error'); }
   };
 
-  // Persist profile to D1 (debounced) — SKIP during workspace switches to prevent contamination
+  // Persist profile to D1 (debounced) — blocked during initial sync and workspace switches
   useEffect(() => {
-    if (!user || !dbLoaded) return;
+    if (!user || !dbLoaded || isSyncingRef.current) return;
     if (prevClientIdRef.current !== activeClientId) {
       prevClientIdRef.current = activeClientId;
       return;
     }
     const t = setTimeout(() => {
-      console.log('Persisting profile to', activeClientId ? `client:${activeClientId}` : 'agency', profile.name);
+      if (isSyncingRef.current) return; // double-check after debounce delay
       upsertActiveWorkspace({ profile }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
   }, [profile, user, dbLoaded, activeClientId]);
 
-  // Persist stats to D1 — same workspace-switch guard
+  // Persist stats to D1 — same guards
   useEffect(() => {
-    if (!user || !dbLoaded) return;
+    if (!user || !dbLoaded || isSyncingRef.current) return;
     if (prevClientIdRef.current !== activeClientId) return;
     upsertActiveWorkspace({ stats }).catch(() => {});
   }, [stats, user, dbLoaded, activeClientId]);
