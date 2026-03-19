@@ -17,6 +17,7 @@ interface D1Database {
 type Env = {
   OPENROUTER_API_KEY: string;
   CLERK_SECRET_KEY: string;
+  CLERK_JWT_KEY?: string;
   DB: D1Database;
   LATE_API_KEY?: string;
   FACEBOOK_APP_ID?: string;
@@ -40,12 +41,13 @@ app.use(
 );
 
 // ── Auth helper — verifies Clerk JWT and returns userId ──────────────────────
-async function getAuthUserId(req: Request, secretKey: string): Promise<string | null> {
+async function getAuthUserId(req: Request, secretKey: string, jwtKey?: string): Promise<string | null> {
   const auth = req.headers.get('Authorization');
   if (!auth?.startsWith('Bearer ')) return null;
   const token = auth.slice(7);
   try {
-    const payload = await verifyToken(token, { secretKey });
+    const opts: Record<string, string> = jwtKey ? { jwtKey } : { secretKey };
+    const payload = await verifyToken(token, opts as any);
     return (payload as any).sub ?? null;
   } catch {
     return null;
@@ -143,14 +145,14 @@ app.post('/api/ai/generate', async (c) => {
 // ── DB: User ─────────────────────────────────────────────────────────────────
 
 app.get('/api/db/user', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const row = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first();
   return c.json({ user: row ?? null });
 });
 
 app.put('/api/db/user', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const body = await c.req.json<Record<string, unknown>>();
 
@@ -202,7 +204,7 @@ app.put('/api/db/user', async (c) => {
 });
 
 app.delete('/api/db/user', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(uid).run();
   return c.json({ ok: true });
@@ -211,7 +213,7 @@ app.delete('/api/db/user', async (c) => {
 // ── DB: Posts ─────────────────────────────────────────────────────────────────
 
 app.get('/api/db/posts', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.query('clientId') ?? null;
   const { results } = clientId
@@ -225,7 +227,7 @@ app.get('/api/db/posts', async (c) => {
 });
 
 app.post('/api/db/posts', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const body = await c.req.json<Record<string, unknown>>();
   const id = uuid();
@@ -244,7 +246,7 @@ app.post('/api/db/posts', async (c) => {
 });
 
 app.put('/api/db/posts/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const postId = c.req.param('id');
   const body = await c.req.json<Record<string, unknown>>();
@@ -270,7 +272,7 @@ app.put('/api/db/posts/:id', async (c) => {
 });
 
 app.delete('/api/db/posts/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const postId = c.req.param('id');
   await c.env.DB.prepare('DELETE FROM posts WHERE id = ? AND user_id = ?').bind(postId, uid).run();
@@ -279,7 +281,7 @@ app.delete('/api/db/posts/:id', async (c) => {
 
 // Bulk-update posts status (e.g. mark overdue as Missed)
 app.post('/api/db/posts/bulk-status', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const { ids, status } = await c.req.json<{ ids: string[]; status: string }>();
   if (!ids?.length) return c.json({ ok: true });
@@ -290,7 +292,7 @@ app.post('/api/db/posts/bulk-status', async (c) => {
 
 // Client posts (limited, for health check)
 app.get('/api/db/posts/client-health', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.query('clientId');
   if (!clientId) return c.json({ error: 'clientId required' }, 400);
@@ -303,7 +305,7 @@ app.get('/api/db/posts/client-health', async (c) => {
 // ── DB: Clients ───────────────────────────────────────────────────────────────
 
 app.get('/api/db/clients', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const { results } = await c.env.DB.prepare('SELECT * FROM clients WHERE user_id = ?').bind(uid).all();
   const clients = results.map((r: Record<string, unknown>) => ({
@@ -318,7 +320,7 @@ app.get('/api/db/clients', async (c) => {
 });
 
 app.get('/api/db/clients/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.param('id');
   const row = await c.env.DB.prepare('SELECT * FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<Record<string, unknown>>();
@@ -336,7 +338,7 @@ app.get('/api/db/clients/:id', async (c) => {
 });
 
 app.post('/api/db/clients', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const body = await c.req.json<Record<string, unknown>>();
   const id = uuid();
@@ -347,7 +349,7 @@ app.post('/api/db/clients', async (c) => {
 });
 
 app.put('/api/db/clients/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.param('id');
   const body = await c.req.json<Record<string, unknown>>();
@@ -373,7 +375,7 @@ app.put('/api/db/clients/:id', async (c) => {
 });
 
 app.delete('/api/db/clients/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.param('id');
   await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
@@ -385,7 +387,7 @@ app.delete('/api/db/clients/:id', async (c) => {
 // Stored in dedicated column — never mixed into profile blob, never cached client-side
 
 app.get('/api/db/social-tokens', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.query('clientId') ?? null;
   const raw = clientId
@@ -396,7 +398,7 @@ app.get('/api/db/social-tokens', async (c) => {
 });
 
 app.put('/api/db/social-tokens', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const clientId = c.req.query('clientId') ?? null;
   const body = await c.req.json<Record<string, unknown>>();
@@ -419,7 +421,7 @@ app.get('/api/db/portal/:slug', async (c) => {
 });
 
 app.put('/api/db/portal/:slug', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const slug = c.req.param('slug').toLowerCase();
   const { email, password } = await c.req.json<{ email: string; password: string }>();
@@ -432,7 +434,7 @@ app.put('/api/db/portal/:slug', async (c) => {
 // ── DB: Activations / Cancellations ──────────────────────────────────────────
 
 app.get('/api/db/activations', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const email = c.req.query('email') ?? null;
   const byUid = await c.env.DB.prepare('SELECT * FROM pending_activations WHERE id = ? AND consumed = 0').bind(uid).first();
@@ -442,7 +444,7 @@ app.get('/api/db/activations', async (c) => {
 });
 
 app.put('/api/db/activations/:id/consume', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const id = c.req.param('id');
   await c.env.DB.prepare('UPDATE pending_activations SET consumed = 1 WHERE id = ?').bind(id).run();
@@ -450,7 +452,7 @@ app.put('/api/db/activations/:id/consume', async (c) => {
 });
 
 app.get('/api/db/cancellations', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const email = c.req.query('email') ?? null;
   const byUid = await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE id = ? AND consumed = 0').bind(uid).first();
@@ -460,7 +462,7 @@ app.get('/api/db/cancellations', async (c) => {
 });
 
 app.put('/api/db/cancellations/:id/consume', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const id = c.req.param('id');
   await c.env.DB.prepare('UPDATE pending_cancellations SET consumed = 1 WHERE id = ?').bind(id).run();
