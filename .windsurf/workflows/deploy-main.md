@@ -34,5 +34,10 @@ git push origin main
 - https://socialaistudio.pages.dev (CF default URL)
 
 ### Environment variables required in CF Pages project settings:
+- `VITE_CLERK_PUBLISHABLE_KEY` — Clerk publishable key (pk_live_...)
+- `VITE_AI_WORKER_URL` — Worker URL: `https://socialai-api.steve-700.workers.dev`
 - `LATE_API_KEY` — Late.dev API key (from https://app.getlate.dev)
-- Any Firebase keys are embedded in the build (public, safe to include)
+- `FACEBOOK_APP_ID` — Facebook App ID (for token exchange Pages function)
+- `FACEBOOK_APP_SECRET` — Facebook App Secret (never exposed to client, server-side only)
+
+Note: Clerk secret key (`CLERK_SECRET_KEY`) is set in the **Worker** secrets, NOT in Pages.

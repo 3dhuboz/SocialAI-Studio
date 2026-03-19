@@ -49,12 +49,23 @@ Edit `src/client.configs/newclient.ts` — update:
 - If domain is on Cloudflare DNS, it auto-configures
 - Otherwise update CNAME at registrar to point to `<project>.pages.dev`
 
-#### Step 4: Set up Firebase auto-login user
-In Firebase Console → Authentication → Add user:
+#### Step 4: Set up Clerk auto-login user
+In Clerk Dashboard → Users → Create user:
 - Email: the `autoLoginEmail` from the client config
 - Password: the `autoLoginPassword` from the client config
 
-#### Step 5: Set up client workspace in agency backend
+This user gets auto-signed-in when clients visit their branded portal URL.
+
+#### Step 5: Set env vars in the CF Pages project
+- `VITE_CLERK_PUBLISHABLE_KEY` — same Clerk publishable key as main site
+- `VITE_AI_WORKER_URL` — `https://socialai-api.steve-700.workers.dev`
+- `VITE_AUTO_LOGIN_EMAIL` — the client's auto-login email
+- `VITE_AUTO_LOGIN_PASSWORD` — the client's auto-login password
+- `LATE_API_KEY` — Late.dev API key
+- `FACEBOOK_APP_ID` — Facebook App ID
+- `FACEBOOK_APP_SECRET` — Facebook App Secret
+
+#### Step 6: Set up client workspace in agency backend
 - Log into socialaistudio.au as agency admin
-- Go to Clients tab → Add client → set name and business details
-- Connect Facebook for that client workspace
+- Go to Clients tab — verify the client appears (it was seeded in D1 directly)
+- Switch to that client workspace and connect their Facebook Page
