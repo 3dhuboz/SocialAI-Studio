@@ -46,13 +46,24 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }
   const [mode, setMode] = useState<'login' | 'signup'>('login');
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex flex-col items-center justify-center p-6">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(245,158,11,0.1),transparent_60%)] pointer-events-none" />
+    <div className="min-h-screen bg-[#06060a] flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      {/* Background layers */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(245,158,11,0.18),transparent)] pointer-events-none" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_40%_30%_at_80%_80%,rgba(251,146,60,0.06),transparent)] pointer-events-none" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_40%_30%_at_20%_70%,rgba(168,85,247,0.05),transparent)] pointer-events-none" />
+      {/* Grid overlay */}
+      <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{backgroundImage:'linear-gradient(rgba(255,255,255,0.5) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.5) 1px,transparent 1px)',backgroundSize:'48px 48px'}} />
 
-      <div className="w-full max-w-md relative">
-        <div className="flex justify-center mb-8">
-          <AppLogo size={90} />
+      <div className="w-full max-w-[420px] relative z-10">
+        {/* Branding */}
+        <div className="flex flex-col items-center mb-8">
+          <AppLogo size={80} />
+          <h1 className="mt-4 text-2xl font-black text-white tracking-tight">{CLIENT.appName}</h1>
+          <p className="text-sm text-white/30 mt-1">{CLIENT.tagline}</p>
         </div>
+
+        {/* Card glow */}
+        <div className="absolute -inset-1 bg-gradient-to-br from-amber-500/10 via-transparent to-orange-500/5 rounded-[28px] blur-xl pointer-events-none" />
 
         {mode === 'login' ? (
           <SignIn
@@ -71,22 +82,22 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }
         )}
 
         {!loginOnly && (
-          <div className="mt-4 text-center">
+          <div className="mt-5 text-center">
             {mode === 'login' ? (
-              <p className="text-xs text-white/25">
-                Don't have an account?{' '}
-                <button onClick={() => setMode('signup')} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
-                  Sign Up
+              <p className="text-xs text-white/20">
+                No account?{' '}
+                <button onClick={() => setMode('signup')} className="text-amber-400/80 hover:text-amber-300 transition font-semibold">
+                  Sign up free
                 </button>
-                {' · '}
-                <button onClick={onShowLanding} className="text-white/20 hover:text-white/40 transition">
+                <span className="mx-2 text-white/10">·</span>
+                <button onClick={onShowLanding} className="text-white/20 hover:text-white/50 transition">
                   View plans
                 </button>
               </p>
             ) : (
-              <p className="text-xs text-white/25">
-                Already have an account?{' '}
-                <button onClick={() => setMode('login')} className="text-amber-400/70 hover:text-amber-400 transition font-semibold">
+              <p className="text-xs text-white/20">
+                Have an account?{' '}
+                <button onClick={() => setMode('login')} className="text-amber-400/80 hover:text-amber-300 transition font-semibold">
                   Sign in
                 </button>
               </p>
@@ -94,8 +105,8 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }
           </div>
         )}
 
-        <p className="text-center text-xs text-white/15 mt-5">
-          <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="hover:text-white/30 transition">
+        <p className="text-center text-[11px] text-white/10 mt-6">
+          <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="hover:text-white/25 transition">
             {CLIENT.poweredBy || 'Powered by Penny Wise I.T'}
           </a>
         </p>
