@@ -559,6 +559,8 @@ const Dashboard: React.FC = () => {
           setLateProfileId(lp);
           setLateConnectedPlatforms(lc);
           setLateAccountIds(la);
+          // Keep in-memory clients cache in sync with D1 so fallback is accurate
+          setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: lp || undefined, lateConnectedPlatforms: lc, lateAccountIds: la } : c));
           if (clientRow.insightReport) {
             setInsightReport(clientRow.insightReport as InsightReport);
             const ageMs = Date.now() - new Date((clientRow.insightReport as InsightReport).generatedAt).getTime();
