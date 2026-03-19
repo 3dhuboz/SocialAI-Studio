@@ -5,6 +5,9 @@
  */
 
 const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL || 'http://localhost:8787';
+if (!(import.meta.env as Record<string, string>).VITE_AI_WORKER_URL) {
+  console.warn('[db] VITE_AI_WORKER_URL is not set — falling back to localhost:8787. Set this env var in Cloudflare Pages to connect to the production Worker.');
+}
 
 type GetToken = () => Promise<string | null>;
 
