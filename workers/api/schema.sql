@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS portal (
   slug        TEXT PRIMARY KEY,
   email       TEXT NOT NULL,
   password    TEXT NOT NULL,
+  portal_token TEXT,
+  user_id     TEXT,
+  client_id   TEXT,
   created_at  TEXT DEFAULT (datetime('now'))
 );
 

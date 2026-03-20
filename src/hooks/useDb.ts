@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import { useAuth } from '@clerk/react';
+import { useAuth } from '../contexts/AuthContext';
 import { createDb } from '../services/db';
 
 export const useDb = () => {
-  const { getToken } = useAuth();
-  return useMemo(() => createDb(getToken), [getToken]);
+  const { getApiToken, authMode } = useAuth();
+  return useMemo(() => createDb(getApiToken, authMode), [getApiToken, authMode]);
 };

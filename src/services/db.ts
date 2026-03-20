@@ -8,6 +8,7 @@ const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
 type GetToken = () => Promise<string | null>;
+type AuthMode = 'clerk' | 'portal';
 
 // ── Fetch wrapper ─────────────────────────────────────────────────────────────
 
@@ -15,10 +16,13 @@ async function apiFetch(
   getToken: GetToken,
   path: string,
   options: RequestInit = {},
+  authMode: AuthMode = 'clerk',
 ): Promise<Response> {
   const token = await getToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (token) {
+    headers['Authorization'] = authMode === 'portal' ? `Portal ${token}` : `Bearer ${token}`;
+  }
   return fetch(`${BASE}${path}`, { ...options, headers });
 }
 
@@ -82,8 +86,8 @@ export interface DbClient {
 
 // ── DB factory ────────────────────────────────────────────────────────────────
 
-export function createDb(getToken: GetToken) {
-  const f = (path: string, opts: RequestInit = {}) => apiFetch(getToken, path, opts);
+export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
+  const f = (path: string, opts: RequestInit = {}) => apiFetch(getToken, path, opts, authMode);
   const j = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body) });
   const put = (body: unknown) => ({ method: 'PUT', body: JSON.stringify(body) });
   const del = () => ({ method: 'DELETE' });

@@ -24,9 +24,11 @@ interface AuthContextType {
   logOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   refreshUserDoc: () => Promise<void>;
+  getApiToken: () => Promise<string | null>;
+  authMode: 'clerk' | 'portal';
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+export const AuthContext = createContext<AuthContextType | null>(null);
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
@@ -95,7 +97,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const resetPassword = async (_e: string) => {};
 
   return (
-    <AuthContext.Provider value={{ user, userDoc, loading, signUp, logIn, logOut, resetPassword, refreshUserDoc }}>
+    <AuthContext.Provider value={{ user, userDoc, loading, signUp, logIn, logOut, resetPassword, refreshUserDoc, getApiToken: getToken, authMode: 'clerk' }}>
       {children}
     </AuthContext.Provider>
   );

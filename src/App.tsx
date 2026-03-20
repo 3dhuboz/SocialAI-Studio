@@ -168,45 +168,15 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, logIn, logOut, refreshUserDoc } = useAuth();
+  const { user, userDoc, loading, logIn, logOut, refreshUserDoc } = useAuth();
   const db = useDb();
   const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
-  const [autoLoginPending, setAutoLoginPending] = useState(CLIENT.clientMode);
+  const [autoLoginPending, setAutoLoginPending] = useState(false);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
-
-  useEffect(() => {
-    if (!CLIENT.clientMode) { setAutoLoginPending(false); return; }
-    if (user) { setAutoLoginPending(false); return; }
-    const clientId = (import.meta.env.VITE_CLIENT_ID as string) || '';
-    const tryLogin = async (email: string, pw: string) => {
-      await logIn(email, pw);
-    };
-    const run = async () => {
-      try {
-        if (clientId) {
-          try {
-            const portal = await db.getPortal(clientId);
-            if (portal?.email && portal.password) { await tryLogin(portal.email, portal.password); return; }
-          } catch {
-            // Portal read failed (rules not deployed yet) — fall through to env-var credentials
-          }
-        }
-        if (CLIENT.autoLoginEmail && CLIENT.autoLoginPassword) {
-          await tryLogin(CLIENT.autoLoginEmail, CLIENT.autoLoginPassword);
-        }
-      } catch (e: any) {
-        toast(`Auto-login failed: ${e?.message || e}`, 'error');
-      } finally {
-        setAutoLoginPending(false);
-      }
-    };
-    run();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handlePlanActivated = async (planId: string) => {
     setActivePlan(planId as PlanTier);
@@ -1708,7 +1678,7 @@ const Dashboard: React.FC = () => {
 
   // Auth gate
   if (!user) {
-    if (autoLoginPending) {
+    if (loading || autoLoginPending) {
       return (
         <div className="min-h-screen bg-black flex items-center justify-center">
           <div className="flex flex-col items-center gap-3 text-white/40">
@@ -1719,7 +1689,16 @@ const Dashboard: React.FC = () => {
       );
     }
     if (CLIENT.clientMode) {
-      return <AuthScreen onShowLanding={() => {}} loginOnly />;
+      // Portal mode — if we reach here, the portal token wasn't found
+      return (
+        <div className="min-h-screen bg-black flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-white/60 max-w-md text-center">
+            <AlertCircle size={32} className="text-red-400" />
+            <p className="text-lg font-semibold text-red-400">Portal not configured</p>
+            <p className="text-sm">This client portal hasn't been set up yet. Ask your agency administrator to configure the portal token.</p>
+          </div>
+        </div>
+      );
     }
     if (showLanding && !CLIENT.clientMode) {
       return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} />;
