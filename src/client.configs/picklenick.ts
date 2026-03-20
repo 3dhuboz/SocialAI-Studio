@@ -7,6 +7,7 @@
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
+  clientId: 'picklenick',
   appName: 'Pickle Nick Social',
   tagline: 'AI-powered social media — brined to perfection',
 

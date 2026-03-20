@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { AuthContext } from './AuthContext';
 import type { AppUser } from './AuthContext';
 import { createDb } from '../services/db';
+import { CLIENT } from '../client.config';
 
 interface UserDoc {
   email: string;
@@ -27,9 +28,11 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   useEffect(() => {
     const run = async () => {
       try {
-        const clientId = (import.meta.env as Record<string, string>).VITE_CLIENT_ID || '';
+        const clientId = (CLIENT as any).clientId
+          || (import.meta.env as Record<string, string>).VITE_CLIENT_ID
+          || '';
         if (!clientId) {
-          console.error('[PortalAuth] No VITE_CLIENT_ID set');
+          console.error('[PortalAuth] No clientId configured (set CLIENT.clientId or VITE_CLIENT_ID)');
           setLoading(false);
           return;
         }

@@ -6,6 +6,9 @@
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
+  /** Portal slug — leave empty on the main agency site, set per-client on white-label deployments */
+  clientId: '',
+
   appName: 'SocialAI Studio',
   tagline: 'AI-powered social media — done for you',
 
