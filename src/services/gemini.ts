@@ -713,7 +713,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     let research: any = {};
     onPhase?.('researching');
     try {
-      const researchRaw = extractJson((await withTimeout(callAI(researchPrompt, { temperature: 0.5, responseFormat: 'json' }), 90000)));
+      const researchRaw = extractJson((await withTimeout(callAI(researchPrompt, { temperature: 0.5, maxTokens: 4096, responseFormat: 'json' }), 90000)));
       if (researchRaw) research = JSON.parse(sanitizeJson(researchRaw));
     } catch {
       research = saturationMode ? saturationFallback : normalFallback;
@@ -867,7 +867,9 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 }`;
 
     onPhase?.('writing');
-    const raw = extractJson(await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000));
+    // Video posts with scripts/shots need much more output tokens than the default 2048
+    const outputTokens = includeVideos ? 8192 : (effectivePosts > 7 ? 6144 : 4096);
+    const raw = extractJson(await withTimeout(callAI(prompt, { temperature: 0.75, maxTokens: outputTokens, responseFormat: 'json' }), 120000));
     const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
     return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
   } catch (error: any) {
