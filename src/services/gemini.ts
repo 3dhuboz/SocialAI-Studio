@@ -1,12 +1,56 @@
-// Sanitise raw AI JSON output — replaces literal control chars inside string values
-// so JSON.parse doesn't throw "Bad control character" errors
-const sanitizeJson = (raw: string): string =>
-  raw.replace(/[\u0000-\u001f\u007f]/g, (c) => {
+// Sanitise raw AI JSON output — fixes common issues that cause JSON.parse to fail
+const sanitizeJson = (raw: string): string => {
+  let s = raw;
+  // Strip BOM and zero-width characters
+  s = s.replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '');
+  // Replace smart/curly quotes with straight quotes
+  s = s.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"');
+  s = s.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
+  // Replace en-dash/em-dash with hyphen
+  s = s.replace(/[\u2013\u2014]/g, '-');
+  // Replace ellipsis character with three dots
+  s = s.replace(/\u2026/g, '...');
+  // Replace control characters
+  s = s.replace(/[\u0000-\u001f\u007f]/g, (c) => {
     if (c === '\n') return '\\n';
     if (c === '\r') return '\\r';
     if (c === '\t') return '\\t';
-    return ''; // strip other control chars
+    return '';
   });
+  return s;
+};
+
+// Extract valid JSON from a string that may contain markdown fences or extra text
+const extractJson = (raw: string): string => {
+  let s = raw.trim();
+  // Strip markdown code fences
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // If it doesn't start with { or [, find the first one
+  if (s && !s.startsWith('{') && !s.startsWith('[')) {
+    const braceIdx = s.indexOf('{');
+    const bracketIdx = s.indexOf('[');
+    const idx = braceIdx >= 0 && bracketIdx >= 0 ? Math.min(braceIdx, bracketIdx) : braceIdx >= 0 ? braceIdx : bracketIdx;
+    if (idx >= 0) s = s.slice(idx);
+  }
+  // Find matching closing brace/bracket
+  if (s.startsWith('{') || s.startsWith('[')) {
+    const open = s[0];
+    const close = open === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (escape) { escape = false; continue; }
+      if (c === '\\' && inString) { escape = true; continue; }
+      if (c === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (c === open) depth++;
+      else if (c === close) { depth--; if (depth === 0) { s = s.slice(0, i + 1); break; } }
+    }
+  }
+  return s;
+};
 
 const callAI = async (
   prompt: string,
@@ -144,13 +188,11 @@ Return JSON: {"content": "post body text — NO hashtags in content", "hashtags"
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
-    const trimmed = raw.trim();
     try {
-      return trimmed ? JSON.parse(sanitizeJson(trimmed)) : { content: 'Error generating content.', hashtags: [] };
+      const cleaned = extractJson(raw);
+      return cleaned ? JSON.parse(sanitizeJson(cleaned)) : { content: 'Error generating content.', hashtags: [] };
     } catch {
-      const stripped = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      const match = stripped.match(/\{[\s\S]*\}/);
-      return match ? JSON.parse(sanitizeJson(match[0])) : { content: stripped || 'Could not parse AI response.', hashtags: [] };
+      return { content: raw.trim() || 'Could not parse AI response.', hashtags: [] };
     }
   };
 
@@ -671,8 +713,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     let research: any = {};
     onPhase?.('researching');
     try {
-      const researchRaw = (await withTimeout(callAI(researchPrompt, { temperature: 0.5, responseFormat: 'json' }), 90000)).trim()
-        .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+      const researchRaw = extractJson((await withTimeout(callAI(researchPrompt, { temperature: 0.5, responseFormat: 'json' }), 90000)));
       if (researchRaw) research = JSON.parse(sanitizeJson(researchRaw));
     } catch {
       research = saturationMode ? saturationFallback : normalFallback;
@@ -826,13 +867,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 }`;
 
     onPhase?.('writing');
-    let raw = (await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000)).trim()
-      .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-    // If response doesn't start with '{', try to extract JSON object
-    if (raw && !raw.startsWith('{')) {
-      const jsonStart = raw.indexOf('{');
-      if (jsonStart >= 0) raw = raw.slice(jsonStart);
-    }
+    const raw = extractJson(await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000));
     const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
     return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
   } catch (error: any) {
