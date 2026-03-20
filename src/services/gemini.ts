@@ -767,7 +767,7 @@ MODE: HIGHLIGHTS ONLY — schedule posts ONLY at the absolute top 3 researched t
 
     const prompt = saturationMode ? `
 You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${businessType}.
-Tone: ${tone}. Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
+Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
 ${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
@@ -814,7 +814,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
   ]
 }` : `
 You are an elite social media strategist writing a data-driven content calendar for "${businessName}", a ${businessType}.
-Tone: ${tone}. Location: ${location}. Current date: ${now.toISOString().split('T')[0]}.
+Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
 ${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${quick24hExtra}${highlightsExtra}
@@ -869,20 +869,19 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
 
-    // Ensure no post is scheduled in the past — push past times at least 15 min into the future
-    const fifteenMinsFromNow = new Date(now.getTime() + 15 * 60 * 1000);
+    // Ensure no post is scheduled in the past.
+    // Strategy: keep the AI's chosen time-of-day but advance the date until it's in the future.
+    // This preserves "best time" slots — e.g. 08:00 AM today → 08:00 AM tomorrow.
+    const thirtyMinsFromNow = new Date(now.getTime() + 30 * 60 * 1000);
     posts = posts.map((post) => {
       if (!post.scheduledFor) return post;
       const t = new Date(post.scheduledFor);
-      if (t < fifteenMinsFromNow) {
-        // For quick24h mode, push to same time tomorrow; otherwise bump by the gap + 15 min
-        const bumpMs = isQuick24h
-          ? 24 * 60 * 60 * 1000
-          : fifteenMinsFromNow.getTime() - t.getTime() + 15 * 60 * 1000;
-        const bumped = new Date(t.getTime() + bumpMs);
-        return { ...post, scheduledFor: bumped.toISOString().slice(0, 19) };
-      }
-      return post;
+      if (t >= thirtyMinsFromNow) return post; // already in the future
+      // Keep the same HH:MM:SS but advance by whole days until it clears the threshold
+      const msPerDay = 24 * 60 * 60 * 1000;
+      const daysToAdd = Math.ceil((thirtyMinsFromNow.getTime() - t.getTime()) / msPerDay);
+      const bumped = new Date(t.getTime() + daysToAdd * msPerDay);
+      return { ...post, scheduledFor: bumped.toISOString().slice(0, 19) };
     });
 
     return { posts, strategy: data.strategy || '' };
