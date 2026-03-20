@@ -1816,10 +1816,17 @@ const Dashboard: React.FC = () => {
                           setVideoModalGenerating(true);
                           setVideoModalProgress(0);
                           try {
+                            // Coerce script/shots to string (AI may return arrays)
+                            const scriptStr = Array.isArray(videoScriptModal.script)
+                              ? (videoScriptModal.script as string[]).join(' ')
+                              : String(videoScriptModal.script || '');
+                            const shotsStr = Array.isArray(videoScriptModal.shots)
+                              ? (videoScriptModal.shots as string[]).join('. ')
+                              : String(videoScriptModal.shots || '');
                             // Build a motion prompt from the script + shots
                             const motionPrompt = [
-                              videoScriptModal.script?.split(/\.|,|\n/).slice(0, 2).join('. '),
-                              videoScriptModal.shots?.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
+                              scriptStr.split(/\.|,|\n/).slice(0, 2).join('. '),
+                              shotsStr.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
                             ].filter(Boolean).join(' — ').slice(0, 300) || videoScriptModal.hookText;
 
                             // Use the post's generated image as the input frame if available
@@ -1867,7 +1874,11 @@ const Dashboard: React.FC = () => {
                   <div className="space-y-1.5">
                     <p className="text-[10px] font-black text-purple-400 uppercase tracking-wider">Script</p>
                     <div className="bg-purple-950/40 border border-purple-500/15 rounded-xl p-4">
-                      <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">{videoScriptModal.script}</p>
+                      <p className="text-sm text-white/80 leading-relaxed whitespace-pre-wrap">
+                        {Array.isArray(videoScriptModal.script)
+                          ? (videoScriptModal.script as string[]).join(' ')
+                          : videoScriptModal.script}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1875,7 +1886,11 @@ const Dashboard: React.FC = () => {
                   <div className="space-y-1.5">
                     <p className="text-[10px] font-black text-purple-400 uppercase tracking-wider">Shot-by-Shot Brief</p>
                     <div className="bg-purple-950/40 border border-purple-500/15 rounded-xl p-4">
-                      <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{videoScriptModal.shots}</p>
+                      <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">
+                        {Array.isArray(videoScriptModal.shots)
+                          ? (videoScriptModal.shots as string[]).map((s, i) => `${i + 1}. ${s}`).join('\n')
+                          : videoScriptModal.shots}
+                      </p>
                     </div>
                   </div>
                 )}
