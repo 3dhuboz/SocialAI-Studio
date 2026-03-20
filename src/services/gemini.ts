@@ -515,6 +515,10 @@ export interface SmartScheduledPost {
   imagePrompt: string;
   reasoning: string;
   pillar: string;
+  postType?: 'image' | 'video' | 'text';
+  videoScript?: string;
+  videoShots?: string;
+  videoMood?: string;
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
@@ -765,7 +769,10 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       "hashtags": ["#mega", "#large", "#medium", "#niche", "#local"],
       "imagePrompt": "vivid, specific image description matching the aesthetic",
       "reasoning": "content pillar used + time window chosen + why this format at this time",
-      "pillar": "exact content pillar name"
+      "pillar": "exact content pillar name",
+      "videoScript": "(only for video postType) 30-60 second spoken script with hook, body, CTA",
+      "videoShots": "(only for video postType) numbered shot list e.g. 1. Close-up of product, 3s...",
+      "videoMood": "(only for video postType) music mood/genre e.g. Upbeat pop, 120BPM"
     }
   ]
 }` : `
@@ -810,13 +817,22 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       "hashtags": ["#mega", "#large", "#medium", "#niche", "#local"],
       "imagePrompt": "vivid, specific, production-quality image description",
       "reasoning": "exact research insight that drove this: pillar + time + day + format choice",
-      "pillar": "content pillar name from researched list"
+      "pillar": "content pillar name from researched list",
+      "videoScript": "(only for video postType) 30-60 second spoken script with hook, body, CTA",
+      "videoShots": "(only for video postType) numbered shot list e.g. 1. Close-up of product, 3s...",
+      "videoMood": "(only for video postType) music mood/genre e.g. Upbeat pop, 120BPM"
     }
   ]
 }`;
 
     onPhase?.('writing');
-    const raw = (await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000)).trim();
+    let raw = (await withTimeout(callAI(prompt, { temperature: 0.75, responseFormat: 'json' }), 90000)).trim()
+      .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+    // If response doesn't start with '{', try to extract JSON object
+    if (raw && !raw.startsWith('{')) {
+      const jsonStart = raw.indexOf('{');
+      if (jsonStart >= 0) raw = raw.slice(jsonStart);
+    }
     const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
     return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
   } catch (error: any) {

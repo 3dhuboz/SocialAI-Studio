@@ -1442,7 +1442,11 @@ const Dashboard: React.FC = () => {
             imagePrompt: sp.imagePrompt || undefined,
             reasoning: sp.reasoning || undefined,
             pillar: sp.pillar || undefined,
-            topic: sp.topic
+            topic: sp.topic,
+            postType: sp.postType || 'image',
+            videoScript: sp.videoScript || undefined,
+            videoShots: sp.videoShots || undefined,
+            videoMood: sp.videoMood || undefined,
           };
           const batchPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
           completedCount++;
