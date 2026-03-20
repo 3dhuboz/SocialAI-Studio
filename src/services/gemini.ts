@@ -759,8 +759,9 @@ VIDEO POST RULES (${videoCount} posts should be "video" type Reels):
 - "imagePrompt" should describe the thumbnail/cover frame for the Reel
 For image posts, set "postType": "image". For pure text posts, set "postType": "text".` : '';
 
+    const nowTimeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
     const quick24hExtra = isQuick24h ? `
-MODE: QUICK 24HR BURST — schedule ALL posts within the next 24 hours ONLY (${now.toISOString().split('T')[0]}T${now.getHours().toString().padStart(2,'0')}:00 to ${windowEnd.toISOString().split('T')[0]}T${now.getHours().toString().padStart(2,'0')}:59). Use only the top researched time slots that fall within the next 24 hours. Generate punchy, high-engagement content designed for immediate interaction.` : '';
+MODE: QUICK 24HR BURST — Current time is ${nowTimeStr} on ${now.toISOString().split('T')[0]}. Schedule ALL posts at least 30 minutes from now, within the next 24 hours. Do NOT schedule anything at or before ${nowTimeStr} today — those times have already passed. Use only researched time slots that are still in the future. Generate punchy, high-engagement content designed for immediate interaction.` : '';
     const highlightsExtra = isHighlights ? `
 MODE: HIGHLIGHTS ONLY — schedule posts ONLY at the absolute top 3 researched time slots across the 14-day window. Quality over quantity. Each post must be polished, pillar-defining, and perfectly timed. No filler — every post must be your single best recommendation for that pillar.` : '';
 
@@ -866,7 +867,25 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const outputTokens = includeVideos ? 8192 : (effectivePosts > 7 ? 6144 : 4096);
     const raw = extractJson(await withTimeout(callAI(prompt, { temperature: 0.75, maxTokens: outputTokens, responseFormat: 'json' }), 120000));
     const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
-    return { posts: Array.isArray(data.posts) ? data.posts : [], strategy: data.strategy || '' };
+    let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
+
+    // Ensure no post is scheduled in the past — push past times at least 15 min into the future
+    const fifteenMinsFromNow = new Date(now.getTime() + 15 * 60 * 1000);
+    posts = posts.map((post) => {
+      if (!post.scheduledFor) return post;
+      const t = new Date(post.scheduledFor);
+      if (t < fifteenMinsFromNow) {
+        // For quick24h mode, push to same time tomorrow; otherwise bump by the gap + 15 min
+        const bumpMs = isQuick24h
+          ? 24 * 60 * 60 * 1000
+          : fifteenMinsFromNow.getTime() - t.getTime() + 15 * 60 * 1000;
+        const bumped = new Date(t.getTime() + bumpMs);
+        return { ...post, scheduledFor: bumped.toISOString().slice(0, 19) };
+      }
+      return post;
+    });
+
+    return { posts, strategy: data.strategy || '' };
   } catch (error: any) {
     console.error("Smart Schedule Error:", error);
     return { posts: [], strategy: `Error: ${error?.message || 'Unknown'}` };
