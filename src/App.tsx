@@ -168,7 +168,7 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, loading, logIn, logOut, refreshUserDoc } = useAuth();
+  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
   const db = useDb();
   const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
@@ -253,6 +253,15 @@ const Dashboard: React.FC = () => {
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+
+  // In portal mode, auto-select the client workspace that belongs to this portal
+  useEffect(() => {
+    if (authMode === 'portal' && portalClientId && activeClientId === null) {
+      setActiveClientId(portalClientId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authMode, portalClientId]);
+
   const [clientHealthMap, setClientHealthMap] = useState<Record<string, { scheduledCount: number; lastPostAt: string | null }>>({});
   const [portalInputs, setPortalInputs] = useState<Record<string, { slug: string; email: string; password: string; showPw: boolean; saving: boolean }>>({});
 

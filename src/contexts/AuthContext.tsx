@@ -26,6 +26,7 @@ interface AuthContextType {
   refreshUserDoc: () => Promise<void>;
   getApiToken: () => Promise<string | null>;
   authMode: 'clerk' | 'portal';
+  portalClientId?: string | null;
 }
 
 export const AuthContext = createContext<AuthContextType | null>(null);

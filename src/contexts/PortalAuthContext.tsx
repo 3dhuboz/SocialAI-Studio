@@ -24,6 +24,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [user, setUser] = useState<AppUser | null>(null);
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
   const [loading, setLoading] = useState(true);
+  const [portalClientId, setPortalClientId] = useState<string | null>(null);
 
   useEffect(() => {
     const run = async () => {
@@ -58,6 +59,9 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         // Store the token for API calls
         _portalToken = data.portal.portal_token;
+
+        // Store which client workspace to auto-select
+        if (data.portal.client_id) setPortalClientId(data.portal.client_id);
 
         // Set the user from portal data
         setUser({
@@ -113,7 +117,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       value={{
         user, userDoc, loading,
         signUp, logIn, logOut, resetPassword, refreshUserDoc,
-        getApiToken, authMode: 'portal',
+        getApiToken, authMode: 'portal', portalClientId,
       }}
     >
       {children}
