@@ -221,7 +221,11 @@ const Dashboard: React.FC = () => {
   const [showPricing, setShowPricing] = useState(false);
   const [showIntakeForm, setShowIntakeForm] = useState(false);
   const [intakeFormDone, setIntakeFormDone] = useState(false);
-  const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string } | null>(null);
+  const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string; imageUrl?: string; imagePrompt?: string } | null>(null);
+  const [videoModalGenerating, setVideoModalGenerating] = useState(false);
+  const [videoModalProgress, setVideoModalProgress] = useState(0);
+  const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
+  const [videoModalError, setVideoModalError] = useState<string | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptProgress, setAcceptProgress] = useState(0);
   const [acceptSaved, setAcceptSaved] = useState(0);
@@ -1750,7 +1754,7 @@ const Dashboard: React.FC = () => {
         <div
           className="fixed inset-0 z-[999] flex items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(14px)' }}
-          onClick={() => setVideoScriptModal(null)}
+          onClick={() => { if (!videoModalGenerating) setVideoScriptModal(null); }}
         >
           <div
             className="relative w-full max-w-2xl bg-[#0f0f1a] border border-purple-500/25 rounded-3xl overflow-hidden shadow-2xl shadow-purple-900/30"
@@ -1762,19 +1766,100 @@ const Dashboard: React.FC = () => {
                 <span className="text-[10px] font-black bg-purple-500/70 text-white px-2 py-0.5 rounded-full">REEL</span>
                 <span className="text-sm font-bold text-white">Video Script &amp; Brief</span>
               </div>
-              <button onClick={() => setVideoScriptModal(null)} className="text-white/30 hover:text-white transition p-1 rounded-lg hover:bg-white/8">
+              <button onClick={() => { if (!videoModalGenerating) setVideoScriptModal(null); }} className="text-white/30 hover:text-white transition p-1 rounded-lg hover:bg-white/8">
                 <X size={16} />
               </button>
             </div>
 
             <div className="flex gap-5 p-6">
-              {/* Animated preview — larger */}
-              <AnimatedReelPreview
-                hookText={videoScriptModal.hookText}
-                mood={videoScriptModal.mood}
-                size="md"
-                className="!w-28 !h-48 flex-shrink-0"
-              />
+              {/* Left: preview pane */}
+              <div className="flex-shrink-0 flex flex-col items-center gap-3">
+                {videoModalUrl ? (
+                  <div className="w-28 rounded-2xl overflow-hidden border border-purple-500/30 shadow-lg shadow-purple-900/40" style={{ aspectRatio: '9/16' }}>
+                    <video
+                      src={videoModalUrl}
+                      controls
+                      autoPlay
+                      loop
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <AnimatedReelPreview
+                    hookText={videoScriptModal.hookText}
+                    mood={videoScriptModal.mood}
+                    size="md"
+                    className="!w-28 !h-48"
+                  />
+                )}
+
+                {/* Generate button / progress */}
+                {!videoModalUrl && (
+                  <div className="w-28 space-y-2">
+                    {videoModalGenerating ? (
+                      <>
+                        <div className="w-full bg-purple-900/30 rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className="h-full bg-purple-400 rounded-full transition-all duration-500"
+                            style={{ width: `${Math.round(videoModalProgress * 100)}%` }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-purple-300 text-center">
+                          Generating… {Math.round(videoModalProgress * 100)}%
+                        </p>
+                      </>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          setVideoModalError(null);
+                          setVideoModalGenerating(true);
+                          setVideoModalProgress(0);
+                          try {
+                            // Build a motion prompt from the script + shots
+                            const motionPrompt = [
+                              videoScriptModal.script?.split(/\.|,|\n/).slice(0, 2).join('. '),
+                              videoScriptModal.shots?.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
+                            ].filter(Boolean).join(' — ').slice(0, 300) || videoScriptModal.hookText;
+
+                            // Use the post's generated image as the input frame if available
+                            const inputImage = videoScriptModal.imageUrl || '';
+
+                            const url = await FalService.generateVideo(
+                              motionPrompt,
+                              inputImage,
+                              5,
+                              (p) => setVideoModalProgress(p),
+                            );
+                            setVideoModalUrl(url);
+                          } catch (e: any) {
+                            setVideoModalError(e?.message || 'Video generation failed');
+                          } finally {
+                            setVideoModalGenerating(false);
+                          }
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl transition-all"
+                      >
+                        <Play size={11} />
+                        Generate Video
+                      </button>
+                    )}
+                    {videoModalError && (
+                      <p className="text-[10px] text-red-400 text-center leading-tight">{videoModalError}</p>
+                    )}
+                  </div>
+                )}
+
+                {videoModalUrl && (
+                  <a
+                    href={videoModalUrl}
+                    download="reel.mp4"
+                    className="w-28 flex items-center justify-center gap-1.5 bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-300 text-[11px] font-bold py-2 rounded-xl transition-all"
+                  >
+                    ↓ Download
+                  </a>
+                )}
+              </div>
 
               {/* Script details */}
               <div className="flex-1 min-w-0 space-y-4 overflow-y-auto max-h-[70vh] pr-1">
@@ -1808,7 +1893,9 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="px-6 pb-5">
-              <p className="text-[10px] text-white/20 text-center">Click anywhere outside to close</p>
+              <p className="text-[10px] text-white/20 text-center">
+                {videoModalGenerating ? 'Generating your video — please wait…' : 'Click anywhere outside to close'}
+              </p>
             </div>
           </div>
         </div>
@@ -3092,14 +3179,22 @@ const Dashboard: React.FC = () => {
                           }
                           mood={(sp as any).videoMood}
                           size="md"
-                          onClick={() => setVideoScriptModal({
-                            hookText: (sp as any).videoScript
-                              ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() ?? sp.content
-                              : sp.content,
-                            script: (sp as any).videoScript,
-                            shots: (sp as any).videoShots,
-                            mood: (sp as any).videoMood,
-                          })}
+                          onClick={() => {
+                            setVideoModalUrl(null);
+                            setVideoModalError(null);
+                            setVideoModalProgress(0);
+                            setVideoModalGenerating(false);
+                            setVideoScriptModal({
+                              hookText: (sp as any).videoScript
+                                ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() ?? sp.content
+                                : sp.content,
+                              script: (sp as any).videoScript,
+                              shots: (sp as any).videoShots,
+                              mood: (sp as any).videoMood,
+                              imageUrl: (sp as any).imageUrl || undefined,
+                              imagePrompt: (sp as any).imagePrompt || undefined,
+                            });
+                          }}
                         />
                       ) : (
                         <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group">
