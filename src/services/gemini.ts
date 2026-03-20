@@ -10,13 +10,8 @@ const sanitizeJson = (raw: string): string => {
   s = s.replace(/[\u2013\u2014]/g, '-');
   // Replace ellipsis character with three dots
   s = s.replace(/\u2026/g, '...');
-  // Replace control characters
-  s = s.replace(/[\u0000-\u001f\u007f]/g, (c) => {
-    if (c === '\n') return '\\n';
-    if (c === '\r') return '\\r';
-    if (c === '\t') return '\\t';
-    return '';
-  });
+  // Strip problematic control characters — but KEEP \n \r \t which are valid JSON whitespace
+  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001f\u007f]/g, '');
   return s;
 };
 
