@@ -1,23 +1,23 @@
 /// <reference types="vite/client" />
 /**
  * ─────────────────────────────────────────────────────────
- *  CLIENT CONFIG  —  Pickle Nick
- *  Deployed at: social.picklenick.au
- *  Netlify env: VITE_CLIENT_ID=picklenick
+ *  CLIENT CONFIG  —  O'Connor Agriculture
+ *  Deployed at: social.oconnoragriculture.com.au (or similar)
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
-  clientId: 'picklenick',
-  appName: 'Pickle Nick Social',
-  tagline: 'AI-powered social media — brined to perfection',
+  clientId: 'oconnor',
+  appName: 'O\'Connor Agriculture Social',
+  tagline: 'AI-powered social media — from paddock to plate',
 
-  defaultBusinessName: 'Pickle Nick',
-  defaultBusinessType: 'artisan deli & pickled goods',
-  defaultLocation: 'Australia',
-  defaultTone: 'Fun, quirky and food-loving',
-  defaultDescription: 'Handcrafted pickles, fermented goods and deli favourites. Small batch, big flavour.',
+  defaultBusinessName: 'O\'Connor Agriculture',
+  defaultBusinessType: 'Butcher & Delivery',
+  defaultLocation: 'Queensland, Australia',
+  defaultTone: 'Warm & Authentic',
+  defaultDescription: 'Premium farm-fresh meats delivered to your door. From paddock to plate, quality you can taste.',
 
   accentColor: '#16a34a',
+  theme: 'light' as const,
 
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',
@@ -75,7 +75,7 @@ export const CLIENT = {
         'Content calendar',
       ],
       limitations: ['Text posts only — no AI images'],
-      color: 'from-green-700 to-green-800',
+      color: 'from-amber-600 to-amber-700',
       badge: null,
     },
     {
@@ -93,7 +93,7 @@ export const CLIENT = {
         'Content calendar',
       ],
       limitations: [],
-      color: 'from-green-600 to-emerald-600',
+      color: 'from-amber-500 to-orange-500',
       badge: 'Most Popular',
     },
     {
@@ -112,7 +112,7 @@ export const CLIENT = {
         'Priority support',
       ],
       limitations: [],
-      color: 'from-emerald-600 to-teal-600',
+      color: 'from-orange-500 to-red-600',
       badge: 'Best Value',
     },
     {
@@ -131,7 +131,7 @@ export const CLIENT = {
         'Priority support',
       ],
       limitations: [],
-      color: 'from-green-700 to-green-900',
+      color: 'from-red-600 to-red-800',
       badge: 'For Agencies',
     },
   ],

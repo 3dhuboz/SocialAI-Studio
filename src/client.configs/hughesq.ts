@@ -7,6 +7,7 @@
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
+  clientId: 'hughesq',
   appName: 'Hugheseys Que Social',
   tagline: 'AI-powered social media — smoke, fire and flavour online',
 

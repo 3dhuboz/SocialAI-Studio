@@ -168,7 +168,7 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, loading, logIn, logOut, refreshUserDoc } = useAuth();
+  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
   const db = useDb();
   const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
@@ -253,6 +253,15 @@ const Dashboard: React.FC = () => {
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+
+  // In portal mode, auto-select the client workspace that belongs to this portal
+  useEffect(() => {
+    if (authMode === 'portal' && portalClientId && activeClientId === null) {
+      setActiveClientId(portalClientId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authMode, portalClientId]);
+
   const [clientHealthMap, setClientHealthMap] = useState<Record<string, { scheduledCount: number; lastPostAt: string | null }>>({});
   const [portalInputs, setPortalInputs] = useState<Record<string, { slug: string; email: string; password: string; showPw: boolean; saving: boolean }>>({});
 
@@ -301,28 +310,31 @@ const Dashboard: React.FC = () => {
             lateAccountIds: typeof row.late_account_ids === 'string' ? JSON.parse(row.late_account_ids as string) : (row.late_account_ids ?? {}),
             insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
           };
-          if (d.profile && Object.keys(d.profile).length) {
-            const p = { ...DEFAULT_PROFILE, ...d.profile };
-            if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
-            // Strip deprecated token fields before caching in localStorage
-            const { facebookPageId: _fpid, facebookPageAccessToken: _fpat, facebookConnected: _fc, instagramBusinessAccountId: _ig, ...safeProfile } = p;
-            setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(safeProfile));
-            agencyLateRef.current.profileName = p.name;
-          } else if (isAdmin) {
-            // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
-            const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
-            setProfile(fresh);
-            localStorage.setItem('sai_profile', JSON.stringify(fresh));
-            agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
-          }
-          // Load social tokens from dedicated D1 column (separate from profile blob)
-          try {
-            const rawTokens = await db.getSocialTokens(null);
-            if (rawTokens && Object.keys(rawTokens).length) {
-              setSocialTokens({ ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens);
+          // In portal mode, skip user-level profile/stats/tokens — the client workspace effect handles those
+          if (authMode !== 'portal') {
+            if (d.profile && Object.keys(d.profile).length) {
+              const p = { ...DEFAULT_PROFILE, ...d.profile };
+              if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
+              // Strip deprecated token fields before caching in localStorage
+              const { facebookPageId: _fpid, facebookPageAccessToken: _fpat, facebookConnected: _fc, instagramBusinessAccountId: _ig, ...safeProfile } = p;
+              setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(safeProfile));
+              agencyLateRef.current.profileName = p.name;
+            } else if (isAdmin) {
+              // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
+              const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
+              setProfile(fresh);
+              localStorage.setItem('sai_profile', JSON.stringify(fresh));
+              agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
             }
-          } catch { /* tokens will remain as defaults */ }
-          if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+            // Load social tokens from dedicated D1 column (separate from profile blob)
+            try {
+              const rawTokens = await db.getSocialTokens(null);
+              if (rawTokens && Object.keys(rawTokens).length) {
+                setSocialTokens({ ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens);
+              }
+            } catch { /* tokens will remain as defaults */ }
+            if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+          }
           if (!isAdmin && d.plan) setActivePlan(d.plan as PlanTier);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus as SetupStatus);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
@@ -579,7 +591,7 @@ const Dashboard: React.FC = () => {
 
   // Restore own workspace (profile, posts, Late profile) when switching back from a client
   useEffect(() => {
-    if (!user || activeClientId !== null) return;
+    if (!user || activeClientId !== null || authMode === 'portal') return;
     // IMMEDIATELY restore cached agency Late profile (prevents publishing to wrong page during async fetch)
     setLateProfileId(agencyLateRef.current.profileId);
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
@@ -860,42 +872,6 @@ const Dashboard: React.FC = () => {
   // isAdminMode may be broadened to client admins in future; isSuperAdmin never will be.
   const isSuperAdmin = !CLIENT.clientMode && !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
 
-  // Live credit balances
-  const [falCredits, setFalCredits] = useState<string | null>(null);
-  const [lateCredits, setLateCredits] = useState<string | null>(null);
-  const [creditsLoading, setCreditsLoading] = useState(false);
-  useEffect(() => {
-    if (!isSuperAdmin || activeTab !== 'settings') return;
-    let cancelled = false;
-    const fetchCredits = async () => {
-      setCreditsLoading(true);
-      try {
-        const [falRes, lateRes] = await Promise.allSettled([
-          fetch('/api/fal-proxy?action=get-credits').then(r => r.json()),
-          fetch('/api/late-proxy?action=get-credits').then(r => r.json()),
-        ]);
-        if (cancelled) return;
-        if (falRes.status === 'fulfilled' && falRes.value?.balance != null) {
-          const b = falRes.value.balance;
-          setFalCredits(typeof b === 'number' ? `$${b.toFixed(2)}` : String(b));
-        } else {
-          setFalCredits(null);
-        }
-        if (lateRes.status === 'fulfilled' && !lateRes.value?.error) {
-          const d = lateRes.value;
-          const label = d.plan ? `${d.plan}${d.credits != null ? ` · ${d.credits} posts` : ''}` : d.credits != null ? `${d.credits} posts` : null;
-          setLateCredits(label);
-        } else {
-          setLateCredits(null);
-        }
-      } catch { /* ignore */ } finally {
-        if (!cancelled) setCreditsLoading(false);
-      }
-    };
-    fetchCredits();
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSuperAdmin, activeTab]);
 
   // Persist plan/setupStatus to D1
   useEffect(() => {
@@ -2072,7 +2048,7 @@ const Dashboard: React.FC = () => {
                       {planCfg.name}
                     </span>
                   )}
-                  {activePlan === 'agency' && (
+                  {activePlan === 'agency' && authMode !== 'portal' && (
                     <ClientSwitcher
                       clients={clients}
                       activeClientId={activeClientId}
@@ -2084,7 +2060,7 @@ const Dashboard: React.FC = () => {
                       clientLimit={agencyClientLimit}
                     />
                   )}
-                  {activePlan !== 'agency' && profile.name && profile.name !== 'My Business' && (
+                  {(activePlan !== 'agency' || authMode === 'portal') && profile.name && profile.name !== 'My Business' && (
                     <span className="text-xs text-white/30 hidden sm:inline">{profile.name}</span>
                   )}
                 </div>
@@ -2183,7 +2159,7 @@ const Dashboard: React.FC = () => {
       </nav>
 
       {/* Agency active-client banner — PROMINENT so you always know which account you're working on */}
-      {activeClientId && activePlan === 'agency' && (() => {
+      {activeClientId && activePlan === 'agency' && authMode !== 'portal' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
           <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[109px] z-20">
@@ -2729,7 +2705,7 @@ const Dashboard: React.FC = () => {
             liveStats={liveStats}
             hasApiKey={hasApiKey}
             fbConnected={fbConnected}
-            activePlan={activePlan}
+            activePlan={effectivePlan}
             planName={planCfg?.name}
             businessName={profile.name || CLIENT.defaultBusinessName}
             onGoCalendar={() => setActiveTab('calendar')}
@@ -2848,7 +2824,7 @@ const Dashboard: React.FC = () => {
               liveStats={liveStats}
               hasApiKey={hasApiKey}
               fbConnected={fbConnected}
-              activePlan={activePlan}
+              activePlan={effectivePlan}
               planName={planCfg?.name}
               lastPulled={lastPulled}
               onGoToSettings={() => setActiveTab('settings')}
@@ -4257,51 +4233,6 @@ const Dashboard: React.FC = () => {
             </div>
             )}
 
-            {/* Service Credits — super-admin (owner) only */}
-            {isSuperAdmin && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* fal.ai Credits */}
-                <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
-                  <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
-                    <span className="text-base">🎬</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-white">fal.ai Credits</p>
-                    {creditsLoading
-                      ? <p className="text-xs text-white/30 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Loading…</p>
-                      : falCredits
-                        ? <p className="text-xs font-bold text-purple-300">{falCredits}</p>
-                        : <p className="text-xs text-white/30">Image &amp; video generation balance</p>
-                    }
-                  </div>
-                  <a href="https://fal.ai/dashboard/billing" target="_blank" rel="noopener noreferrer"
-                    className="flex-shrink-0 text-white/20 hover:text-white/50 transition p-1.5 rounded-lg hover:bg-white/5"
-                    title="Open fal.ai billing">
-                    <ExternalLink size={13} />
-                  </a>
-                </div>
-                {/* Late.dev Credits */}
-                <div className="bg-white/3 border border-white/8 rounded-2xl p-4 flex items-center gap-3">
-                  <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
-                    <Link2 size={16} className="text-blue-400" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-white">Late.dev Credits</p>
-                    {creditsLoading
-                      ? <p className="text-xs text-white/30 flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Loading…</p>
-                      : lateCredits
-                        ? <p className="text-xs font-bold text-blue-300">{lateCredits}</p>
-                        : <p className="text-xs text-white/30">Social scheduling usage &amp; balance</p>
-                    }
-                  </div>
-                  <a href="https://app.late.dev/billing" target="_blank" rel="noopener noreferrer"
-                    className="flex-shrink-0 text-white/20 hover:text-white/50 transition p-1.5 rounded-lg hover:bg-white/5"
-                    title="Open Late.dev billing">
-                    <ExternalLink size={13} />
-                  </a>
-                </div>
-              </div>
-            )}
 
             {/* ── SECTION: Content & Video ── */}
             <div className="flex items-center gap-3">
@@ -4436,7 +4367,7 @@ const Dashboard: React.FC = () => {
                       <p key={i} className="text-xs text-white/40 flex items-center gap-2"><CheckCircle size={11} className="text-green-400 shrink-0" /> {f}</p>
                     ))}
                   </div>
-                  {activePlan !== 'pro' && activePlan !== 'agency' && (
+                  {effectivePlan !== 'pro' && effectivePlan !== 'agency' && (
                     <a
                       href={CLIENT.salesUrl}
                       target="_blank"
@@ -4446,7 +4377,7 @@ const Dashboard: React.FC = () => {
                       <ArrowRight size={12} /> Upgrade Plan
                     </a>
                   )}
-                  {activePlan === 'agency' && (
+                  {effectivePlan === 'agency' && authMode !== 'portal' && (
                     <div className="text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-2 rounded-xl flex items-center gap-1.5 self-start font-bold">
                       <CheckCircle size={12} /> You're on our top plan
                     </div>
@@ -4455,8 +4386,8 @@ const Dashboard: React.FC = () => {
               ) : null}
             </div>
 
-            {/* Agency Client Management */}
-            {(activePlan === 'agency' || isAdminMode) && (
+            {/* Agency Client Management — hidden in portal mode */}
+            {(activePlan === 'agency' || isAdminMode) && authMode !== 'portal' && (
               <div className="bg-white/3 border border-emerald-500/20 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <h3 className="font-bold text-white flex items-center gap-2"><Users size={16} className="text-emerald-400" /> Client Workspaces</h3>

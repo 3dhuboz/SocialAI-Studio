@@ -7,6 +7,7 @@
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
+  clientId: 'streetmeats',
   appName: 'Street Meats Social',
   tagline: 'AI-powered social media — keeping the fire burning online',
 

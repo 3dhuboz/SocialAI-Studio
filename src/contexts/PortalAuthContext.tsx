@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { AuthContext } from './AuthContext';
 import type { AppUser } from './AuthContext';
 import { createDb } from '../services/db';
+import { CLIENT } from '../client.config';
 
 interface UserDoc {
   email: string;
@@ -23,13 +24,16 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [user, setUser] = useState<AppUser | null>(null);
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
   const [loading, setLoading] = useState(true);
+  const [portalClientId, setPortalClientId] = useState<string | null>(null);
 
   useEffect(() => {
     const run = async () => {
       try {
-        const clientId = (import.meta.env as Record<string, string>).VITE_CLIENT_ID || '';
+        const clientId = (CLIENT as any).clientId
+          || (import.meta.env as Record<string, string>).VITE_CLIENT_ID
+          || '';
         if (!clientId) {
-          console.error('[PortalAuth] No VITE_CLIENT_ID set');
+          console.error('[PortalAuth] No clientId configured (set CLIENT.clientId or VITE_CLIENT_ID)');
           setLoading(false);
           return;
         }
@@ -55,6 +59,9 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
         // Store the token for API calls
         _portalToken = data.portal.portal_token;
+
+        // Store which client workspace to auto-select
+        if (data.portal.client_id) setPortalClientId(data.portal.client_id);
 
         // Set the user from portal data
         setUser({
@@ -110,7 +117,7 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       value={{
         user, userDoc, loading,
         signUp, logIn, logOut, resetPassword, refreshUserDoc,
-        getApiToken, authMode: 'portal',
+        getApiToken, authMode: 'portal', portalClientId,
       }}
     >
       {children}

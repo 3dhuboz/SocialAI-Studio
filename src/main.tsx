@@ -7,6 +7,11 @@ import { PortalAuthProvider } from './contexts/PortalAuthContext';
 import { CLIENT } from './client.config';
 import './index.css';
 
+// Apply light theme if configured
+if ((CLIENT as any).theme === 'light') {
+  document.documentElement.setAttribute('data-theme', 'light');
+}
+
 // pk_live_ is a publishable key — safe to commit (it's designed to be public)
 const clerkPubKey = (import.meta.env as Record<string, string>).VITE_CLERK_PUBLISHABLE_KEY
   || 'pk_live_Y2xlcmsuc29jaWFsYWlzdHVkaW8uYXUk';
