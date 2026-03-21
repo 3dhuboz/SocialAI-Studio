@@ -34,7 +34,20 @@ const app = new Hono<{ Bindings: Env }>();
 app.use(
   '*',
   cors({
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'https://socialaistudio.au', 'https://*.pages.dev', 'https://social.picklenick.au', 'https://social.streetmeatzbbq.com.au', 'https://hugheseysque.au'],
+    origin: (origin) => {
+      if (!origin) return 'https://socialaistudio.au';
+      const allowed = [
+        'http://localhost:5173', 'http://localhost:5174',
+        'https://socialaistudio.au',
+        'https://social.picklenick.au', 'https://social.streetmeatzbbq.com.au',
+        'https://social.hugheseysque.au', 'https://hugheseysque.au',
+        'https://social.oconnoragriculture.com.au',
+      ];
+      if (allowed.includes(origin)) return origin;
+      // Allow all *.pages.dev subdomains (CF Pages preview/prod deployments)
+      if (origin.endsWith('.pages.dev')) return origin;
+      return 'https://socialaistudio.au';
+    },
     allowHeaders: ['Content-Type', 'Authorization'],
     allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
   })
