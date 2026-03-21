@@ -17,6 +17,7 @@ export const CLIENT = {
   defaultDescription: 'Premium farm-fresh meats delivered to your door. From paddock to plate, quality you can taste.',
 
   accentColor: '#16a34a',
+  theme: 'light' as const,
 
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',

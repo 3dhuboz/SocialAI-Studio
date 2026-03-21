@@ -29,3 +29,96 @@ body {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+
+/* ── Light theme ── */
+[data-theme="light"],
+[data-theme="light"] body {
+  background: #f8f9fa !important;
+  color: #1a1a1a !important;
+}
+
+/* All dark surface backgrounds → light */
+[data-theme="light"] [class*="bg-black"],
+[data-theme="light"] [class*="bg-gray-9"],
+[data-theme="light"] .min-h-screen {
+  background-color: #f8f9fa !important;
+}
+/* Arbitrary dark hex backgrounds */
+[data-theme="light"] [style*="background"],
+[data-theme="light"] [class*="bg-[#0"] {
+  background-color: #f8f9fa !important;
+}
+
+/* White-alpha backgrounds → subtle gray */
+[data-theme="light"] [class*="bg-white/"] {
+  background-color: rgba(0,0,0,0.03) !important;
+}
+
+/* Text: white → dark (high contrast) */
+[data-theme="light"] .text-white { color: #111111 !important; }
+[data-theme="light"] [class*="text-white/"] { color: rgba(0,0,0,0.75) !important; }
+[data-theme="light"] [class*="text-gray-"] { color: #333333 !important; }
+[data-theme="light"] [class*="text-amber"] { color: revert !important; }
+[data-theme="light"] [class*="text-green"] { color: revert !important; }
+[data-theme="light"] [class*="text-blue"] { color: revert !important; }
+[data-theme="light"] [class*="text-purple"] { color: revert !important; }
+[data-theme="light"] [class*="text-red"] { color: revert !important; }
+[data-theme="light"] [class*="text-pink"] { color: revert !important; }
+
+/* Borders */
+[data-theme="light"] [class*="border-white/"] { border-color: rgba(0,0,0,0.1) !important; }
+[data-theme="light"] [class*="border-gray-"] { border-color: rgba(0,0,0,0.1) !important; }
+
+/* Nav bar */
+[data-theme="light"] nav {
+  background-color: #ffffff !important;
+  border-bottom-color: rgba(0,0,0,0.08) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* Cards and sections — give them white bg + subtle border */
+[data-theme="light"] [class*="rounded-xl"],
+[data-theme="light"] [class*="rounded-2xl"],
+[data-theme="light"] [class*="rounded-lg"] {
+  background-color: #ffffff !important;
+  border-color: rgba(0,0,0,0.08) !important;
+}
+
+/* Hero gradient area */
+[data-theme="light"] [class*="bg-gradient"] {
+  background-image: none !important;
+  background-color: #ffffff !important;
+}
+
+/* Action cards — white bg, coloured title text matching original accent */
+[data-theme="light"] [class*="from-blue"][class*="rounded-2xl"] .font-black { color: #2563eb !important; }
+[data-theme="light"] [class*="from-amber"][class*="rounded-2xl"] .font-black { color: #d97706 !important; }
+[data-theme="light"] [class*="from-purple"][class*="rounded-2xl"] .font-black { color: #7c3aed !important; }
+[data-theme="light"] [class*="from-green"][class*="rounded-2xl"] .font-black { color: #16a34a !important; }
+[data-theme="light"] [class*="from-pink"][class*="rounded-2xl"] .font-black { color: #db2777 !important; }
+[data-theme="light"] [class*="from-red"][class*="rounded-2xl"] .font-black { color: #dc2626 !important; }
+[data-theme="light"] [class*="from-orange"][class*="rounded-2xl"] .font-black { color: #ea580c !important; }
+
+/* Inputs */
+[data-theme="light"] input,
+[data-theme="light"] textarea,
+[data-theme="light"] select {
+  background-color: #ffffff !important;
+  border-color: rgba(0,0,0,0.15) !important;
+  color: #1a1a1a !important;
+}
+[data-theme="light"] input::placeholder,
+[data-theme="light"] textarea::placeholder {
+  color: rgba(0,0,0,0.35) !important;
+}
+
+/* Badges — keep accent colours */
+[data-theme="light"] [class*="bg-amber"] { background-color: revert !important; }
+[data-theme="light"] [class*="bg-green"] { background-color: revert !important; }
+[data-theme="light"] [class*="bg-blue"] { background-color: revert !important; }
+[data-theme="light"] [class*="bg-purple"] { background-color: revert !important; }
+[data-theme="light"] [class*="bg-pink"] { background-color: revert !important; }
+[data-theme="light"] [class*="bg-red"] { background-color: revert !important; }
+
+/* Scrollbar */
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cbd5e1; }

@@ -310,28 +310,31 @@ const Dashboard: React.FC = () => {
             lateAccountIds: typeof row.late_account_ids === 'string' ? JSON.parse(row.late_account_ids as string) : (row.late_account_ids ?? {}),
             insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
           };
-          if (d.profile && Object.keys(d.profile).length) {
-            const p = { ...DEFAULT_PROFILE, ...d.profile };
-            if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
-            // Strip deprecated token fields before caching in localStorage
-            const { facebookPageId: _fpid, facebookPageAccessToken: _fpat, facebookConnected: _fc, instagramBusinessAccountId: _ig, ...safeProfile } = p;
-            setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(safeProfile));
-            agencyLateRef.current.profileName = p.name;
-          } else if (isAdmin) {
-            // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
-            const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
-            setProfile(fresh);
-            localStorage.setItem('sai_profile', JSON.stringify(fresh));
-            agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
-          }
-          // Load social tokens from dedicated D1 column (separate from profile blob)
-          try {
-            const rawTokens = await db.getSocialTokens(null);
-            if (rawTokens && Object.keys(rawTokens).length) {
-              setSocialTokens({ ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens);
+          // In portal mode, skip user-level profile/stats/tokens — the client workspace effect handles those
+          if (authMode !== 'portal') {
+            if (d.profile && Object.keys(d.profile).length) {
+              const p = { ...DEFAULT_PROFILE, ...d.profile };
+              if (p.name === 'My Business') p.name = CLIENT.defaultBusinessName;
+              // Strip deprecated token fields before caching in localStorage
+              const { facebookPageId: _fpid, facebookPageAccessToken: _fpat, facebookConnected: _fc, instagramBusinessAccountId: _ig, ...safeProfile } = p;
+              setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(safeProfile));
+              agencyLateRef.current.profileName = p.name;
+            } else if (isAdmin) {
+              // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
+              const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
+              setProfile(fresh);
+              localStorage.setItem('sai_profile', JSON.stringify(fresh));
+              agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
             }
-          } catch { /* tokens will remain as defaults */ }
-          if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+            // Load social tokens from dedicated D1 column (separate from profile blob)
+            try {
+              const rawTokens = await db.getSocialTokens(null);
+              if (rawTokens && Object.keys(rawTokens).length) {
+                setSocialTokens({ ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens);
+              }
+            } catch { /* tokens will remain as defaults */ }
+            if (d.stats && Object.keys(d.stats).length) { const st = { ...DEFAULT_STATS, ...d.stats }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
+          }
           if (!isAdmin && d.plan) setActivePlan(d.plan as PlanTier);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus as SetupStatus);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
@@ -588,7 +591,7 @@ const Dashboard: React.FC = () => {
 
   // Restore own workspace (profile, posts, Late profile) when switching back from a client
   useEffect(() => {
-    if (!user || activeClientId !== null) return;
+    if (!user || activeClientId !== null || authMode === 'portal') return;
     // IMMEDIATELY restore cached agency Late profile (prevents publishing to wrong page during async fetch)
     setLateProfileId(agencyLateRef.current.profileId);
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
