@@ -44,10 +44,11 @@ export async function onRequest(context) {
       const { prompt } = await request.json();
       if (!prompt) return json({ error: 'prompt is required' }, 400);
 
-      const res = await fetch('https://fal.run/fal-ai/flux/schnell', {
+      // FLUX Dev: higher quality, more realistic than Schnell (25 steps vs 4)
+      const res = await fetch('https://fal.run/fal-ai/flux/dev', {
         method: 'POST',
         headers: authHeader,
-        body: JSON.stringify({ prompt, image_size: 'square_hd', num_inference_steps: 4, num_images: 1, enable_safety_checker: true }),
+        body: JSON.stringify({ prompt, image_size: 'square_hd', num_inference_steps: 25, num_images: 1, enable_safety_checker: true, guidance_scale: 3.5 }),
       });
 
       let data;
