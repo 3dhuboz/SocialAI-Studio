@@ -89,11 +89,14 @@ const parseAiJson = (raw: string): any => {
   }
 };
 
+const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
+  || 'https://socialai-api.steve-700.workers.dev';
+
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
 ): Promise<string> => {
-  const res = await fetch(`/api/ai/generate`, {
+  const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -339,7 +342,7 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   // ── 1. fal.ai FLUX Schnell — primary, fast, high-quality ──────────
   try {
     console.log('fal.ai FLUX →', prompt.substring(0, 80));
-    const res = await fetch('/api/fal-proxy?action=generate-image', {
+    const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: imagePrompt }),

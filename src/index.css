@@ -84,8 +84,8 @@ body {
   border-color: rgba(0,0,0,0.08) !important;
 }
 
-/* Hero gradient area */
-[data-theme="light"] [class*="bg-gradient"] {
+/* Hero gradient area — but preserve gradient text (bg-clip-text) */
+[data-theme="light"] [class*="bg-gradient"]:not([class*="bg-clip-text"]) {
   background-image: none !important;
   background-color: #ffffff !important;
 }
