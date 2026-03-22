@@ -342,7 +342,7 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   // ── 1. fal.ai FLUX Schnell — primary, fast, high-quality ──────────
   try {
     console.log('fal.ai FLUX →', prompt.substring(0, 80));
-    const res = await fetch('/api/fal-proxy?action=generate-image', {
+    const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt: imagePrompt }),
