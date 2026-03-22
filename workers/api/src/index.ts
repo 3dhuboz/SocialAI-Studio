@@ -270,7 +270,10 @@ app.post('/api/db/posts', async (c) => {
     body.scheduledFor ?? null, JSON.stringify(body.hashtags ?? []),
     body.imageUrl ?? null, body.topic ?? null, body.pillar ?? null,
     body.latePostId ?? null, body.imagePrompt ?? null, body.reasoning ?? null,
-    body.postType ?? null, body.videoScript ?? null, body.videoShots ?? null, body.videoMood ?? null
+    body.postType ?? null,
+    typeof body.videoScript === 'string' ? body.videoScript : (body.videoScript ? JSON.stringify(body.videoScript) : null),
+    typeof body.videoShots === 'string' ? body.videoShots : (body.videoShots ? JSON.stringify(body.videoShots) : null),
+    body.videoMood ?? null
   ).run();
   return c.json({ id });
 });
@@ -292,7 +295,10 @@ app.put('/api/db/posts/:id', async (c) => {
   for (const [k, col] of Object.entries(colMap)) {
     if (!(k in body)) continue;
     sets.push(`${col} = ?`);
-    vals.push(k === 'hashtags' ? JSON.stringify(body[k] ?? []) : body[k] ?? null);
+    const v = body[k];
+    if (k === 'hashtags') { vals.push(JSON.stringify(v ?? [])); }
+    else if ((k === 'videoScript' || k === 'videoShots') && v && typeof v !== 'string') { vals.push(JSON.stringify(v)); }
+    else { vals.push(v ?? null); }
   }
   if (sets.length) {
     vals.push(postId, uid);
