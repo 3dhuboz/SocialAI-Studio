@@ -144,24 +144,54 @@ const getQuickStarts = (businessType: string, businessName: string) => {
 };
 
 // ── Autopilot draft persistence ─────────────────────────
-const DRAFT_KEY = 'sai_autopilot_draft';
+const DRAFT_KEY_PREFIX = 'sai_autopilot_draft';
 const DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
-const readDraft = (): { posts: any[]; strategy: string; savedAt: number; mode: string; platform: string } | null => {
+// One-time migration: nuke ALL old drafts that were generated with corrupted profile data
+// This version flag ensures it only runs once per browser
+const DRAFT_MIGRATION_KEY = 'sai_draft_v3_migrated';
+if (!localStorage.getItem(DRAFT_MIGRATION_KEY)) {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    // Clear ALL draft keys (global + any per-client) since old drafts had wrong profile data
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(DRAFT_KEY_PREFIX)) keysToRemove.push(k);
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    // Also clear cached profile that may have wrong agency data
+    localStorage.removeItem('sai_profile');
+    localStorage.setItem(DRAFT_MIGRATION_KEY, '1');
+    console.log('[Draft Migration] Cleared', keysToRemove.length, 'old draft(s) and cached profile');
+  } catch {}
+}
+const getDraftKey = (clientId: string | null) => clientId ? `${DRAFT_KEY_PREFIX}_${clientId}` : DRAFT_KEY_PREFIX;
+const readDraft = (clientId?: string | null): { posts: any[]; strategy: string; savedAt: number; mode: string; platform: string } | null => {
+  try {
+    const key = getDraftKey(clientId ?? null);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw);
     if (!d?.posts?.length || Date.now() - (d.savedAt || 0) > DRAFT_MAX_AGE_MS) {
-      localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(key);
       return null;
     }
     return d;
   } catch { return null; }
 };
-const saveDraft = (posts: any[], strategy: string, mode: string, platform: string) => {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ posts, strategy, savedAt: Date.now(), mode, platform })); } catch {}
+const saveDraft = (posts: any[], strategy: string, mode: string, platform: string, clientId?: string | null) => {
+  try {
+    const key = getDraftKey(clientId ?? null);
+    localStorage.setItem(key, JSON.stringify({ posts, strategy, savedAt: Date.now(), mode, platform }));
+  } catch {}
 };
-const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch {} };
+const clearDraft = (clientId?: string | null) => {
+  try {
+    const key = getDraftKey(clientId ?? null);
+    localStorage.removeItem(key);
+    // Also clear legacy global key if it exists
+    localStorage.removeItem(DRAFT_KEY_PREFIX);
+  } catch {}
+};
 
 type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 
@@ -382,20 +412,22 @@ const Dashboard: React.FC = () => {
           lateConnectedPlatforms: c.lateConnectedPlatforms ?? [],
           lateAccountIds: c.lateAccountIds ?? {},
         } as ClientWorkspace)));
-        // Load posts for own workspace
-        const loadedPosts = await db.getPosts();
-        const loaded: SocialPost[] = loadedPosts.map(p => ({
-          id: p.id, content: p.content, platform: p.platform as SocialPost['platform'],
-          status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
-          hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
-          image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
-          latePostId: p.late_post_id ?? undefined,
-          imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined,
-          postType: p.post_type as SocialPost['postType'] ?? undefined,
-          videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined,
-        }));
-        setPosts(loaded);
-        localStorage.setItem('sai_posts', JSON.stringify(loaded));
+        // Load posts for own workspace — skip in portal mode (client workspace effect handles posts)
+        if (authMode !== 'portal') {
+          const loadedPosts = await db.getPosts();
+          const loaded: SocialPost[] = loadedPosts.map(p => ({
+            id: p.id, content: p.content, platform: p.platform as SocialPost['platform'],
+            status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
+            hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
+            image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
+            latePostId: p.late_post_id ?? undefined,
+            imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined,
+            postType: p.post_type as SocialPost['postType'] ?? undefined,
+            videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined,
+          }));
+          setPosts(loaded);
+          localStorage.setItem('sai_posts', JSON.stringify(loaded));
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('D1 sync error:', msg);
@@ -692,6 +724,15 @@ const Dashboard: React.FC = () => {
     }
     const t = setTimeout(() => {
       if (isSyncingRef.current) return; // double-check after debounce delay
+      // SAFEGUARD: If we're in a client workspace, verify the profile belongs to this client
+      // Prevents agency profile from accidentally overwriting client profiles during workspace switches
+      if (activeClientId) {
+        const client = clients.find(c => c.id === activeClientId);
+        if (client && profile.name && profile.name !== client.name && profile.name !== CLIENT.defaultBusinessName) {
+          console.warn(`[Profile Save Guard] Blocked save — profile name "${profile.name}" doesn't match client "${client.name}". Likely a stale agency profile during workspace switch.`);
+          return;
+        }
+      }
       upsertActiveWorkspace({ profile }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
@@ -731,10 +772,10 @@ const Dashboard: React.FC = () => {
   const [isRewriting, setIsRewriting] = useState(false);
 
   // Smart Schedule State — restored from localStorage draft if browser crashed before accepting
-  const [_initialDraft] = useState(readDraft); // reads localStorage exactly once
+  const [_initialDraft] = useState(() => readDraft(null)); // reads localStorage exactly once (own workspace draft)
   const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>(_initialDraft?.posts ?? []);
   const [smartStrategy, setSmartStrategy] = useState(_initialDraft?.strategy ?? '');
-  const [draftRestoredAt] = useState<number | null>(_initialDraft?.savedAt ?? null);
+  const [draftRestoredAt, setDraftRestoredAt] = useState<number | null>(_initialDraft?.savedAt ?? null);
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
   const [autopilotMode, setAutopilotMode] = useState<AutopilotMode>('smart');
   const saturationMode = autopilotMode === 'saturation';
@@ -742,6 +783,23 @@ const Dashboard: React.FC = () => {
   const [includeVideos, setIncludeVideos] = useState(false);
   const [autopilotPlatform, setAutopilotPlatform] = useState<'both' | 'facebook' | 'instagram'>('both');
   const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | null>(null);
+
+  // Load/clear smart drafts when switching client workspaces
+  useEffect(() => {
+    const draft = readDraft(activeClientId);
+    if (draft) {
+      setSmartPosts(draft.posts);
+      setSmartStrategy(draft.strategy);
+      setDraftRestoredAt(draft.savedAt);
+    } else {
+      setSmartPosts([]);
+      setSmartStrategy('');
+      setDraftRestoredAt(null);
+    }
+    setSmartPostImages({});
+    setAutoGenSet(new Set());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClientId]);
 
   // Smart post image generation
   const [smartPostImages, setSmartPostImages] = useState<Record<number, string>>({});
@@ -751,6 +809,7 @@ const Dashboard: React.FC = () => {
   const uploadFileRef = useRef<HTMLInputElement>(null);
   const [uploadTargetIdx, setUploadTargetIdx] = useState<number | null>(null);
   const quickPostVideoUploadRef = useRef<HTMLInputElement>(null);
+  const quickPostImageUploadRef = useRef<HTMLInputElement>(null);
 
   // Calendar post image generation (keyed by post ID)
   const [calendarImages, setCalendarImages] = useState<Record<string, string>>({});
@@ -1185,6 +1244,21 @@ const Dashboard: React.FC = () => {
     e.target.value = '';
   };
 
+  const handleQuickPostImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = ev.target?.result as string;
+      if (dataUrl) {
+        setGeneratedImage(dataUrl);
+        toast('Photo added — write a caption or hit Create Post, then publish.', 'success');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || uploadTargetIdx === null) return;
@@ -1229,7 +1303,7 @@ const Dashboard: React.FC = () => {
     setSmartGenPhase('researching');
     setSmartPostImages({});
     setAutoGenSet(new Set());
-    clearDraft();
+    clearDraft(activeClientId);
     const platformsObj = {
       facebook: autopilotPlatform === 'both' || autopilotPlatform === 'facebook',
       instagram: autopilotPlatform === 'both' || autopilotPlatform === 'instagram',
@@ -1248,10 +1322,17 @@ const Dashboard: React.FC = () => {
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
       } else {
-        setSmartPosts(result.posts);
+        // Enforce plan limits: strip video posts if plan doesn't support them
+        const canVideos = effectivePlan === 'pro' || effectivePlan === 'agency';
+        const cleanPosts = canVideos ? result.posts : result.posts.map(p =>
+          (p as any).postType === 'video'
+            ? { ...p, postType: 'image' as const, videoScript: undefined, videoShots: undefined, videoMood: undefined }
+            : p
+        );
+        setSmartPosts(cleanPosts);
         setSmartStrategy(result.strategy);
-        saveDraft(result.posts, result.strategy, autopilotMode, autopilotPlatform);
-        autoGenerateAllImages(result.posts);
+        saveDraft(cleanPosts, result.strategy, autopilotMode, autopilotPlatform, activeClientId);
+        autoGenerateAllImages(cleanPosts);
       }
     } catch (e: any) {
       toast(`Smart schedule failed: ${e?.message?.substring(0, 100) || 'Unknown error — check your API key and connection.'}`, 'error');
@@ -1426,7 +1507,7 @@ const Dashboard: React.FC = () => {
         })
       );
       setPosts(prev => [...results, ...prev]);
-      clearDraft();
+      clearDraft(activeClientId);
       if (!lateProfileId) {
         toast(`${results.length} posts saved to calendar. Connect social accounts in Settings to enable auto-publishing.`, 'success');
       } else if (lateFailCount > 0) {
@@ -2004,11 +2085,11 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="px-4 pb-4">
               <button
-                onClick={() => { setShowPreview(false); handlePublishViaLate(lateConnectedPlatforms.length ? lateConnectedPlatforms.map(p => p.toLowerCase() as 'facebook' | 'instagram') : ['facebook', 'instagram']); }}
+                onClick={() => { setShowPreview(false); handlePublishViaLate([platform.toLowerCase() as 'facebook' | 'instagram']); }}
                 disabled={!fbConnected || isGeneratingReel}
                 className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 transition text-sm"
               >
-                <Send size={14} /> Publish Now
+                <Send size={14} /> Publish to {platform}
               </button>
             </div>
           </div>
@@ -2346,6 +2427,25 @@ const Dashboard: React.FC = () => {
                     />
                   </>
                 )}
+                {contentType !== 'video' && (
+                  <>
+                    <span className="text-white/30 text-xs font-medium">or</span>
+                    <button
+                      onClick={() => quickPostImageUploadRef.current?.click()}
+                      className="flex items-center gap-2 px-5 py-3 text-sm font-bold border-2 border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 hover:border-indigo-500/50 text-indigo-300 rounded-xl transition shadow-sm"
+                    >
+                      <Upload size={15} /> Upload Photo
+                    </button>
+                    <input
+                      ref={quickPostImageUploadRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={handleQuickPostImageUpload}
+                    />
+                  </>
+                )}
               </div>
             </div>
 
@@ -2443,6 +2543,13 @@ const Dashboard: React.FC = () => {
                           </button>
                         )}
                         <button
+                          onClick={() => quickPostImageUploadRef.current?.click()}
+                          title="Upload your own photo"
+                          className="bg-white/15 hover:bg-indigo-500/30 backdrop-blur border border-white/20 text-white text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition"
+                        >
+                          <Upload size={12} /> Upload
+                        </button>
+                        <button
                           onClick={() => { setGeneratedImage(null); }}
                           title="Remove image"
                           className="bg-white/10 hover:bg-red-500/30 backdrop-blur border border-white/15 text-white/70 p-2 rounded-xl transition"
@@ -2456,6 +2563,18 @@ const Dashboard: React.FC = () => {
                           {platform}
                         </span>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Upload photo prompt when no image was generated */}
+                  {generatedContent && !generatedImage && !isGeneratingImage && contentType === 'image' && (
+                    <div
+                      onClick={() => quickPostImageUploadRef.current?.click()}
+                      className="flex-shrink-0 md:w-56 border-2 border-dashed border-white/15 hover:border-amber-500/40 rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition bg-white/2 hover:bg-amber-500/5 min-h-[180px] p-4"
+                    >
+                      <Upload size={24} className="text-white/30" />
+                      <span className="text-xs text-white/40 text-center font-medium">Upload your own photo</span>
+                      <span className="text-[10px] text-white/20 text-center">Drag & drop or click to browse</span>
                     </div>
                   )}
 
@@ -2663,13 +2782,13 @@ const Dashboard: React.FC = () => {
                   )}
                   {fbConnected && (
                     <button
-                      onClick={() => handlePublishViaLate(lateConnectedPlatforms.length ? lateConnectedPlatforms.map(p => p.toLowerCase() as 'facebook' | 'instagram') : ['facebook', 'instagram'])}
+                      onClick={() => handlePublishViaLate([platform.toLowerCase() as 'facebook' | 'instagram'])}
                       disabled={isPublishing || isGeneratingReel}
-                      title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : undefined}
+                      title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : `Publish to ${platform}`}
                       className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
                     >
                       {isPublishing ? <Loader2 size={14} className="animate-spin" /> : isGeneratingReel ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      {isGeneratingReel ? 'Generating video…' : 'Publish Now'}
+                      {isGeneratingReel ? 'Generating video…' : `Publish to ${platform}`}
                     </button>
                   )}
                 </div>
@@ -2781,7 +2900,7 @@ const Dashboard: React.FC = () => {
                   if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
+                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   await db.updatePost(post.id, { status: 'Posted' });
                   toast('Published successfully!', 'success');
@@ -2793,7 +2912,7 @@ const Dashboard: React.FC = () => {
                   if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems);
+                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
                   await db.updatePost(post.id, { status: 'Posted' });
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Post published successfully!', 'success');
@@ -3107,7 +3226,7 @@ const Dashboard: React.FC = () => {
                       </div>
                     </div>
                     <button
-                      onClick={() => { clearDraft(); setSmartPosts([]); setSmartStrategy(''); }}
+                      onClick={() => { clearDraft(activeClientId); setSmartPosts([]); setSmartStrategy(''); setDraftRestoredAt(null); }}
                       className="text-xs text-white/30 hover:text-white/60 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 flex-shrink-0"
                     >
                       <X size={11} /> Discard
@@ -3890,7 +4009,7 @@ const Dashboard: React.FC = () => {
                       <div>
                         <h3 className="font-bold text-white">Plan &amp; Billing</h3>
                         <p className="text-xs text-white/30 mt-0.5">
-                          {activePlan ? <>Currently on <span className={`font-bold bg-gradient-to-r ${CLIENT.plans.find(p => p.id === activePlan)?.color ?? 'from-white to-white'} bg-clip-text text-transparent`}>{CLIENT.plans.find(p => p.id === activePlan)?.name}</span> plan</> : 'No active plan'}
+                          {effectivePlan ? <>Currently on <span className={`font-bold bg-gradient-to-r ${CLIENT.plans.find(p => p.id === effectivePlan)?.color ?? 'from-white to-white'} bg-clip-text text-transparent`}>{CLIENT.plans.find(p => p.id === effectivePlan)?.name}</span> plan</> : 'No active plan'}
                         </p>
                       </div>
                     </div>
@@ -3904,7 +4023,7 @@ const Dashboard: React.FC = () => {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {CLIENT.plans.map(plan => {
-                      const isCurrent = activePlan === plan.id;
+                      const isCurrent = effectivePlan === plan.id;
                       const planOrder = ['starter', 'growth', 'pro', 'agency'];
                       const currentIdx = planOrder.indexOf(activePlan ?? '');
                       const planIdx = planOrder.indexOf(plan.id);

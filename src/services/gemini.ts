@@ -1,10 +1,12 @@
 // Sanitise raw AI JSON output — fixes common issues that cause JSON.parse to fail
+// IMPORTANT: Do NOT replace smart double quotes with straight quotes here — that breaks
+// JSON parsing by prematurely ending string values. Smart double quotes (U+201C/201D)
+// are valid Unicode inside JSON strings; only U+0022 is a JSON string delimiter.
 const sanitizeJson = (raw: string): string => {
   let s = raw;
   // Strip BOM and zero-width characters
   s = s.replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '');
-  // Replace smart/curly quotes with straight quotes
-  s = s.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"');
+  // Replace smart SINGLE quotes with straight apostrophe (safe — apostrophes don't delimit JSON strings)
   s = s.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
   // Replace en-dash/em-dash with hyphen
   s = s.replace(/[\u2013\u2014]/g, '-');
@@ -45,6 +47,46 @@ const extractJson = (raw: string): string => {
     }
   }
   return s;
+};
+
+// Escape literal newlines/tabs inside JSON string values AND fix invalid escape sequences
+// AI models sometimes return JSON with unescaped newlines or JS-style escapes like \'
+const escapeJsonStrings = (s: string): string => {
+  let out = '';
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc) {
+      // Fix invalid JSON escapes: \' is valid JS but NOT valid JSON — just output the char
+      if (c === "'") { out += c; esc = false; continue; }
+      // All other escapes (\n, \", \\, \t, \/, \b, \f, \r, \uXXXX) are valid — pass through
+      out += c; esc = false; continue;
+    }
+    if (c === '\\' && inStr) { out += c; esc = true; continue; }
+    if (c === '"') { inStr = !inStr; out += c; continue; }
+    if (inStr) {
+      if (c === '\n') { out += '\\n'; continue; }
+      if (c === '\r') { out += '\\r'; continue; }
+      if (c === '\t') { out += '\\t'; continue; }
+    }
+    out += c;
+  }
+  return out;
+};
+
+// Parse raw AI JSON response robustly — handles newlines, markdown fences, invalid escapes
+const parseAiJson = (raw: string): any => {
+  const cleaned = extractJson(raw);
+  if (!cleaned) return null;
+  const fixed = escapeJsonStrings(cleaned);
+  try {
+    return JSON.parse(sanitizeJson(fixed));
+  } catch {
+    // Second attempt: strip all backslash-escapes that aren't valid JSON
+    const stripped = fixed.replace(/\\(?!["\\/bfnrtu])/g, '');
+    return JSON.parse(sanitizeJson(stripped));
+  }
 };
 
 const callAI = async (
@@ -105,16 +147,35 @@ export const generateSocialPost = async (
     productsServices?: string;
     socialGoal?: string;
     location?: string;
+    contentTopics?: string;
   },
   contentFormat?: string
 ): Promise<{ content: string; hashtags: string[]; imagePrompt?: string }> => {
-  const profileContext = profile ? [
-    profile.description && `About: ${profile.description}`,
-    profile.targetAudience && `Target audience: ${profile.targetAudience}`,
-    profile.uniqueValue && `Differentiator: ${profile.uniqueValue}`,
-    profile.productsServices && `Products/services: ${profile.productsServices}`,
-    profile.socialGoal && `Primary social goal: ${profile.socialGoal}`,
-    profile.location && `Location: ${profile.location}`,
+  // Sanity check: detect corrupted profile data (e.g. agency profile leaked into client workspace)
+  const isSinglePostProfileCorrupted = (() => {
+    if (!profile) return false;
+    const profileText = [profile.description, profile.contentTopics, profile.productsServices].filter(Boolean).join(' ').toLowerCase();
+    const bizLower = businessType.toLowerCase();
+    const foodKeywords = ['bbq', 'restaurant', 'food', 'catering', 'deli', 'pickle', 'butcher', 'meat', 'café', 'cafe', 'bakery', 'bar', 'pub'];
+    const techKeywords = ['web design', 'website builder', 'ai technology', 'social ai studio', 'social media intergration', 'social media integration'];
+    const isFood = foodKeywords.some(k => bizLower.includes(k));
+    const hasTechContent = techKeywords.some(k => profileText.includes(k));
+    if (isFood && hasTechContent) {
+      console.warn(`[Profile Sanity] Corrupted profile for "${businessName}" (${businessType}) — ignoring stale profile data.`);
+      return true;
+    }
+    return false;
+  })();
+  const safeProfile = isSinglePostProfileCorrupted ? undefined : profile;
+
+  const profileContext = safeProfile ? [
+    safeProfile.description && `About: ${safeProfile.description}`,
+    safeProfile.targetAudience && `Target audience: ${safeProfile.targetAudience}`,
+    safeProfile.uniqueValue && `Differentiator: ${safeProfile.uniqueValue}`,
+    safeProfile.productsServices && `Products/services: ${safeProfile.productsServices}`,
+    safeProfile.socialGoal && `Primary social goal: ${safeProfile.socialGoal}`,
+    safeProfile.location && `Location: ${safeProfile.location}`,
+    safeProfile.contentTopics && `Content topics & themes to focus on: ${safeProfile.contentTopics}`,
   ].filter(Boolean).join('\n') : '';
 
   // Pick a random content angle so repeated generations feel fresh
@@ -175,20 +236,76 @@ ANTI-GENERIC RULES:
 - Never start with "Exciting news!" or "We're thrilled to announce"
 - Never use filler phrases like "In today's fast-paced world" or "As a business owner"
 - Every sentence must earn its place — if it could apply to any business, rewrite it
-- Reference specific details about this business (products, location, audience) when relevant
+- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name
+- If content topics are provided above, the post MUST relate to one of those topics or themes
 - Write like you're texting a smart friend, not writing a press release
+- Do NOT invent events, locations, or facts that aren't in the brand context — stay true to what the business actually does
 
 Write a ${platform} post about: "${topic}".
 Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "A 10–15 word vivid visual description of the perfect photo/image to accompany this specific post. MUST feature ${businessName}'s actual products or brand (${businessType}). Be concrete — describe the specific product, scene, lighting, colours, mood. NOT generic food or abstract concepts."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
+    // Attempt 0: Direct JSON.parse — works if AI returns valid JSON (expected with responseFormat: 'json')
     try {
-      const cleaned = extractJson(raw);
-      return cleaned ? JSON.parse(sanitizeJson(cleaned)) : { content: 'Error generating content.', hashtags: [] };
-    } catch {
-      return { content: raw.trim() || 'Could not parse AI response.', hashtags: [] };
-    }
+      const direct = JSON.parse(raw);
+      if (direct?.content) return direct;
+    } catch { /* not valid JSON as-is */ }
+
+    // Attempt 1: parseAiJson — handles markdown fences, newlines in strings, invalid escapes
+    try {
+      const result = parseAiJson(raw);
+      if (result?.content) return result;
+    } catch { /* fall through */ }
+
+    // Attempt 2: Pre-process newlines then parse — handles literal newlines in JSON string values
+    try {
+      const noNewlines = raw.replace(/\r?\n/g, '\\n');
+      const result = JSON.parse(noNewlines);
+      if (result?.content) {
+        result.content = result.content.replace(/\\n/g, '\n');
+        return result;
+      }
+    } catch { /* fall through */ }
+
+    // Attempt 3: Manual character-by-character extraction
+    try {
+      const cIdx = raw.indexOf('"content"');
+      if (cIdx >= 0) {
+        const colonIdx = raw.indexOf(':', cIdx + 9);
+        let valStart = -1;
+        for (let i = colonIdx + 1; i < raw.length; i++) {
+          if (raw[i] === '"') { valStart = i + 1; break; }
+        }
+        if (valStart > 0) {
+          let valEnd = -1;
+          let esc = false;
+          for (let i = valStart; i < raw.length; i++) {
+            if (esc) { esc = false; continue; }
+            if (raw[i] === '\\') { esc = true; continue; }
+            if (raw[i] === '"') { valEnd = i; break; }
+          }
+          if (valEnd > valStart) {
+            const content = raw.substring(valStart, valEnd)
+              .replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\t/g, '\t');
+            const hashMatch = raw.match(/"hashtags"\s*:\s*\[([\s\S]*?)\]/);
+            const hashtags = hashMatch
+              ? (hashMatch[1].match(/"([^"]+)"/g) || []).map(h => h.replace(/"/g, ''))
+              : [];
+            const imgMatch = raw.match(/"imagePrompt"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+            const imagePrompt = imgMatch ? imgMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : undefined;
+            return { content, hashtags, imagePrompt };
+          }
+        }
+      }
+    } catch { /* fall through */ }
+    // Last resort: strip JSON wrapper
+    const stripped = raw
+      .replace(/^\s*\{?\s*"content"\s*:\s*"?/i, '')
+      .replace(/"?\s*,?\s*"hashtags"[\s\S]*$/i, '')
+      .replace(/\\n/g, '\n').replace(/\\"/g, '"')
+      .trim();
+    return { content: stripped || 'Could not parse AI response.', hashtags: [] };
   };
 
   const text = await callAI(prompt, { temperature: 0.8, maxTokens: 512, responseFormat: 'json' });
@@ -196,63 +313,65 @@ Content must respect the character limits above. No padding. No filler.`;
 };
 
 export const generateMarketingImage = async (prompt: string): Promise<string | null> => {
-  const imagePrompt = `Professional social media marketing photograph: ${prompt}. Shot on high-end DSLR, cinematic lighting, vibrant colours, sharp focus, depth of field, commercial quality. No text, no watermarks, no logos.`;
+  // Helper: convert a remote image URL to a compressed data URL
+  const urlToDataUrl = async (imageUrl: string): Promise<string | null> => {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 30000);
+      const res = await fetch(imageUrl, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      if (blob.size < 1000 || !blob.type.startsWith('image')) return null;
+      const dataUrl: string | null = await new Promise(r => {
+        const reader = new FileReader();
+        reader.onloadend = () => r(reader.result as string);
+        reader.onerror = () => r(null);
+        reader.readAsDataURL(blob);
+      });
+      return dataUrl ? await compressImage(dataUrl, 700, 0.65) : null;
+    } catch { return null; }
+  };
 
-  // ── 1. Pollinations.ai — free, no key needed ────────────────────────
+  // Build a clean, concrete visual prompt — emphasise photorealism to avoid "AI look"
+  const imagePrompt = `${prompt}, shot on Canon EOS R5, 35mm lens, natural ambient lighting, shallow depth of field, real photograph, editorial quality, no AI artifacts, no plastic skin, no oversaturated colours`;
+
+  // ── 1. fal.ai FLUX Schnell — primary, fast, high-quality ──────────
+  try {
+    console.log('fal.ai FLUX →', prompt.substring(0, 80));
+    const res = await fetch('/api/fal-proxy?action=generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: imagePrompt }),
+    });
+    const data = await res.json() as { imageUrl?: string; error?: string };
+    if (res.ok && data.imageUrl) {
+      console.log('fal.ai FLUX: success →', data.imageUrl.substring(0, 60));
+      const img = await urlToDataUrl(data.imageUrl);
+      if (img) return img;
+    } else {
+      console.warn('fal.ai FLUX failed:', data.error || res.status);
+    }
+  } catch (e: any) { console.warn('fal.ai FLUX error:', e?.message); }
+
+  // ── 2. Pollinations.ai — free fallback ────────────────────────────
   const pollinationsFetch = async (shortPrompt: string): Promise<string | null> => {
     const encoded = encodeURIComponent(shortPrompt);
-    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
-    console.log('Pollinations.ai →', shortPrompt.substring(0, 60));
+    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 100000)}&model=flux`;
+    console.log('Pollinations.ai fallback →', shortPrompt.substring(0, 80));
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 45000);
     const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(t);
-    console.log('Pollinations.ai:', res.status, res.headers.get('content-type'));
     if (!res.ok) return null;
-    const blob = await res.blob();
-    if (blob.size < 1000 || !blob.type.startsWith('image')) return null;
-    const dataUrl: string | null = await new Promise(r => {
-      const reader = new FileReader();
-      reader.onloadend = () => r(reader.result as string);
-      reader.onerror = () => r(null);
-      reader.readAsDataURL(blob);
-    });
-    return dataUrl ? await compressImage(dataUrl, 700, 0.65) : null;
+    return await urlToDataUrl(url);
   };
 
-  // Use the prompt directly — it's already an AI-generated visual description
-  // Keep it short (max 120 chars) to avoid Pollinations 500 errors
-  const visualPrompt = prompt.substring(0, 120).trim();
   try {
-    const img = await pollinationsFetch(`${visualPrompt}, professional photography, sharp focus, vibrant colors`);
+    const shortPrompt = prompt.substring(0, 120).trim();
+    const img = await pollinationsFetch(`${shortPrompt}, professional photography, sharp focus`);
     if (img) return img;
-  } catch (e: any) { console.warn('Pollinations attempt 1:', e?.message); }
-
-  // Retry with shorter version
-  try {
-    const shortPrompt = visualPrompt.split(/[,\-–—.]/).slice(0, 3).join(',').trim().substring(0, 60);
-    const img = await pollinationsFetch(`${shortPrompt}, photo`);
-    if (img) return img;
-  } catch (e: any) { console.warn('Pollinations attempt 2:', e?.message); }
-
-  // ── 3. Picsum — random quality photo as absolute last resort ────────
-  try {
-    console.log('Falling back to Picsum (random stock photo)…');
-    const seed = encodeURIComponent(visualPrompt.substring(0, 20));
-    const picRes = await fetch(`https://picsum.photos/seed/${seed}/1024/1024`);
-    if (picRes.ok) {
-      const blob = await picRes.blob();
-      if (blob.size > 1000) {
-        const dataUrl: string | null = await new Promise(r => {
-          const reader = new FileReader();
-          reader.onloadend = () => r(reader.result as string);
-          reader.onerror = () => r(null);
-          reader.readAsDataURL(blob);
-        });
-        if (dataUrl) return await compressImage(dataUrl, 700, 0.65);
-      }
-    }
-  } catch (e: any) { console.warn('Picsum fallback:', e?.message); }
+  } catch (e: any) { console.warn('Pollinations fallback:', e?.message); }
 
   return null;
 };
@@ -296,6 +415,7 @@ export const generateVideoScript = async (
   if (profile?.uniqueValue) profileLines.push(`Unique value: ${profile.uniqueValue}`);
   if (profile?.socialGoal) profileLines.push(`Social media goal: ${profile.socialGoal}`);
   if (profile?.location) profileLines.push(`Location: ${profile.location}`);
+  if (profile?.contentTopics) profileLines.push(`Content topics & themes: ${profile.contentTopics}`);
   const profileContext = profileLines.length > 0 ? `\nBUSINESS CONTEXT:\n${profileLines.join('\n')}` : '';
   const hashtagContext = hashtags?.length ? `\nHashtags for this post: ${hashtags.join(', ')}` : '';
   const formatContext = contentFormat && contentFormat !== 'standard' ? `\nPost style: ${contentFormat} (match the video energy to this style)` : '';
@@ -333,7 +453,7 @@ Return ONLY raw JSON, no markdown:
   "videoPrompt": "A 20-30 word cinematic motion description for AI video generation. Describe: what moves, camera motion (pan/zoom/track), lighting changes, the key visual transition. Must match the first shot and be specific to this business topic."
 }`;
     const raw = (await callAI(prompt, { temperature: 0.85, responseFormat: 'json' })).trim();
-    const parsed = raw ? JSON.parse(sanitizeJson(raw)) : null;
+    const parsed = parseAiJson(raw);
     return parsed ? { ...DEFAULT_VIDEO_SCRIPT, ...parsed } : { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
   } catch (error: any) {
     return { ...DEFAULT_VIDEO_SCRIPT, script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}` };
@@ -356,7 +476,7 @@ Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
     const raw = (await callAI(prompt, { temperature: 0.8, responseFormat: 'json' })).trim();
-    return raw ? JSON.parse(sanitizeJson(raw)) : { content: 'Error rewriting post.', hashtags: [] };
+    return parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
   } catch (error: any) {
     const msg = error?.message || String(error);
     return { content: `AI Error: ${msg.substring(0, 120)}`, hashtags: [] };
@@ -590,13 +710,32 @@ export const generateSmartSchedule = async (
     const effectivePosts = isQuick24h ? Math.min(postsToGenerate, 5) : isHighlights ? Math.min(postsToGenerate, 5) : postsToGenerate;
     const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
+    // Sanity check: detect corrupted profile data (e.g. agency profile leaked into client workspace)
+    // If the rich profile description/topics mention completely unrelated industries, discard it
+    const isProfileCorrupted = (() => {
+      if (!richProfile) return false;
+      const profileText = [richProfile.description, richProfile.contentTopics, richProfile.productsServices].filter(Boolean).join(' ').toLowerCase();
+      const bizLower = businessType.toLowerCase();
+      // If the business is food/restaurant/catering but the profile talks about web design, AI, technology — it's corrupted
+      const foodKeywords = ['bbq', 'restaurant', 'food', 'catering', 'deli', 'pickle', 'butcher', 'meat', 'café', 'cafe', 'bakery', 'bar', 'pub'];
+      const techKeywords = ['web design', 'website builder', 'ai technology', 'social ai studio', 'social media intergration', 'social media integration'];
+      const isFood = foodKeywords.some(k => bizLower.includes(k));
+      const hasTechContent = techKeywords.some(k => profileText.includes(k));
+      if (isFood && hasTechContent) {
+        console.warn(`[Profile Sanity] Corrupted profile detected for "${businessName}" (${businessType}) — profile mentions tech/AI but business is food. Ignoring profile data.`);
+        return true;
+      }
+      return false;
+    })();
+    const safeProfile = isProfileCorrupted ? undefined : richProfile;
+
     const profileBlock = [
-      richProfile?.description && `Business description: ${richProfile.description}`,
-      richProfile?.targetAudience && `Target audience: ${richProfile.targetAudience}`,
-      richProfile?.uniqueValue && `Unique value proposition: ${richProfile.uniqueValue}`,
-      richProfile?.productsServices && `Products/services: ${richProfile.productsServices}`,
-      richProfile?.socialGoal && `Social media goal: ${richProfile.socialGoal}`,
-      richProfile?.contentTopics && `Preferred content topics: ${richProfile.contentTopics}`,
+      safeProfile?.description && `Business description: ${safeProfile.description}`,
+      safeProfile?.targetAudience && `Target audience: ${safeProfile.targetAudience}`,
+      safeProfile?.uniqueValue && `Unique value proposition: ${safeProfile.uniqueValue}`,
+      safeProfile?.productsServices && `Products/services: ${safeProfile.productsServices}`,
+      safeProfile?.socialGoal && `Social media goal: ${safeProfile.socialGoal}`,
+      safeProfile?.contentTopics && `Preferred content topics: ${safeProfile.contentTopics}`,
     ].filter(Boolean).join('\n');
 
     const researchPrompt = saturationMode ? `
@@ -607,6 +746,8 @@ BUSINESS PROFILE:
 - Location: ${location} (use the correct local timezone for scheduling)
 - Current stats: ${stats.followers} followers, ${stats.engagement}% engagement rate, ${stats.reach} monthly reach
 ${profileBlock ? profileBlock : ''}
+
+CRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about (e.g. for food: menu items, behind the kitchen, customer favourites, seasonal specials, local events).
 
 YOUR RESEARCH TASK: Analyse this exact business type and location to determine the absolute best saturation campaign strategy. Consider:
 1. INDUSTRY-SPECIFIC peak engagement windows for ${businessType} businesses — when are their customers most active on Facebook vs Instagram?
@@ -643,17 +784,19 @@ BUSINESS PROFILE:
 - Current stats: ${stats.followers} followers, ${stats.engagement}% engagement rate, ${stats.reach} monthly reach, ${stats.postsLast30Days} posts last 30 days
 ${profileBlock ? profileBlock : ''}
 
-YOUR RESEARCH TASK: Using your knowledge of social media algorithms, industry benchmarks, and audience behaviour data, produce a precise strategy for this business. Research:
+CRITICAL: You are creating content for "${businessName}", which is a ${businessType}. ALL content pillars, topics, and posts MUST be about THIS business and its industry (${businessType}). NEVER generate content about social media marketing, AI tools, web design, software, or any topic unrelated to ${businessType}. Every pillar must be something a ${businessType} business would actually post about.
+
+YOUR RESEARCH TASK: Using your knowledge of social media algorithms, industry benchmarks, and audience behaviour data, produce a precise strategy for this ${businessType} business. Research:
 
 1. OPTIMAL POSTING TIMES: Based on data for ${businessType} businesses in ${location} — when are their specific customers (${richProfile?.targetAudience || 'local consumers'}) most active? Consider work schedules, commute times, lunch breaks, and evening patterns for this location.
 
 2. BEST DAYS: Which days of the week consistently produce highest engagement for ${businessType} businesses? Factor in local events, pay cycles, and industry patterns.
 
-3. CONTENT PILLARS: What are the 5 most effective content categories for ${businessType} businesses to build authority, trust and sales? Be specific to this industry.
+3. CONTENT PILLARS: What are the 5 most effective content categories specifically for a ${businessType} business? Examples for food businesses: Menu Highlights, Behind the Kitchen, Customer Favourites, Local Events/Markets, Seasonal Specials. Be specific to the ${businessType} industry — NOT about marketing, AI, or technology.
 
 4. HASHTAG RESEARCH: Produce a 4-tier hashtag strategy (mega/large/medium/niche) tailored to ${businessType} in ${location}. Include local area hashtags. Research which hashtags are actively used by the target audience.
 
-5. POST FORMAT MIX: What ratio of image posts vs video/Reels vs text posts performs best for this business type on Facebook and Instagram currently?
+5. POST FORMAT MIX: What ratio of image posts vs text posts performs best for this business type on Facebook and Instagram currently?
 
 6. CAPTION STYLE: What caption length, structure, and call-to-action format produces highest engagement for this industry? (e.g. question at end, story format, list format, etc.)
 
@@ -708,8 +851,9 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     let research: any = {};
     onPhase?.('researching');
     try {
-      const researchRaw = extractJson((await withTimeout(callAI(researchPrompt, { temperature: 0.5, maxTokens: 4096, responseFormat: 'json' }), 90000)));
-      if (researchRaw) research = JSON.parse(sanitizeJson(researchRaw));
+      const researchText = await withTimeout(callAI(researchPrompt, { temperature: 0.5, maxTokens: 4096, responseFormat: 'json' }), 90000);
+      const researchParsed = parseAiJson(researchText);
+      if (researchParsed) research = researchParsed;
     } catch {
       research = saturationMode ? saturationFallback : normalFallback;
     }
@@ -771,6 +915,7 @@ Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().spl
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
 ${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
+CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
@@ -790,7 +935,7 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: 10-15 per post, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: specific, vivid, production-quality description of the visual for this exact post.
+7. imagePrompt: specific, vivid, production-quality description of a real photo for THIS ${businessType} business. Must show actual ${businessType} products, scenes, or people — NEVER generic stock imagery, tech/office scenes, or anything unrelated to ${businessType}.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
@@ -818,6 +963,7 @@ Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().spl
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
 ${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${quick24hExtra}${highlightsExtra}
+CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
 - Best days: ${(research.bestDays || normalFallback.bestDays).join(', ')} | Avoid: ${(research.worstDays || []).join(', ')}
@@ -827,7 +973,7 @@ RESEARCH INSIGHTS — apply every finding precisely:
 - Hashtag pool (mix ALL tiers, 8-12 per post): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
 - Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Platform split: ${fbCount} Facebook, ${igCount} Instagram
-- Post format mix: ${JSON.stringify(research.postFormatMix || { image: 60, video: 25, text: 15 })}
+- Post format mix: ${JSON.stringify(includeVideos ? (research.postFormatMix || { image: 50, video: 30, text: 20 }) : { image: 70, text: 30 })}
 - Key engagement tactic: ${research.engagementTips || 'Ask a question every post'}
 ${videoInstructions}
 RULES:
@@ -837,7 +983,7 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: 8-12 per post, mix all 4 tiers + local. Vary the set per post — no identical hashtag lists.
-7. imagePrompt: ultra-specific, production-quality visual description tailored to this exact post topic.
+7. imagePrompt: ultra-specific, production-quality visual description of a real photo for THIS ${businessType} business. Must show actual ${businessType} products, scenes, or people — NEVER generic stock imagery, tech/office scenes, or anything unrelated to ${businessType}.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 
@@ -865,8 +1011,8 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     onPhase?.('writing');
     // Video posts with scripts/shots need much more output tokens than the default 2048
     const outputTokens = includeVideos ? 8192 : (effectivePosts > 7 ? 6144 : 4096);
-    const raw = extractJson(await withTimeout(callAI(prompt, { temperature: 0.75, maxTokens: outputTokens, responseFormat: 'json' }), 120000));
-    const data = raw ? JSON.parse(sanitizeJson(raw)) : { posts: [], strategy: '' };
+    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.75, maxTokens: outputTokens, responseFormat: 'json' }), 120000);
+    const data = parseAiJson(scheduleText) || { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
 
     // Ensure no post is scheduled in the past.

@@ -143,10 +143,12 @@ export const CalendarGrid: React.FC<Props> = ({
                   )}
                 </div>
 
-                {/* Post pills */}
+                {/* Post pills — click to open post directly */}
                 <div className="space-y-0.5">
                   {fbPosts.slice(0, 2).map(p => (
-                    <div key={p.id} className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium
+                    <div key={p.id}
+                      onClick={(e) => { e.stopPropagation(); setSelectedDay(date); setSelectedPost(p); }}
+                      className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium cursor-pointer hover:ring-1 hover:ring-white/20 transition
                       ${p.status === 'Posted' ? 'bg-green-500/20 text-green-300' : p.status === 'Missed' ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'}
                     `}>
                       <Facebook size={8} className="inline mr-0.5" />
@@ -154,7 +156,9 @@ export const CalendarGrid: React.FC<Props> = ({
                     </div>
                   ))}
                   {igPosts.slice(0, 2).map(p => (
-                    <div key={p.id} className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium
+                    <div key={p.id}
+                      onClick={(e) => { e.stopPropagation(); setSelectedDay(date); setSelectedPost(p); }}
+                      className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium cursor-pointer hover:ring-1 hover:ring-white/20 transition
                       ${p.status === 'Posted' ? 'bg-green-500/20 text-green-300' : p.status === 'Missed' ? 'bg-red-500/20 text-red-300' : 'bg-pink-500/20 text-pink-300'}
                     `}>
                       <Instagram size={8} className="inline mr-0.5" />
