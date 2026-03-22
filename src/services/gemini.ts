@@ -337,9 +337,9 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   };
 
   // Build a clean, concrete visual prompt — emphasise photorealism to avoid "AI look"
-  const imagePrompt = `${prompt}, shot on Canon EOS R5, 35mm lens, natural ambient lighting, shallow depth of field, real photograph, editorial quality, no AI artifacts, no plastic skin, no oversaturated colours`;
+  const imagePrompt = `RAW photo, ${prompt}, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, imperfect composition, realistic textures, matte finish, editorial food photography style, unedited look`;
 
-  // ── 1. fal.ai FLUX Schnell — primary, fast, high-quality ──────────
+  // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
     console.log('fal.ai FLUX →', prompt.substring(0, 80));
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
