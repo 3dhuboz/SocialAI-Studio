@@ -89,11 +89,14 @@ const parseAiJson = (raw: string): any => {
   }
 };
 
+const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
+  || 'https://socialai-api.steve-700.workers.dev';
+
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
 ): Promise<string> => {
-  const res = await fetch(`/api/ai/generate`, {
+  const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

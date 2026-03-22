@@ -728,9 +728,21 @@ const Dashboard: React.FC = () => {
       // Prevents agency profile from accidentally overwriting client profiles during workspace switches
       if (activeClientId) {
         const client = clients.find(c => c.id === activeClientId);
-        if (client && profile.name && profile.name !== client.name && profile.name !== CLIENT.defaultBusinessName) {
-          console.warn(`[Profile Save Guard] Blocked save — profile name "${profile.name}" doesn't match client "${client.name}". Likely a stale agency profile during workspace switch.`);
-          return;
+        if (client) {
+          // Block save if profile name doesn't match client name (fuzzy: ignore case/punctuation)
+          const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const profileNorm = normName(profile.name || '');
+          const clientNorm = normName(client.name || '');
+          const defaultNorm = normName(CLIENT.defaultBusinessName);
+          if (profileNorm && profileNorm !== clientNorm && profileNorm !== defaultNorm) {
+            console.warn(`[Profile Save Guard] Blocked save — profile "${profile.name}" doesn't match client "${client.name}"`);
+            return;
+          }
+          // Block save if profile type doesn't match the client's business type
+          if (profile.type && client.businessType && normName(profile.type) !== normName(client.businessType)) {
+            console.warn(`[Profile Save Guard] Blocked save — profile type "${profile.type}" doesn't match client type "${client.businessType}"`);
+            return;
+          }
         }
       }
       upsertActiveWorkspace({ profile }).catch(() => {});
