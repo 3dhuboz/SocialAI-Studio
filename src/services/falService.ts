@@ -1,4 +1,6 @@
-const PROXY = '/api/fal-proxy';
+const WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
+  || 'https://socialai-api.steve-700.workers.dev';
+const PROXY = `${WORKER}/api/fal-proxy`;
 
 const proxyHeaders = () => {
   const key = localStorage.getItem('sai_fal_key');

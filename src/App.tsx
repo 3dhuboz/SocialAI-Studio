@@ -1507,7 +1507,8 @@ const Dashboard: React.FC = () => {
                 text,
                 undefined,
                 new Date(sp.scheduledFor).toISOString(),
-                mediaItems
+                mediaItems,
+                lateAccountIds
               );
               if (lateResult?.id) await db.updatePost(batchPostId, { latePostId: lateResult.id } as any);
             } catch (lateErr: any) {
