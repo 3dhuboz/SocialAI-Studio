@@ -1,4 +1,6 @@
-const PROXY = '/api/late-proxy';
+const WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
+  || 'https://socialai-api.steve-700.workers.dev';
+const PROXY = `${WORKER}/api/late-proxy`;
 
 const safeJson = async (res: Response) => {
   const text = await res.text();
