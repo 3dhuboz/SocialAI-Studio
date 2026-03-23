@@ -46,7 +46,7 @@ export const LateConnectButton: React.FC<Props> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId, isConnected]);
 
-  const handleConnect = async () => {
+  const handleConnect = async (connectPlatform: 'facebook' | 'instagram' = 'facebook') => {
     setStep('creating');
     setError('');
     try {
@@ -75,7 +75,7 @@ export const LateConnectButton: React.FC<Props> = ({
       // ── Standard mode: Late hosts page selection UI ───────────────────
       setStep('connecting');
       const redirectUrl = `${window.location.origin}${window.location.pathname}?late_cb=1`;
-      const authUrl = await LateService.getConnectUrl(pid, 'facebook', redirectUrl);
+      const authUrl = await LateService.getConnectUrl(pid, connectPlatform, redirectUrl);
 
       // Snapshot accounts BEFORE connecting so we can diff after
       let accountsBefore: { id: string; platform: string; name?: string }[] = [];
@@ -203,13 +203,24 @@ export const LateConnectButton: React.FC<Props> = ({
             <X size={16} />
           </button>
         </div>
-        <button
-          onClick={handleConnect}
-          disabled={step === 'connecting' || step === 'waiting'}
-          className="w-full text-[11px] text-white/25 hover:text-white/50 transition py-1"
-        >
-          Reconnect or add Instagram →
-        </button>
+        <div className="flex gap-2 w-full">
+          <button
+            onClick={() => handleConnect('facebook')}
+            disabled={step === 'connecting' || step === 'waiting'}
+            className="flex-1 text-[11px] text-white/25 hover:text-blue-300 transition py-1"
+          >
+            Reconnect Facebook →
+          </button>
+          {!connectedPlatforms.includes('instagram') && (
+            <button
+              onClick={() => handleConnect('instagram')}
+              disabled={step === 'connecting' || step === 'waiting'}
+              className="flex-1 text-[11px] text-white/25 hover:text-pink-300 transition py-1"
+            >
+              + Connect Instagram →
+            </button>
+          )}
+        </div>
       </div>
     );
   }

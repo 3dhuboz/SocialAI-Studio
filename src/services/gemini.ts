@@ -873,9 +873,26 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     }
 
     const postsPerDay = saturationMode ? Math.ceil(effectivePosts / windowDays) : null;
-    const postingWindows = saturationMode
+
+    // Validate posting times — reject anything outside 6:00 AM – 9:30 PM
+    const isReasonableTime = (t: string): boolean => {
+      const m = t.match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return false;
+      const h = parseInt(m[1], 10);
+      const min = parseInt(m[2], 10);
+      const totalMins = h * 60 + min;
+      return totalMins >= 360 && totalMins <= 1290; // 6:00 AM to 9:30 PM
+    };
+    const rawWindows = saturationMode
       ? (research.dailyPostingWindows || saturationFallback.dailyPostingWindows)
       : (research.bestPostingTimes || normalFallback.bestPostingTimes);
+    const postingWindows = (rawWindows as string[]).filter(isReasonableTime);
+    // If ALL researched times were unreasonable, use safe defaults
+    if (postingWindows.length === 0) {
+      postingWindows.push(...(saturationMode
+        ? saturationFallback.dailyPostingWindows
+        : normalFallback.bestPostingTimes));
+    }
 
     const buildHashtagPool = (r: any) => {
       const tiers = r.hashtagTiers;
@@ -1025,7 +1042,20 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     posts = posts.map((post) => {
       if (!post.scheduledFor) return post;
       const t = new Date(post.scheduledFor);
-      if (t >= thirtyMinsFromNow) return post; // already in the future
+
+      // Fix unreasonable hours (before 6 AM or after 9:30 PM) — move to nearest sensible time
+      const h = t.getHours();
+      const totalMins = h * 60 + t.getMinutes();
+      if (totalMins < 360) { // before 6:00 AM → move to 9:00 AM same day
+        t.setHours(9, 0, 0, 0);
+      } else if (totalMins > 1290) { // after 9:30 PM → move to 9:00 AM next day
+        t.setDate(t.getDate() + 1);
+        t.setHours(9, 0, 0, 0);
+      }
+
+      if (t >= thirtyMinsFromNow) {
+        return { ...post, scheduledFor: t.toISOString().slice(0, 19) };
+      }
       // Keep the same HH:MM:SS but advance by whole days until it clears the threshold
       const msPerDay = 24 * 60 * 60 * 1000;
       const daysToAdd = Math.ceil((thirtyMinsFromNow.getTime() - t.getTime()) / msPerDay);

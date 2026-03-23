@@ -1,6 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Brain, Image, Video, RefreshCw, Zap, Activity, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
 
+const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
+  || 'https://socialai-api.steve-700.workers.dev';
+
 interface OpenRouterStats {
   ok: boolean;
   label?: string | null;
@@ -76,7 +79,7 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
     if (!isSuperAdmin) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/ai/stats');
+      const res = await fetch(`${AI_WORKER}/api/ai/stats`);
       const data: OpenRouterStats = await res.json();
       setStats(data);
       setLastFetched(new Date());
