@@ -965,7 +965,7 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST be a literal description of a real photograph of ${businessName}'s actual products or workspace. Format: "[specific product/item] on [surface/setting], [lighting], [angle]". Example for a BBQ business: "glistening smoked brisket slices on a wooden cutting board, warm natural light, close-up overhead shot". NEVER use abstract concepts, party scenes, people's faces, concerts, neon lights, or anything unrelated to ${businessType} products.
+7. imagePrompt: MUST be a literal description of a real photograph matching ${businessName}'s ${businessType} business. Format: "[specific product/item/scene] on [surface/setting], [lighting], [angle]". Use the IMAGE PROMPT RULES from the research data above — follow the examples and avoid list EXACTLY. ${bd.imagePromptAvoid}
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
@@ -1013,7 +1013,7 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST be a literal description of a real photograph of ${businessName}'s actual products or workspace. Format: "[specific product/item] on [surface/setting], [lighting], [angle]". Example for a BBQ business: "glistening smoked brisket slices on a wooden cutting board, warm natural light, close-up overhead shot". NEVER use abstract concepts, party scenes, people's faces, concerts, neon lights, or anything unrelated to ${businessType} products.
+7. imagePrompt: MUST be a literal description of a real photograph matching ${businessName}'s ${businessType} business. Format: "[specific product/item/scene] on [surface/setting], [lighting], [angle]". Use the IMAGE PROMPT RULES from the research data above — follow the examples and avoid list EXACTLY. ${bd.imagePromptAvoid}
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 

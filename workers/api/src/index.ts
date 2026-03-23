@@ -732,7 +732,60 @@ app.post('/api/facebook-exchange-token', async (c) => {
   });
 });
 
-// ── fal.ai Proxy ────────────────────────────────────────────────────────────────
+// ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────────
+app.all('/api/fal-proxy', async (c) => {
+  const apiKey = c.env.FAL_API_KEY;
+  if (!apiKey) return c.json({ error: 'fal.ai API key not configured' }, 401);
+  const url = new URL(c.req.url);
+  const action = url.searchParams.get('action');
+  const authHeader = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
+
+  if (action === 'generate-image' && c.req.method === 'POST') {
+    const { prompt } = await c.req.json() as any;
+    if (!prompt) return c.json({ error: 'prompt is required' }, 400);
+    const res = await fetch('https://fal.run/fal-ai/flux/dev', {
+      method: 'POST', headers: authHeader,
+      body: JSON.stringify({ prompt, image_size: 'square_hd', num_inference_steps: 25, num_images: 1, enable_safety_checker: true, guidance_scale: 3.5 }),
+    });
+    const data = await res.json() as any;
+    if (!res.ok) return c.json({ error: data?.detail || data?.message || `fal.ai HTTP ${res.status}` }, res.status as any);
+    return c.json({ imageUrl: data?.images?.[0]?.url || null });
+  }
+  if (action === 'generate-video' && c.req.method === 'POST') {
+    const { promptText, promptImage, duration = 5 } = await c.req.json() as any;
+    if (!promptImage) return c.json({ error: 'promptImage is required' }, 400);
+    const res = await fetch('https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video', {
+      method: 'POST', headers: authHeader,
+      body: JSON.stringify({ prompt: promptText || 'cinematic, smooth motion', image_url: promptImage, duration: String(duration), aspect_ratio: '9:16' }),
+    });
+    const data = await res.json() as any;
+    if (!res.ok) return c.json({ error: data?.detail || data?.message || `fal.ai HTTP ${res.status}` }, res.status as any);
+    return c.json({ requestId: data.request_id, statusUrl: data.status_url || null, responseUrl: data.response_url || null });
+  }
+  if (action === 'task-status') {
+    const requestId = url.searchParams.get('requestId');
+    if (!requestId) return c.json({ error: 'requestId required' }, 400);
+    const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/${requestId}/status`, { headers: authHeader });
+    const data = await res.json() as any;
+    return c.json(data, { status: res.status as any });
+  }
+  if (action === 'task-result') {
+    const requestId = url.searchParams.get('requestId');
+    if (!requestId) return c.json({ error: 'requestId required' }, 400);
+    const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/${requestId}`, { headers: authHeader });
+    const data = await res.json() as any;
+    return c.json(data, { status: res.status as any });
+  }
+  if (action === 'get-credits') {
+    const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
+    const data = await res.json() as any;
+    if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
+    return c.json({ balance: data?.balance ?? data?.credits ?? null });
+  }
+  return c.json({ error: `Unknown action: ${action}` }, 400);
+});
+
+// ── fal.ai Proxy (path-based passthrough) ───────────────────────────────────
 app.all('/api/fal-proxy/*', async (c) => {
   const path = c.req.path.replace('/api/fal-proxy', '');
   const url = `https://api.fal.ai${path}`;
@@ -750,11 +803,13 @@ app.all('/api/fal-proxy/*', async (c) => {
   };
 
   const res = await fetch(url, { method, headers, body });
-  const data = res.headers.get('content-type')?.includes('application/json') 
-    ? await res.json() 
-    : await res.text();
-  
-  return c.body(String(data), { status: res.status as any });
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const data = await res.json();
+    return c.json(data as any, { status: res.status as any });
+  }
+  const text = await res.text();
+  return c.body(text, { status: res.status as any });
 });
 
 // ── Runway Proxy ───────────────────────────────────────────────────────────────
@@ -775,11 +830,13 @@ app.all('/api/runway-proxy/*', async (c) => {
   };
 
   const res = await fetch(url, { method, headers, body });
-  const data = res.headers.get('content-type')?.includes('application/json') 
-    ? await res.json() 
-    : await res.text();
-  
-  return c.body(String(data), { status: res.status as any });
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const data = await res.json();
+    return c.json(data as any, { status: res.status as any });
+  }
+  const text = await res.text();
+  return c.body(text, { status: res.status as any });
 });
 
 // ── PayPal Verify ───────────────────────────────────────────────────────────────
