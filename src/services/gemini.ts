@@ -1045,13 +1045,20 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const data = parseAiJson(scheduleText) || { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
 
-    // Ensure no post is scheduled in the past.
-    // Strategy: keep the AI's chosen time-of-day but advance the date until it's in the future.
-    // This preserves "best time" slots — e.g. 08:00 AM today → 08:00 AM tomorrow.
+    // Format a Date as local time string (NOT UTC) — "YYYY-MM-DDTHH:MM:SS"
+    const toLocalISO = (d: Date): string => {
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
+
+    // Ensure no post is scheduled in the past or at unreasonable hours.
     const thirtyMinsFromNow = new Date(now.getTime() + 30 * 60 * 1000);
     posts = posts.map((post) => {
       if (!post.scheduledFor) return post;
-      const t = new Date(post.scheduledFor);
+
+      // Parse the scheduledFor — treat as local time (no Z suffix)
+      const raw = post.scheduledFor.replace('Z', '');
+      const t = new Date(raw);
 
       // Fix unreasonable hours (before 6 AM or after 9:30 PM) — move to nearest sensible time
       const h = t.getHours();
@@ -1064,13 +1071,13 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       }
 
       if (t >= thirtyMinsFromNow) {
-        return { ...post, scheduledFor: t.toISOString().slice(0, 19) };
+        return { ...post, scheduledFor: toLocalISO(t) };
       }
       // Keep the same HH:MM:SS but advance by whole days until it clears the threshold
       const msPerDay = 24 * 60 * 60 * 1000;
       const daysToAdd = Math.ceil((thirtyMinsFromNow.getTime() - t.getTime()) / msPerDay);
       const bumped = new Date(t.getTime() + daysToAdd * msPerDay);
-      return { ...post, scheduledFor: bumped.toISOString().slice(0, 19) };
+      return { ...post, scheduledFor: toLocalISO(bumped) };
     });
 
     return { posts, strategy: data.strategy || '' };
