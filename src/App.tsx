@@ -219,6 +219,8 @@ const Dashboard: React.FC = () => {
 
   // Profile & Posts — init from localStorage cache for instant render
   const [profile, setProfile] = useState<BusinessProfile>(() => {
+    // In portal/client mode, NEVER use cached localStorage — always start with CLIENT defaults
+    if (CLIENT.clientMode) return DEFAULT_PROFILE;
     try {
       const s = localStorage.getItem('sai_profile');
       if (s) {
@@ -231,6 +233,7 @@ const Dashboard: React.FC = () => {
     } catch { return DEFAULT_PROFILE; }
   });
   const [posts, setPosts] = useState<SocialPost[]>(() => {
+    if (CLIENT.clientMode) return []; // Portal mode — don't load cached agency posts
     try { const s = localStorage.getItem('sai_posts'); return s ? JSON.parse(s) : []; } catch { return []; }
   });
   const [stats, setStats] = useState<ContentCalendarStats>(() => {
@@ -1550,7 +1553,10 @@ const Dashboard: React.FC = () => {
     setIsAnalyzing(true);
     try {
       const recentTopics = posts.slice(0, 10).map(p => p.topic || p.content.substring(0, 40));
-      const report = await generateInsightReport(profile.name, profile.type, profile.location || 'Australia', stats, recentTopics);
+      // In portal mode, always use CLIENT config to avoid stale cached profile data
+      const insightName = authMode === 'portal' ? (CLIENT.defaultBusinessName || profile.name) : profile.name;
+      const insightType = authMode === 'portal' ? (CLIENT.defaultBusinessType || profile.type) : profile.type;
+      const report = await generateInsightReport(insightName, insightType, profile.location || 'Australia', stats, recentTopics);
       setInsightReport(report);
       setInsightStale(false);
       if (user) {
@@ -2304,7 +2310,9 @@ const Dashboard: React.FC = () => {
                 <div>
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Platform</label>
                   <div className="flex rounded-xl overflow-hidden border border-white/10">
-                    {(['Instagram', 'Facebook'] as const).map(p => (
+                    {(['Instagram', 'Facebook'] as const)
+                      .filter(p => p === 'Facebook' ? !!lateAccountIds?.facebook : !!lateAccountIds?.instagram)
+                      .map(p => (
                       <button key={p} onClick={() => setPlatform(p)}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition ${
                           platform === p
@@ -2314,6 +2322,11 @@ const Dashboard: React.FC = () => {
                         {p === 'Instagram' ? <Instagram size={14} /> : <Facebook size={14} />} {p}
                       </button>
                     ))}
+                    {!lateAccountIds?.facebook && !lateAccountIds?.instagram && (
+                      <div className="flex items-center gap-2 px-4 py-2.5 text-xs text-white/30">
+                        No platforms connected. <button onClick={() => setActiveTab('settings')} className="text-amber-400 underline">Settings →</button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -2839,7 +2852,7 @@ const Dashboard: React.FC = () => {
             fbConnected={fbConnected}
             activePlan={effectivePlan}
             planName={planCfg?.name}
-            businessName={profile.name || CLIENT.defaultBusinessName}
+            businessName={authMode === 'portal' ? (CLIENT.defaultBusinessName || profile.name) : (profile.name || CLIENT.defaultBusinessName)}
             onGoCalendar={() => setActiveTab('calendar')}
             onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
             onGoSchedule={() => { setActiveTab('smart'); setSmartSubMode('autopilot'); }}
@@ -3082,31 +3095,54 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* Platform selector */}
+                {/* Platform selector — only show platforms that are connected */}
                 <div>
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Post to</label>
-                  <div className="flex rounded-xl overflow-hidden border border-white/10 w-fit">
-                    {(['both', 'facebook', 'instagram'] as const).map(opt => (
-                      <button
-                        key={opt}
-                        onClick={() => setAutopilotPlatform(opt)}
-                        className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold transition ${
-                          autopilotPlatform === opt
-                            ? opt === 'instagram'
-                              ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white'
-                              : opt === 'facebook'
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
-                            : 'bg-transparent text-white/30 hover:text-white/60'
-                        }`}
-                      >
-                        {opt === 'facebook' && <Facebook size={13} />}
-                        {opt === 'instagram' && <Instagram size={13} />}
-                        {opt === 'both' && <span className="text-[11px]">f + 📸</span>}
-                        {opt === 'both' ? 'Both' : opt.charAt(0).toUpperCase() + opt.slice(1)}
-                      </button>
-                    ))}
-                  </div>
+                  {(() => {
+                    const hasFb = !!lateAccountIds?.facebook;
+                    const hasIg = !!lateAccountIds?.instagram;
+                    const availableOpts = [
+                      ...(hasFb && hasIg ? ['both' as const] : []),
+                      ...(hasFb ? ['facebook' as const] : []),
+                      ...(hasIg ? ['instagram' as const] : []),
+                    ];
+                    // If nothing is connected, show all as disabled
+                    if (availableOpts.length === 0) {
+                      return (
+                        <div className="text-xs text-white/30 bg-white/3 border border-white/10 rounded-xl px-4 py-3">
+                          No platforms connected. <button onClick={() => setActiveTab('settings')} className="text-amber-400 underline">Connect in Settings →</button>
+                        </div>
+                      );
+                    }
+                    // Auto-select first available if current selection isn't valid
+                    if (!availableOpts.includes(autopilotPlatform) && availableOpts.length > 0) {
+                      setTimeout(() => setAutopilotPlatform(availableOpts[0]), 0);
+                    }
+                    return (
+                      <div className="flex rounded-xl overflow-hidden border border-white/10 w-fit">
+                        {availableOpts.map(opt => (
+                          <button
+                            key={opt}
+                            onClick={() => setAutopilotPlatform(opt)}
+                            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold transition ${
+                              autopilotPlatform === opt
+                                ? opt === 'instagram'
+                                  ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white'
+                                  : opt === 'facebook'
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
+                                : 'bg-transparent text-white/30 hover:text-white/60'
+                            }`}
+                          >
+                            {opt === 'facebook' && <Facebook size={13} />}
+                            {opt === 'instagram' && <Instagram size={13} />}
+                            {opt === 'both' && <span className="text-[11px]">f + 📸</span>}
+                            {opt === 'both' ? 'Both' : opt.charAt(0).toUpperCase() + opt.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Include Reels toggle */}

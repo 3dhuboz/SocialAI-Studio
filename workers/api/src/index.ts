@@ -535,7 +535,161 @@ app.post('/api/internal/cancellation', async (c) => {
   return c.json({ ok: true, id });
 });
 
+// ── OpenRouter Stats ──────────────────────────────────────────────────────────
+app.get('/api/ai/stats', async (c) => {
+  const apiKey = c.env.OPENROUTER_API_KEY;
+  if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500);
+  try {
+    const [keyRes, creditsRes] = await Promise.allSettled([
+      fetch('https://openrouter.ai/api/v1/auth/key', { headers: { Authorization: `Bearer ${apiKey}` } }),
+      fetch('https://openrouter.ai/api/v1/credits', { headers: { Authorization: `Bearer ${apiKey}` } }),
+    ]);
+    let keyData: any = null;
+    if (keyRes.status === 'fulfilled' && keyRes.value.ok) { try { keyData = await keyRes.value.json(); } catch {} }
+    let creditsData: any = null;
+    if (creditsRes.status === 'fulfilled' && creditsRes.value.ok) { try { creditsData = await creditsRes.value.json(); } catch {} }
+    return c.json({
+      ok: true,
+      label: keyData?.data?.label ?? null,
+      isFreeTier: keyData?.data?.is_free_tier ?? false,
+      usage: keyData?.data?.usage ?? null,
+      limit: keyData?.data?.limit ?? null,
+      limitRemaining: keyData?.data?.limit_remaining ?? null,
+      rateLimit: keyData?.data?.rate_limit ?? null,
+      totalCredits: creditsData?.data?.total_credits ?? null,
+      totalUsage: creditsData?.data?.total_usage ?? null,
+      model: 'google/gemini-2.0-flash-001',
+      provider: 'OpenRouter',
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message || 'Failed to fetch OpenRouter stats' }, 500);
+  }
+});
+
 // ── Late API Proxy ─────────────────────────────────────────────────────────────
+// Match both /api/late-proxy (query-param based) and /api/late-proxy/* (path based)
+app.all('/api/late-proxy', async (c) => {
+  // Forward to the Pages Function logic — query-param based actions
+  // This handler exists so portal builds (which route through the worker) can reach Late
+  const apiKey = c.env.LATE_API_KEY;
+  if (!apiKey) return c.json({ error: 'LATE_API_KEY not configured' }, 500);
+  const url = new URL(c.req.url);
+  const action = url.searchParams.get('action');
+  if (!action) return c.json({ error: 'action query param required' }, 400);
+
+  const LATE_BASE = 'https://getlate.dev/api/v1';
+  const authHeader = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
+  const getBody = async () => { try { return await c.req.json(); } catch { return {}; } };
+
+  if (action === 'connect-url') {
+    const profileId = url.searchParams.get('profileId');
+    const platform = url.searchParams.get('platform') || 'facebook';
+    const redirectUrl = url.searchParams.get('redirectUrl') || '';
+    if (!profileId) return c.json({ error: 'profileId required' }, 400);
+    const params = new URLSearchParams({ profileId, redirect_url: redirectUrl });
+    const res = await fetch(`${LATE_BASE}/connect/${platform}?${params}`, { headers: authHeader });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'create-profile') {
+    const { title } = await getBody() as any;
+    const res = await fetch(`${LATE_BASE}/profiles`, { method: 'POST', headers: authHeader, body: JSON.stringify({ name: title || 'SocialAI Client' }) });
+    const data = await res.json() as any;
+    if (data.profile) data.id = data.profile._id;
+    return c.json(data, { status: res.status as any });
+  }
+  if (action === 'list-profiles') {
+    const res = await fetch(`${LATE_BASE}/profiles`, { headers: authHeader });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'list-accounts' || action === 'get-accounts') {
+    const profileId = url.searchParams.get('profileId');
+    const accountsUrl = profileId ? `${LATE_BASE}/accounts?profileId=${encodeURIComponent(profileId)}` : `${LATE_BASE}/accounts`;
+    const res = await fetch(accountsUrl, { headers: authHeader });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'list-pages') {
+    const connectToken = url.searchParams.get('connectToken');
+    if (!connectToken) return c.json({ error: 'connectToken required' }, 400);
+    const res = await fetch(`${LATE_BASE}/connect/facebook/pages`, { headers: { ...authHeader, 'X-Connect-Token': connectToken } });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'select-page') {
+    const { connectToken, pageId } = await getBody() as any;
+    if (!connectToken || !pageId) return c.json({ error: 'connectToken and pageId required' }, 400);
+    const res = await fetch(`${LATE_BASE}/connect/facebook/select-page`, { method: 'POST', headers: { ...authHeader, 'X-Connect-Token': connectToken }, body: JSON.stringify({ pageId }) });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'post') {
+    const body = await getBody() as any;
+    const { profileId, platforms, text, mediaUrls, scheduleDate, mediaItems, accountIds } = body;
+    if (!platforms?.length || !text) return c.json({ error: 'platforms and text are required' }, 400);
+    const requestedPlatforms = platforms.map((p: string) => p.toLowerCase());
+    let platformObjs: any[] = [];
+    if (accountIds && typeof accountIds === 'object') {
+      platformObjs = requestedPlatforms.filter((p: string) => accountIds[p]).map((p: string) => ({ platform: p, accountId: accountIds[p] }));
+    }
+    if (platformObjs.length === 0 && profileId) {
+      try {
+        const filteredRes = await fetch(`${LATE_BASE}/accounts?profileId=${profileId}`, { headers: authHeader });
+        if (filteredRes.ok) {
+          const filteredData = await filteredRes.json() as any;
+          const filteredAccounts = filteredData.accounts || filteredData || [];
+          if (Array.isArray(filteredAccounts) && filteredAccounts.length > 0) {
+            platformObjs = requestedPlatforms.map((p: string) => {
+              const acc = filteredAccounts.find((a: any) => (a.platform || '').toLowerCase() === p);
+              const accId = acc?._id || acc?.id || acc?.accountId;
+              return acc && accId ? { platform: p, accountId: accId } : null;
+            }).filter(Boolean);
+          }
+        }
+      } catch {}
+    }
+    if (platformObjs.length === 0) return c.json({ error: 'Could not determine which page to post to.' }, 422);
+    const postBody = {
+      content: text, platforms: platformObjs,
+      ...(profileId ? { profileId } : {}),
+      ...(scheduleDate ? { scheduledFor: scheduleDate, timezone: 'UTC' } : { publishNow: true }),
+      ...(mediaItems?.length ? { mediaItems } : mediaUrls?.length ? { mediaUrls } : {}),
+    };
+    const res = await fetch(`${LATE_BASE}/posts`, { method: 'POST', headers: authHeader, body: JSON.stringify(postBody) });
+    const data = await res.json() as any;
+    if (!res.ok) return c.json({ error: data?.message || data?.error || `Late API HTTP ${res.status}` }, res.status as any);
+    return c.json(data, { status: res.status as any });
+  }
+  if (action === 'profile-info') {
+    const profileId = url.searchParams.get('profileId');
+    if (!profileId) return c.json({ error: 'profileId required' }, 400);
+    const res = await fetch(`${LATE_BASE}/profiles/${profileId}`, { headers: authHeader });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'analytics') {
+    const profileId = url.searchParams.get('profileId');
+    if (!profileId) return c.json({ error: 'profileId required' }, 400);
+    const res = await fetch(`${LATE_BASE}/analytics?profileId=${profileId}`, { headers: authHeader });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'media-presign') {
+    const { fileName, fileType } = await getBody() as any;
+    if (!fileName || !fileType) return c.json({ error: 'fileName and fileType required' }, 400);
+    const res = await fetch(`${LATE_BASE}/media/presign`, { method: 'POST', headers: authHeader, body: JSON.stringify({ fileName, fileType }) });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'list-posts') {
+    const profileId = url.searchParams.get('profileId');
+    const limit = url.searchParams.get('limit') || '30';
+    if (!profileId) return c.json({ error: 'profileId required' }, 400);
+    const res = await fetch(`${LATE_BASE}/profiles/${profileId}/posts?limit=${limit}&status=published`, { headers: authHeader });
+    return c.json(await res.json() as any, { status: res.status as any });
+  }
+  if (action === 'get-credits') {
+    const res = await fetch(`${LATE_BASE}/user/me`, { headers: authHeader });
+    const data = await res.json() as any;
+    if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
+    return c.json({ credits: data?.credits ?? null, plan: data?.plan ?? null, raw: data });
+  }
+  return c.json({ error: `Unknown action: ${action}` }, 400);
+});
+
 app.all('/api/late-proxy/*', async (c) => {
   const apiKey = c.env.LATE_API_KEY;
   if (!apiKey) return c.json({ error: 'LATE_API_KEY not configured' }, 500);

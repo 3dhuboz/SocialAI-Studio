@@ -131,7 +131,7 @@ export const CLIENT = {
   paypalManageUrl: 'https://www.paypal.com/myaccount/autopay',
 
   /** Max client workspaces per agency account */
-  agencyClientLimit: 5,
+  agencyClientLimit: 10,
 
   /**
    * CLIENT MODE: set true on white-label sites deployed for end-clients.

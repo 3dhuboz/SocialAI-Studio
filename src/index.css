@@ -84,10 +84,18 @@ body {
   border-color: rgba(0,0,0,0.08) !important;
 }
 
-/* Hero gradient area — but preserve gradient text (bg-clip-text) */
-[data-theme="light"] [class*="bg-gradient"]:not([class*="bg-clip-text"]) {
+/* Hero gradient area — but preserve gradient text (bg-clip-text) and buttons */
+[data-theme="light"] [class*="bg-gradient"]:not([class*="bg-clip-text"]):not(button):not(a) {
   background-image: none !important;
   background-color: #ffffff !important;
+}
+
+/* Force remove inline gradient styles on cards/sections */
+[data-theme="light"] [style*="linear-gradient"],
+[data-theme="light"] [style*="radial-gradient"] {
+  background-image: none !important;
+  background: #ffffff !important;
+  color: #1a1a1a !important;
 }
 
 /* Action cards — white bg, coloured title text matching original accent */

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Loader2, X, Zap, Facebook, Instagram, AlertCircle } from 'lucide-react';
+import { CheckCircle, Loader2, X, Zap, Facebook, Instagram, AlertCircle, RefreshCw } from 'lucide-react';
 import { LateService } from '../services/lateService';
 
 interface Props {
@@ -103,27 +103,29 @@ export const LateConnectButton: React.FC<Props> = ({
         if (urlAccountId) {
           console.log('[Connect] Got accountId from redirect URL:', urlAccountId);
           resolved[platform.toLowerCase()] = urlAccountId;
-          return resolved;
         }
-        // Method 2: diff accounts before/after — scoped to THIS profile only
+        // Method 2: scan ALL accounts for this profile — pick up both Facebook AND Instagram
         try {
-          // Always filter by finalPid so we never pick up another workspace's accounts
           const accountsAfter = await LateService.getAccounts(finalPid);
           console.log('[Connect] Accounts AFTER (profile-scoped):', JSON.stringify(accountsAfter.map(a => ({ id: a.id, platform: a.platform, name: a.name }))));
+
+          // Check for new accounts (diff)
           const newAccounts = accountsAfter.filter(a => !beforeIds.has(a.id));
           console.log('[Connect] NEW accounts (diff):', JSON.stringify(newAccounts));
           if (newAccounts.length > 0) {
             for (const acc of newAccounts) {
               resolved[acc.platform.toLowerCase()] = acc.id;
             }
-            return resolved;
           }
-          // Method 3: no new accounts found — take any account for this platform scoped to this profile
-          for (const p of [platform.toLowerCase()]) {
-            const matches = accountsAfter.filter(a => a.platform.toLowerCase() === p);
-            if (matches.length > 0) {
-              resolved[p] = matches[matches.length - 1].id;
-              console.log(`[Connect] Using profile-scoped ${p} account:`, resolved[p]);
+
+          // ALWAYS scan for all platforms — pick up Instagram even if it's not "new"
+          for (const p of ['facebook', 'instagram']) {
+            if (!resolved[p]) {
+              const matches = accountsAfter.filter(a => a.platform.toLowerCase() === p);
+              if (matches.length > 0) {
+                resolved[p] = matches[matches.length - 1].id;
+                console.log(`[Connect] Found ${p} account:`, resolved[p]);
+              }
             }
           }
         } catch (e) { console.warn('[Connect] Failed to resolve accountIds:', e); }
@@ -150,10 +152,10 @@ export const LateConnectButton: React.FC<Props> = ({
             const urlAccountId = params.get('accountId') || params.get('account_id') || '';
             popup.close();
             clearInterval(poll);
-            // Resolve accountIds then call onConnected
+            // Resolve accountIds then call onConnected — pass ALL detected platforms
             resolveAccountIds(platform, urlAccountId || undefined).then(accIds => {
               console.log('[Connect] Final resolved accountIds:', JSON.stringify(accIds));
-              onConnected(finalPid, [platform], accIds);
+              onConnected(finalPid, Object.keys(accIds), accIds);
             });
             setStep('idle');
           }
@@ -170,57 +172,80 @@ export const LateConnectButton: React.FC<Props> = ({
 
   // ── Already connected ────────────────────────────────────────────────
   if (isConnected) {
+    const hasFb = connectedPlatforms.includes('facebook');
+    const hasIg = connectedPlatforms.includes('instagram');
+    const isBusy = step === 'connecting' || step === 'waiting';
+
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-3 bg-green-500/8 border border-green-500/20 rounded-2xl p-4">
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0">
-            <Zap size={18} className="text-white" />
+        {/* Facebook connection */}
+        <div className={`flex items-center gap-3 ${hasFb ? 'bg-green-500/8 border-green-500/20' : 'bg-white/3 border-white/10'} border rounded-2xl p-4`}>
+          <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Facebook size={16} className="text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-white">Social accounts connected</p>
-            <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
-              <CheckCircle size={11} /> Auto-publishing active
-            </p>
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
-              {connectedPlatforms.includes('facebook') && (
-                <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Facebook size={9} />
-                  {connectedPageName ? connectedPageName : 'Facebook'}
-                </span>
-              )}
-              {connectedPlatforms.includes('instagram') && (
-                <span className="text-[10px] bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Instagram size={9} /> Instagram
-                </span>
-              )}
-            </div>
+            <p className="text-sm font-semibold text-white">Facebook</p>
+            {hasFb ? (
+              <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle size={10} /> {connectedPageName || 'Connected'} &middot; Auto-publishing active
+              </p>
+            ) : (
+              <p className="text-xs text-white/40 mt-0.5">Not connected</p>
+            )}
           </div>
-          <button
-            onClick={onDisconnect}
-            className="text-white/20 hover:text-red-400 transition p-1.5 flex-shrink-0 rounded-lg hover:bg-red-500/10"
-            title="Disconnect social accounts"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="flex gap-2 w-full">
-          <button
-            onClick={() => handleConnect('facebook')}
-            disabled={step === 'connecting' || step === 'waiting'}
-            className="flex-1 text-[11px] text-white/25 hover:text-blue-300 transition py-1"
-          >
-            Reconnect Facebook →
-          </button>
-          {!connectedPlatforms.includes('instagram') && (
-            <button
-              onClick={() => handleConnect('instagram')}
-              disabled={step === 'connecting' || step === 'waiting'}
-              className="flex-1 text-[11px] text-white/25 hover:text-pink-300 transition py-1"
-            >
-              + Connect Instagram →
+          {hasFb ? (
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button onClick={() => handleConnect('facebook')} disabled={isBusy} className="text-[10px] text-white/25 hover:text-blue-300 transition px-2 py-1 rounded-lg hover:bg-blue-500/10" title="Reconnect">
+                <RefreshCw size={12} />
+              </button>
+              <button onClick={onDisconnect} className="text-white/20 hover:text-red-400 transition p-1 rounded-lg hover:bg-red-500/10" title="Disconnect Facebook">
+                <X size={13} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => handleConnect('facebook')} disabled={isBusy} className="text-xs font-semibold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-lg transition">
+              Connect
             </button>
           )}
         </div>
+
+        {/* Instagram connection */}
+        <div className={`flex items-center gap-3 ${hasIg ? 'bg-green-500/8 border-green-500/20' : 'bg-white/3 border-white/10'} border rounded-2xl p-4`}>
+          <div className="w-9 h-9 bg-gradient-to-br from-pink-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Instagram size={16} className="text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-white">Instagram</p>
+            {hasIg ? (
+              <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle size={10} /> Connected &middot; Auto-publishing active
+              </p>
+            ) : hasFb ? (
+              <p className="text-xs text-white/40 mt-0.5">Not connected &middot; Reconnect Facebook to auto-detect</p>
+            ) : (
+              <p className="text-xs text-white/40 mt-0.5">Connect Facebook first, then Instagram will auto-detect</p>
+            )}
+          </div>
+          {hasIg ? (
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button onClick={() => handleConnect('facebook')} disabled={isBusy} className="text-[10px] text-white/25 hover:text-pink-300 transition px-2 py-1 rounded-lg hover:bg-pink-500/10" title="Reconnect">
+                <RefreshCw size={12} />
+              </button>
+            </div>
+          ) : hasFb ? (
+            <button onClick={() => handleConnect('facebook')} disabled={isBusy} className="text-xs font-semibold text-pink-400 hover:text-pink-300 bg-pink-500/10 hover:bg-pink-500/20 px-3 py-1.5 rounded-lg transition" title="Reconnect Facebook to detect linked Instagram">
+              Detect
+            </button>
+          ) : null}
+        </div>
+
+        {/* Loading states */}
+        {isBusy && (
+          <div className="flex items-center justify-center gap-2 text-xs text-white/40 py-2">
+            <Loader2 size={14} className="animate-spin" />
+            {step === 'connecting' ? 'Opening connection...' : 'Waiting — select your page in the popup...'}
+          </div>
+        )}
       </div>
     );
   }
