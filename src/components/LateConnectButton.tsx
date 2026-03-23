@@ -220,23 +220,21 @@ export const LateConnectButton: React.FC<Props> = ({
               <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
                 <CheckCircle size={10} /> Connected &middot; Auto-publishing active
               </p>
-            ) : hasFb ? (
-              <p className="text-xs text-white/40 mt-0.5">Not connected &middot; Reconnect Facebook to auto-detect</p>
             ) : (
-              <p className="text-xs text-white/40 mt-0.5">Connect Facebook first, then Instagram will auto-detect</p>
+              <p className="text-xs text-white/40 mt-0.5">Not connected &middot; Login to connect</p>
             )}
           </div>
           {hasIg ? (
             <div className="flex items-center gap-1.5 flex-shrink-0">
-              <button onClick={() => handleConnect('facebook')} disabled={isBusy} className="text-[10px] text-white/25 hover:text-pink-300 transition px-2 py-1 rounded-lg hover:bg-pink-500/10" title="Reconnect">
+              <button onClick={() => handleConnect('instagram')} disabled={isBusy} className="text-[10px] text-white/25 hover:text-pink-300 transition px-2 py-1 rounded-lg hover:bg-pink-500/10" title="Reconnect Instagram">
                 <RefreshCw size={12} />
               </button>
             </div>
-          ) : hasFb ? (
-            <button onClick={() => handleConnect('facebook')} disabled={isBusy} className="text-xs font-semibold text-pink-400 hover:text-pink-300 bg-pink-500/10 hover:bg-pink-500/20 px-3 py-1.5 rounded-lg transition" title="Reconnect Facebook to detect linked Instagram">
-              Detect
+          ) : (
+            <button onClick={() => handleConnect('instagram')} disabled={isBusy} className="text-xs font-semibold text-pink-400 hover:text-pink-300 bg-pink-500/10 hover:bg-pink-500/20 px-3 py-1.5 rounded-lg transition">
+              Connect
             </button>
-          ) : null}
+          )}
         </div>
 
         {/* Loading states */}
