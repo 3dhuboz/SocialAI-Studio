@@ -223,4 +223,16 @@ export const CLIENT = {
       badge: 'For Agencies',
     },
   ],
-} as const;
+};
+
+// ── Per-deployment overrides via VITE_CLIENT_CONFIG env var ──────────────────
+// Set VITE_CLIENT_CONFIG as a JSON string in CF Pages env vars to override
+// any of the above defaults for a specific white-label deployment.
+// e.g. {"defaultBusinessName":"O'Connor Agriculture","accentColor":"#4E7732"}
+try {
+  const raw = (import.meta as any).env?.VITE_CLIENT_CONFIG;
+  if (raw) {
+    const overrides = JSON.parse(raw);
+    Object.assign(CLIENT, overrides);
+  }
+} catch { /* ignore parse errors */ }
