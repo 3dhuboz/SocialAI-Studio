@@ -268,7 +268,7 @@ export const LateConnectButton: React.FC<Props> = ({
       )}
 
       <button
-        onClick={handleConnect}
+        onClick={() => handleConnect('facebook')}
         disabled={isBusy}
         className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 hover:opacity-90 disabled:opacity-60 text-white font-bold py-4 px-6 rounded-2xl text-sm transition shadow-lg shadow-purple-900/30"
       >

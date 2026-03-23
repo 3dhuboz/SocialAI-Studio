@@ -1,3 +1,5 @@
+import { getIndustryBenchmarks, formatBenchmarksForPrompt, HASHTAG_LIMITS } from '../data/socialMediaResearch';
+
 // Sanitise raw AI JSON output — fixes common issues that cause JSON.parse to fail
 // IMPORTANT: Do NOT replace smart double quotes with straight quotes here — that breaks
 // JSON parsing by prematurely ending string values. Smart double quotes (U+201C/201D)
@@ -213,7 +215,7 @@ export const generateSocialPost = async (
 - Body: 80–150 characters is the engagement sweet spot. Max 300 for storytelling. NEVER exceed 400.
 - Structure: attention-grabbing hook first line → 1–2 body lines → CTA last.
 - Voice: conversational, human, first-person. Not a brand announcement. Write like a real person talking to a friend.
-- Hashtags: EXACTLY 3–5 niche-relevant hashtags. More than 5 actively reduces reach.
+- Hashtags: EXACTLY 1–3 niche-relevant hashtags. More than 3 actively reduces reach on Facebook.
 - Emojis: 2–4 placed naturally mid-sentence or at line breaks. Not at the end of every line.
 - CTA: end with a comment-driving question OR a soft "DM us" / "tap the link". Never hard-sell.
 - Line breaks: use short paragraphs (1–2 sentences each) with blank lines between them for readability.
@@ -221,7 +223,7 @@ export const generateSocialPost = async (
     : `INSTAGRAM POST RULES (2025/26 Reels-first algorithm — follow strictly):
 - Hook: the first 125 characters must stop the scroll — bold claim, intriguing question, or surprising fact.
 - Body: 150–280 characters total. Reels-era captions are shorter; save-worthy value drives shares.
-- Hashtags: EXACTLY 5–8. Mix tiers: 1 mega (1M+ posts), 2 large (100k–1M), 3 medium (10k–100k), 2 niche (<10k).
+- Hashtags: EXACTLY 3–5 relevant hashtags. Mix: 1 branded/niche + 2-3 industry + 1 location. Do NOT use more than 5.
 - Emojis: 3–5 used to break lines and add rhythm. Not filler.
 - CTA: prioritise saves ("Save this ✓"), shares ("Tag someone"), or comments (open question).
 - Avoid: hashtag dumps >10 (penalised), generic captions, posting without a scroll-stopping hook.`;
@@ -741,24 +743,29 @@ export const generateSmartSchedule = async (
       safeProfile?.contentTopics && `Preferred content topics: ${safeProfile.contentTopics}`,
     ].filter(Boolean).join('\n');
 
+    // ── Inject real research data ──
+    const benchmarks = getIndustryBenchmarks(businessType, location);
+    const benchmarkBlock = formatBenchmarksForPrompt(benchmarks.data, benchmarks.timezone);
+
     const researchPrompt = saturationMode ? `
-You are a world-class social media growth strategist and data analyst specialising in HIGH-FREQUENCY SATURATION posting for small businesses.
+You are a world-class social media growth strategist specialising in HIGH-FREQUENCY SATURATION posting for small businesses.
 
 BUSINESS PROFILE:
 - Name: "${businessName}" — ${businessType}
-- Location: ${location} (use the correct local timezone for scheduling)
+- Location: ${location}
 - Current stats: ${stats.followers} followers, ${stats.engagement}% engagement rate, ${stats.reach} monthly reach
 ${profileBlock ? profileBlock : ''}
 
-CRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about (e.g. for food: menu items, behind the kitchen, customer favourites, seasonal specials, local events).
+${benchmarkBlock}
 
-YOUR RESEARCH TASK: Analyse this exact business type and location to determine the absolute best saturation campaign strategy. Consider:
-1. INDUSTRY-SPECIFIC peak engagement windows for ${businessType} businesses — when are their customers most active on Facebook vs Instagram?
-2. LOCAL TIMING: Adjust all times for the ${location} timezone and local lifestyle patterns (work commute, lunch, evening routines)
-3. CONTENT FATIGUE PREVENTION: How to post 3-5x/day without alienating followers — what variety rules prevent unfollows?
-4. ALGORITHM MAXIMISATION: What content mix (Reels vs static vs Stories vs carousels) performs best for rapid reach growth for this business type?
-5. HASHTAG STRATEGY: Research the top-performing hashtag tiers (mega 1M+, large 100k-1M, medium 10k-100k, niche <10k) specifically for ${businessType} businesses in ${location}. Mix all four tiers per post.
-6. ENGAGEMENT BAIT TACTICS: What question formats, CTAs and content hooks generate the most comments/shares for this industry?
+CRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about.
+
+YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, build a saturation campaign strategy for this specific ${businessType} business. You MUST use the researched posting times and days — do NOT invent different times. Adapt the content pillars and hashtags to this specific business while staying within the research guidelines.
+1. Use the researched posting times from the data above — spread posts across those windows
+2. CONTENT FATIGUE PREVENTION: How to post 3-5x/day without alienating followers
+3. ALGORITHM MAXIMISATION: What content mix performs best for rapid reach growth
+4. Hashtag counts: Facebook ${HASHTAG_LIMITS.facebook.optimal} (max ${HASHTAG_LIMITS.facebook.max}), Instagram ${HASHTAG_LIMITS.instagram.optimal} (max ${HASHTAG_LIMITS.instagram.max})
+5. ENGAGEMENT HOOKS: What question formats and CTAs generate the most comments for this industry?
 
 Respond with ONLY a raw JSON object — no markdown, no code fences:
 {
@@ -779,23 +786,24 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
   "engagementHooks": ["hook1", "hook2", "hook3"],
   "localHashtags": ["#localTag1", "#localTag2", "#localTag3"]
 }` : `
-You are a world-class social media strategist, data analyst and content researcher for small businesses.
+You are a world-class social media strategist and content researcher for small businesses.
 
 BUSINESS PROFILE:
 - Name: "${businessName}" — ${businessType}
-- Location: ${location} (use the correct local timezone for ALL scheduled times)
+- Location: ${location}
 - Current stats: ${stats.followers} followers, ${stats.engagement}% engagement rate, ${stats.reach} monthly reach, ${stats.postsLast30Days} posts last 30 days
 ${profileBlock ? profileBlock : ''}
 
-CRITICAL: You are creating content for "${businessName}", which is a ${businessType}. ALL content pillars, topics, and posts MUST be about THIS business and its industry (${businessType}). NEVER generate content about social media marketing, AI tools, web design, software, or any topic unrelated to ${businessType}. Every pillar must be something a ${businessType} business would actually post about.
+${benchmarkBlock}
 
-YOUR RESEARCH TASK: Using your knowledge of social media algorithms, industry benchmarks, and audience behaviour data, produce a precise strategy for this ${businessType} business. Research:
+CRITICAL: You are creating content for "${businessName}", which is a ${businessType}. ALL content pillars, topics, and posts MUST be about THIS business. NEVER generate content about social media marketing, AI tools, web design, or technology.
 
-1. OPTIMAL POSTING TIMES: Based on data for ${businessType} businesses in ${location} — when are their specific customers (${richProfile?.targetAudience || 'local consumers'}) most active? Consider work schedules, commute times, lunch breaks, and evening patterns for this location.
+YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, refine the strategy for this specific ${businessType} business. You MUST use the researched posting times and best days — do NOT invent different times. Adapt content pillars to this specific business.
 
-2. BEST DAYS: Which days of the week consistently produce highest engagement for ${businessType} businesses? Factor in local events, pay cycles, and industry patterns.
-
-3. CONTENT PILLARS: What are the 5 most effective content categories specifically for a ${businessType} business? Examples for food businesses: Menu Highlights, Behind the Kitchen, Customer Favourites, Local Events/Markets, Seasonal Specials. Be specific to the ${businessType} industry — NOT about marketing, AI, or technology.
+1. POSTING TIMES: Use the researched times from the data above. Do NOT change them unless you have a strong, specific reason for this exact business.
+2. BEST DAYS: Use the researched days from the data above.
+3. CONTENT PILLARS: Adapt the recommended pillars to this specific business — use their products, services, and audience.
+4. Hashtag counts: Facebook ${HASHTAG_LIMITS.facebook.optimal} (max ${HASHTAG_LIMITS.facebook.max}), Instagram ${HASHTAG_LIMITS.instagram.optimal} (max ${HASHTAG_LIMITS.instagram.max}). Do NOT exceed these limits.
 
 4. HASHTAG RESEARCH: Produce a 4-tier hashtag strategy (mega/large/medium/niche) tailored to ${businessType} in ${location}. Include local area hashtags. Research which hashtags are actively used by the target audience.
 
@@ -831,24 +839,26 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
   "contentTopicsToAvoid": ["topic1", "topic2"]
 }`;
 
+    // Fallbacks use REAL research data instead of arbitrary defaults
+    const bd = benchmarks.data;
     const saturationFallback = {
-      dailyPostingWindows: ['07:00', '10:00', '12:30', '16:00', '19:30'],
-      contentVarietyStrategy: 'Rotate promo, value, story, entertainment, and UGC each day',
-      contentPillars: ['Product Showcase', 'Behind the Scenes', 'Customer Stories', 'Educational', 'Flash Deals', 'Trending/Seasonal', 'Community Engagement'],
-      hashtagThemes: ['small business', 'local community', 'daily deals', 'behind the scenes'],
+      dailyPostingWindows: bd.bestPostingTimes.facebook,
+      contentVarietyStrategy: bd.contentMix.description,
+      contentPillars: bd.contentMix.pillars,
+      hashtagThemes: bd.hashtagStrategy.sampleHashtags.industry.slice(0, 5),
       imageStyle: 'vibrant, clean background with natural lighting',
       platformSplit: { facebook: 40, instagram: 60 },
       saturationTactics: 'Post at every peak window daily, alternating content types so each post feels fresh.',
-      bestContentMix: '30% promotional, 30% value/educational, 20% entertainment, 20% behind-the-scenes/story'
+      bestContentMix: bd.contentMix.ratio
     };
     const normalFallback = {
-      bestPostingTimes: ['09:00', '12:00', '18:00'],
-      bestDays: ['Tuesday', 'Thursday', 'Saturday'],
-      contentPillars: ['Product Showcase', 'Behind the Scenes', 'Customer Stories', 'Educational', 'Seasonal/Trending'],
-      hashtagThemes: ['small business', 'local community', 'industry tips'],
+      bestPostingTimes: bd.bestPostingTimes.facebook,
+      bestDays: bd.bestDays.facebook,
+      contentPillars: bd.contentMix.pillars,
+      hashtagThemes: bd.hashtagStrategy.sampleHashtags.industry.slice(0, 5),
       imageStyle: 'vibrant, clean background with natural lighting',
       platformSplit: { facebook: 40, instagram: 60 },
-      engagementTips: 'Post consistently and respond to every comment within 2 hours.'
+      engagementTips: bd.engagementNotes
     };
 
     let research: any = {};
@@ -940,7 +950,7 @@ SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
 - Content pillars — ROTATE ALL: ${pillarsForPrompt.join(' | ')}
-- Hashtag pool (mix ALL tiers per post, 10-15 per post): ${hashtagPool || (saturationFallback as any).hashtagThemes?.join(', ')}
+- Hashtag pool (mix ALL tiers per post, Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}): ${hashtagPool || (saturationFallback as any).hashtagThemes?.join(', ')}
 - Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Image aesthetic: ${research.imageStyle || saturationFallback.imageStyle}
 - Saturation tactics: ${research.saturationTactics || saturationFallback.saturationTactics}
@@ -954,7 +964,7 @@ ABSOLUTE RULES:
 3. NEVER schedule two posts at the same time on the same day.
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
-6. Hashtags: 10-15 per post, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
+6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
 7. imagePrompt: MUST be a literal description of a real photograph of ${businessName}'s actual products or workspace. Format: "[specific product/item] on [surface/setting], [lighting], [angle]". Example for a BBQ business: "glistening smoked brisket slices on a wooden cutting board, warm natural light, close-up overhead shot". NEVER use abstract concepts, party scenes, people's faces, concerts, neon lights, or anything unrelated to ${businessType} products.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 
@@ -990,7 +1000,7 @@ RESEARCH INSIGHTS — apply every finding precisely:
 - Content pillars: ${pillarsForPrompt.join(' | ')}
 - Caption style: ${research.captionStyle || 'conversational, question at end, 3-4 sentences max'}
 - Image aesthetic: ${research.imageStyle || 'vibrant, natural lighting, authentic'} 
-- Hashtag pool (mix ALL tiers, 8-12 per post): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
+- Hashtag pool (mix ALL tiers, Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
 - Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Platform split: ${fbCount} Facebook, ${igCount} Instagram
 - Post format mix: ${JSON.stringify(includeVideos ? (research.postFormatMix || { image: 50, video: 30, text: 20 }) : { image: 70, text: 30 })}
@@ -1002,7 +1012,7 @@ RULES:
 3. Rotate through ALL content pillars — no pillar used more than twice in a row.
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
-6. Hashtags: 8-12 per post, mix all 4 tiers + local. Vary the set per post — no identical hashtag lists.
+6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
 7. imagePrompt: MUST be a literal description of a real photograph of ${businessName}'s actual products or workspace. Format: "[specific product/item] on [surface/setting], [lighting], [angle]". Example for a BBQ business: "glistening smoked brisket slices on a wooden cutting board, warm natural light, close-up overhead shot". NEVER use abstract concepts, party scenes, people's faces, concerts, neon lights, or anything unrelated to ${businessType} products.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
