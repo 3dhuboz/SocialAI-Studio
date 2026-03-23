@@ -1,24 +1,22 @@
 /// <reference types="vite/client" />
 /**
  * ─────────────────────────────────────────────────────────
- *  CLIENT CONFIG  —  Pickle Nick
- *  Deployed at: social.picklenick.au
- *  Netlify env: VITE_CLIENT_ID=picklenick
+ *  CLIENT CONFIG  —  Gladstone BBQ Festival
+ *  Deployed at: social.gladstonebbqfestival.com.au (or similar)
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
-  clientId: 'picklenick',
-  appName: 'Pickle Nick Social',
-  tagline: 'AI-powered social media — brined to perfection',
+  clientId: 'gladstonebbq',
+  appName: 'Gladstone BBQ Festival Social',
+  tagline: 'AI-powered social media — fuelling the festival fire',
 
-  defaultBusinessName: 'Pickle Nick',
-  defaultBusinessType: 'artisan deli & pickled goods',
-  defaultLocation: 'Australia',
-  defaultTone: 'Fun, quirky and food-loving',
-  defaultDescription: 'Handcrafted pickles, fermented goods and deli favourites. Small batch, big flavour.',
+  defaultBusinessName: 'Gladstone BBQ Festival',
+  defaultBusinessType: 'BBQ festival and community event',
+  defaultLocation: 'Gladstone, Queensland, Australia',
+  defaultTone: 'Exciting, community-focused and smoky',
+  defaultDescription: 'Gladstone\'s premier BBQ festival — bringing together the best pitmasters, live music, and community for an unforgettable day of low & slow.',
 
-  accentColor: '#b5513c',
-  theme: 'light' as const,
+  accentColor: '#d97706',
 
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',
@@ -76,7 +74,7 @@ export const CLIENT = {
         'Content calendar',
       ],
       limitations: ['Text posts only — no AI images'],
-      color: 'from-green-700 to-green-800',
+      color: 'from-amber-600 to-amber-700',
       badge: null,
     },
     {
@@ -94,7 +92,7 @@ export const CLIENT = {
         'Content calendar',
       ],
       limitations: [],
-      color: 'from-green-600 to-emerald-600',
+      color: 'from-amber-500 to-orange-500',
       badge: 'Most Popular',
     },
     {
@@ -113,7 +111,7 @@ export const CLIENT = {
         'Priority support',
       ],
       limitations: [],
-      color: 'from-emerald-600 to-teal-600',
+      color: 'from-orange-500 to-red-600',
       badge: 'Best Value',
     },
     {
@@ -132,7 +130,7 @@ export const CLIENT = {
         'Priority support',
       ],
       limitations: [],
-      color: 'from-green-700 to-green-900',
+      color: 'from-red-600 to-red-800',
       badge: 'For Agencies',
     },
   ],
