@@ -49,6 +49,8 @@ export interface IndustryBenchmarks {
     description: string;
   };
   engagementNotes: string;
+  imagePromptExamples: string[];
+  imagePromptAvoid: string;
   sources: string[];
 }
 
@@ -107,6 +109,14 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'Lead with mouth-watering food photography. 4 out of 5 posts should educate, entertain, or build community. Every 5th post can promote a deal, new menu item, or catering service.',
     },
     engagementNotes: 'Food content performs best with close-up, well-lit photography. Videos of food preparation (sizzle reels) get 2-3x more engagement than static images. Ask questions about favourite dishes to drive comments.',
+    imagePromptExamples: [
+      'glistening smoked brisket slices on a wooden cutting board, warm natural light, close-up overhead shot',
+      'pork belly lollipops on a rustic plate, smoky background, golden hour lighting',
+      'chef slicing meat at a food truck counter, steam rising, action shot',
+      'colourful BBQ platter with sides on a picnic table, outdoor setting, vibrant colours',
+      'close-up of pickled vegetables in glass jars, natural window light, artisan deli counter',
+    ],
+    imagePromptAvoid: 'NEVER show: people\'s faces, concerts, parties, office scenes, computers, abstract art, neon lights. ONLY show: food, cooking, kitchen, restaurant, market scenes.',
     sources: ['Sprout Social 2024 Best Times Report', 'Hootsuite 2024 Restaurant Social Media Guide', 'Later 2024 Food & Beverage Instagram Study'],
   },
 
@@ -140,6 +150,14 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'Show the farm, the land, the animals, the produce. Authenticity wins — real photos outperform polished marketing. Share the journey from paddock to plate.',
     },
     engagementNotes: 'Agricultural audiences value authenticity. Real farm photos outperform stock images. Seasonal content performs especially well — harvest time, new stock arrivals, weather updates.',
+    imagePromptExamples: [
+      'fresh cuts of premium beef on butcher paper, rustic wooden counter, warm lighting',
+      'farmland at golden hour with cattle grazing, wide landscape shot',
+      'box of fresh seasonal produce ready for delivery, kitchen bench, natural light',
+      'farmer inspecting crops in a green field, early morning light, authentic feel',
+      'meat display case in a butcher shop, clean presentation, professional lighting',
+    ],
+    imagePromptAvoid: 'NEVER show: computers, offices, technology, websites, abstract art, neon lights. ONLY show: farm scenes, fresh produce, meat cuts, rural landscapes, delivery boxes.',
     sources: ['Sprout Social 2024 Consumer Goods Report', 'Hootsuite 2024 Social Media for Agriculture', 'Buffer 2024 Small Business Social Study'],
   },
 
@@ -172,6 +190,13 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'Retail can afford slightly more promotional content than other industries. Product-focused posts with lifestyle context outperform plain product shots.',
     },
     engagementNotes: 'User-generated content (customer photos) drives 4x more engagement than branded content. Instagram Stories and Reels outperform feed posts for retail.',
+    imagePromptExamples: [
+      'beautifully arranged product display on a clean shelf, soft lighting, boutique interior',
+      'customer unboxing a package, hands visible, warm natural light, lifestyle shot',
+      'flat lay of products with props on a marble surface, overhead shot, styled arrangement',
+      'store interior with warm lighting, inviting atmosphere, shallow depth of field',
+    ],
+    imagePromptAvoid: 'NEVER show: food, farms, technology dashboards, abstract art. ONLY show: products, store interiors, packaging, lifestyle scenes with products.',
     sources: ['Sprout Social 2024 Retail Industry Report', 'Hootsuite 2024 eCommerce Guide', 'Later 2024 Retail Instagram Benchmarks'],
   },
 
@@ -204,6 +229,14 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'B2B and professional services need to lead with expertise. Thought leadership, case studies, and educational content build trust before any sales pitch.',
     },
     engagementNotes: 'LinkedIn may outperform Facebook/Instagram for B2B. On Facebook, educational carousels and short how-to videos get highest engagement. Avoid hard selling.',
+    imagePromptExamples: [
+      'modern website design displayed on a MacBook screen, clean desk, minimalist office, natural light',
+      'team meeting around a whiteboard with wireframes, professional office setting, candid feel',
+      'close-up of hands typing on a laptop keyboard, code or design on screen, shallow depth of field',
+      'before-and-after website redesign shown on a monitor, split screen layout, professional',
+      'person presenting a dashboard on a large screen in a modern office, warm lighting',
+    ],
+    imagePromptAvoid: 'NEVER show: food, farms, restaurants, BBQ, nature scenes without tech context. ONLY show: computers, websites, offices, technology, dashboards, team meetings, professional settings.',
     sources: ['Sprout Social 2024 B2B Social Report', 'Hootsuite 2024 Professional Services Guide', 'Buffer 2024 B2B Content Study'],
   },
 
@@ -236,6 +269,13 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'Health & wellness audiences want inspiration and education. Before/after transformations and quick tip videos drive highest engagement.',
     },
     engagementNotes: 'Instagram Reels showing quick exercises or recipes get 3-5x more reach than static posts. Early morning posts catch the pre-workout audience.',
+    imagePromptExamples: [
+      'person doing yoga in a bright studio, warm natural light, peaceful atmosphere',
+      'healthy meal prep bowls on a kitchen counter, colourful vegetables, overhead shot',
+      'gym equipment with morning sunlight streaming through windows, motivational vibe',
+      'personal trainer demonstrating an exercise, action shot, gym setting',
+    ],
+    imagePromptAvoid: 'NEVER show: junk food, offices, computers, technology. ONLY show: fitness activities, healthy food, wellness spaces, nature/outdoors for wellness.',
     sources: ['Sprout Social 2024 Health & Wellness Report', 'Later 2024 Fitness Instagram Study', 'Hootsuite 2024 Health Industry Guide'],
   },
 
@@ -267,6 +307,13 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'Events thrive on FOMO and excitement. Build momentum with countdown posts, vendor reveals, and throwback highlights. Increase frequency as the event approaches.',
     },
     engagementNotes: 'Post frequency should increase as the event date approaches. Video content from past events creates powerful FOMO. Tag vendors and performers for cross-promotion.',
+    imagePromptExamples: [
+      'bustling outdoor market with food stalls, colourful bunting, crowd atmosphere',
+      'live band performing on stage at a festival, evening lights, energy and excitement',
+      'vendor setting up a stall at dawn, behind-the-scenes preparation, warm light',
+      'aerial view of a festival grounds with tents and crowds, vibrant atmosphere',
+    ],
+    imagePromptAvoid: 'NEVER show: offices, computers, generic stock photos. ONLY show: event venues, crowds, performers, market stalls, festival atmosphere.',
     sources: ['Sprout Social 2024 Entertainment Industry Report', 'Hootsuite 2024 Event Marketing Guide'],
   },
 
@@ -299,6 +346,13 @@ const INDUSTRY_DATA: Record<string, IndustryBenchmarks> = {
       description: 'Focus on building trust and community first. Most of your content should provide value — only 1 in 5 posts should directly promote.',
     },
     engagementNotes: 'Consistency matters more than frequency. Posting 3-4 times per week consistently outperforms daily posting that drops off. Respond to every comment within 2 hours.',
+    imagePromptExamples: [
+      'small business storefront with an open sign, welcoming atmosphere, morning light',
+      'business owner working at their desk, authentic candid shot, warm lighting',
+      'product arrangement on a clean surface, professional photography, brand colours',
+      'team photo in a workspace, natural smiles, professional but authentic',
+    ],
+    imagePromptAvoid: 'NEVER show: anything unrelated to the specific business type. Match images to the actual products/services of the business.',
     sources: ['Sprout Social 2024 All-Industry Average', 'Buffer 2024 Small Business Report', 'CoSchedule 2024 Social Media Timing Study'],
   },
 };
@@ -404,5 +458,10 @@ CONTENT MIX:
   Recommended pillars: ${data.contentMix.pillars.join(' | ')}
 
 ENGAGEMENT INSIGHT: ${data.engagementNotes}
+
+IMAGE PROMPT RULES (CRITICAL — images must match the business):
+  ${data.imagePromptAvoid}
+  GOOD examples for this industry:
+${data.imagePromptExamples.map(e => `    - "${e}"`).join('\n')}
 `.trim();
 }
