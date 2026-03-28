@@ -323,7 +323,21 @@ app.delete('/api/db/posts', async (c) => {
   if (clientId) {
     await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
   } else {
-    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND (client_id IS NULL OR client_id = \'\')').bind(uid).run();
+    // Delete all posts for own workspace (no client_id) — match both NULL and empty string
+    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND (client_id IS NULL OR client_id = ?)').bind(uid, '').run();
+  }
+  return c.json({ ok: true });
+});
+
+// POST-based bulk delete (fallback for clients that don't support DELETE with no path param)
+app.post('/api/db/posts/delete-all', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const { clientId } = await c.req.json<{ clientId?: string | null }>();
+  if (clientId) {
+    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
+  } else {
+    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND (client_id IS NULL OR client_id = ?)').bind(uid, '').run();
   }
   return c.json({ ok: true });
 });

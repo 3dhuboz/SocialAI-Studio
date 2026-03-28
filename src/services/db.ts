@@ -127,8 +127,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     },
 
     async deleteAllPosts(clientId?: string | null): Promise<void> {
-      const params = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
-      await f(`/api/db/posts${params}`, del());
+      await f('/api/db/posts/delete-all', j({ clientId: clientId || null }));
     },
 
     async bulkUpdatePostStatus(ids: string[], status: string): Promise<void> {
