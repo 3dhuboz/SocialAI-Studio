@@ -128,10 +128,14 @@ async function verifyWebhookSignature(request, rawBody, token, env) {
 
 function planFromPayPalId(planId, env) {
   const map = {
-    [env.PAYPAL_PLAN_STARTER]: 'starter',
-    [env.PAYPAL_PLAN_GROWTH]:  'growth',
-    [env.PAYPAL_PLAN_PRO]:     'pro',
-    [env.PAYPAL_PLAN_AGENCY]:  'agency',
+    [env.PAYPAL_PLAN_STARTER]:        'starter',
+    [env.PAYPAL_PLAN_GROWTH]:         'growth',
+    [env.PAYPAL_PLAN_PRO]:            'pro',
+    [env.PAYPAL_PLAN_AGENCY]:         'agency',
+    [env.PAYPAL_PLAN_STARTER_YEARLY]: 'starter',
+    [env.PAYPAL_PLAN_GROWTH_YEARLY]:  'growth',
+    [env.PAYPAL_PLAN_PRO_YEARLY]:     'pro',
+    [env.PAYPAL_PLAN_AGENCY_YEARLY]:  'agency',
   };
   return map[planId] || null;
 }

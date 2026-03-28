@@ -124,6 +124,18 @@ export const CLIENT = {
   },
 
   /**
+   * PAYPAL YEARLY SUBSCRIPTION PLAN IDs:
+   * Same as above but billed annually at a discounted rate (2 months free).
+   * Created separately in PayPal with YEAR billing cycles.
+   */
+  paypalYearlyPlanIds: {
+    starter: 'P-23K372061K495014NNHDSUFY',
+    growth:  'P-6VF32272Y1041453GNHDSVHI',
+    pro:     'P-342482060T033343KNHDSV7A',
+    agency:  'P-8C163695HR972353WNHDSWYI',
+  },
+
+  /**
    * PAYPAL MANAGE URL:
    * Where customers go to manage or cancel their PayPal subscription.
    * Default points to the PayPal autopay management page.
@@ -154,6 +166,7 @@ export const CLIENT = {
       id: 'starter' as const,
       name: 'Starter',
       price: 29,
+      yearlyPrice: 290,
       postsPerWeek: 7,
       features: [
         'Up to 7 posts per week',
@@ -170,6 +183,7 @@ export const CLIENT = {
       id: 'growth' as const,
       name: 'Growth',
       price: 49,
+      yearlyPrice: 490,
       postsPerWeek: 14,
       features: [
         'Up to 14 posts per week',
@@ -188,6 +202,7 @@ export const CLIENT = {
       id: 'pro' as const,
       name: 'Pro',
       price: 79,
+      yearlyPrice: 790,
       postsPerWeek: 21,
       features: [
         'Up to 21 posts per week',
@@ -207,6 +222,7 @@ export const CLIENT = {
       id: 'agency' as const,
       name: 'Agency',
       price: 149,
+      yearlyPrice: 1490,
       postsPerWeek: 21,
       features: [
         'Up to 5 client workspaces',

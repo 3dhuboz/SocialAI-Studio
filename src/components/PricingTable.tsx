@@ -37,19 +37,29 @@ const planCheckColor: Record<string, string> = {
 
 export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId }) => {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [activating, setActivating] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activated, setActivated] = useState(false);
 
+  const isYearly = billingCycle === 'yearly';
   const hasPayPal = !!CLIENT.paypalClientId;
+  const hasYearlyPlans = !!(CLIENT as any).paypalYearlyPlanIds;
+
+  const getPayPalPlanId = (planId: string) => {
+    if (isYearly && hasYearlyPlans) {
+      return ((CLIENT as any).paypalYearlyPlanIds as Record<string, string>)[planId];
+    }
+    return (CLIENT.paypalPlanIds as Record<string, string>)[planId];
+  };
 
   const handleSelectPlan = (planId: string) => {
     if (!hasPayPal) {
       window.open(CLIENT.salesUrl, '_blank');
       return;
     }
-    const planId_ = (CLIENT.paypalPlanIds as Record<string, string>)[planId];
-    if (!planId_) {
+    const ppPlanId = getPayPalPlanId(planId);
+    if (!ppPlanId) {
       window.open(CLIENT.salesUrl, '_blank');
       return;
     }
@@ -102,7 +112,7 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
 
   const selectedPlan = CLIENT.plans.find(p => p.id === selectedPlanId);
   const selectedPayPalPlanId = selectedPlanId
-    ? (CLIENT.paypalPlanIds as Record<string, string>)[selectedPlanId]
+    ? getPayPalPlanId(selectedPlanId)
     : null;
 
   return (
@@ -133,6 +143,25 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
             </button>
           )}
         </div>
+
+        {/* Monthly / Yearly toggle */}
+        {hasYearlyPlans && (
+          <div className="flex items-center justify-center gap-3 mb-8">
+            <span className={`text-sm font-semibold transition ${!isYearly ? 'text-white' : 'text-white/35'}`}>Monthly</span>
+            <button
+              onClick={() => { setBillingCycle(isYearly ? 'monthly' : 'yearly'); setSelectedPlanId(null); setActivationError(null); }}
+              className={`relative w-14 h-7 rounded-full transition-colors ${isYearly ? 'bg-green-500' : 'bg-white/20'}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${isYearly ? 'translate-x-7' : ''}`} />
+            </button>
+            <span className={`text-sm font-semibold transition ${isYearly ? 'text-white' : 'text-white/35'}`}>Yearly</span>
+            {isYearly && (
+              <span className="bg-green-500/15 border border-green-500/30 text-green-400 text-xs font-bold px-2.5 py-1 rounded-full">
+                Save ~17%
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Plan cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -165,9 +194,24 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
 
                   <h3 className="text-xl font-black text-white mb-1">{plan.name}</h3>
                   <div className="flex items-baseline gap-1 mb-1">
-                    <span className="text-4xl font-black text-white">${plan.price}</span>
-                    <span className="text-white/35 text-sm">/mo</span>
+                    {isYearly && (plan as any).yearlyPrice ? (
+                      <>
+                        <span className="text-4xl font-black text-white">${Math.round((plan as any).yearlyPrice / 12)}</span>
+                        <span className="text-white/35 text-sm">/mo</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-4xl font-black text-white">${plan.price}</span>
+                        <span className="text-white/35 text-sm">/mo</span>
+                      </>
+                    )}
                   </div>
+                  {isYearly && (plan as any).yearlyPrice && (
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs text-white/25 line-through">${plan.price * 12}/yr</span>
+                      <span className="text-xs text-green-400 font-semibold">${(plan as any).yearlyPrice}/yr</span>
+                    </div>
+                  )}
                   {promo?.active ? (
                     <p className="text-xs mb-6 flex items-center gap-1.5">
                       <span className="text-white/25 line-through">${CLIENT.setupFee} setup</span>
@@ -215,7 +259,9 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                   <Lock size={10} /> Secure checkout via PayPal
                 </div>
                 <h3 className="text-lg font-black text-white">
-                  {selectedPlan.name} — ${selectedPlan.price}/mo
+                  {selectedPlan.name} — {isYearly && (selectedPlan as any).yearlyPrice
+                    ? `$${Math.round((selectedPlan as any).yearlyPrice / 12)}/mo ($${(selectedPlan as any).yearlyPrice}/yr)`
+                    : `$${selectedPlan.price}/mo`}
                 </h3>
                 <p className="text-xs text-white/35 mt-0.5">
                   {promo?.active
