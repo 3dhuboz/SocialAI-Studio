@@ -119,19 +119,9 @@ async function main() {
       status:      'ACTIVE',
       billing_cycles: [
         {
-          // one-time setup fee (charged on first billing cycle)
-          tenure_type:    'TRIAL',
-          sequence:       1,
-          total_cycles:   1,
-          pricing_scheme: {
-            fixed_price: { value: SETUP_FEE, currency_code: CURRENCY },
-          },
-          frequency: { interval_unit: 'MONTH', interval_count: 1 },
-        },
-        {
-          // recurring yearly subscription
+          // recurring yearly subscription — starts immediately
           tenure_type:    'REGULAR',
-          sequence:       2,
+          sequence:       1,
           total_cycles:   0,
           pricing_scheme: {
             fixed_price: { value: plan.yearlyPrice, currency_code: CURRENCY },
@@ -141,6 +131,7 @@ async function main() {
       ],
       payment_preferences: {
         auto_bill_outstanding:     true,
+        setup_fee:                 { value: SETUP_FEE, currency_code: CURRENCY },
         setup_fee_failure_action:  'CANCEL',
         payment_failure_threshold: 1,
       },
