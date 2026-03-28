@@ -346,60 +346,189 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
 
         {/* ─── BENEFITS TAB ─── */}
         {tab === 'benefits' && (
-          <div className="max-w-5xl mx-auto px-6 py-16 space-y-20">
+          <div className="max-w-5xl mx-auto px-6 py-16 space-y-24">
 
-            {/* KEY STATS */}
+            {/* HERO PROBLEM/SOLUTION */}
+            <div className="text-center">
+              <div className="inline-flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-300 text-xs font-semibold px-4 py-2 rounded-full mb-6">
+                <Timer size={12} /> The #1 reason small businesses fail at social media
+              </div>
+              <h2 className="text-3xl md:text-5xl font-black mb-5 leading-tight">
+                You know you <span className="italic text-white/50">should</span> be posting.{' '}
+                <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">But who has the time?</span>
+              </h2>
+              <p className="text-white/45 max-w-2xl mx-auto text-base leading-relaxed mb-10">
+                Most businesses post once, get busy, then go silent for weeks. Your competitors don't stop.
+                SocialAI Studio makes sure <strong className="text-white/70">you never go quiet again</strong> — with AI that writes, designs, schedules, and publishes for you.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-3xl mx-auto">
+                {[
+                  { emoji: '1', title: 'Tell us about your business', desc: 'Industry, location, tone — takes 60 seconds', color: 'from-blue-500 to-indigo-600' },
+                  { emoji: '2', title: 'AI creates your content plan', desc: 'Captions, images, hashtags, schedule — all done', color: 'from-amber-500 to-orange-500' },
+                  { emoji: '3', title: 'Posts publish automatically', desc: 'Facebook & Instagram, on autopilot', color: 'from-emerald-500 to-teal-500' },
+                ].map((step, i) => (
+                  <div key={i} className="relative bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-center">
+                    <div className={`w-10 h-10 mx-auto mb-4 rounded-full bg-gradient-to-br ${step.color} flex items-center justify-center`}>
+                      <span className="text-white font-black text-sm">{step.emoji}</span>
+                    </div>
+                    <h3 className="font-bold text-sm mb-1.5">{step.title}</h3>
+                    <p className="text-xs text-white/40">{step.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* IMPACT STATS — BIG & BOLD */}
             <div>
               <div className="text-center mb-10">
                 <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                  <Brain size={12} /> Why AI-Powered Social Media?
+                  <TrendingUp size={12} /> Real Results for Real Businesses
                 </div>
-                <h2 className="text-3xl md:text-4xl font-black mb-3">Stop posting manually. Let AI do it better.</h2>
-                <p className="text-white/40 max-w-xl mx-auto text-sm">Businesses using AI for social media post more consistently, save time, and see measurably higher engagement.</p>
+                <h2 className="text-3xl md:text-4xl font-black mb-3">The numbers speak for themselves</h2>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { icon: Repeat2,       value: '3×',    label: 'More consistent posting',   color: 'text-blue-400',   bg: 'bg-blue-500/10',   border: 'border-blue-500/20' },
-                  { icon: Clock,         value: '8 hrs', label: 'Saved per week',             color: 'text-amber-400',  bg: 'bg-amber-500/10',  border: 'border-amber-500/20' },
-                  { icon: TrendingUp,    value: '47%',   label: 'Higher engagement rate',     color: 'text-emerald-400',bg: 'bg-emerald-500/10',border: 'border-emerald-500/20' },
-                  { icon: MessageCircle, value: '2.4×',  label: 'More audience reach',        color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+                  { icon: Clock,         value: '8+ hrs',  label: 'Saved every single week',     sub: 'That\'s a full work day back',     color: 'text-amber-400',   bg: 'bg-gradient-to-br from-amber-500/15 to-orange-500/5',   border: 'border-amber-500/25' },
+                  { icon: TrendingUp,    value: '47%',     label: 'Higher engagement rate',       sub: 'vs manual posting',                color: 'text-emerald-400', bg: 'bg-gradient-to-br from-emerald-500/15 to-teal-500/5',   border: 'border-emerald-500/25' },
+                  { icon: Repeat2,       value: '3x',      label: 'More consistent posting',     sub: 'Never go silent again',            color: 'text-blue-400',    bg: 'bg-gradient-to-br from-blue-500/15 to-indigo-500/5',   border: 'border-blue-500/25' },
+                  { icon: MessageCircle, value: '2.4x',    label: 'Wider audience reach',         sub: 'More eyes on your brand',          color: 'text-purple-400',  bg: 'bg-gradient-to-br from-purple-500/15 to-pink-500/5',   border: 'border-purple-500/25' },
                 ].map((s, i) => (
-                  <div key={i} className={`${s.bg} border ${s.border} rounded-2xl p-5 text-center`}>
-                    <s.icon size={20} className={`${s.color} mx-auto mb-2`} />
-                    <p className={`text-3xl font-black ${s.color}`}>{s.value}</p>
-                    <p className="text-xs text-white/40 mt-1">{s.label}</p>
+                  <div key={i} className={`${s.bg} border ${s.border} rounded-2xl p-6 text-center hover:scale-[1.03] transition-transform`}>
+                    <s.icon size={22} className={`${s.color} mx-auto mb-3`} />
+                    <p className={`text-4xl md:text-5xl font-black ${s.color}`}>{s.value}</p>
+                    <p className="text-sm font-semibold text-white/70 mt-2">{s.label}</p>
+                    <p className="text-xs text-white/30 mt-1">{s.sub}</p>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* FEATURES GRID */}
+            {/* BEFORE / AFTER COMPARISON */}
             <div>
               <div className="text-center mb-10">
-                <h2 className="text-3xl font-black mb-2">Everything your socials need</h2>
-                <p className="text-white/40 text-sm">Built for busy Australian small businesses</p>
+                <h2 className="text-3xl md:text-4xl font-black mb-3">
+                  <span className="text-red-400">Without</span> vs <span className="text-emerald-400">With</span> SocialAI Studio
+                </h2>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="bg-red-500/[0.04] border border-red-500/15 rounded-2xl p-7">
+                  <div className="flex items-center gap-2 mb-5">
+                    <X size={18} className="text-red-400" />
+                    <h3 className="font-black text-red-400">Doing It Yourself</h3>
+                  </div>
+                  <div className="space-y-3">
+                    {[
+                      'Spend hours thinking of what to post',
+                      'Scramble for images or skip them entirely',
+                      'Post once, get busy, go silent for weeks',
+                      'No idea what time your audience is online',
+                      'Competitors drown you out',
+                      'Engagement flatlines, followers stagnate',
+                    ].map((item, i) => (
+                      <div key={i} className="flex items-start gap-2.5">
+                        <X size={13} className="text-red-400/60 shrink-0 mt-0.5" />
+                        <span className="text-sm text-white/45">{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-emerald-500/[0.04] border border-emerald-500/15 rounded-2xl p-7 ring-1 ring-emerald-500/10">
+                  <div className="flex items-center gap-2 mb-5">
+                    <Rocket size={18} className="text-emerald-400" />
+                    <h3 className="font-black text-emerald-400">With SocialAI Studio</h3>
+                  </div>
+                  <div className="space-y-3">
+                    {[
+                      'AI writes captions in your brand voice instantly',
+                      'Every post gets a custom AI-generated image',
+                      'Up to 21 posts per week, completely automated',
+                      'AI schedules at peak engagement times',
+                      'Your brand stays visible and top of mind',
+                      'Consistent growth in followers and engagement',
+                    ].map((item, i) => (
+                      <div key={i} className="flex items-start gap-2.5">
+                        <CheckCircle size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+                        <span className="text-sm text-white/70">{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* FEATURES — WHAT YOU GET */}
+            <div>
+              <div className="text-center mb-10">
+                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
+                  <Zap size={12} /> Packed with Power
+                </div>
+                <h2 className="text-3xl md:text-4xl font-black mb-2">Everything your socials need to thrive</h2>
+                <p className="text-white/40 text-sm">Built for busy small businesses who want results, not busywork</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
                 {[
-                  { icon: Brain, title: 'AI Caption Writing', desc: 'Google Gemini writes captions in your brand voice, with hashtags included.' },
-                  { icon: ImageIcon, title: 'AI Image Generation', desc: 'Every post gets a custom AI-generated image matched to your content.' },
-                  { icon: Calendar, title: 'Smart Scheduling', desc: 'AI picks the best times to post based on your audience and industry.' },
-                  { icon: Facebook, title: 'Direct Facebook Publishing', desc: 'Posts publish straight to your Facebook page. No copying and pasting.' },
-                  { icon: BarChart3, title: 'Live Stats', desc: 'See your follower count, reach, and engagement rate — updated in real time.' },
-                  { icon: Zap, title: 'Saturation Mode', desc: 'Launch a 21-post blitz campaign to rapidly grow your page reach (Pro plan).' },
+                  { icon: Brain, title: 'AI Caption Writing', desc: 'Google Gemini writes scroll-stopping captions in your brand voice. Hashtags included.', color: 'from-purple-500 to-indigo-600' },
+                  { icon: ImageIcon, title: 'AI Image Generation', desc: 'Every single post gets a custom, eye-catching AI image. No stock photos needed.', color: 'from-pink-500 to-rose-600' },
+                  { icon: Calendar, title: 'Smart Scheduling', desc: 'AI analyses your industry and picks the exact times your audience is most active.', color: 'from-blue-500 to-cyan-500' },
+                  { icon: Facebook, title: 'Auto-Publish to Facebook & Insta', desc: 'Posts go live automatically. No logging in, no copying, no pasting. Ever.', color: 'from-blue-600 to-blue-800' },
+                  { icon: BarChart3, title: 'Live Analytics Dashboard', desc: 'Track followers, reach, and engagement in real time. Know exactly what\'s working.', color: 'from-emerald-500 to-teal-600' },
+                  { icon: Zap, title: 'Saturation Mode', desc: 'Flood your socials with 21 posts in one hit. Perfect for launches, promos, or catching up.', color: 'from-amber-500 to-orange-600' },
                 ].map((f, i) => (
-                  <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-6 hover:bg-white/5 transition group">
-                    <div className="w-10 h-10 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                      <f.icon size={18} className="text-amber-400" />
+                  <div key={i} className="bg-white/[0.03] border border-white/8 rounded-2xl p-6 hover:bg-white/[0.06] hover:border-white/15 transition-all group">
+                    <div className={`w-11 h-11 bg-gradient-to-br ${f.color} rounded-xl flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
+                      <f.icon size={20} className="text-white" />
                     </div>
-                    <h3 className="font-bold mb-1.5 text-sm">{f.title}</h3>
-                    <p className="text-xs text-white/40 leading-relaxed">{f.desc}</p>
+                    <h3 className="font-black mb-2 text-[15px]">{f.title}</h3>
+                    <p className="text-xs text-white/45 leading-relaxed">{f.desc}</p>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* AGENCY */}
+            {/* SOCIAL PROOF / TRUST */}
+            <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/20 rounded-3xl p-8 md:p-10">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
+                <div>
+                  <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-5">
+                    <Star size={12} /> Built for Aussie Businesses
+                  </div>
+                  <h2 className="text-2xl md:text-3xl font-black mb-4 leading-tight">
+                    Your social media on{' '}
+                    <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">complete autopilot</span>
+                  </h2>
+                  <p className="text-white/50 mb-6 text-sm leading-relaxed">
+                    While you focus on running your business, SocialAI Studio keeps your brand in front of customers every single day. More visibility means more enquiries, more walk-ins, and more revenue.
+                  </p>
+                  <div className="space-y-3 mb-6">
+                    {[
+                      { text: 'Set it up in 60 seconds', bold: 'No design skills needed' },
+                      { text: 'Posts go live automatically', bold: 'Even while you sleep' },
+                      { text: 'Cancel anytime', bold: 'No lock-in contracts' },
+                      { text: 'Aussie-built', bold: 'Local support, local business focus' },
+                    ].map((f, i) => (
+                      <div key={i} className="flex items-start gap-3">
+                        <CheckCircle size={15} className="text-amber-400 shrink-0 mt-0.5" />
+                        <span className="text-sm text-white/65"><strong className="text-white/90">{f.bold}.</strong> {f.text}.</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5">
+                    <div className="flex gap-1 mb-2">{[1,2,3,4,5].map(n => <Star key={n} size={14} className="text-amber-400 fill-amber-400" />)}</div>
+                    <p className="text-sm text-white/60 italic leading-relaxed mb-3">"I used to spend my Sundays writing posts. Now the AI does a full week in 30 seconds. Game changer for my bakery."</p>
+                    <p className="text-xs font-bold text-white/80">Sarah M. — Cafe Owner, Gold Coast</p>
+                  </div>
+                  <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5">
+                    <div className="flex gap-1 mb-2">{[1,2,3,4,5].map(n => <Star key={n} size={14} className="text-amber-400 fill-amber-400" />)}</div>
+                    <p className="text-sm text-white/60 italic leading-relaxed mb-3">"My gym's Instagram went from dead to 3 posts a week with real engagement. Members are finding us through social now."</p>
+                    <p className="text-xs font-bold text-white/80">Jake T. — Fitness Studio, Brisbane</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* AGENCY SECTION */}
             <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-3xl p-8 md:p-10">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
                 <div>
@@ -439,7 +568,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                 </div>
                 <div className="space-y-3">
                   {[
-                    { name: "Bella's Bakery", type: 'Café & Bakery', posts: 14, active: true },
+                    { name: "Bella's Bakery", type: 'Cafe & Bakery', posts: 14, active: true },
                     { name: 'FastFit Gym', type: 'Fitness Studio', posts: 21, active: false },
                     { name: 'Green Thumb Nursery', type: 'Garden Centre', posts: 7, active: false },
                   ].map((client, i) => (
@@ -458,10 +587,14 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
               </div>
             </div>
 
-            <div className="text-center">
-              <button onClick={() => { setTab('pricing'); }} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl hover:opacity-90 transition">
-                View Pricing <ArrowRight size={18} />
+            {/* FINAL CTA */}
+            <div className="text-center space-y-5">
+              <h2 className="text-2xl md:text-3xl font-black">Ready to grow your business on social media?</h2>
+              <p className="text-white/40 text-sm max-w-lg mx-auto">Join hundreds of businesses that stopped overthinking social media and let AI handle it.</p>
+              <button onClick={() => { setTab('pricing'); }} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-4 rounded-2xl hover:opacity-90 transition text-base shadow-xl shadow-amber-500/20">
+                Get Started Now <ArrowRight size={18} />
               </button>
+              <p className="text-xs text-white/25">No lock-in. Cancel anytime. Set up in 60 seconds.</p>
             </div>
           </div>
         )}
