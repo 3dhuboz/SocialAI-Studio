@@ -15,5 +15,9 @@ binding = "DB"
 database_name = "socialai-db"
 database_id = "6295841e-e5f7-4355-b0e0-c5f22e58d99d"
 
+# Cron trigger — check fal.ai credits every 6 hours
+[triggers]
+crons = ["0 */6 * * *"]
+
 [dev]
 port = 8787

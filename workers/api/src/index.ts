@@ -27,6 +27,7 @@ type Env = {
   PAYPAL_CLIENT_ID?: string;
   PAYPAL_CLIENT_SECRET?: string;
   PAYPAL_WEBHOOK_ID?: string;
+  RESEND_API_KEY?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -809,6 +810,28 @@ app.all('/api/fal-proxy', async (c) => {
     if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
     return c.json({ balance: data?.balance ?? data?.credits ?? null });
   }
+  if (action === 'check-credits-alert') {
+    const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
+    const data = await res.json() as any;
+    if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
+    const balance = data?.balance ?? data?.credits ?? null;
+    const threshold = 5;
+    const resendKey = c.env.RESEND_API_KEY;
+    if (balance !== null && balance < threshold && resendKey) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'SocialAI Studio <noreply@socialaistudio.au>',
+          to: 'steve@3dhub.au',
+          subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
+          html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out. Top up now to keep your posts looking great.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a><p style="color:#888;font-size:12px;margin-top:20px;">This alert triggers when balance drops below $${threshold}.</p></div>`,
+        }),
+      });
+      return c.json({ balance, alert: 'sent', threshold });
+    }
+    return c.json({ balance, alert: balance !== null && balance < threshold ? 'no_resend_key' : 'not_needed', threshold });
+  }
   return c.json({ error: `Unknown action: ${action}` }, 400);
 });
 
@@ -1023,4 +1046,36 @@ app.post('/api/paypal-webhook', async (c) => {
   return c.json({ received: true });
 });
 
-export default app;
+// ── Cron Trigger: Check fal.ai credits every 6 hours ────────────────────────
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    const apiKey = env.FAL_API_KEY;
+    const resendKey = env.RESEND_API_KEY;
+    if (!apiKey || !resendKey) { console.log('[CRON] Missing FAL_API_KEY or RESEND_API_KEY'); return; }
+
+    try {
+      const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
+      const data = await res.json() as any;
+      const balance = data?.balance ?? data?.credits ?? null;
+      console.log(`[CRON] fal.ai balance: $${balance}`);
+
+      const threshold = 5;
+      if (balance !== null && balance < threshold) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'SocialAI Studio <noreply@socialaistudio.au>',
+            to: 'steve@3dhub.au',
+            subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
+            html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out. Top up now to keep your posts looking great.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a><p style="color:#888;font-size:12px;margin-top:20px;">This alert triggers when balance drops below $${threshold}. Checked every 6 hours.</p></div>`,
+          }),
+        });
+        console.log(`[CRON] Low balance alert sent to steve@3dhub.au ($${balance})`);
+      }
+    } catch (e: any) {
+      console.error('[CRON] Credit check failed:', e.message);
+    }
+  },
+};
