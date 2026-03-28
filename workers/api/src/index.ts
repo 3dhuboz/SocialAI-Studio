@@ -315,6 +315,19 @@ app.delete('/api/db/posts/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// Delete all posts for the authenticated user (optionally scoped to a client)
+app.delete('/api/db/posts', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId');
+  if (clientId) {
+    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
+  } else {
+    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND (client_id IS NULL OR client_id = \'\')').bind(uid).run();
+  }
+  return c.json({ ok: true });
+});
+
 // Bulk-update posts status (e.g. mark overdue as Missed)
 app.post('/api/db/posts/bulk-status', async (c) => {
   const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);

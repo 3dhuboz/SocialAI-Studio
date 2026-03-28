@@ -126,6 +126,11 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       await f(`/api/db/posts/${id}`, del());
     },
 
+    async deleteAllPosts(clientId?: string | null): Promise<void> {
+      const params = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      await f(`/api/db/posts${params}`, del());
+    },
+
     async bulkUpdatePostStatus(ids: string[], status: string): Promise<void> {
       await f('/api/db/posts/bulk-status', j({ ids, status }));
     },

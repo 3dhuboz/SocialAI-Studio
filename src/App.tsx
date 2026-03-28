@@ -4667,8 +4667,11 @@ const Dashboard: React.FC = () => {
                 <button
                   onClick={() => {
                     if (confirm('Delete all posts? This cannot be undone.')) {
-                      setPosts([]);
-                      toast('All posts cleared.');
+                      db.deleteAllPosts(activeClientId).then(() => {
+                        setPosts([]);
+                        localStorage.removeItem('sai_posts');
+                        toast('All posts cleared.');
+                      }).catch(() => toast('Failed to clear posts.'));
                     }
                   }}
                   className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 px-4 py-2 rounded-xl text-sm transition"
