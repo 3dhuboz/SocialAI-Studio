@@ -129,10 +129,10 @@ export const CLIENT = {
    * Created separately in PayPal with YEAR billing cycles.
    */
   paypalYearlyPlanIds: {
-    starter: 'P-23K372061K495014NNHDSUFY',
-    growth:  'P-6VF32272Y1041453GNHDSVHI',
-    pro:     'P-342482060T033343KNHDSV7A',
-    agency:  'P-8C163695HR972353WNHDSWYI',
+    starter: 'P-2S525302FD0352228NHDUKWQ',
+    growth:  'P-7W802953MP807873ANHDUKWY',
+    pro:     'P-01W402685H732841CNHDUKWY',
+    agency:  'P-2XR70607TA386300FNHDUKWY',
   },
 
   /**
