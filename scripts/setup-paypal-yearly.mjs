@@ -107,10 +107,22 @@ async function main() {
     console.log(`    ✓ Product created → ID: ${product.id}\n`);
   }
 
+  // Check for existing yearly plans to avoid duplicates
+  console.log('🔍  Checking for existing yearly plans…');
+  const existingPlans = await ppGet('/v1/billing/plans?page_size=20&status=ACTIVE', token);
+  const existingNames = new Set((existingPlans.plans || []).map(p => p.name));
+
   // Create yearly plans
   const yearlyPlanIds = {};
 
   for (const plan of PLANS) {
+    const fullName = `SocialAI Studio — ${plan.name}`;
+    if (existingNames.has(fullName)) {
+      const existing = existingPlans.plans.find(p => p.name === fullName);
+      console.log(`    ⚠️  "${plan.name}" already exists → ${existing.id} (skipping)`);
+      yearlyPlanIds[plan.id] = existing.id;
+      continue;
+    }
     console.log(`💳  Creating "${plan.name}" plan ($${plan.yearlyPrice}/yr + $${SETUP_FEE} setup)…`);
     const result = await ppPost('/v1/billing/plans', {
       product_id:  product.id,

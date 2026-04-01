@@ -251,4 +251,6 @@ try {
     const overrides = JSON.parse(raw);
     Object.assign(CLIENT, overrides);
   }
-} catch { /* ignore parse errors */ }
+} catch (e) {
+  console.warn('[client.config] Failed to parse VITE_CLIENT_CONFIG — check your env var JSON:', e);
+}

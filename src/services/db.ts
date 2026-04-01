@@ -23,7 +23,12 @@ async function apiFetch(
   if (token) {
     headers['Authorization'] = authMode === 'portal' ? `Portal ${token}` : `Bearer ${token}`;
   }
-  return fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`API ${options.method || 'GET'} ${path} failed (${res.status}): ${text}`);
+  }
+  return res;
 }
 
 // ── Shared types ──────────────────────────────────────────────────────────────
@@ -169,9 +174,14 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     // ── Portal ────────────────────────────────────────────────────────────────
     async getPortal(slug: string): Promise<{ email: string; password: string } | null> {
-      const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(slug.toLowerCase())}`);
-      const data = await res.json() as { portal: { email: string; password: string } | null };
-      return data.portal;
+      try {
+        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(slug.toLowerCase())}`);
+        if (!res.ok) return null;
+        const data = await res.json() as { portal: { email: string; password: string } | null };
+        return data.portal;
+      } catch {
+        return null;
+      }
     },
 
     async setPortal(slug: string, email: string, password: string): Promise<void> {

@@ -547,7 +547,7 @@ app.post('/api/internal/activation', async (c) => {
   if (!plan || !email) return c.json({ error: 'plan and email required' }, 400);
   const id = uuid();
   await c.env.DB.prepare(
-    `INSERT INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
+    `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
      VALUES (?,?,?,?,?,?,0)`
   ).bind(id, plan, email, paypalSubscriptionId ?? null, paypalCustomerId ?? null, activatedAt ?? new Date().toISOString()).run();
   return c.json({ ok: true, id });
@@ -890,6 +890,9 @@ app.all('/api/runway-proxy/*', async (c) => {
 });
 
 // ── PayPal Verify ───────────────────────────────────────────────────────────────
+// Called by the frontend after PayPal checkout completes.
+// Verifies with PayPal that the subscription is active, then stores a pending
+// activation record. Uses INSERT OR IGNORE so a webhook-created record wins.
 app.post('/api/paypal-verify', async (c) => {
   const clientId = c.env.PAYPAL_CLIENT_ID;
   const clientSecret = c.env.PAYPAL_CLIENT_SECRET;
@@ -911,13 +914,14 @@ app.post('/api/paypal-verify', async (c) => {
   const tokenData = await tokenRes.json() as any;
   if (!tokenData.access_token) return c.json({ error: 'Failed to get PayPal token' }, 500);
 
-  // Get subscription details
+  // Get subscription details from PayPal
   const subRes = await fetch(`https://api-m.paypal.com/v1/billing/subscriptions/${subscriptionId}`, {
     headers: {
       Authorization: `Bearer ${tokenData.access_token}`,
       'Content-Type': 'application/json',
     },
   });
+  if (!subRes.ok) return c.json({ error: 'Failed to fetch subscription from PayPal' }, 500);
   const subscription = await subRes.json() as any;
 
   if (subscription.status !== 'ACTIVE') {
@@ -926,14 +930,22 @@ app.post('/api/paypal-verify', async (c) => {
     }, 400);
   }
 
+  // Warn if the claimed planId doesn't match the PayPal subscription's actual plan.
+  // We can't fully validate here without the plan ID mapping, but we log the discrepancy.
+  const paypalPlanId = subscription.plan_id;
+  if (paypalPlanId) {
+    console.log(`PayPal verify: claimed planId=${planId}, subscription plan_id=${paypalPlanId}`);
+  }
+
   const customerEmail = subscription.subscriber?.email_address || '';
   const payerId = subscription.subscriber?.payer_id || '';
   const docId = uid || customerEmail || subscriptionId;
 
-  // Store in D1 pending_activations
+  // INSERT OR IGNORE: webhook may have already inserted the authoritative record.
+  // Do not overwrite it — the webhook-set plan is trusted over the client-claimed planId.
   await c.env.DB.prepare(`
-    INSERT OR REPLACE INTO pending_activations 
-    (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed) 
+    INSERT OR IGNORE INTO pending_activations
+    (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).bind(
     docId,
@@ -942,109 +954,15 @@ app.post('/api/paypal-verify', async (c) => {
     subscriptionId,
     payerId,
     new Date().toISOString(),
-    false
+    0
   ).run();
 
   console.log(`PayPal activation stored for ${docId} → plan: ${planId}`);
   return c.json({ success: true, plan: planId });
 });
 
-// ── PayPal Webhook ───────────────────────────────────────────────────────────────
-app.post('/api/paypal-webhook', async (c) => {
-  const clientId = c.env.PAYPAL_CLIENT_ID;
-  const clientSecret = c.env.PAYPAL_CLIENT_SECRET;
-  const webhookId = c.env.PAYPAL_WEBHOOK_ID;
-  if (!clientId || !clientSecret || !webhookId) return c.json({ error: 'PayPal webhook not configured' }, 500);
-
-  // Get PayPal token for webhook verification
-  const creds = btoa(`${clientId}:${clientSecret}`);
-  const tokenRes = await fetch('https://api-m.paypal.com/v1/oauth2/token', {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${creds}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials',
-  });
-  const tokenData = await tokenRes.json() as any;
-  if (!tokenData.access_token) return c.json({ error: 'Failed to get PayPal token' }, 500);
-
-  // Verify webhook signature
-  const headers = c.req.raw.headers;
-  const verifyBody = {
-    auth_algo: headers.get('paypal-auth-algo'),
-    cert_url: headers.get('paypal-cert-url'),
-    transmission_id: headers.get('paypal-transmission-id'),
-    transmission_sig: headers.get('paypal-transmission-sig'),
-    transmission_time: headers.get('paypal-transmission-time'),
-    webhook_id: webhookId,
-    webhook_event: await c.req.json(),
-  };
-
-  const verifyRes = await fetch('https://api-m.paypal.com/v1/notifications/verify-webhook-signature', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${tokenData.access_token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(verifyBody),
-  });
-  const verifyData = await verifyRes.json() as any;
-
-  if (verifyData.verification_status !== 'SUCCESS') {
-    return c.json({ error: 'Webhook signature verification failed' }, 400);
-  }
-
-  const event = verifyBody.webhook_event;
-  const eventType = event.event_type;
-
-  // Handle subscription events
-  if (eventType === 'BILLING.SUBSCRIPTION.ACTIVATED') {
-    const subscription = event.resource;
-    const customerEmail = subscription.subscriber?.email_address || '';
-    const subscriptionId = subscription.id;
-
-    // Find matching pending activation by subscription ID or email
-    const existing = await c.env.DB.prepare(`
-      SELECT * FROM pending_activations 
-      WHERE paypal_subscription_id = ? OR email = ?
-    `).bind(subscriptionId, customerEmail).first();
-
-    if (existing) {
-      // Update user plan in D1
-      const userId = existing.id;
-      await c.env.DB.prepare('UPDATE users SET plan = ? WHERE id = ?')
-        .bind(existing.plan, userId).run();
-      
-      // Mark activation as consumed
-      await c.env.DB.prepare('UPDATE pending_activations SET consumed = 1 WHERE id = ?')
-        .bind(existing.id).run();
-
-      console.log(`PayPal webhook activated plan ${existing.plan} for user ${userId}`);
-    }
-  }
-  else if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
-    const subscription = event.resource;
-    const customerEmail = subscription.subscriber?.email_address || '';
-
-    // Store cancellation for client to handle
-    await c.env.DB.prepare(`
-      INSERT OR REPLACE INTO pending_cancellations 
-      (id, email, paypal_subscription_id, cancelled_at, consumed) 
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(
-      uuid(),
-      customerEmail,
-      subscription.id,
-      new Date().toISOString(),
-      false
-    ).run();
-
-    console.log(`PayPal webhook stored cancellation for ${customerEmail}`);
-  }
-
-  return c.json({ received: true });
-});
+// NOTE: PayPal webhook is handled by the Cloudflare Pages Function at
+// functions/api/paypal-webhook.js — do not duplicate it here.
 
 // ── Cron Trigger: Check fal.ai credits every 6 hours ────────────────────────
 export default {

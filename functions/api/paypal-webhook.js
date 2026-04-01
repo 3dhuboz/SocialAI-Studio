@@ -11,7 +11,8 @@ const WORKER_URL = 'https://socialai-api.steve-700.workers.dev';
 
 const PAYPAL_BASE = 'https://api-m.paypal.com';
 const FROM = 'Social AI Studio <noreply@socialaistudio.au>';
-const ADMIN_EMAIL = 'steve@pennywiseit.com.au';
+// Set ADMIN_EMAIL env var in Cloudflare Pages to override the default.
+const DEFAULT_ADMIN_EMAIL = 'steve@pennywiseit.com.au';
 
 async function sendEmail(env, { to, subject, html }) {
   if (!env.RESEND_API_KEY) return;
@@ -73,24 +74,26 @@ function cancellationHtml(email) {
 }
 
 async function storeActivation(env, data) {
-  const workerUrl = env.VITE_AI_WORKER_URL || WORKER_URL;
+  const workerUrl = env.AI_WORKER_URL || env.VITE_AI_WORKER_URL || WORKER_URL;
   try {
-    await fetch(`${workerUrl}/api/internal/activation`, {
+    const res = await fetch(`${workerUrl}/api/internal/activation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
+    if (!res.ok) console.error('Failed to store activation in D1:', res.status, await res.text());
   } catch (e) { console.error('Failed to store activation in D1:', e.message); }
 }
 
 async function storeCancellation(env, data) {
-  const workerUrl = env.VITE_AI_WORKER_URL || WORKER_URL;
+  const workerUrl = env.AI_WORKER_URL || env.VITE_AI_WORKER_URL || WORKER_URL;
   try {
-    await fetch(`${workerUrl}/api/internal/cancellation`, {
+    const res = await fetch(`${workerUrl}/api/internal/cancellation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
+    if (!res.ok) console.error('Failed to store cancellation in D1:', res.status, await res.text());
   } catch (e) { console.error('Failed to store cancellation in D1:', e.message); }
 }
 
@@ -180,7 +183,7 @@ export async function onRequest(context) {
     console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan}`);
     if (email) {
       await sendEmail(env, { to: email, subject: `Welcome to Social AI Studio — your ${plan} plan is active!`, html: welcomeHtml(email, plan) });
-      await sendEmail(env, { to: ADMIN_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+      await sendEmail(env, { to: env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
     }
   }
 
@@ -192,7 +195,7 @@ export async function onRequest(context) {
     console.log(`PayPal cancellation stored for ${email || subscriptionId}`);
     if (email) {
       await sendEmail(env, { to: email, subject: 'Your Social AI Studio subscription has been cancelled', html: cancellationHtml(email) });
-      await sendEmail(env, { to: ADMIN_EMAIL, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+      await sendEmail(env, { to: env.ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
     }
   }
 

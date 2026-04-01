@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useUser, useClerk, useAuth as useClerkAuth } from '@clerk/react';
 import { createDb } from '../services/db';
 
@@ -42,13 +42,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const clerk = useClerk();
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
 
-  const user: AppUser | null = clerkUser
+  // Memoize so the object reference is stable — prevents downstream useEffect([user])
+  // from firing on every render and overwriting form state with stale DB data.
+  const user: AppUser | null = useMemo(() => clerkUser
     ? {
         uid: clerkUser.id,
         email: clerkUser.primaryEmailAddress?.emailAddress ?? null,
         displayName: clerkUser.fullName,
       }
-    : null;
+    : null,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [clerkUser?.id, clerkUser?.primaryEmailAddress?.emailAddress, clerkUser?.fullName]);
 
   const loading = !isLoaded;
 
