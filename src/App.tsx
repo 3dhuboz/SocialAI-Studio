@@ -448,7 +448,10 @@ const Dashboard: React.FC = () => {
       }
     };
     sync();
-  }, [user]);
+  // Depend on user.uid only — the user object itself is memoized in AuthContext but
+  // using the primitive uid prevents re-firing if the memo ever misses a reference change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
 
   // ── Sync post statuses with Late.dev ──
   const syncPostStatuses = async () => {

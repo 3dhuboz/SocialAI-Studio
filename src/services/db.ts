@@ -23,7 +23,12 @@ async function apiFetch(
   if (token) {
     headers['Authorization'] = authMode === 'portal' ? `Portal ${token}` : `Bearer ${token}`;
   }
-  return fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`API ${options.method || 'GET'} ${path} failed (${res.status}): ${text}`);
+  }
+  return res;
 }
 
 // ── Shared types ──────────────────────────────────────────────────────────────
