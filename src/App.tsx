@@ -277,8 +277,10 @@ const Dashboard: React.FC = () => {
   // Social tokens — loaded from D1, NEVER cached in localStorage
   const [socialTokens, setSocialTokens] = useState<SocialTokens>(DEFAULT_SOCIAL_TOKENS);
   const saveSocialTokens = (tokens: SocialTokens) => {
-    setSocialTokens(tokens);
+    const previous = socialTokens;
+    setSocialTokens(tokens); // optimistic update
     db.setSocialTokens(tokens as unknown as Record<string, unknown>, activeClientId).catch(() => {
+      setSocialTokens(previous); // revert on failure
       toast('Facebook token could not be saved — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
     });
   };
@@ -1318,8 +1320,9 @@ const Dashboard: React.FC = () => {
       toast('Music added! Download or publish your video with audio.', 'success');
     } catch (e: any) {
       toast(`Audio mix failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+    } finally {
+      setIsMixingAudio(false);
     }
-    setIsMixingAudio(false);
   };
 
   // ── Smart Schedule ──
@@ -1678,15 +1681,19 @@ const Dashboard: React.FC = () => {
   };
 
   const handleAnalyze = async () => {
-    // AI is always available server-side
     setIsAnalyzing(true);
-    const [recs, times] = await Promise.all([
-      generateRecommendations(profile.name, profile.type, stats),
-      analyzePostTimes(profile.type, profile.location)
-    ]);
-    setRecommendations(recs || '');
-    setBestTimes(times || '');
-    setIsAnalyzing(false);
+    try {
+      const [recs, times] = await Promise.all([
+        generateRecommendations(profile.name, profile.type, stats),
+        analyzePostTimes(profile.type, profile.location)
+      ]);
+      setRecommendations(recs || '');
+      setBestTimes(times || '');
+    } catch (e: any) {
+      toast(`Analysis failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   // ── Settings Save Handlers ──

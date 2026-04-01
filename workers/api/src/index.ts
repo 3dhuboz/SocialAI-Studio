@@ -477,12 +477,13 @@ app.put('/api/db/social-tokens', async (c) => {
 
 // ── DB: Portal ────────────────────────────────────────────────────────────────
 
-// Public — returns portal token for client-mode auth (no Clerk needed)
+// Public — returns portal token for client-mode auth (no Clerk needed).
+// password intentionally excluded — only portal_token is needed for API auth.
 app.get('/api/db/portal/:slug', async (c) => {
   const slug = c.req.param('slug').toLowerCase();
   const row = await c.env.DB.prepare(
-    'SELECT email, password, portal_token, user_id, client_id FROM portal WHERE slug = ?'
-  ).bind(slug).first<{ email: string; password: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
+    'SELECT email, portal_token, user_id, client_id FROM portal WHERE slug = ?'
+  ).bind(slug).first<{ email: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
   return c.json({ portal: row ?? null });
 });
 
