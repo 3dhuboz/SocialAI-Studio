@@ -174,9 +174,14 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     // ── Portal ────────────────────────────────────────────────────────────────
     async getPortal(slug: string): Promise<{ email: string; password: string } | null> {
-      const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(slug.toLowerCase())}`);
-      const data = await res.json() as { portal: { email: string; password: string } | null };
-      return data.portal;
+      try {
+        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(slug.toLowerCase())}`);
+        if (!res.ok) return null;
+        const data = await res.json() as { portal: { email: string; password: string } | null };
+        return data.portal;
+      } catch {
+        return null;
+      }
     },
 
     async setPortal(slug: string, email: string, password: string): Promise<void> {

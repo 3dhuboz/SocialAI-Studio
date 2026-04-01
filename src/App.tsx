@@ -498,17 +498,15 @@ const Dashboard: React.FC = () => {
   };
 
   // Sync statuses every 5 minutes and on component mount
+  // NOTE: 'posts' intentionally excluded — adding it would reset the interval on every
+  // post change and create a stale closure over the posts array inside setInterval.
   useEffect(() => {
     if (!user || !lateProfileId) return;
-    
-    // Initial sync
     syncPostStatuses();
-    
-    // Periodic sync every 5 minutes
     const interval = setInterval(syncPostStatuses, 5 * 60 * 1000);
-    
     return () => clearInterval(interval);
-  }, [user, lateProfileId, posts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, lateProfileId]);
 
   // Manual sync function for user-triggered refresh
   const handleManualSync = async () => {
@@ -561,6 +559,7 @@ const Dashboard: React.FC = () => {
   // Reload profile+posts+Late profile when switching client workspace
   useEffect(() => {
     if (!user || activeClientId === null) return;
+    let isMounted = true;
     const loadClient = async () => {
       isSyncingRef.current = true;
       // Resolve workspace name/type before try so catch block can use them
@@ -569,6 +568,7 @@ const Dashboard: React.FC = () => {
       const wsType = ws?.businessType || CLIENT.defaultBusinessType;
       try {
         const clientRow = await db.getClient(activeClientId);
+        if (!isMounted) return;
         if (clientRow) {
           const cp = { ...DEFAULT_PROFILE, name: wsName, type: wsType, ...(clientRow.profile || {}) };
           if (!clientRow.profile || !(clientRow.profile as Record<string,unknown>).name || (clientRow.profile as Record<string,unknown>).name === CLIENT.defaultBusinessName || (clientRow.profile as Record<string,unknown>).name === 'My Business') cp.name = wsName;
@@ -622,14 +622,16 @@ const Dashboard: React.FC = () => {
         setPosts([]);
         if (isSuperAdmin) toast('Could not load client workspace from database — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
       }
-      finally { isSyncingRef.current = false; }
+      finally { if (isMounted) isSyncingRef.current = false; }
     };
     loadClient();
-  }, [activeClientId, user]);
+    return () => { isMounted = false; };
+  }, [activeClientId, user?.uid]);
 
   // Restore own workspace (profile, posts, Late profile) when switching back from a client
   useEffect(() => {
     if (!user || activeClientId !== null || authMode === 'portal') return;
+    let isMounted = true;
     // IMMEDIATELY restore cached agency Late profile (prevents publishing to wrong page during async fetch)
     setLateProfileId(agencyLateRef.current.profileId);
     setLateConnectedPlatforms(agencyLateRef.current.platforms);
@@ -638,6 +640,7 @@ const Dashboard: React.FC = () => {
     isSyncingRef.current = true;
     const restoreOwn = async () => {
       const row = await db.getUser();
+      if (!isMounted) return;
       if (row) {
         const rp = typeof row.profile === 'string' ? JSON.parse(row.profile) : (row.profile ?? {});
         const rs = typeof row.stats === 'string' ? JSON.parse(row.stats as string) : (row.stats ?? {});
@@ -669,8 +672,9 @@ const Dashboard: React.FC = () => {
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
     };
-    restoreOwn().catch(() => {}).finally(() => { isSyncingRef.current = false; });
-  }, [activeClientId, user]);
+    restoreOwn().catch(() => {}).finally(() => { if (isMounted) isSyncingRef.current = false; });
+    return () => { isMounted = false; };
+  }, [activeClientId, user?.uid]);
 
   // Add a new client workspace
   const addClient = async (name: string, businessType: string) => {
@@ -756,11 +760,15 @@ const Dashboard: React.FC = () => {
     return () => clearTimeout(t);
   }, [profile, user, dbLoaded, activeClientId]);
 
-  // Persist stats to D1 — same guards
+  // Persist stats to D1 — same guards as profile (debounced)
   useEffect(() => {
     if (!user || !dbLoaded || isSyncingRef.current) return;
     if (prevClientIdRef.current !== activeClientId) return;
-    upsertActiveWorkspace({ stats }).catch(() => {});
+    const t = setTimeout(() => {
+      if (isSyncingRef.current) return;
+      upsertActiveWorkspace({ stats }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(t);
   }, [stats, user, dbLoaded, activeClientId]);
 
   // Content Generator State
