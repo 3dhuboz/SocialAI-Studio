@@ -339,7 +339,7 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   };
 
   // Build a clean, concrete visual prompt — emphasise photorealism to avoid "AI look"
-  const imagePrompt = `RAW photo, ${prompt}, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, imperfect composition, realistic textures, matte finish, editorial food photography style, unedited look`;
+  const imagePrompt = `RAW photo, ${prompt}, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, imperfect composition, realistic textures, matte finish, editorial photography style, unedited look`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
