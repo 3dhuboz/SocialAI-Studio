@@ -793,6 +793,7 @@ const Dashboard: React.FC = () => {
   const [isGeneratingReel, setIsGeneratingReel] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [publishSuccess, setPublishSuccess] = useState(false);
+  const publishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [publishingPlatforms, setPublishingPlatforms] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [draftText, setDraftText] = useState('');
@@ -893,13 +894,14 @@ const Dashboard: React.FC = () => {
     : autopilotMode === 'highlights' ? TICKER_STEPS_HIGHLIGHTS
     : TICKER_STEPS_NORMAL;
   const [tickerIdx, setTickerIdx] = useState(0);
+  const tickerStepsLen = TICKER_STEPS.length;
   useEffect(() => {
     if (!isSmartGenerating) { setTickerIdx(0); return; }
     const id = setInterval(() => {
-      setTickerIdx(prev => (prev < TICKER_STEPS.length - 1 ? prev + 1 : prev));
+      setTickerIdx(prev => (prev < tickerStepsLen - 1 ? prev + 1 : prev));
     }, 2800);
     return () => clearInterval(id);
-  }, [isSmartGenerating]);
+  }, [isSmartGenerating, tickerStepsLen]);
 
   // Insights State
   const [recommendations, setRecommendations] = useState('');
@@ -1059,7 +1061,8 @@ const Dashboard: React.FC = () => {
       console.log('[Publish] Final accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
       await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems, resolvedAccountIds);
       setPublishSuccess(true);
-      setTimeout(() => setPublishSuccess(false), 4000);
+      if (publishTimerRef.current) clearTimeout(publishTimerRef.current);
+      publishTimerRef.current = setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
       toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
     }
@@ -1099,10 +1102,17 @@ const Dashboard: React.FC = () => {
     if (contentType === 'video') {
       // Step 1: Generate text brief with full business context
       setIsGeneratingVideo(true);
-      const brief = await generateVideoScript(
-        topic, platform, profile.name, profile.type, profile.tone, result.content,
-        profile, result.hashtags, contentFormat
-      );
+      let brief;
+      try {
+        brief = await generateVideoScript(
+          topic, platform, profile.name, profile.type, profile.tone, result.content,
+          profile, result.hashtags, contentFormat
+        );
+      } catch (e: any) {
+        toast(`Video script failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+        setIsGeneratingVideo(false);
+        return;
+      }
       setGeneratedVideoScript(brief);
       setShowVideoBriefDetail(false);
       setIsGeneratingVideo(false);
@@ -1429,18 +1439,21 @@ const Dashboard: React.FC = () => {
       (p as any).postType !== 'video'
     );
     if (missing.length === 0) return;
+    let cancelled = false;
     const run = async () => {
       for (const post of missing) {
+        if (cancelled) return;
         calendarAutoGenRanRef.current.add(post.id);
         setCalendarGenSet(prev => new Set(prev).add(post.id));
         try {
           const img = await generateImage(post.imagePrompt!);
-          if (img) setCalendarImages(prev => ({ ...prev, [post.id]: img }));
+          if (!cancelled && img) setCalendarImages(prev => ({ ...prev, [post.id]: img }));
         } catch { /* silently skip */ }
-        setCalendarGenSet(prev => { const s = new Set(prev); s.delete(post.id); return s; });
+        if (!cancelled) setCalendarGenSet(prev => { const s = new Set(prev); s.delete(post.id); return s; });
       }
     };
     run();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posts, activeTab]);
 
