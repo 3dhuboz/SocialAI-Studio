@@ -700,7 +700,8 @@ app.all('/api/late-proxy', async (c) => {
   if (action === 'media-presign') {
     const { fileName, fileType } = await getBody() as any;
     if (!fileName || !fileType) return c.json({ error: 'fileName and fileType required' }, 400);
-    const res = await fetch(`${LATE_BASE}/media/presign`, { method: 'POST', headers: authHeader, body: JSON.stringify({ fileName, fileType }) });
+    // Late.dev API expects 'filename' (lowercase) and 'contentType' (not 'fileType')
+    const res = await fetch(`${LATE_BASE}/media/presign`, { method: 'POST', headers: authHeader, body: JSON.stringify({ filename: fileName, contentType: fileType }) });
     return c.json(await res.json() as any, { status: res.status as any });
   }
   if (action === 'list-posts') {

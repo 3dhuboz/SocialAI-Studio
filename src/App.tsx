@@ -1556,7 +1556,15 @@ const Dashboard: React.FC = () => {
             try {
               const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
               const imageDataUrl = smartPostImages[i];
-              const mediaItems = imageDataUrl ? await uploadImageToLate(imageDataUrl) : undefined;
+              let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
+              if (imageDataUrl) {
+                try {
+                  mediaItems = await uploadImageToLate(imageDataUrl);
+                } catch (imgErr: any) {
+                  console.warn(`Image upload failed for post ${i}, scheduling text-only:`, imgErr?.message);
+                  // Continue without image rather than skipping the whole Late schedule
+                }
+              }
               const lateResult = await LateService.post(
                 lateProfileId,
                 [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
@@ -1567,9 +1575,10 @@ const Dashboard: React.FC = () => {
                 lateAccountIds
               );
               if (lateResult?.id) await db.updatePost(batchPostId, { latePostId: lateResult.id } as any);
+              else console.warn(`Late scheduling returned no ID for post ${i}:`, JSON.stringify(lateResult));
             } catch (lateErr: any) {
               lateFailCount++;
-              console.warn(`Late scheduling failed for post ${i}:`, lateErr?.message);
+              console.error(`[Late Schedule] Failed for post ${i} "${sp.content.substring(0, 40)}":`, lateErr?.message);
             }
           }
           return { id: batchPostId, ...postData } as SocialPost;
