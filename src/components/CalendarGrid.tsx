@@ -20,6 +20,7 @@ interface Props {
   onUpload: (postId: string) => void;
   onGoCreate: () => void;
   onGoSmart: () => void;
+  toast?: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -31,7 +32,7 @@ function isSameDay(a: Date, b: Date) {
 
 export const CalendarGrid: React.FC<Props> = ({
   posts, calendarImages, calendarGenSet, fbConnected, hasApiKey,
-  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart,
+  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart, toast: toastFn,
 }) => {
   const today = new Date();
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -199,9 +200,23 @@ export const CalendarGrid: React.FC<Props> = ({
               </p>
               <p className="text-xs text-white/30 mt-0.5">{selectedPosts.length} post{selectedPosts.length !== 1 ? 's' : ''}</p>
             </div>
-            <button onClick={() => setSelectedDay(null)} className="text-white/20 hover:text-white/50 transition">
-              <X size={15} />
-            </button>
+            <div className="flex items-center gap-2">
+              {selectedPosts.length > 1 && (
+                <button
+                  onClick={() => {
+                    if (!confirm(`Delete all ${selectedPosts.length} posts for this day?`)) return;
+                    selectedPosts.forEach(p => onDelete(p.id));
+                    toastFn?.(`${selectedPosts.length} posts deleted.`, 'success');
+                  }}
+                  className="text-red-400/60 hover:text-red-400 text-[10px] font-semibold flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/15 px-2 py-1 rounded-lg transition"
+                >
+                  <Trash2 size={10} /> Delete All
+                </button>
+              )}
+              <button onClick={() => setSelectedDay(null)} className="text-white/20 hover:text-white/50 transition">
+                <X size={15} />
+              </button>
+            </div>
           </div>
 
           {selectedPosts.length === 0 ? (
@@ -265,6 +280,18 @@ export const CalendarGrid: React.FC<Props> = ({
                       {publishingId === post.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Retry
                     </button>
                   )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!confirm('Delete this post?')) return;
+                      onDelete(post.id);
+                      toastFn?.('Post deleted.', 'success');
+                    }}
+                    className="shrink-0 text-white/10 hover:text-red-400 transition p-1 rounded-lg hover:bg-red-500/10"
+                    title="Delete post"
+                  >
+                    <Trash2 size={12} />
+                  </button>
                   <div className="text-white/15 group-hover:text-white/35 transition shrink-0 self-center text-xs">›</div>
                 </button>
               ))}

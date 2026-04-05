@@ -3016,6 +3016,7 @@ const Dashboard: React.FC = () => {
               onUpload={handleCalendarUpload}
               onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
               onGoSmart={() => setActiveTab('smart')}
+              toast={toast}
             />
           </div>
         )}
