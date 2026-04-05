@@ -705,7 +705,8 @@ export const generateSmartSchedule = async (
   },
   includeVideos: boolean = false,
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
-  onPhase?: (phase: 'researching' | 'writing') => void
+  onPhase?: (phase: 'researching' | 'writing') => void,
+  campaignFocus?: string
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   try {
     const now = new Date();
@@ -757,7 +758,7 @@ BUSINESS PROFILE:
 ${profileBlock ? profileBlock : ''}
 
 ${benchmarkBlock}
-
+${campaignFocus ? `\nCAMPAIGN FOCUS — the user wants ALL posts this batch to emphasise:\n"${campaignFocus}"\nEvery post MUST tie back to this focus. Make it the central theme of every caption, image prompt, and hashtag set. If the focus mentions a specific product, event, or promotion, feature it prominently in every post.\n` : ''}
 CRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about.
 
 YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, build a saturation campaign strategy for this specific ${businessType} business. You MUST use the researched posting times and days — do NOT invent different times. Adapt the content pillars and hashtags to this specific business while staying within the research guidelines.
@@ -795,7 +796,7 @@ BUSINESS PROFILE:
 ${profileBlock ? profileBlock : ''}
 
 ${benchmarkBlock}
-
+${campaignFocus ? `\nCAMPAIGN FOCUS — the user wants ALL posts this batch to emphasise:\n"${campaignFocus}"\nEvery post MUST tie back to this focus. Make it the central theme of every caption, image prompt, and hashtag set. If the focus mentions a specific product, event, or promotion, feature it prominently in every post.\n` : ''}
 CRITICAL: You are creating content for "${businessName}", which is a ${businessType}. ALL content pillars, topics, and posts MUST be about THIS business. NEVER generate content about social media marketing, AI tools, web design, or technology.
 
 YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, refine the strategy for this specific ${businessType} business. You MUST use the researched posting times and best days — do NOT invent different times. Adapt content pillars to this specific business.

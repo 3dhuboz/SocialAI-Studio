@@ -811,6 +811,7 @@ const Dashboard: React.FC = () => {
   const [smartCount, setSmartCount] = useState(7);
   const [includeVideos, setIncludeVideos] = useState(false);
   const [autopilotPlatform, setAutopilotPlatform] = useState<'both' | 'facebook' | 'instagram'>('both');
+  const [campaignFocus, setCampaignFocus] = useState('');
   const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | null>(null);
 
   // Load/clear smart drafts when switching client workspaces
@@ -1372,7 +1373,8 @@ const Dashboard: React.FC = () => {
         profile,
         includeVideos,
         autopilotMode,
-        (phase) => setSmartGenPhase(phase)
+        (phase) => setSmartGenPhase(phase),
+        campaignFocus.trim() || undefined
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
@@ -3221,6 +3223,19 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
+                {/* Campaign Focus */}
+                <div>
+                  <label className="text-[10px] font-bold tracking-widest text-white/30 block mb-1.5">CAMPAIGN FOCUS <span className="text-white/15 font-normal tracking-normal">(optional)</span></label>
+                  <textarea
+                    value={campaignFocus}
+                    onChange={e => setCampaignFocus(e.target.value)}
+                    placeholder="What do you want to promote? e.g. 'Easter specials', 'New product launch', 'SocialAI Studio features'…"
+                    rows={2}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 resize-none"
+                  />
+                  <p className="text-[10px] text-white/20 mt-1">Steer the AI toward a specific product, event, or theme. Leave blank for general content.</p>
+                </div>
+
                 <div className="flex flex-wrap gap-3 items-end">
                   <div>
                     <label className="text-xs text-white/40 block mb-1.5">Posts to Generate</label>
@@ -3573,7 +3588,7 @@ const Dashboard: React.FC = () => {
             {/* AI Insights are always available */}
             <div className="bg-green-500/8 border border-green-500/20 rounded-2xl p-6 text-center space-y-3">
               <Sparkles size={28} className="text-green-400 mx-auto" />
-              <p className="text-white/60 font-semibold">AI Insights are powered by OpenRouter</p>
+              <p className="text-white/60 font-semibold">AI Insights are ready</p>
               <button onClick={() => setActiveTab('settings')} className="text-xs text-amber-400 underline hover:text-amber-300 transition">Go to Settings →</button>
             </div>
 
@@ -3590,7 +3605,7 @@ const Dashboard: React.FC = () => {
                       <p className="text-sm font-bold text-white">
                         {isScanningPosts ? 'Scanning Past Posts…' : 'Generating AI Insights…'}
                       </p>
-                      <p className="text-xs text-white/40">Powered by Claude AI</p>
+                      <p className="text-xs text-white/40">Powered by AI</p>
                     </div>
                   </div>
 
