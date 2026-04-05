@@ -1027,16 +1027,32 @@ const Dashboard: React.FC = () => {
 
   // Stats are fetched manually via Refresh Stats button only — auto-fetch removed (was firing on every workspace switch)
 
-  const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
-    if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
-    // Safety: warn if Late profile doesn't match expected workspace
-    if (!activeClientId && agencyLateRef.current.profileId && lateProfileId !== agencyLateRef.current.profileId) {
-      console.warn('Publish safety: lateProfileId mismatch — forcing restore from agency cache');
+  // Guard: verify lateProfileId matches the active workspace before any Late.dev publish.
+  // Returns the correct profile ID if valid, or null (and shows a toast) if mismatched.
+  const verifyLateProfile = (): string | null => {
+    if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return null; }
+    if (activeClientId) {
+      const client = clients.find(c => c.id === activeClientId);
+      const expected = client?.lateProfileId;
+      if (expected && lateProfileId !== expected) {
+        console.warn(`[Late Guard] Client "${client?.name}" expects ${expected} but got ${lateProfileId} — fixing`);
+        setLateProfileId(expected);
+        toast('Workspace was out of sync — please try again.', 'warning');
+        return null;
+      }
+    } else if (agencyLateRef.current.profileId && lateProfileId !== agencyLateRef.current.profileId) {
+      console.warn(`[Late Guard] Own workspace expects ${agencyLateRef.current.profileId} but got ${lateProfileId} — fixing`);
       setLateProfileId(agencyLateRef.current.profileId);
-      toast('Workspace was out of sync — please try publishing again.', 'warning');
-      return;
+      toast('Workspace was out of sync — please try again.', 'warning');
+      return null;
     }
-    console.log('[Publish] Profile:', lateProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
+    return lateProfileId;
+  };
+
+  const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
+    const verifiedProfileId = verifyLateProfile();
+    if (!verifiedProfileId) return;
+    console.log('[Publish] Profile:', verifiedProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
@@ -1058,8 +1074,8 @@ const Dashboard: React.FC = () => {
         else toast('Image upload failed — posting text only.', 'warning');
       }
 
-      console.log('[Publish] Final accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
-      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems, resolvedAccountIds);
+      console.log('[Publish] Final accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', verifiedProfileId);
+      await LateService.post(verifiedProfileId, platforms, fullText, undefined, undefined, mediaItems, resolvedAccountIds);
       setPublishSuccess(true);
       if (publishTimerRef.current) clearTimeout(publishTimerRef.current);
       publishTimerRef.current = setTimeout(() => setPublishSuccess(false), 4000);
@@ -1502,6 +1518,8 @@ const Dashboard: React.FC = () => {
 
   const handleAcceptSmartPosts = async () => {
     if (!user) return;
+    // Guard: verify lateProfileId matches expected workspace before batch-scheduling
+    if (lateProfileId && !verifyLateProfile()) return;
     const total = smartPosts.length;
     setIsAccepting(true);
     setAcceptProgress(0);
@@ -2959,11 +2977,12 @@ const Dashboard: React.FC = () => {
               onSave={handleUpdatePost}
               onPublish={async (post) => {
                 try {
+                  const verifiedId = verifyLateProfile();
+                  if (!verifiedId) return;
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
-                  if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
+                  await LateService.post(verifiedId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   await db.updatePost(post.id, { status: 'Posted' });
                   toast('Published successfully!', 'success');
@@ -2971,11 +2990,12 @@ const Dashboard: React.FC = () => {
               }}
               onRetry={async (post) => {
                 try {
+                  const verifiedId = verifyLateProfile();
+                  if (!verifiedId) return;
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
-                  if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
                   const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
+                  await LateService.post(verifiedId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
                   await db.updatePost(post.id, { status: 'Posted' });
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Post published successfully!', 'success');
