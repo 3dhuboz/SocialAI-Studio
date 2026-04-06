@@ -5,7 +5,7 @@ import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
 import {
   CheckCircle, ArrowRight, Sparkles, Loader2,
-  Building2, MapPin, Facebook, PartyPopper, X,
+  Building2, MapPin, Facebook, Instagram, PartyPopper, X,
   Wand2, HelpCircle, Calendar,
 } from 'lucide-react';
 
@@ -237,10 +237,10 @@ export const OnboardingWizard: React.FC<Props> = ({
             <div className="space-y-5">
               <div>
                 <h2 className="text-xl font-black text-white mb-1 flex items-center gap-2">
-                  <Facebook className="text-blue-400" size={20} /> Connect Facebook
+                  <Facebook className="text-blue-400" size={20} /> Connect Facebook & Instagram
                 </h2>
                 <p className="text-xs text-white/35 leading-relaxed">
-                  Optional — lets the app publish directly to your Facebook Page with one click.
+                  Connect your Facebook Page to enable one-click publishing. Instagram will be linked automatically if connected to your page.
                 </p>
               </div>
               <FacebookConnectButton
@@ -258,6 +258,26 @@ export const OnboardingWizard: React.FC<Props> = ({
                   else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
                 }}
               />
+
+              {/* Instagram setup instructions */}
+              <div className="bg-pink-500/5 border border-pink-500/15 rounded-2xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-pink-300 flex items-center gap-1.5">
+                  <Instagram size={12} /> Want Instagram posting too?
+                </p>
+                <p className="text-[11px] text-white/40 leading-relaxed">
+                  To enable Instagram, your Facebook Page needs a linked Instagram Business account. Here's how:
+                </p>
+                <ol className="text-[11px] text-white/35 leading-relaxed space-y-1 list-decimal list-inside">
+                  <li>Open your Facebook Page on facebook.com</li>
+                  <li>Go to <strong className="text-white/50">Settings</strong> → <strong className="text-white/50">Linked Accounts</strong></li>
+                  <li>Click <strong className="text-white/50">Connect Account</strong> next to Instagram</li>
+                  <li>Log in to your Instagram Business or Creator account</li>
+                  <li>Come back here and reconnect Facebook — Instagram will be detected automatically</li>
+                </ol>
+                <p className="text-[10px] text-white/20">
+                  Note: Instagram must be a Business or Creator account, not a personal one.
+                </p>
+              </div>
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => next(true)}
