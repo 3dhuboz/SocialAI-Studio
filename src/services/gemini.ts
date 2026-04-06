@@ -735,43 +735,40 @@ const researchCampaignFocus = async (
     }
   }
 
-  const prompt = `You are a marketing research analyst. The business "${businessName}" (${businessType}) wants to run a focused social media campaign.
+  const prompt = `You are a direct-response copywriter researching a campaign. NO fluff. NO vague marketing speak. Every sentence must contain a SPECIFIC fact, feature name, number, or concrete detail.
 
-${profileDescription ? `Business description: ${profileDescription}` : ''}
-${productsServices ? `Products/services: ${productsServices}` : ''}
+BUSINESS: "${businessName}" (${businessType})
+${profileDescription ? `DESCRIPTION: ${profileDescription}` : ''}
+${productsServices ? `PRODUCTS/SERVICES: ${productsServices}` : ''}
 
-THE USER'S CAMPAIGN BRIEF:
+CAMPAIGN BRIEF FROM USER:
 "${campaignFocus}"
 
-${websiteContent ? `ACTUAL WEBSITE CONTENT (scraped from the URL the user mentioned — USE THIS AS YOUR PRIMARY SOURCE OF FACTS):
----
-${websiteContent}
----
-IMPORTANT: The above is REAL content from the website. Extract specific features, benefits, pricing, testimonials, and product details from it. Do NOT make up facts — use what's actually on the page.
-` : ''}
+${websiteContent ? `WEBSITE CONTENT (real data from the URL — use this as primary source):\n---\n${websiteContent}\n---\n` : ''}
+RULES:
+- Use ONLY facts from the business description, products/services, and website content above
+- Name specific features (e.g. "AI Content Autopilot" not "our AI tool")
+- Include specific numbers (e.g. "$29/mo" not "affordable pricing", "7-14 posts/week" not "regular posts")
+- If the description mentions a URL, include it in CTAs
+- NEVER write generic phrases like "boost your engagement", "take your business to the next level", "in today's digital world"
 
-YOUR TASK: Produce a comprehensive campaign research brief based on the REAL data above. Be specific and factual:
+PRODUCE THIS BRIEF:
 
-1. PRODUCT/SERVICE: What exactly is being promoted? List specific features found on the website.
-2. TARGET AUDIENCE: Who would benefit most from this? Be specific.
-3. KEY BENEFITS: List 5-8 specific, concrete benefits (not vague marketing speak). Use real features from the website.
-4. PAIN POINTS SOLVED: What problems does this solve? Reference real capabilities.
-5. CALL-TO-ACTION: What should people do? Include the actual URL if provided.
-6. PRICING: Include any pricing found on the website.
-7. CONTENT ANGLES: List 7-10 distinct post angles, each focusing on a DIFFERENT specific feature or benefit:
-   - Feature spotlight (name the actual feature)
-   - How-to / tutorial angle
-   - Pain point → solution
-   - Before/after comparison
-   - Customer success story angle
-   - Behind the scenes
-   - FAQ / myth busting
-   - Social proof / testimonial
-   - Limited time / urgency
-   - Comparison vs alternatives
-8. IMAGE DESCRIPTIONS: For each angle, describe a specific image showing the product IN USE — dashboards, screens, real scenarios. NO generic stock photos of people at laptops.
-
-Respond in structured plain text. Be thorough and specific — vague posts perform poorly.`;
+1. PRODUCT NAME & DESCRIPTION (2 sentences max — what is it, what does it do)
+2. SPECIFIC FEATURES (list each by name with one-line description):
+   - Feature 1: [name] — [what it does]
+   - Feature 2: [name] — [what it does]
+   - (list ALL features mentioned in the profile/website data)
+3. PRICING: Exact prices and plan names if available
+4. TARGET AUDIENCE: Who specifically + their #1 pain point
+5. COMPETITOR COMPARISON: What's the alternative? (doing it manually, hiring a social media manager, etc.) How is this better?
+6. POST ANGLES (7-10, each must spotlight a DIFFERENT specific feature):
+   For each angle provide:
+   - ANGLE NAME: e.g. "Feature: AI Content Autopilot"
+   - HOOK (first line of the post): Must be a question or bold claim with a specific detail
+   - KEY FACT to include in the post body
+   - CTA: specific action (visit URL, sign up, try free, etc.)
+   - IMAGE: describe a concrete visual — product screenshot, dashboard view, before/after, device mockup. NO people, NO stock photos.`;
 
   try {
     return await withTimeout(callAI(prompt, { temperature: 0.5, maxTokens: 3000 }), 45000);
