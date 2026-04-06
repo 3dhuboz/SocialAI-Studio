@@ -149,6 +149,107 @@ app.get('/api/facebook/posts', async (c) => {
   }
 });
 
+// Discover Instagram Business Account linked to a Facebook Page
+app.get('/api/facebook/instagram', async (c) => {
+  const pageId = c.req.query('pageId');
+  const token = c.req.query('pageAccessToken');
+  if (!pageId || !token) return c.json({ error: 'pageId and pageAccessToken required' }, 400);
+  try {
+    const res = await fetch(`${FB_GRAPH}/${pageId}?fields=instagram_business_account&access_token=${encodeURIComponent(token)}`);
+    const data = await res.json() as any;
+    if (data.error) return c.json({ error: data.error.message }, 400);
+    const igId = data.instagram_business_account?.id || null;
+    return c.json({ instagramAccountId: igId });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Failed to check Instagram' }, 500);
+  }
+});
+
+// Publish to Instagram (photo or reel)
+app.post('/api/facebook/instagram-publish', async (c) => {
+  const { instagramAccountId, pageAccessToken, caption, imageUrl, videoUrl, mediaType } = await c.req.json<{
+    instagramAccountId: string; pageAccessToken: string; caption: string;
+    imageUrl?: string; videoUrl?: string; mediaType?: 'IMAGE' | 'REELS';
+  }>();
+  if (!instagramAccountId || !pageAccessToken || !caption) return c.json({ error: 'instagramAccountId, pageAccessToken, and caption required' }, 400);
+
+  try {
+    // Step 1: Create media container
+    const containerParams: Record<string, string> = {
+      access_token: pageAccessToken,
+      caption,
+    };
+    if (mediaType === 'REELS' && videoUrl) {
+      containerParams.media_type = 'REELS';
+      containerParams.video_url = videoUrl;
+    } else if (imageUrl) {
+      containerParams.image_url = imageUrl;
+    } else {
+      return c.json({ error: 'imageUrl or videoUrl required' }, 400);
+    }
+
+    const createRes = await fetch(`${FB_GRAPH}/${instagramAccountId}/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(containerParams).toString(),
+    });
+    const createData = await createRes.json() as any;
+    if (createData.error) return c.json({ error: createData.error.message }, 400);
+    const containerId = createData.id;
+    if (!containerId) return c.json({ error: 'Failed to create media container' }, 500);
+
+    // Step 2: For reels, poll until ready (video processing takes time)
+    if (mediaType === 'REELS') {
+      let ready = false;
+      for (let i = 0; i < 30; i++) { // Max 5 min wait (30 * 10s)
+        await new Promise(r => setTimeout(r, 10000));
+        const statusRes = await fetch(`${FB_GRAPH}/${containerId}?fields=status_code&access_token=${encodeURIComponent(pageAccessToken)}`);
+        const statusData = await statusRes.json() as any;
+        if (statusData.status_code === 'FINISHED') { ready = true; break; }
+        if (statusData.status_code === 'ERROR') return c.json({ error: 'Instagram video processing failed' }, 500);
+      }
+      if (!ready) return c.json({ error: 'Instagram video processing timed out' }, 504);
+    }
+
+    // Step 3: Publish the container
+    const publishRes = await fetch(`${FB_GRAPH}/${instagramAccountId}/media_publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ creation_id: containerId, access_token: pageAccessToken }).toString(),
+    });
+    const publishData = await publishRes.json() as any;
+    if (publishData.error) return c.json({ error: publishData.error.message }, 400);
+    return c.json({ id: publishData.id, success: true });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Instagram publish failed' }, 500);
+  }
+});
+
+// Publish Facebook Reel
+app.post('/api/facebook/reel', async (c) => {
+  const { pageId, pageAccessToken, description, videoUrl } = await c.req.json<{
+    pageId: string; pageAccessToken: string; description: string; videoUrl: string;
+  }>();
+  if (!pageId || !pageAccessToken || !videoUrl) return c.json({ error: 'pageId, pageAccessToken, and videoUrl required' }, 400);
+  try {
+    const res = await fetch(`${FB_GRAPH}/${pageId}/video_reels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        access_token: pageAccessToken,
+        upload_phase: 'finish',
+        video_url: videoUrl,
+        description,
+      }).toString(),
+    });
+    const data = await res.json() as any;
+    if (data.error) return c.json({ error: data.error.message }, 400);
+    return c.json({ id: data.id || data.video_id, success: true });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Facebook Reel publish failed' }, 500);
+  }
+});
+
 // ── Web Fetch — fetch a URL and return text content for AI research ──────────
 app.post('/api/web-fetch', async (c) => {
   const { url } = await c.req.json<{ url: string }>();

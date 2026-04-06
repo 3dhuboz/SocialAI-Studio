@@ -46,4 +46,58 @@ export const FacebookPublishService = {
     if (data.error) throw new Error(data.error);
     return data.posts || [];
   },
+
+  /**
+   * Discover Instagram Business Account linked to a Facebook Page.
+   * Returns the Instagram account ID or null if not linked.
+   */
+  getInstagramAccount: async (
+    pageId: string,
+    pageAccessToken: string,
+  ): Promise<string | null> => {
+    const res = await fetch(`${WORKER}/api/facebook/instagram?pageId=${encodeURIComponent(pageId)}&pageAccessToken=${encodeURIComponent(pageAccessToken)}`);
+    const data = await res.json() as any;
+    if (data.error) return null;
+    return data.instagramAccountId || null;
+  },
+
+  /**
+   * Publish a photo or Reel to Instagram.
+   */
+  publishInstagram: async (
+    instagramAccountId: string,
+    pageAccessToken: string,
+    caption: string,
+    imageUrl?: string,
+    videoUrl?: string,
+    mediaType: 'IMAGE' | 'REELS' = 'IMAGE',
+  ): Promise<FbPublishResult> => {
+    const res = await fetch(`${WORKER}/api/facebook/instagram-publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instagramAccountId, pageAccessToken, caption, imageUrl, videoUrl, mediaType }),
+    });
+    const data = await res.json() as any;
+    if (!res.ok || data.error) throw new Error(data.error || `Instagram publish failed (${res.status})`);
+    return { id: data.id, success: true };
+  },
+
+  /**
+   * Publish a Facebook Reel.
+   */
+  publishFacebookReel: async (
+    pageId: string,
+    pageAccessToken: string,
+    description: string,
+    videoUrl: string,
+  ): Promise<FbPublishResult> => {
+    const res = await fetch(`${WORKER}/api/facebook/reel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageId, pageAccessToken, description, videoUrl }),
+    });
+    const data = await res.json() as any;
+    if (!res.ok || data.error) throw new Error(data.error || `Facebook Reel failed (${res.status})`);
+    return { id: data.id, success: true };
+  },
 };

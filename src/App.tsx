@@ -4561,10 +4561,21 @@ const Dashboard: React.FC = () => {
                   connectedPageId={socialTokens.facebookPageId}
                   connectedPageName={socialTokens.facebookPageName || profile.name}
                   tokenNeverExpires={!!socialTokens.connectedAt}
-                  onConnected={(pageId, pageAccessToken, pageName, longLivedUserToken) => {
-                    const updated = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
+                  onConnected={async (pageId, pageAccessToken, pageName, longLivedUserToken) => {
+                    const updated: any = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
+                    // Auto-discover linked Instagram Business Account
+                    try {
+                      const igId = await FacebookPublishService.getInstagramAccount(pageId, pageAccessToken);
+                      if (igId) {
+                        updated.instagramBusinessAccountId = igId;
+                        toast(`Facebook + Instagram connected!`, 'success');
+                      } else {
+                        toast('Facebook connected! (No Instagram Business account linked to this page)', 'success');
+                      }
+                    } catch {
+                      toast('Facebook connected!', 'success');
+                    }
                     saveSocialTokens(updated);
-                    toast('Facebook page connected!', 'success');
                   }}
                   onDisconnect={() => {
                     saveSocialTokens({ ...DEFAULT_SOCIAL_TOKENS });
