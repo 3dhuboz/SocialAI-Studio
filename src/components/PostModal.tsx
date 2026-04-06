@@ -5,6 +5,7 @@ import {
   RefreshCw, Upload, Hash
 } from 'lucide-react';
 import { SocialPost } from '../types';
+import { AnimatedReelPreview } from './AnimatedReelPreview';
 
 interface Props {
   post: SocialPost;
@@ -66,6 +67,8 @@ export const PostModal: React.FC<Props> = ({
   };
 
   const isIG = post.platform === 'Instagram';
+  const isVideo = post.postType === 'video';
+  const [showScript, setShowScript] = useState(false);
 
   return (
     <div
@@ -99,8 +102,46 @@ export const PostModal: React.FC<Props> = ({
         </div>
 
         <div className="overflow-y-auto max-h-[80vh]">
-          {/* ── Image ── */}
-          {displayImage ? (
+          {/* ── Video Reel Preview ── */}
+          {isVideo ? (
+            <div className="border-b border-white/[0.06]">
+              <div className="flex items-center gap-4 p-5">
+                <AnimatedReelPreview
+                  hookText={post.videoScript?.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() || post.content}
+                  mood={post.videoMood}
+                  size="md"
+                />
+                <div className="flex-1 min-w-0">
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/25">Reel</span>
+                  {post.videoMood && <p className="text-xs text-white/30 mt-2">Mood: {post.videoMood}</p>}
+                  {post.videoScript && (
+                    <button
+                      onClick={() => setShowScript(!showScript)}
+                      className="text-xs text-purple-400 hover:text-purple-300 mt-2 flex items-center gap-1 transition"
+                    >
+                      {showScript ? '▴ Hide' : '▾ View'} Video Script & Shot Brief
+                    </button>
+                  )}
+                </div>
+              </div>
+              {showScript && post.videoScript && (
+                <div className="px-5 pb-4 space-y-3 animate-fadeSlideUp">
+                  <div className="bg-white/3 border border-white/8 rounded-xl p-3">
+                    <p className="text-[10px] font-bold text-purple-400/60 uppercase tracking-wider mb-1">Script</p>
+                    <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{post.videoScript}</p>
+                  </div>
+                  {post.videoShots && (
+                    <div className="bg-white/3 border border-white/8 rounded-xl p-3">
+                      <p className="text-[10px] font-bold text-purple-400/60 uppercase tracking-wider mb-1">Shot Brief</p>
+                      <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{post.videoShots}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+          /* ── Image ── */
+          displayImage ? (
             <div className="relative">
               <img src={displayImage} alt="" className="w-full max-h-56 object-cover" />
               <div className="absolute top-2 right-2 flex gap-1.5">
@@ -147,6 +188,7 @@ export const PostModal: React.FC<Props> = ({
                 </button>
               </div>
             </div>
+          )
           )}
 
           <div className="p-6 space-y-4">
