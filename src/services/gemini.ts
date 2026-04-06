@@ -687,10 +687,29 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`AI response timed out after ${ms / 1000}s — try again or check your API key.`)), ms))]);
 
 /**
+ * Fetch a URL's text content via the Worker proxy for AI research.
+ */
+const fetchUrlContent = async (url: string): Promise<string> => {
+  try {
+    const res = await fetch(`${AI_WORKER}/api/web-fetch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.text) return data.text;
+    console.warn('[Web Fetch] Failed:', data.error);
+    return '';
+  } catch (e) {
+    console.warn('[Web Fetch] Error:', e);
+    return '';
+  }
+};
+
+/**
  * Pre-research the campaign focus before generating posts.
- * Analyses what the user wants to promote — extracts features, benefits,
- * pricing, URLs, CTAs, and creates a structured brief the AI can use
- * to write highly specific, targeted posts.
+ * If a URL is mentioned, actually fetches the page content and feeds it
+ * to the AI so it can write posts based on real product data.
  */
 const researchCampaignFocus = async (
   campaignFocus: string,
@@ -699,6 +718,18 @@ const researchCampaignFocus = async (
   profileDescription?: string,
   productsServices?: string,
 ): Promise<string> => {
+  // Extract URLs from the campaign focus and fetch their content
+  const urlMatch = campaignFocus.match(/https?:\/\/[^\s,]+|www\.[^\s,]+/gi);
+  let websiteContent = '';
+  if (urlMatch) {
+    const urls = urlMatch.map(u => u.startsWith('www.') ? `https://${u}` : u);
+    const fetched = await Promise.all(urls.slice(0, 2).map(fetchUrlContent));
+    websiteContent = fetched.filter(Boolean).join('\n\n---\n\n');
+    if (websiteContent) {
+      console.log(`[Campaign Research] Fetched ${urls.length} URL(s), got ${websiteContent.length} chars`);
+    }
+  }
+
   const prompt = `You are a marketing research analyst. The business "${businessName}" (${businessType}) wants to run a focused social media campaign.
 
 ${profileDescription ? `Business description: ${profileDescription}` : ''}
@@ -707,23 +738,38 @@ ${productsServices ? `Products/services: ${productsServices}` : ''}
 THE USER'S CAMPAIGN BRIEF:
 "${campaignFocus}"
 
-YOUR TASK: Deeply analyse what they want to promote and produce a comprehensive campaign research brief. Think step by step:
+${websiteContent ? `ACTUAL WEBSITE CONTENT (scraped from the URL the user mentioned — USE THIS AS YOUR PRIMARY SOURCE OF FACTS):
+---
+${websiteContent}
+---
+IMPORTANT: The above is REAL content from the website. Extract specific features, benefits, pricing, testimonials, and product details from it. Do NOT make up facts — use what's actually on the page.
+` : ''}
 
-1. WHAT is being promoted? (product, service, event, URL, offer — be specific)
-2. WHO is the target audience for this campaign?
-3. WHY should someone care? List 5-8 specific benefits/features/selling points
-4. WHAT pain points does this solve for the audience?
-5. WHAT is the call-to-action? (visit URL, sign up, call, book, etc.)
-6. WHAT tone/angle works best? (urgency, curiosity, social proof, education, FOMO)
-7. WHAT specific content angles should each post take? List 7-10 distinct angles (e.g. "feature spotlight: AI scheduling", "customer success story", "comparison vs doing it manually", "behind the scenes", "FAQ/myth busting", "limited time offer", etc.)
-8. IMAGE DESCRIPTIONS: For each angle, describe what the ideal image should show — be specific about the product/service in action, not generic stock imagery
+YOUR TASK: Produce a comprehensive campaign research brief based on the REAL data above. Be specific and factual:
 
-If a URL was mentioned, describe what the landing page likely contains and how to reference it naturally.
+1. PRODUCT/SERVICE: What exactly is being promoted? List specific features found on the website.
+2. TARGET AUDIENCE: Who would benefit most from this? Be specific.
+3. KEY BENEFITS: List 5-8 specific, concrete benefits (not vague marketing speak). Use real features from the website.
+4. PAIN POINTS SOLVED: What problems does this solve? Reference real capabilities.
+5. CALL-TO-ACTION: What should people do? Include the actual URL if provided.
+6. PRICING: Include any pricing found on the website.
+7. CONTENT ANGLES: List 7-10 distinct post angles, each focusing on a DIFFERENT specific feature or benefit:
+   - Feature spotlight (name the actual feature)
+   - How-to / tutorial angle
+   - Pain point → solution
+   - Before/after comparison
+   - Customer success story angle
+   - Behind the scenes
+   - FAQ / myth busting
+   - Social proof / testimonial
+   - Limited time / urgency
+   - Comparison vs alternatives
+8. IMAGE DESCRIPTIONS: For each angle, describe a specific image showing the product IN USE — dashboards, screens, real scenarios. NO generic stock photos of people at laptops.
 
-Respond in structured plain text (not JSON). Be thorough — this brief will be used to write 5-14 highly targeted social media posts.`;
+Respond in structured plain text. Be thorough and specific — vague posts perform poorly.`;
 
   try {
-    return await withTimeout(callAI(prompt, { temperature: 0.6, maxTokens: 2048 }), 30000);
+    return await withTimeout(callAI(prompt, { temperature: 0.5, maxTokens: 3000 }), 45000);
   } catch (e) {
     console.warn('[Campaign Research] Failed:', e);
     return `Campaign focus: ${campaignFocus}`;

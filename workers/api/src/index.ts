@@ -90,6 +90,31 @@ const uuid = () => crypto.randomUUID();
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
 
+// ── Web Fetch — fetch a URL and return text content for AI research ──────────
+app.post('/api/web-fetch', async (c) => {
+  const { url } = await c.req.json<{ url: string }>();
+  if (!url || !url.startsWith('http')) return c.json({ error: 'Valid URL required' }, 400);
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SocialAI-Research/1.0)' },
+      redirect: 'follow',
+    });
+    if (!res.ok) return c.json({ error: `HTTP ${res.status}` }, 502);
+    const html = await res.text();
+    // Strip HTML tags, scripts, styles — extract text content
+    const text = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 8000); // Cap at 8K chars for AI context
+    return c.json({ text, url });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Failed to fetch URL' }, 502);
+  }
+});
+
 /**
  * POST /api/ai/generate
  * Body: { prompt, systemPrompt?, temperature?, maxTokens?, responseFormat? }
