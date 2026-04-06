@@ -52,7 +52,8 @@ export const OnboardingWizard: React.FC<Props> = ({
   };
 
   const canAdvanceBusiness =
-    profile.name.trim() && profile.name !== CLIENT.defaultBusinessName;
+    profile.name.trim() && profile.name !== CLIENT.defaultBusinessName &&
+    profile.location.trim() && profile.location !== CLIENT.defaultLocation;
 
   // ── Overlay backdrop ──────────────────────────────────
   return (
@@ -178,7 +179,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
                     <MapPin size={11} className="inline mr-1 text-amber-400/60" />
-                    Location
+                    Location <span className="text-red-400">*</span>
                   </label>
                   <input
                     value={profile.location === CLIENT.defaultLocation ? '' : profile.location}
