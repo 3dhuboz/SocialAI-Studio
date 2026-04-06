@@ -10,9 +10,9 @@ interface Props {
 }
 
 const steps: { id: SetupStatus; label: string; sub: string }[] = [
-  { id: 'ordered',     label: 'Order Received',      sub: 'Payment confirmed' },
-  { id: 'form_sent',   label: 'Setup Form Sent',      sub: 'Check your email' },
-  { id: 'in_progress', label: 'Setup In Progress',    sub: 'Up to 3 business days' },
+  { id: 'ordered',     label: 'Payment Confirmed',    sub: 'Subscription active' },
+  { id: 'form_sent',   label: 'Profile Set Up',       sub: 'Business details saved' },
+  { id: 'in_progress', label: 'Facebook Connected',   sub: 'Ready to publish' },
   { id: 'live',        label: "You're Live!",          sub: 'All systems go' },
 ];
 

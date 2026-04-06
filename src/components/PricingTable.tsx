@@ -97,13 +97,14 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
             <CheckCircle size={30} className="text-green-400" />
           </div>
           <h2 className="text-2xl font-black text-white mb-2">You're all set! 🎉</h2>
-          <p className="text-white/40 text-sm mb-6">Your subscription is active. We'll be in touch within 1–3 business days to connect your Facebook page.</p>
+          <p className="text-white/40 text-sm mb-6">Your subscription is active. Let's get your account set up — it only takes a few minutes.</p>
           <button
             onClick={onClose}
             className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3 px-8 rounded-2xl hover:opacity-90 transition"
           >
-            Go to Dashboard
+            Set Up My Account →
           </button>
+          <p className="text-white/20 text-xs mt-4">Need help? <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 underline">Contact support</a></p>
         </div>
       </div>
     );

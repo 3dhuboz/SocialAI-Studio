@@ -212,6 +212,7 @@ const Dashboard: React.FC = () => {
     setActivePlan(planId as PlanTier);
     setSetupStatus('ordered');
     setShowPricing(false);
+    setShowOnboarding(true); // Auto-show onboarding wizard immediately after payment
     if (user) {
       await db.upsertUser({ plan: planId, setupStatus: 'ordered' }).catch(() => {});
     }
@@ -244,6 +245,8 @@ const Dashboard: React.FC = () => {
 
   // Onboarding wizard — auto-show for new users who haven't set up their profile
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingGenerating, setOnboardingGenerating] = useState(false);
+  const [onboardingGenCount, setOnboardingGenCount] = useState(0);
   const isProfileBlank = (
     (profile.name === CLIENT.defaultBusinessName || !profile.name) &&
     !profile.description &&
@@ -1753,6 +1756,32 @@ const Dashboard: React.FC = () => {
     await handleSaveProfile().catch(() => {});
   };
 
+  // Onboarding: generate 3 quick posts for the new user
+  const handleOnboardingGenerate = async () => {
+    setOnboardingGenerating(true);
+    try {
+      const result = await generateSmartSchedule(
+        profile.name, profile.type, profile.tone, stats, 3,
+        profile.location || 'Australia',
+        { facebook: true, instagram: false },
+        false, profile, false, 'quick24h', undefined, undefined
+      );
+      if (result.posts.length > 0) {
+        const saved = await Promise.all(result.posts.map(async (sp) => {
+          const postData = { platform: sp.platform, content: sp.content, hashtags: sp.hashtags, scheduledFor: sp.scheduledFor, status: 'Scheduled' as const, topic: sp.topic, imagePrompt: sp.imagePrompt, pillar: sp.pillar };
+          const id = await db.createPost({ ...postData, clientId: activeClientId, image_url: undefined, scheduled_for: postData.scheduledFor });
+          return { id, ...postData } as SocialPost;
+        }));
+        setPosts(prev => [...saved, ...prev]);
+        setOnboardingGenCount(saved.length);
+      }
+    } catch (e: any) {
+      console.error('Onboarding generation failed:', e?.message);
+    } finally {
+      setOnboardingGenerating(false);
+    }
+  };
+
   const [falApiKey, setFalApiKey] = useState(() => localStorage.getItem('sai_fal_key') || '');
   const [isSavingFalKey, setIsSavingFalKey] = useState(false);
   const handleSaveFalKey = async () => {
@@ -2069,6 +2098,10 @@ const Dashboard: React.FC = () => {
           userEmail={user?.email ?? undefined}
           socialTokens={socialTokens}
           onSaveSocialTokens={saveSocialTokens}
+          onGenerateFirstPosts={handleOnboardingGenerate}
+          isGenerating={onboardingGenerating}
+          generatedCount={onboardingGenCount}
+          onAdvanceSetup={(status) => { setSetupStatus(status as any); db.upsertUser({ setupStatus: status }).catch(() => {}); }}
         />
       )}
       {/* ── Publishing overlay ── */}
