@@ -15,6 +15,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
+import { AdminDashboard } from './components/AdminDashboard';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 // Late.dev import kept for backward compatibility — being phased out
 // import { LateService } from './services/lateService';
@@ -961,6 +962,24 @@ const Dashboard: React.FC = () => {
   // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai/Late credits, API keys).
   // isAdminMode may be broadened to client admins in future; isSuperAdmin never will be.
   const isSuperAdmin = !CLIENT.clientMode && !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
+
+  // Admin dashboard: all posts across all clients
+  const [adminAllPosts, setAdminAllPosts] = useState<any[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const loadAdminPosts = async () => {
+    if (!isSuperAdmin) return;
+    setAdminLoading(true);
+    try {
+      const ownPosts = await db.getPosts();
+      const clientPostArrays = await Promise.all(clients.map(c => db.getPosts(c.id).catch(() => [])));
+      const all = [
+        ...ownPosts.map(p => ({ ...p, client_id: null })),
+        ...clients.flatMap((c, i) => (clientPostArrays[i] || []).map((p: any) => ({ ...p, client_id: c.id }))),
+      ];
+      setAdminAllPosts(all);
+    } catch { /* silently fail */ }
+    setAdminLoading(false);
+  };
 
 
   // Persist plan/setupStatus to D1
@@ -4237,6 +4256,21 @@ const Dashboard: React.FC = () => {
                 <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">AI &amp; Keys</span>
                 <div className="h-px flex-1 bg-white/6" />
               </div>
+            )}
+
+            {/* Admin Dashboard — all posts + connections overview */}
+            {isSuperAdmin && (
+              <AdminDashboard
+                clients={clients.map(c => ({
+                  ...c,
+                  businessType: c.business_type ?? c.businessType ?? null,
+                  facebookConnected: !!c.lateProfileId,
+                  facebookPageName: c.name,
+                }))}
+                allPosts={adminAllPosts}
+                onRefresh={loadAdminPosts}
+                isLoading={adminLoading}
+              />
             )}
 
             {/* AI Engine Panel — agents + live OpenRouter stats */}
