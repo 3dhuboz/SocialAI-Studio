@@ -200,7 +200,20 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
+  const [activeTab, setActiveTabRaw] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
+  // Wrap setActiveTab to push browser history so back button works within the app
+  const setActiveTab = (tab: typeof activeTab) => {
+    setActiveTabRaw(tab);
+    window.history.pushState({ tab }, '', `#${tab}`);
+  };
+  // Listen for browser back/forward
+  React.useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      if (e.state?.tab) setActiveTabRaw(e.state.tab);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -1432,10 +1445,17 @@ const Dashboard: React.FC = () => {
 
   // ── Image generation: fal.ai FLUX → Gemini Imagen → Pollinations.ai (free) ──
   const generateImage = async (prompt: string): Promise<string | null> => {
+    // Validate prompt — reject titles, pillar names, and vague descriptions
+    const isBad = !prompt || prompt.length < 15 || /^(N\/A|none|null)$/i.test(prompt.trim());
+    const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
+    const effectivePrompt = (isBad || looksLikeTitle)
+      ? `close-up product photo for a ${profile.type} business, professional lighting, overhead angle`
+      : prompt.replace(/\b(woman|women|man|men|person|people|face|chef|farmer|barista|customer|owner|staff|worker|girl|boy|lady|guy|hand|hands|happy|customers)\b/gi, '').trim();
+
     if (FalService.isConfigured()) {
       try {
         const url = await FalService.generateImage(
-          `Professional social media marketing photograph: ${prompt}. Cinematic lighting, vibrant colours, sharp focus, commercial quality. No text, no watermarks, no logos.`
+          `Professional product photograph: ${effectivePrompt}. Cinematic lighting, vibrant colours, sharp focus, commercial quality. No text, no watermarks, no logos, no people, no faces.`
         );
         if (url) return url;
       } catch (e: any) {

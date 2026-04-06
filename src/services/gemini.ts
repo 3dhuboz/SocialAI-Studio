@@ -358,13 +358,21 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
     } catch { return null; }
   };
 
-  // Build a clean, concrete visual prompt — emphasise photorealism to avoid "AI look"
-  // Aggressively strip any people/portrait/human descriptions — AI images of people always look fake
-  const cleanPrompt = prompt
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers)\b/gi, '')
+  // Validate the AI's image prompt — reject titles, pillar names, and vague descriptions
+  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
+  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
+
+  // If the AI wrote a title instead of a description, generate a fallback
+  const effectivePrompt = (isBadPrompt || looksLikeTitle)
+    ? `close-up product photo for a ${businessType} business, professional lighting, overhead angle`
+    : prompt;
+
+  // Strip any people/portrait/human descriptions — AI images of people always look fake
+  const cleanPrompt = effectivePrompt
+    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  const imagePrompt = `RAW photo, ${cleanPrompt || prompt}, product photography, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, realistic textures, matte finish, no people, no humans, no faces, no portraits, no hands, product only`;
+  const imagePrompt = `RAW photo, ${cleanPrompt || effectivePrompt}, product photography, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, realistic textures, matte finish, no people, no humans, no faces, no portraits, no hands, product only`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
