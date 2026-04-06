@@ -80,7 +80,7 @@ body {
 }
 
 /* Noise texture overlay */
-.noise { position: relative; overflow: hidden; }
+.noise { position: relative; }
 .noise::after {
   content: '';
   position: absolute;
