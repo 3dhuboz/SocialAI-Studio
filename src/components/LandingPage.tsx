@@ -106,11 +106,11 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+    <div className="min-h-screen bg-[var(--color-surface-0)] text-white overflow-x-hidden">
       {showPricing && <PricingTable onClose={() => setShowPricing(false)} />}
 
       {/* NAV */}
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl">
+      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl noise">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <button onClick={() => setTab('home')}><AppLogo size={52} /></button>
 
@@ -175,7 +175,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
             <section className="relative pt-20 pb-16 px-6 text-center overflow-hidden">
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(245,158,11,0.15),transparent_70%)]" />
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_50%,rgba(168,85,247,0.06),transparent_60%)]" />
-              <div className="relative max-w-3xl mx-auto">
+              <div className="relative max-w-3xl mx-auto animate-fadeSlideUp">
                 <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-7">
                   <Zap size={12} /> AI-Powered Social Media — Done For You
                 </div>
@@ -302,7 +302,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {howItWorks.map((step, i) => (
-                    <div key={i} className="relative text-center">
+                    <div key={i} className="relative text-center glass-card card-hover rounded-2xl p-4">
                       {i < howItWorks.length - 1 && (
                         <div className="hidden md:block absolute top-7 left-[62%] w-full h-px bg-gradient-to-r from-amber-500/25 to-transparent z-0" />
                       )}
@@ -693,7 +693,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                 </button>
               </div>
             ) : (
-              <div className="bg-white/3 border border-white/8 rounded-3xl p-6 md:p-8 space-y-5">
+              <div className="glass-card border-gradient rounded-3xl p-6 md:p-8 space-y-5">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="text-xs font-bold text-white/40 block mb-1.5">Your Name *</label>
@@ -769,7 +769,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
             </div>
             <div className="space-y-3">
               {faqs.map((faq, i) => (
-                <div key={i} className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+                <div key={i} className="glass rounded-2xl overflow-hidden">
                   <button
                     onClick={() => setOpenFaq(openFaq === i ? null : i)}
                     className="w-full flex items-center justify-between px-6 py-5 text-left hover:bg-white/3 transition"

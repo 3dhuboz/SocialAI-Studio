@@ -73,10 +73,10 @@ export const PostModal: React.FC<Props> = ({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
 
       {/* Modal */}
-      <div className="relative z-10 w-full max-w-lg bg-[#0f0f17] border border-white/10 rounded-3xl shadow-2xl shadow-black/60 overflow-hidden">
+      <div className="relative z-10 w-full max-w-lg bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl shadow-black/60 overflow-hidden animate-spring-in">
 
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/6">
@@ -228,14 +228,14 @@ export const PostModal: React.FC<Props> = ({
         </div>
 
         {/* ── Footer actions ── */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-white/6 bg-black/20">
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-white/[0.06] bg-[var(--color-surface-0)]/40 backdrop-blur-sm">
           <div className="flex gap-2">
             {/* Publish */}
             {fbConnected && post.status !== 'Posted' && (
               <button
                 onClick={handlePublish}
                 disabled={isPublishing || isEditing}
-                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 disabled:opacity-60 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-lg shadow-blue-900/20"
+                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 disabled:opacity-60 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-lg shadow-blue-900/20 press"
               >
                 {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 {isPublishing ? 'Publishing…' : 'Publish Now'}
@@ -250,7 +250,7 @@ export const PostModal: React.FC<Props> = ({
             {!isEditing && post.status !== 'Posted' && (
               <button
                 onClick={() => setIsEditing(true)}
-                className="flex items-center gap-2 bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition"
+                className="flex items-center gap-2 bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition press"
               >
                 <Edit2 size={13} /> Edit
               </button>

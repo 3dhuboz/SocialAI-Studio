@@ -176,10 +176,10 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
             return (
               <div
                 key={plan.id}
-                className={`relative rounded-3xl border flex flex-col overflow-hidden transition-transform hover:scale-[1.02] ${
+                className={`relative rounded-3xl border flex flex-col overflow-hidden card-hover noise ${
                   isSelected ? `${borderClass} shadow-2xl ring-2 ring-offset-2 ring-offset-transparent ${borderClass.replace('border-', 'ring-')}` : borderClass
                 }`}
-                style={{ background: `linear-gradient(160deg, ${glow} 0%, #0d0d14 55%)` }}
+                style={{ background: `linear-gradient(160deg, ${glow} 0%, var(--color-surface-1) 55%)` }}
               >
                 <div className={`h-1.5 w-full bg-gradient-to-r ${plan.color}`} />
 

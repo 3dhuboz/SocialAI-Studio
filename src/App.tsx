@@ -2145,7 +2145,7 @@ const Dashboard: React.FC = () => {
         />
       )}
       {/* Header */}
-      <header id="app-header" className="border-b border-white/5 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
+      <header id="app-header" className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl sticky top-0 z-40 noise">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
           <div className="flex items-center gap-3 min-w-0">
             {CLIENT.clientMode ? (
@@ -2244,7 +2244,7 @@ const Dashboard: React.FC = () => {
         </div>
         {/* Live Stats Bar */}
         {liveStats && (
-          <div className="border-t border-white/5 bg-black/10">
+          <div className="border-t border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-md">
             <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-6 text-xs overflow-x-auto">
               <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap"><Users size={11} className="text-blue-400" /> <span className="text-white font-bold">{liveStats.followersCount.toLocaleString()}</span> followers</span>
               <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap"><Activity size={11} className="text-purple-400" /> <span className="text-white font-bold">{liveStats.reach28d.toLocaleString()}</span> reach (28d)</span>
@@ -2256,15 +2256,15 @@ const Dashboard: React.FC = () => {
       </header>
 
       {/* Tab Nav */}
-      <nav className="border-b border-white/10 bg-black/10 sticky top-[64px] z-30">
+      <nav className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-lg sticky top-[64px] z-30">
         <div className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition whitespace-nowrap ${
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition whitespace-nowrap press ${
                 activeTab === tab.id
-                  ? 'border-amber-400 text-amber-400'
+                  ? 'border-amber-400 text-amber-400 shadow-[0_2px_8px_rgba(245,158,11,0.3)]'
                   : 'border-transparent text-gray-400 hover:text-white'
               }`}
             >
@@ -2279,7 +2279,7 @@ const Dashboard: React.FC = () => {
       {activeClientId && activePlan === 'agency' && authMode !== 'portal' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
-          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b-2 border-emerald-500/40 backdrop-blur-sm sticky top-[109px] z-20">
+          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b border-emerald-500/20 backdrop-blur-sm sticky top-[109px] z-20 glass">
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/25 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
