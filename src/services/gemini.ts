@@ -94,6 +94,26 @@ const parseAiJson = (raw: string): any => {
 const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
+/** Generate business-specific image prompt examples based on business type */
+const getImagePromptExamples = (businessType: string): string => {
+  const t = businessType.toLowerCase();
+  if (t.includes('butcher') || t.includes('meat') || t.includes('agriculture'))
+    return "e.g. 'raw beef ribeye steak on dark wooden cutting board, warm lighting, overhead shot' or 'lamb cutlets on butcher paper with rosemary, natural light'";
+  if (t.includes('bbq') || t.includes('barbeque') || t.includes('food truck'))
+    return "e.g. 'smoked brisket sliced on butcher paper with pickles, golden hour light' or 'pulled pork burger with coleslaw, close-up shot'";
+  if (t.includes('bakery') || t.includes('café') || t.includes('cafe') || t.includes('coffee'))
+    return "e.g. 'sourdough loaf on marble counter, morning light, overhead' or 'flat white coffee with latte art, rustic wooden table'";
+  if (t.includes('pickle') || t.includes('deli') || t.includes('ferment'))
+    return "e.g. 'jar of bread and butter pickles with fresh cucumbers, natural light' or 'cheese board with artisan pickles, overhead shot'";
+  if (t.includes('web') || t.includes('software') || t.includes('tech') || t.includes('it') || t.includes('digital') || t.includes('saas'))
+    return "e.g. 'laptop screen showing social media dashboard with analytics, soft desk lighting' or 'phone displaying content calendar app, clean white desk'";
+  if (t.includes('festival') || t.includes('event'))
+    return "e.g. 'outdoor festival crowd scene from behind, golden sunset light' or 'BBQ competition trophies on display table, dramatic lighting'";
+  if (t.includes('surf') || t.includes('sport') || t.includes('outdoor'))
+    return "e.g. 'surfboard standing in sand with ocean background, golden hour' or 'row of surfboards in shop rack, natural light'";
+  return `e.g. 'the main product/service of ${businessType} in its natural setting, professional lighting, close-up shot'`;
+};
+
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
@@ -247,7 +267,7 @@ ANTI-GENERIC RULES:
 - Do NOT invent events, locations, or facts that aren't in the brand context — stay true to what the business actually does
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product: e.g. 'raw beef ribeye on dark wooden board, warm lighting, overhead shot' or 'smoked pork ribs on butcher paper, natural light, close-up'. NEVER say 'produce', 'items', 'food' — name the specific cut/dish/product from this ${businessType} business. NO people, NO hands, NO faces."}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product — ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods' — name the specific item. NO people, NO hands, NO faces."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
@@ -1065,7 +1085,7 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST name the EXACT product from this post. For ${businessType}: name the specific item (e.g. "raw beef ribeye steak" not "farm produce", "smoked brisket sliced on butcher paper" not "meat on table", "laptop showing social media dashboard" not "technology"). Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(businessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
@@ -1113,7 +1133,7 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST name the EXACT product from this post. For ${businessType}: name the specific item (e.g. "raw beef ribeye steak" not "farm produce", "smoked brisket sliced on butcher paper" not "meat on table", "laptop showing social media dashboard" not "technology"). Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(businessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 
