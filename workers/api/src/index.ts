@@ -140,7 +140,7 @@ app.get('/api/facebook/posts', async (c) => {
   const token = c.req.query('pageAccessToken');
   if (!pageId || !token) return c.json({ error: 'pageId and pageAccessToken required' }, 400);
   try {
-    const res = await fetch(`${FB_GRAPH}/${pageId}/published_posts?fields=message,created_time,full_picture,permalink_url&limit=30&access_token=${encodeURIComponent(token)}`);
+    const res = await fetch(`${FB_GRAPH}/${pageId}/published_posts?fields=message,created_time,full_picture,permalink_url,likes.summary(true),comments.summary(true),shares&limit=30&access_token=${encodeURIComponent(token)}`);
     const data = await res.json() as any;
     if (data.error) return c.json({ error: data.error.message }, 400);
     return c.json({ posts: data.data || [] });

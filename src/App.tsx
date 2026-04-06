@@ -17,8 +17,7 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { AdminDashboard } from './components/AdminDashboard';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
-// Late.dev import kept for backward compatibility — being phased out
-// import { LateService } from './services/lateService';
+// Late.dev fully replaced by direct Facebook Graph API — see facebookPublishService.ts
 import { FacebookPublishService } from './services/facebookPublishService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -1206,23 +1205,6 @@ const Dashboard: React.FC = () => {
     setIsGeneratingImage(false);
   };
 
-  // Upload a base64 data URL image to Late.dev and return a mediaItems array (or undefined on failure)
-  const uploadImageToLate = async (dataUrl: string): Promise<{ url: string; type: 'image' }[] | undefined> => {
-    if (!dataUrl) return undefined;
-    if (!dataUrl.startsWith('data:')) return [{ url: dataUrl, type: 'image' }];
-    try {
-      const mimeType = dataUrl.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-      const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-      const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`post_${Date.now()}.${ext}`, mimeType);
-      const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
-      await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
-      return [{ url: publicUrl, type: 'image' }];
-    } catch (e: any) {
-      console.warn('Image upload to Late failed:', e?.message);
-      return undefined;
-    }
-  };
-
   const handleSavePost = async () => {
     if (!generatedContent) { toast('Generate content first.', 'warning'); return; }
     if (!user) return;
@@ -1585,9 +1567,9 @@ const Dashboard: React.FC = () => {
       if (!lateProfileId) {
         toast(`${results.length} posts saved to calendar. Connect social accounts in Settings to enable auto-publishing.`, 'success');
       } else if (lateFailCount > 0) {
-        toast(`${results.length} posts saved. ${lateFailCount} failed to schedule via Late — publish those manually from the calendar.`, 'warning');
+        toast(`${results.length} posts saved. ${lateFailCount} failed to schedule — publish those manually from the calendar.`, 'warning');
       } else {
-        toast(`${results.length} posts scheduled via Late.dev — they'll auto-publish at the set times! 🎉`, 'success');
+        toast(`${results.length} posts scheduled — they'll auto-publish at the set times!`, 'success');
       }
       setSmartPosts([]);
       setSmartStrategy('');
@@ -1656,27 +1638,7 @@ const Dashboard: React.FC = () => {
       // correctly even when there are zero local posts.
       let scanPosts = appPosts;
 
-      // Path 1 — Late list-posts (published posts via Late's managed OAuth)
-      if (scanPosts === appPosts && lateProfileId) {
-        try {
-          const res = await fetch(`/api/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
-          const lateData = await res.json();
-          const rawPosts: any[] = lateData?.posts ?? lateData?.data ?? lateData?.items ?? (Array.isArray(lateData) ? lateData : []);
-          if (rawPosts.length) {
-            scanPosts = rawPosts.map((p: any) => ({
-              message: p.text ?? p.message ?? p.content ?? p.body ?? p.caption ?? '',
-              created_time: p.publishedAt ?? p.published_at ?? p.scheduledAt ?? p.created_time ?? p.created_at ?? '',
-              likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
-              comments: p.comments ?? p.commentsCount ?? p.metrics?.comments ?? 0,
-              shares: p.shares ?? p.sharesCount ?? p.metrics?.shares ?? 0,
-            })).filter((p: any) => p.message);
-          }
-        } catch {
-          // Late list-posts unavailable — keep app posts
-        }
-      }
-
-      // Path 2 — Facebook published posts fallback
+      // Path 1 — Facebook published posts (direct Graph API with engagement data)
       if (scanPosts === appPosts && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
         try {
           const fbPosts = await FacebookPublishService.getPublishedPosts(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken);
@@ -1684,7 +1646,9 @@ const Dashboard: React.FC = () => {
             scanPosts = fbPosts.map((p: any) => ({
               message: p.message ?? '',
               created_time: p.created_time ?? '',
-              likes: 0, comments: 0, shares: 0,
+              likes: p.likes?.summary?.total_count ?? 0,
+              comments: p.comments?.summary?.total_count ?? 0,
+              shares: p.shares?.count ?? 0,
             })).filter((p: any) => p.message);
           }
         } catch {
@@ -4581,7 +4545,7 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-white">Social Media Connection</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Connect Facebook &amp; Instagram via Late — one click, no tokens to manage</p>
+                  <p className="text-xs text-white/30 mt-0.5">Connect Facebook &amp; Instagram — one click setup</p>
                 </div>
               </div>
 
