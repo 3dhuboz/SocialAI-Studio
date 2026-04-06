@@ -25,7 +25,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
   if (isLive) return null;
 
   return (
-    <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/8 to-transparent border border-amber-500/20 rounded-2xl p-5 mb-6">
+    <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/8 to-transparent border border-amber-500/20 rounded-2xl p-5 mb-6 glass noise">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-amber-500/20 border border-amber-500/30 rounded-xl flex items-center justify-center">
@@ -54,7 +54,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
           return (
             <React.Fragment key={step.id}>
               <div className="flex flex-col items-center min-w-0 flex-1">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition ${
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${
                   done
                     ? active && !isLive
                       ? 'bg-amber-500/20 border-amber-500 text-amber-400'
@@ -75,7 +75,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
                 <p className="text-[9px] text-white/20 text-center hidden sm:block">{step.sub}</p>
               </div>
               {i < steps.length - 1 && (
-                <div className={`h-px flex-1 mx-1 mb-5 transition ${i < idx ? 'bg-green-500/40' : 'bg-white/10'}`} />
+                <div className={`h-px flex-1 mx-1 mb-5 transition-all duration-500 ${i < idx ? 'bg-green-500/40' : 'bg-white/10'}`} />
               )}
             </React.Fragment>
           );

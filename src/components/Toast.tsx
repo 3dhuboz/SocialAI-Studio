@@ -49,7 +49,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         {toasts.map(t => (
           <div
             key={t.id}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-xl text-white text-sm animate-in slide-in-from-right ${bgColors[t.type]}`}
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl backdrop-blur-xl text-white text-sm animate-in slide-in-from-right ${bgColors[t.type]}`}
           >
             {icons[t.type]}
             <span className="flex-1">{t.message}</span>

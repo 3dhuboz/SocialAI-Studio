@@ -41,8 +41,7 @@ const Popover: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({
   return (
     <div
       ref={ref}
-      className="absolute top-full mt-2 left-0 z-50 w-72 bg-[#13131f] border border-white/12 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-in"
-      style={{ animation: 'fadeSlideDown 0.15s ease-out' }}
+      className="absolute top-full mt-2 left-0 z-50 w-72 glass-card noise rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fadeSlideDown"
     >
       {children}
     </div>
@@ -82,7 +81,7 @@ export const DashboardStats: React.FC<Props> = ({
       <div className="relative">
         <button
           onClick={() => toggle('posts')}
-          className={`w-full text-left bg-white/3 border rounded-2xl p-4 transition hover:bg-white/5 group ${open === 'posts' ? 'border-amber-500/40 bg-white/5' : 'border-white/8 hover:border-white/15'}`}
+          className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'posts' ? 'border-amber-500/40 !bg-white/5' : ''}`}
         >
           <div className="flex items-center justify-between mb-1">
             <p className="text-xs text-white/30">Scheduled Posts</p>
@@ -183,7 +182,7 @@ export const DashboardStats: React.FC<Props> = ({
       <div className="relative">
         <button
           onClick={() => toggle('next')}
-          className={`w-full text-left bg-white/3 border rounded-2xl p-4 transition hover:bg-white/5 group ${open === 'next' ? 'border-purple-500/40 bg-white/5' : 'border-white/8 hover:border-white/15'}`}
+          className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'next' ? 'border-purple-500/40 !bg-white/5' : ''}`}
         >
           <div className="flex items-center justify-between mb-1">
             <p className="text-xs text-white/30">Next Post</p>
@@ -281,7 +280,7 @@ export const DashboardStats: React.FC<Props> = ({
       <div className="relative">
         <button
           onClick={() => toggle('engagement')}
-          className={`w-full text-left bg-white/3 border rounded-2xl p-4 transition hover:bg-white/5 group ${open === 'engagement' ? 'border-emerald-500/40 bg-white/5' : 'border-white/8 hover:border-white/15'}`}
+          className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'engagement' ? 'border-emerald-500/40 !bg-white/5' : ''}`}
         >
           <div className="flex items-center justify-between mb-1">
             <p className="text-xs text-white/30">Engagement Rate</p>
@@ -373,7 +372,7 @@ export const DashboardStats: React.FC<Props> = ({
       <div className="relative">
         <button
           onClick={() => toggle('status')}
-          className={`w-full text-left bg-white/3 border rounded-2xl p-4 transition hover:bg-white/5 group ${open === 'status' ? 'border-blue-500/40 bg-white/5' : 'border-white/8 hover:border-white/15'}`}
+          className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'status' ? 'border-blue-500/40 !bg-white/5' : ''}`}
         >
           <div className="flex items-center justify-between mb-1">
             <p className="text-xs text-white/30">Status</p>

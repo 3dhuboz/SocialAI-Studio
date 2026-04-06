@@ -20,7 +20,7 @@ export const AnimatedReelPreview: React.FC<AnimatedReelPreviewProps> = ({
 
   return (
     <div
-      className={`${w} ${h} rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg shadow-purple-900/30 ${onClick ? 'cursor-pointer group/reel' : ''} ${className}`}
+      className={`${w} ${h} rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg shadow-purple-900/30 glass ${onClick ? 'cursor-pointer group/reel' : ''} ${className}`}
       style={{ background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
       onClick={onClick}
     >

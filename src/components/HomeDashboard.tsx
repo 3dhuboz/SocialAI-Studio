@@ -121,7 +121,7 @@ export const HomeDashboard: React.FC<Props> = ({
     <div className="space-y-8">
 
       {/* ── Hero Greeting ── */}
-      <div className="relative rounded-3xl overflow-hidden border border-white/8 bg-gradient-to-br from-[#13131f] via-[#0d0d18] to-[#0a0a12] px-6 py-8 md:px-10 md:py-10">
+      <div className="relative rounded-3xl overflow-hidden glass-card noise px-6 py-8 md:px-10 md:py-10">
         <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-transparent to-purple-500/5 pointer-events-none" />
         <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-5">
           <div>
@@ -160,7 +160,7 @@ export const HomeDashboard: React.FC<Props> = ({
             { label: 'Followers',      value: liveStats ? liveStats.followersCount.toLocaleString() : '—', icon: Users, color: 'text-purple-400' },
             { label: 'Engagement',     value: liveStats ? `${liveStats.engagementRate}%` : '—',          icon: TrendingUp, color: 'text-amber-400' },
           ].map(s => (
-            <div key={s.label} className="bg-white/4 border border-white/8 rounded-2xl px-4 py-3 flex items-center gap-3">
+            <div key={s.label} className="glass card-hover rounded-2xl px-4 py-3 flex items-center gap-3">
               <s.icon size={16} className={s.color} />
               <div>
                 <p className="text-white font-black text-lg leading-none">{s.value}</p>
@@ -192,7 +192,7 @@ export const HomeDashboard: React.FC<Props> = ({
             <button
               key={card.id}
               onClick={card.onClick}
-              className={`group relative rounded-2xl border ${card.border} bg-gradient-to-br ${card.color} p-5 text-left transition-all hover:scale-[1.02] hover:shadow-xl hover:shadow-black/40 flex flex-col gap-4`}
+              className={`group relative rounded-2xl border ${card.border} bg-gradient-to-br ${card.color} p-5 text-left card-hover press flex flex-col gap-4`}
             >
               <div className="flex items-start justify-between">
                 <div className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center`}>
@@ -220,7 +220,7 @@ export const HomeDashboard: React.FC<Props> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* Next scheduled post */}
-        <div className="lg:col-span-1 bg-[#0d0d18] border border-white/8 rounded-2xl p-5 flex flex-col">
+        <div className="lg:col-span-1 glass-card rounded-2xl p-5 flex flex-col">
           <p className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Next scheduled post</p>
           {nextPost ? (
             <div className="flex-1 flex flex-col gap-3">
@@ -263,7 +263,7 @@ export const HomeDashboard: React.FC<Props> = ({
         <div className="lg:col-span-2 space-y-3">
           <p className="text-xs font-bold uppercase tracking-widest text-white/25">Posting tips for today</p>
           {tips.map((tip, i) => (
-            <div key={i} className={`flex gap-4 border ${tip.bg} rounded-2xl px-4 py-4`}>
+            <div key={i} className={`flex gap-4 border ${tip.bg} glass rounded-2xl px-4 py-4`}>
               <div className={`w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center shrink-0`}>
                 <tip.icon size={15} className={tip.color} />
               </div>
@@ -278,7 +278,7 @@ export const HomeDashboard: React.FC<Props> = ({
 
       {/* ── Setup nudge if Facebook not connected ── */}
       {!fbConnected && (
-        <div className="bg-gradient-to-r from-amber-950/40 to-amber-900/20 border border-amber-500/20 rounded-2xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+        <div className="bg-gradient-to-r from-amber-950/40 to-amber-900/20 border border-amber-500/20 rounded-2xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap glass noise">
           <div className="flex items-center gap-3">
             <Settings size={16} className="text-amber-400 shrink-0" />
             <div>

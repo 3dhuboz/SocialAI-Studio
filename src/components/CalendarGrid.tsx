@@ -102,9 +102,9 @@ export const CalendarGrid: React.FC<Props> = ({
       </div>
 
       {/* ── Grid ─────────────────────────────────────────────────────────── */}
-      <div className="bg-white/2 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="glass noise rounded-2xl overflow-hidden">
         {/* Day headers */}
-        <div className="grid grid-cols-7 border-b border-white/8">
+        <div className="grid grid-cols-7 border-b border-white/[0.06]">
           {DAYS.map(d => (
             <div key={d} className="py-2.5 text-center text-[11px] font-bold text-white/30 uppercase tracking-wider">
               {d}
@@ -129,7 +129,7 @@ export const CalendarGrid: React.FC<Props> = ({
                 className={`min-h-[80px] p-2 text-left border-b border-r border-white/5 transition relative
                   ${idx % 7 === 6 ? 'border-r-0' : ''}
                   ${idx >= 35 ? 'border-b-0' : ''}
-                  ${isSelected ? 'bg-amber-500/8 border-amber-500/20' : isCurrentMonth ? 'hover:bg-white/3' : 'hover:bg-white/2'}
+                  ${isSelected ? 'bg-amber-500/8 border-amber-500/20 shadow-[inset_0_0_30px_rgba(245,158,11,0.05)]' : isCurrentMonth ? 'hover:bg-white/[0.04] hover:shadow-[inset_0_0_20px_rgba(255,255,255,0.02)]' : 'hover:bg-white/2'}
                 `}
               >
                 {/* Date number */}
@@ -191,8 +191,8 @@ export const CalendarGrid: React.FC<Props> = ({
 
       {/* ── Selected Day Panel ───────────────────────────────────────────── */}
       {selectedDay && (
-        <div className="bg-white/2 border border-white/8 rounded-2xl overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/6">
+        <div className="glass rounded-2xl overflow-hidden animate-fadeSlideUp">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
             <div>
               <p className="font-bold text-white text-sm">
                 {selectedDay.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
@@ -302,7 +302,7 @@ export const CalendarGrid: React.FC<Props> = ({
 
       {/* ── Empty state ──────────────────────────────────────────────────── */}
       {posts.length === 0 && (
-        <div className="text-center py-16 border border-white/5 rounded-2xl bg-white/2">
+        <div className="text-center py-16 glass rounded-2xl">
           <div className="w-14 h-14 mx-auto mb-4 bg-white/5 rounded-2xl flex items-center justify-center">
             <Calendar size={24} className="text-white/20" />
           </div>

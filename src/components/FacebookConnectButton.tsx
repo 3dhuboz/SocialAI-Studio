@@ -146,7 +146,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
             <button
               key={page.id}
               onClick={() => handlePickPage(page)}
-              className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-white/8 bg-white/3 hover:bg-blue-500/10 hover:border-blue-500/30 transition text-left group"
+              className="w-full flex items-center gap-3 p-3.5 rounded-xl glass card-hover hover:bg-blue-500/10 hover:border-blue-500/30 text-left group"
             >
               {page.picture?.data?.url
                 ? <img src={page.picture.data.url} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
@@ -208,7 +208,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
       <button
         onClick={handleConnect}
         disabled={step === 'logging_in'}
-        className="w-full flex items-center justify-center gap-3 bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 text-white font-bold py-4 px-6 rounded-2xl text-sm transition shadow-lg shadow-blue-900/30"
+        className="w-full flex items-center justify-center gap-3 bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 text-white font-bold py-4 px-6 rounded-2xl text-sm transition shadow-lg shadow-blue-900/30 press"
       >
         {step === 'logging_in'
           ? <><Loader2 size={18} className="animate-spin" /> Connecting…</>
