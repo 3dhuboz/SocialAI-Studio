@@ -1074,15 +1074,26 @@ const Dashboard: React.FC = () => {
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : generatedContent;
 
-      // Use image URL if available (fal.ai/Gemini returns URLs, not base64 in most cases)
-      const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
+      // Video Reel → use Reel endpoint
+      if (generatedVideoUrl) {
+        if (platforms.includes('instagram') && socialTokens.instagramBusinessAccountId) {
+          await FacebookPublishService.publishInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, fullText, undefined, generatedVideoUrl, 'REELS');
+        } else {
+          await FacebookPublishService.publishFacebookReel(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText, generatedVideoUrl);
+        }
+      } else {
+        // Image or text post
+        const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
 
-      await FacebookPublishService.publish(
-        socialTokens.facebookPageId,
-        socialTokens.facebookPageAccessToken,
-        fullText,
-        imageUrl,
-      );
+        // Publish to Instagram if selected and connected
+        if (platforms.includes('instagram') && socialTokens.instagramBusinessAccountId && imageUrl) {
+          await FacebookPublishService.publishInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, fullText, imageUrl);
+        }
+        // Publish to Facebook
+        if (platforms.includes('facebook')) {
+          await FacebookPublishService.publish(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText, imageUrl);
+        }
+      }
       setPublishSuccess(true);
       if (publishTimerRef.current) clearTimeout(publishTimerRef.current);
       publishTimerRef.current = setTimeout(() => setPublishSuccess(false), 4000);
