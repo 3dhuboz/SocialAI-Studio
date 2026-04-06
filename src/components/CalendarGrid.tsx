@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { SocialPost } from '../types';
 import { PostModal } from './PostModal';
+import { AnimatedReelPreview } from './AnimatedReelPreview';
 
 interface Props {
   posts: SocialPost[];
@@ -240,6 +241,13 @@ export const CalendarGrid: React.FC<Props> = ({
                   className="w-full flex gap-4 p-4 hover:bg-white/4 transition group text-left"
                 >
                   {/* Thumbnail */}
+                  {post.postType === 'video' ? (
+                    <AnimatedReelPreview
+                      hookText={post.videoScript?.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() || post.content}
+                      mood={post.videoMood}
+                      size="sm"
+                    />
+                  ) : (
                   <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8">
                     {calendarImages[post.id] || post.image ? (
                       <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
@@ -253,6 +261,7 @@ export const CalendarGrid: React.FC<Props> = ({
                       </div>
                     )}
                   </div>
+                  )}
                   {/* Content */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
