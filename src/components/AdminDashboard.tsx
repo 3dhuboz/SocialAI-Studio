@@ -23,6 +23,7 @@ interface Client {
 
 interface Props {
   clients: Client[];
+  ownWorkspace?: { facebookConnected: boolean; facebookPageName?: string };
   allPosts: Post[];
   onRefresh: () => void;
   isLoading?: boolean;
@@ -39,7 +40,7 @@ const statusBadge: Record<string, { bg: string; text: string; icon: React.ReactN
   Draft: { bg: 'bg-white/5 border-white/10', text: 'text-white/40', icon: null },
 };
 
-export const AdminDashboard: React.FC<Props> = ({ clients, allPosts, onRefresh, isLoading }) => {
+export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPosts, onRefresh, isLoading }) => {
   const [tab, setTab] = useState<'posts' | 'connections'>('posts');
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -172,8 +173,8 @@ export const AdminDashboard: React.FC<Props> = ({ clients, allPosts, onRefresh, 
       {/* ── CONNECTIONS TAB ── */}
       {tab === 'connections' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[{ id: null, name: 'Own Workspace (Agency)', businessType: 'Agency' }, ...clients].map((client: any) => {
-            const isConnected = client.facebookConnected || !!client.lateProfileId;
+          {[{ id: null, name: 'Own Workspace (Agency)', businessType: 'Agency', facebookConnected: ownWorkspace?.facebookConnected, facebookPageName: ownWorkspace?.facebookPageName }, ...clients].map((client: any) => {
+            const isConnected = !!client.facebookConnected;
             return (
               <div key={client.id || 'own'} className="bg-[#111118] border border-white/8 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">

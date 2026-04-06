@@ -4231,9 +4231,13 @@ const Dashboard: React.FC = () => {
                 clients={clients.map(c => ({
                   ...c,
                   businessType: c.business_type ?? c.businessType ?? null,
-                  facebookConnected: !!c.lateProfileId,
+                  facebookConnected: !!c.lateProfileId || !!c.lateConnectedPlatforms?.length,
                   facebookPageName: c.name,
                 }))}
+                ownWorkspace={{
+                  facebookConnected: !!socialTokens.facebookConnected,
+                  facebookPageName: socialTokens.facebookPageName || profile.name,
+                }}
                 allPosts={adminAllPosts}
                 onRefresh={loadAdminPosts}
                 isLoading={adminLoading}
