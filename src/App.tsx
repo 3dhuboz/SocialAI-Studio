@@ -16,7 +16,8 @@ import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
-import { LateService } from './services/lateService';
+// Late.dev import kept for backward compatibility — being phased out
+// import { LateService } from './services/lateService';
 import { FacebookPublishService } from './services/facebookPublishService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -472,47 +473,29 @@ const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  // ── Sync post statuses with Late.dev ──
+  // ── Sync post statuses — mark scheduled posts as Published once their time has passed ──
   const syncPostStatuses = async () => {
-    if (!lateProfileId || posts.length === 0) return;
-    
+    if (posts.length === 0) return;
     try {
-      // Get all posts that have a latePostId (handed to Late.dev)
-      const latePosts = posts.filter(p => p.latePostId && p.status === 'Scheduled');
-      if (latePosts.length === 0) return;
-
-      console.log(`[SYNC] Checking ${latePosts.length} scheduled posts against Late.dev`);
-
-      // Get analytics which should include published posts
-      const analytics = await LateService.getAnalytics(lateProfileId);
-      console.log('[SYNC] Late.dev analytics:', analytics);
-
-      // Try different possible structures for published posts
-      const publishedPosts = (analytics.posts || analytics.published || analytics.data || []) as any[];
-      console.log(`[SYNC] Found ${publishedPosts.length} published posts in analytics`);
-
-      // Update posts that were actually published
-      const actuallyPublished = latePosts.filter(localPost => {
-        return publishedPosts.some((publishedPost: any) => {
-          const publishedId = publishedPost.id || publishedPost.latePostId || publishedPost.post_id;
-          return publishedId === localPost.latePostId;
-        });
-      });
-
-      console.log(`[SYNC] ${actuallyPublished.length} posts actually published`);
-
-      if (actuallyPublished.length > 0) {
-        await db.bulkUpdatePostStatus(actuallyPublished.map(p => p.id), 'Posted');
-        setPosts(prev => prev.map(p => 
-          actuallyPublished.find(ap => ap.id === p.id) 
-            ? { ...p, status: 'Posted' as const } 
-            : p
-        ));
-        toast(`${actuallyPublished.length} post${actuallyPublished.length > 1 ? 's' : ''} published successfully!`, 'success');
+      const now = new Date();
+      // Posts that have a Facebook post ID and scheduled time in the past → mark as Posted
+      const dueForPublish = posts.filter(p =>
+        p.status === 'Scheduled' && p.latePostId && new Date(p.scheduledFor) <= now
+      );
+      // Posts past their scheduled time with no Facebook ID → mark as Missed
+      const missed = posts.filter(p =>
+        p.status === 'Scheduled' && !p.latePostId && new Date(p.scheduledFor) <= now
+      );
+      if (dueForPublish.length > 0) {
+        await db.bulkUpdatePostStatus(dueForPublish.map(p => p.id), 'Posted');
+        setPosts(prev => prev.map(p => dueForPublish.find(dp => dp.id === p.id) ? { ...p, status: 'Posted' as const } : p));
+      }
+      if (missed.length > 0) {
+        await db.bulkUpdatePostStatus(missed.map(p => p.id), 'Missed');
+        setPosts(prev => prev.map(p => missed.find(mp => mp.id === p.id) ? { ...p, status: 'Missed' as const } : p));
       }
     } catch (e: any) {
       console.error('[SYNC] Failed to sync post statuses:', e);
-      // Don't show error to user as this runs in background
     }
   };
 
@@ -1008,25 +991,17 @@ const Dashboard: React.FC = () => {
   const handlePullStats = async (silent = false) => {
     setIsPullingStats(true);
     try {
-      // Path 1 — Late analytics (preferred: no token needed, uses connected account)
-      if (lateProfileId) {
+      // Path 1 — Facebook published posts count (direct Graph API)
+      if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
         try {
-          const raw = await LateService.getAnalytics(lateProfileId);
-          const d = (raw as any);
-          const followers = d.followers ?? d.followersCount ?? d.fans ?? d.fanCount ?? 0;
-          const reach = d.reach ?? d.reach28d ?? d.impressions ?? 0;
-          const engagement = d.engagementRate ?? d.engagement_rate ?? d.engagement ?? 0;
-          const posts = d.postsCount ?? d.posts ?? d.postsLast30Days ?? 0;
-          if (followers > 0 || reach > 0) {
-            const mapped: LiveFbStats = { fanCount: followers, followersCount: followers, reach28d: reach, engagedUsers28d: 0, engagementRate: engagement };
-            setLiveStats(mapped);
-            setLastPulled(new Date());
-            setStats(prev => ({ ...prev, followers, reach, engagement: engagement || prev.engagement, postsLast30Days: posts || prev.postsLast30Days }));
-            if (!silent) toast('Stats updated from Late analytics!', 'success');
+          const fbPosts = await FacebookPublishService.getPublishedPosts(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken);
+          if (fbPosts.length > 0) {
+            setStats(prev => ({ ...prev, postsLast30Days: fbPosts.length }));
+            if (!silent) toast(`Stats updated — ${fbPosts.length} published posts found.`, 'success');
             setIsPullingStats(false);
             return;
           }
-        } catch { /* fall through to FB Graph */ }
+        } catch { /* fall through to FB Graph insights */ }
       }
 
       if (!silent) toast('Connect your social accounts in Settings to pull live stats.', 'warning');
@@ -1682,22 +1657,19 @@ const Dashboard: React.FC = () => {
         }
       }
 
-      // Path 2 — Late analytics fallback
-      if (scanPosts === appPosts && lateProfileId) {
+      // Path 2 — Facebook published posts fallback
+      if (scanPosts === appPosts && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
         try {
-          const lateData = await LateService.getAnalytics(lateProfileId);
-          const rawPosts: any[] = (lateData as any)?.posts ?? (lateData as any)?.data ?? (lateData as any)?.items ?? [];
-          if (rawPosts.length) {
-            scanPosts = rawPosts.map((p: any) => ({
-              message: p.text ?? p.message ?? p.content ?? p.body ?? '',
-              created_time: p.publishedAt ?? p.published_at ?? p.created_time ?? p.created_at ?? '',
-              likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
-              comments: p.comments ?? p.commentsCount ?? p.metrics?.comments ?? 0,
-              shares: p.shares ?? p.sharesCount ?? p.metrics?.shares ?? 0,
+          const fbPosts = await FacebookPublishService.getPublishedPosts(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken);
+          if (fbPosts.length) {
+            scanPosts = fbPosts.map((p: any) => ({
+              message: p.message ?? '',
+              created_time: p.created_time ?? '',
+              likes: 0, comments: 0, shares: 0,
             })).filter((p: any) => p.message);
           }
         } catch {
-          // Late analytics unavailable — keep app posts
+          // Facebook posts unavailable — keep app posts
         }
       }
 
