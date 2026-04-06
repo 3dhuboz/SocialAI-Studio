@@ -361,18 +361,21 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   // Validate the AI's image prompt — reject titles, pillar names, and vague descriptions
   const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
   const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
+  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
 
-  // If the AI wrote a title instead of a description, generate a fallback
-  const effectivePrompt = (isBadPrompt || looksLikeTitle)
-    ? `close-up product photo for a ${businessType} business, professional lighting, overhead angle`
+  // If the AI wrote a title instead of a visual description, generate a type-specific fallback
+  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague)
+    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
     : prompt;
 
-  // Strip any people/portrait/human descriptions — AI images of people always look fake
+  // Strip people/portrait/human descriptions — AI images of people always look fake
   const cleanPrompt = effectivePrompt
     .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  const imagePrompt = `RAW photo, ${cleanPrompt || effectivePrompt}, product photography, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, realistic textures, matte finish, no people, no humans, no faces, no portraits, no hands, product only`;
+
+  // Structure: subject first, then style, then negative — per prompt engineering best practices
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, product photography, natural window light, shallow depth of field, overhead angle, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
