@@ -20,6 +20,7 @@ import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 // Late.dev fully replaced by direct Facebook Graph API — see facebookPublishService.ts
 import { FacebookPublishService } from './services/facebookPublishService';
+import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
 // import { LateConnectButton } from './components/LateConnectButton'; // Replaced by FacebookConnectButton
@@ -1029,20 +1030,26 @@ const Dashboard: React.FC = () => {
   const handlePullStats = async (silent = false) => {
     setIsPullingStats(true);
     try {
-      // Path 1 — Facebook published posts count (direct Graph API)
-      if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
-        try {
-          const fbPosts = await FacebookPublishService.getPublishedPosts(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken);
-          if (fbPosts.length > 0) {
-            setStats(prev => ({ ...prev, postsLast30Days: fbPosts.length }));
-            if (!silent) toast(`Stats updated — ${fbPosts.length} published posts found.`, 'success');
-            setIsPullingStats(false);
-            return;
-          }
-        } catch { /* fall through to FB Graph insights */ }
+      if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
+        if (!silent) toast('Connect your social accounts in Settings to pull live stats.', 'warning');
+        setIsPullingStats(false);
+        return;
       }
 
-      if (!silent) toast('Connect your social accounts in Settings to pull live stats.', 'warning');
+      // Pull follower count + engagement from Facebook Graph API
+      try {
+        const fbStats = await FacebookService.getPageStats(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken);
+        setLiveStats(fbStats);
+        setStats(prev => ({ ...prev, followers: fbStats.followersCount, engagement: fbStats.engagementRate, reach: fbStats.reach28d }));
+      } catch { /* getPageStats degrades gracefully — zeros for unavailable metrics */ }
+
+      // Pull published posts count
+      try {
+        const fbPosts = await FacebookPublishService.getPublishedPosts(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken);
+        setStats(prev => ({ ...prev, postsLast30Days: fbPosts.length }));
+        if (!silent) toast(`Stats updated — ${fbPosts.length} posts, ${liveStats?.followersCount?.toLocaleString() || '—'} followers.`, 'success');
+      } catch { if (!silent) toast('Stats partially updated.', 'info'); }
+
     } catch (e: any) {
       const msg = e?.message || '';
       if (!silent) {
@@ -1056,7 +1063,13 @@ const Dashboard: React.FC = () => {
     setIsPullingStats(false);
   };
 
-  // Stats are fetched manually via Refresh Stats button only — auto-fetch removed (was firing on every workspace switch)
+  // Auto-fetch stats on workspace load (silently)
+  useEffect(() => {
+    if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
+      handlePullStats(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socialTokens.facebookPageId]);
 
   // Guard: verify lateProfileId matches the active workspace before any Late.dev publish.
   // Returns the correct profile ID if valid, or null (and shows a toast) if mismatched.
