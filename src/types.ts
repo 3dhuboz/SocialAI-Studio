@@ -27,6 +27,8 @@ export interface SocialTokens {
   connectedAt?: string;
   /** Name of the connected page, for display only */
   facebookPageName?: string;
+  /** Long-lived user token for server-side auto-refresh (60-day, renewable) */
+  longLivedUserToken?: string;
 }
 
 export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {

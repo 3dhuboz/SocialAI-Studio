@@ -1255,8 +1255,88 @@ export default {
       console.error('[CRON] Auto-publish sweep failed:', e.message);
     }
 
-    // ── 2. FAL.AI CREDIT CHECK (only at 0,6,12,18 UTC) ──
+    // ── 2. AUTO-REFRESH FACEBOOK TOKENS (once daily at 3am UTC / 1pm AEST) ──
+    // Long-lived user tokens last 60 days. Refreshing them before expiry gives
+    // a new 60-day token — so tokens effectively never expire as long as cron runs.
     const hour = new Date(event.scheduledTime).getUTCHours();
+    const minute = new Date(event.scheduledTime).getUTCMinutes();
+    if (hour === 3 && minute < 5) {
+      const appId = env.FACEBOOK_APP_ID;
+      const appSecret = env.FACEBOOK_APP_SECRET;
+      if (appId && appSecret) {
+        try {
+          // Refresh tokens for main user accounts
+          const users = await env.DB.prepare(
+            `SELECT id, social_tokens FROM users WHERE social_tokens IS NOT NULL AND social_tokens != '{}'`
+          ).all<{ id: string; social_tokens: string }>();
+
+          // Refresh tokens for client workspaces
+          const clients = await env.DB.prepare(
+            `SELECT id, social_tokens FROM clients WHERE social_tokens IS NOT NULL AND social_tokens != '{}'`
+          ).all<{ id: string; social_tokens: string }>();
+
+          const allAccounts = [
+            ...(users.results || []).map(r => ({ ...r, table: 'users' })),
+            ...(clients.results || []).map(r => ({ ...r, table: 'clients' })),
+          ];
+
+          for (const account of allAccounts) {
+            try {
+              const st = JSON.parse(account.social_tokens);
+              if (!st.longLivedUserToken || !st.facebookPageId) continue;
+
+              // Step 1: Refresh the long-lived user token
+              const refreshUrl = `${FB_GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${encodeURIComponent(st.longLivedUserToken)}`;
+              const refreshRes = await fetch(refreshUrl);
+              const refreshData = await refreshRes.json() as any;
+
+              if (refreshData.error) {
+                console.error(`[CRON] Token refresh failed for ${account.table}/${account.id}: ${refreshData.error.message}`);
+                continue;
+              }
+
+              const newUserToken = refreshData.access_token;
+
+              // Step 2: Get fresh page tokens using the new user token
+              const pagesRes = await fetch(`${FB_GRAPH}/me/accounts?fields=id,access_token&access_token=${newUserToken}`);
+              const pagesData = await pagesRes.json() as any;
+
+              if (pagesData.error || !pagesData.data) {
+                console.error(`[CRON] Pages fetch failed for ${account.table}/${account.id}: ${pagesData.error?.message || 'no data'}`);
+                continue;
+              }
+
+              // Find the matching page
+              const page = pagesData.data.find((p: any) => p.id === st.facebookPageId);
+              if (!page) {
+                console.log(`[CRON] Page ${st.facebookPageId} not found for ${account.table}/${account.id} — skipping.`);
+                continue;
+              }
+
+              // Step 3: Update DB with fresh tokens
+              const updatedTokens = {
+                ...st,
+                facebookPageAccessToken: page.access_token,
+                longLivedUserToken: newUserToken,
+                connectedAt: new Date().toISOString(),
+              };
+
+              await env.DB.prepare(
+                `UPDATE ${account.table} SET social_tokens = ? WHERE id = ?`
+              ).bind(JSON.stringify(updatedTokens), account.id).run();
+
+              console.log(`[CRON] Refreshed token for ${account.table}/${account.id} (page: ${st.facebookPageId})`);
+            } catch (e: any) {
+              console.error(`[CRON] Token refresh error for ${account.table}/${account.id}:`, e.message);
+            }
+          }
+        } catch (e: any) {
+          console.error('[CRON] Token refresh sweep failed:', e.message);
+        }
+      }
+    }
+
+    // ── 3. FAL.AI CREDIT CHECK (only at 0,6,12,18 UTC) ──
     if (hour % 6 === 0) {
       const apiKey = env.FAL_API_KEY;
       const resendKey = env.RESEND_API_KEY;

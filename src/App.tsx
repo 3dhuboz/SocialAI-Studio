@@ -4592,7 +4592,7 @@ const Dashboard: React.FC = () => {
                   connectedPageName={socialTokens.facebookPageName || profile.name}
                   tokenNeverExpires={!!socialTokens.connectedAt}
                   onConnected={async (pageId, pageAccessToken, pageName, longLivedUserToken) => {
-                    const updated: any = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
+                    const updated: any = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName, longLivedUserToken: longLivedUserToken || undefined };
                     // Auto-discover linked Instagram Business Account
                     try {
                       const igId = await FacebookPublishService.getInstagramAccount(pageId, pageAccessToken);
