@@ -1244,7 +1244,8 @@ const Dashboard: React.FC = () => {
           new Date(scheduleDate).toISOString(),
           mediaItems
         );
-        if (lateResult?.id) await db.updatePost(newPostId, { latePostId: lateResult.id } as any);
+        const lateId = lateResult?.id || lateResult?.post?._id || lateResult?.post?.id;
+            if (lateId) await db.updatePost(newPostId, { latePostId: lateId } as any);
         toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
       } catch (e: any) {
         toast(`Post saved but Late scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
@@ -1574,7 +1575,8 @@ const Dashboard: React.FC = () => {
                 mediaItems,
                 lateAccountIds
               );
-              if (lateResult?.id) await db.updatePost(batchPostId, { latePostId: lateResult.id } as any);
+              const lateId = lateResult?.id || lateResult?.post?._id || lateResult?.post?.id;
+              if (lateId) await db.updatePost(batchPostId, { latePostId: lateId } as any);
               else console.warn(`Late scheduling returned no ID for post ${i}:`, JSON.stringify(lateResult));
             } catch (lateErr: any) {
               lateFailCount++;
