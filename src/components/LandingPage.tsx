@@ -20,15 +20,15 @@ interface Props {
 const faqs = [
   {
     q: 'What happens after I purchase?',
-    a: `You'll receive an email with a short setup form within 30 minutes. Once you fill it in, our team connects your Facebook Business page to your personalised dashboard — usually within 1–3 business days. You'll get an email the moment you're live.`,
+    a: `You're taken straight to a quick setup wizard. Enter your business details, connect your Facebook page, and the AI starts generating your first posts — all in under 5 minutes.`,
   },
   {
     q: 'Do I need a Facebook Business page?',
-    a: 'Yes — you need an active Facebook Business page. We handle the technical connection for you as part of the $99 setup. No technical knowledge needed on your end.',
+    a: 'Yes — you need an active Facebook Business page. You connect it yourself during setup with a single click. No technical knowledge needed.',
   },
   {
     q: 'What is the $99 setup fee for?',
-    a: 'The one-time setup covers: connecting your Facebook page to the AI system, configuring your brand profile, training the AI on your tone and industry, and making sure everything is publishing correctly before we hand it over to you.',
+    a: 'The one-time setup covers your personalised AI configuration: training the AI on your brand voice, industry, and tone so every post sounds like you wrote it.',
   },
   {
     q: 'Can I change plans later?',
@@ -45,10 +45,10 @@ const faqs = [
 ];
 
 const howItWorks = [
-  { step: '1', title: 'Purchase a plan', desc: 'Choose the plan that fits your business. One-time $99 setup applies to all plans.', icon: Star },
-  { step: '2', title: 'Fill in the setup form', desc: "We email you a short form asking for your business details and Facebook page info.", icon: Clock },
-  { step: '3', title: 'We connect everything', desc: 'Our team sets up your Facebook connection and brand profile within 1–3 business days.', icon: Shield },
-  { step: '4', title: "You're live!", desc: 'Log in and the AI starts generating your posts. Review, schedule, and publish with one click.', icon: Zap },
+  { step: '1', title: 'Choose a plan', desc: 'Pick the plan that suits your business. Setup takes less than 5 minutes.', icon: Star },
+  { step: '2', title: 'Set up your profile', desc: 'Tell us about your business — name, location, tone. The AI learns your brand voice.', icon: Clock },
+  { step: '3', title: 'Connect Facebook', desc: 'Link your Facebook page in one click. No technical knowledge needed.', icon: Shield },
+  { step: '4', title: "You're live!", desc: 'The AI generates your posts instantly. Review, schedule, and publish with one click.', icon: Zap },
 ];
 
 const planIncludes: Record<string, string> = {
@@ -297,8 +297,8 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
             <section className="py-12 px-6 border-t border-white/5">
               <div className="max-w-4xl mx-auto">
                 <div className="text-center mb-10">
-                  <h2 className="text-2xl md:text-3xl font-black mb-2">Up and running in 3 days</h2>
-                  <p className="text-white/40 text-sm">We handle the entire setup — you just review your posts</p>
+                  <h2 className="text-2xl md:text-3xl font-black mb-2">Up and running in 5 minutes</h2>
+                  <p className="text-white/40 text-sm">Self-service setup — no waiting, no tech skills needed</p>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {howItWorks.map((step, i) => (
