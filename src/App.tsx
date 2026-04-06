@@ -16,12 +16,13 @@ import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { AdminDashboard } from './components/AdminDashboard';
+import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 // Late.dev fully replaced by direct Facebook Graph API — see facebookPublishService.ts
 import { FacebookPublishService } from './services/facebookPublishService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
-import { LateConnectButton } from './components/LateConnectButton';
+// import { LateConnectButton } from './components/LateConnectButton'; // Replaced by FacebookConnectButton
 import { CalendarGrid } from './components/CalendarGrid';
 import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
@@ -1246,6 +1247,7 @@ const Dashboard: React.FC = () => {
 
   // ── Auto-generate images for all smart posts ──
   const autoGenerateAllImages = async (posts: SmartScheduledPost[]) => {
+    if (!canUseImages) return; // Starter plan — no AI images
     const allIdxs = new Set(posts.map((_, i) => i));
     setAutoGenSet(allIdxs);
     setImgGenDone(0);
@@ -1438,6 +1440,7 @@ const Dashboard: React.FC = () => {
   const calendarAutoGenRanRef = React.useRef<Set<string>>(new Set());
   useEffect(() => {
     if (activeTab !== 'calendar') return;
+    if (!canUseImages) return; // Starter plan — no AI images
     if (!hasApiKey && !FalService.isConfigured()) return;
     if (isSmartGenerating || isAccepting) return; // Don't double-generate during Smart Schedule
     const missing = posts.filter(p =>
@@ -4550,45 +4553,18 @@ const Dashboard: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                <LateConnectButton
-                  profileId={lateProfileId}
-                  connectedPlatforms={lateConnectedPlatforms}
-                  businessName={profile.name}
-                  onConnected={async (pid, platforms, accountIds) => {
-                    setLateProfileId(pid);
-                    setLateConnectedPlatforms(platforms);
-                    const resolvedAccountIds = accountIds || {};
-                    console.log('[onConnected] profileId:', pid, 'platforms:', platforms, 'accountIds:', JSON.stringify(resolvedAccountIds));
-                    setLateAccountIds(resolvedAccountIds);
-                    if (user) {
-                      upsertActiveWorkspace({ lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() => {
-                        toast('Facebook connection could not be saved to database. Check that VITE_AI_WORKER_URL is set in CF Pages.', 'error');
-                      });
-                      // Also update agency cache if on own workspace
-                      if (!activeClientId) {
-                        agencyLateRef.current.profileId = pid;
-                        agencyLateRef.current.platforms = platforms;
-                        agencyLateRef.current.accountIds = resolvedAccountIds;
-                      }
-                      if (activeClientId) {
-                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds } : c));
-                      }
-                    }
-                    toast(`Connected to ${platforms.join(' & ')} successfully!`, 'success');
+                <FacebookConnectButton
+                  connectedPageId={socialTokens.facebookPageId}
+                  connectedPageName={socialTokens.facebookPageName || profile.name}
+                  tokenNeverExpires={!!socialTokens.connectedAt}
+                  onConnected={(pageId, pageAccessToken, pageName, longLivedUserToken) => {
+                    const updated = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
+                    saveSocialTokens(updated);
+                    toast('Facebook page connected!', 'success');
                   }}
                   onDisconnect={() => {
-                    setLateProfileId('');
-                    setLateConnectedPlatforms([]);
-                    setLateAccountIds({});
-                    if (user) {
-                      upsertActiveWorkspace({ lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {
-                        toast('Could not save disconnection to database.', 'error');
-                      });
-                      if (activeClientId) {
-                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [], lateAccountIds: {} } : c));
-                      }
-                    }
-                    toast('Social accounts disconnected.', 'warning');
+                    saveSocialTokens({ ...DEFAULT_SOCIAL_TOKENS });
+                    toast('Facebook disconnected.', 'warning');
                   }}
                 />
               </div>
