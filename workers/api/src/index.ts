@@ -1151,36 +1151,137 @@ app.post('/api/paypal-verify', async (c) => {
 // NOTE: PayPal webhook is handled by the Cloudflare Pages Function at
 // functions/api/paypal-webhook.js — do not duplicate it here.
 
-// ── Cron Trigger: Check fal.ai credits every 6 hours ────────────────────────
+// ── Cron Trigger: Auto-publish overdue posts (every 5 min) + fal.ai credits ──
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    const apiKey = env.FAL_API_KEY;
-    const resendKey = env.RESEND_API_KEY;
-    if (!apiKey || !resendKey) { console.log('[CRON] Missing FAL_API_KEY or RESEND_API_KEY'); return; }
 
+    // ── 1. AUTO-PUBLISH OVERDUE POSTS ──
+    // Server-side safety net: catches any post the client missed (browser closed,
+    // token was expired at schedule time, Facebook scheduler glitch, etc.)
     try {
-      const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
-      const data = await res.json() as any;
-      const balance = data?.balance ?? data?.credits ?? null;
-      console.log(`[CRON] fal.ai balance: $${balance}`);
+      const now = new Date().toISOString();
+      const overdue = await env.DB.prepare(
+        `SELECT p.id, p.content, p.hashtags, p.platform, p.image_url,
+                p.user_id, p.client_id, p.late_post_id, p.scheduled_for
+         FROM posts p
+         WHERE p.status = 'Scheduled' AND p.scheduled_for < ?
+         ORDER BY p.scheduled_for ASC LIMIT 20`
+      ).bind(now).all<{
+        id: string; content: string; hashtags: string; platform: string;
+        image_url: string | null; user_id: string; client_id: string | null;
+        late_post_id: string | null; scheduled_for: string;
+      }>();
 
-      const threshold = 5;
-      if (balance !== null && balance < threshold) {
-        await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            from: 'SocialAI Studio <noreply@socialaistudio.au>',
-            to: 'steve@3dhub.au',
-            subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
-            html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out. Top up now to keep your posts looking great.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a><p style="color:#888;font-size:12px;margin-top:20px;">This alert triggers when balance drops below $${threshold}. Checked every 6 hours.</p></div>`,
-          }),
-        });
-        console.log(`[CRON] Low balance alert sent to steve@3dhub.au ($${balance})`);
+      const posts = overdue.results || [];
+      if (posts.length > 0) console.log(`[CRON] ${posts.length} overdue post(s) found.`);
+
+      const tokenCache: Record<string, { pageId: string; token: string } | null> = {};
+
+      for (const post of posts) {
+        // Post already has a Facebook post ID — FB scheduler handled it, just mark Posted
+        if (post.late_post_id && post.late_post_id.includes('_')) {
+          await env.DB.prepare(`UPDATE posts SET status = 'Posted' WHERE id = ?`).bind(post.id).run();
+          console.log(`[CRON] Marked Posted (FB scheduled): ${post.id}`);
+          continue;
+        }
+
+        // Look up Facebook token for this workspace
+        const cacheKey = post.client_id || post.user_id;
+        if (!(cacheKey in tokenCache)) {
+          try {
+            const table = post.client_id ? 'clients' : 'users';
+            const col = post.client_id ? 'id' : 'id';
+            const row = await env.DB.prepare(
+              `SELECT social_tokens FROM ${table} WHERE ${col} = ?`
+            ).bind(cacheKey).first<{ social_tokens: string }>();
+            const st = row?.social_tokens ? JSON.parse(row.social_tokens) : null;
+            tokenCache[cacheKey] = st?.facebookPageId && st?.facebookPageAccessToken
+              ? { pageId: st.facebookPageId, token: st.facebookPageAccessToken } : null;
+          } catch { tokenCache[cacheKey] = null; }
+        }
+
+        const creds = tokenCache[cacheKey];
+        if (!creds) {
+          await env.DB.prepare(`UPDATE posts SET status = 'Missed' WHERE id = ?`).bind(post.id).run();
+          console.log(`[CRON] No FB token for ${post.id} — Missed.`);
+          continue;
+        }
+
+        // Build text with hashtags
+        let text = post.content;
+        try {
+          const tags = JSON.parse(post.hashtags || '[]');
+          if (Array.isArray(tags) && tags.length) text += '\n\n' + tags.join(' ');
+        } catch {}
+
+        // Publish immediately via Facebook Graph API
+        try {
+          const params: Record<string, string> = { access_token: creds.token, message: text };
+          let fbUrl: string;
+          if (post.image_url && post.image_url.startsWith('http')) {
+            fbUrl = `${FB_GRAPH}/${creds.pageId}/photos`;
+            params.url = post.image_url;
+          } else {
+            fbUrl = `${FB_GRAPH}/${creds.pageId}/feed`;
+          }
+
+          const fbRes = await fetch(fbUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(params).toString(),
+          });
+          const fbData = await fbRes.json() as any;
+
+          if (fbData.error) {
+            console.error(`[CRON] FB error for ${post.id}: ${fbData.error.message}`);
+            // Expired token — mark Missed immediately, don't retry
+            if (fbData.error.code === 190 || (fbData.error.message || '').includes('expired')) {
+              await env.DB.prepare(`UPDATE posts SET status = 'Missed' WHERE id = ?`).bind(post.id).run();
+            }
+            continue;
+          }
+
+          const fbId = fbData.id || fbData.post_id;
+          await env.DB.prepare(
+            `UPDATE posts SET status = 'Posted', late_post_id = ? WHERE id = ?`
+          ).bind(fbId, post.id).run();
+          console.log(`[CRON] Published: ${post.id} -> ${fbId}`);
+        } catch (e: any) {
+          console.error(`[CRON] Publish error ${post.id}:`, e.message);
+        }
       }
     } catch (e: any) {
-      console.error('[CRON] Credit check failed:', e.message);
+      console.error('[CRON] Auto-publish sweep failed:', e.message);
+    }
+
+    // ── 2. FAL.AI CREDIT CHECK (only at 0,6,12,18 UTC) ──
+    const hour = new Date(event.scheduledTime).getUTCHours();
+    if (hour % 6 === 0) {
+      const apiKey = env.FAL_API_KEY;
+      const resendKey = env.RESEND_API_KEY;
+      if (apiKey && resendKey) {
+        try {
+          const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
+          const data = await res.json() as any;
+          const balance = data?.balance ?? data?.credits ?? null;
+          console.log(`[CRON] fal.ai balance: $${balance}`);
+          if (balance !== null && balance < 5) {
+            await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from: 'SocialAI Studio <noreply@socialaistudio.au>',
+                to: 'steve@3dhub.au',
+                subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
+                html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a></div>`,
+              }),
+            });
+          }
+        } catch (e: any) {
+          console.error('[CRON] Credit check failed:', e.message);
+        }
+      }
     }
   },
 };
