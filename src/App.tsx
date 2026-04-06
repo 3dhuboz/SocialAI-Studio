@@ -1462,7 +1462,7 @@ const Dashboard: React.FC = () => {
         console.warn('fal.ai image gen failed, trying Gemini:', e?.message ?? e);
       }
     }
-    return generateMarketingImage(prompt);
+    return generateMarketingImage(prompt, profile.type);
   };
 
   // ── Auto-generate images for calendar posts that have imagePrompt but no image ──

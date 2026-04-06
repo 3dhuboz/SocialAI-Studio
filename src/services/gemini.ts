@@ -337,7 +337,7 @@ Content must respect the character limits above. No padding. No filler.`;
   return parseRaw(text);
 };
 
-export const generateMarketingImage = async (prompt: string): Promise<string | null> => {
+export const generateMarketingImage = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
   // Helper: convert a remote image URL to a compressed data URL
   const urlToDataUrl = async (imageUrl: string): Promise<string | null> => {
     try {
