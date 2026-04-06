@@ -339,12 +339,12 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
   };
 
   // Build a clean, concrete visual prompt — emphasise photorealism to avoid "AI look"
-  // Strip any people/portrait descriptions the AI may have injected — they always look fake
+  // Aggressively strip any people/portrait/human descriptions — AI images of people always look fake
   const cleanPrompt = prompt
-    .replace(/\b(woman|man|person|people|portrait|face|smiling|looking|standing|sitting|holding)\b/gi, '')
+    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
-  const imagePrompt = `RAW photo, ${cleanPrompt || prompt}, product photography, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, imperfect composition, realistic textures, matte finish, editorial photography style, unedited look, no people, no faces, no portraits`;
+  const imagePrompt = `RAW photo, ${cleanPrompt || prompt}, product photography, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, realistic textures, matte finish, no people, no humans, no faces, no portraits, no hands, product only`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
