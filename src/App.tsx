@@ -536,6 +536,25 @@ const Dashboard: React.FC = () => {
     }
   }, [posts, user, activeClientId]);
 
+  // ── Facebook token health check — detect expired/expiring tokens on load ──
+  useEffect(() => {
+    if (!user || !socialTokens.facebookPageAccessToken) return;
+    const checkToken = async () => {
+      try {
+        const res = await fetch(`https://graph.facebook.com/v21.0/me?fields=id&access_token=${encodeURIComponent(socialTokens.facebookPageAccessToken)}`);
+        const data = await res.json();
+        if (data.error) {
+          const msg = data.error.message || '';
+          if (msg.includes('expired') || msg.includes('Invalid') || data.error.code === 190) {
+            toast('Your Facebook token has expired. Go to Settings → Facebook and reconnect to keep posts publishing.', 'error');
+          }
+        }
+      } catch { /* network error — skip silently */ }
+    };
+    checkToken();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, socialTokens.facebookPageAccessToken]);
+
   // Load health metrics (last post + scheduled count) when Clients tab is active
   useEffect(() => {
     if (activeTab !== 'clients' || !user || clients.length === 0) return;
