@@ -478,10 +478,12 @@ DEEP THINKING REQUIRED:
 - Reference specific products, services, or scenarios from the business context above
 
 ANTI-GENERIC RULES:
-- No stock-video-looking scenes. Every shot must feel specific to THIS business
-- Never describe "a person smiling at camera" — describe WHAT they're doing, WITH what, WHERE
+- NEVER include people, team members, staff, customers, or faces in any shot description — AI video of people looks terrible
+- Focus on PRODUCTS, FOOD, SCREENS, TOOLS, ENVIRONMENTS — things that look good in AI video
+- No stock-video-looking scenes. Every shot must feature a SPECIFIC product or item from this business
 - The hook must provoke curiosity or emotion — not just state the topic
-- Shots should show real action, not talking heads
+- Shots should show close-ups of products, smooth camera moves over scenes, timelapses, or screen recordings — NOT talking heads or people working
+- ${getImagePromptExamples(businessType)} — use similar subjects for video shots
 
 Return ONLY raw JSON, no markdown:
 {
