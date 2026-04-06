@@ -90,6 +90,65 @@ const uuid = () => crypto.randomUUID();
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
 
+// ── Facebook Graph API — direct publishing (replaces Late.dev) ───────────────
+const FB_GRAPH = 'https://graph.facebook.com/v21.0';
+
+app.post('/api/facebook/publish', async (c) => {
+  const { pageId, pageAccessToken, text, imageUrl, scheduledTime } = await c.req.json<{
+    pageId: string; pageAccessToken: string; text: string;
+    imageUrl?: string; scheduledTime?: number;
+  }>();
+  if (!pageId || !pageAccessToken || !text) return c.json({ error: 'pageId, pageAccessToken, and text required' }, 400);
+
+  try {
+    let fbUrl: string;
+    const params: Record<string, string> = { access_token: pageAccessToken };
+
+    if (imageUrl) {
+      // Photo post — image URL + message
+      fbUrl = `${FB_GRAPH}/${pageId}/photos`;
+      params.url = imageUrl;
+      params.message = text;
+    } else {
+      // Text-only post
+      fbUrl = `${FB_GRAPH}/${pageId}/feed`;
+      params.message = text;
+    }
+
+    if (scheduledTime) {
+      params.scheduled_publish_time = String(scheduledTime);
+      params.published = 'false';
+    }
+
+    const res = await fetch(fbUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params).toString(),
+    });
+    const data = await res.json() as any;
+    if (!res.ok || data.error) {
+      return c.json({ error: data.error?.message || `Facebook API error (${res.status})` }, res.status as any);
+    }
+    return c.json({ id: data.id || data.post_id, success: true });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Facebook publish failed' }, 500);
+  }
+});
+
+app.get('/api/facebook/posts', async (c) => {
+  const pageId = c.req.query('pageId');
+  const token = c.req.query('pageAccessToken');
+  if (!pageId || !token) return c.json({ error: 'pageId and pageAccessToken required' }, 400);
+  try {
+    const res = await fetch(`${FB_GRAPH}/${pageId}/published_posts?fields=message,created_time,full_picture,permalink_url&limit=30&access_token=${encodeURIComponent(token)}`);
+    const data = await res.json() as any;
+    if (data.error) return c.json({ error: data.error.message }, 400);
+    return c.json({ posts: data.data || [] });
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Failed to fetch posts' }, 500);
+  }
+});
+
 // ── Web Fetch — fetch a URL and return text content for AI research ──────────
 app.post('/api/web-fetch', async (c) => {
   const { url } = await c.req.json<{ url: string }>();

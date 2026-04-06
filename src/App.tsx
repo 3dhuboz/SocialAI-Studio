@@ -17,6 +17,7 @@ import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { LateService } from './services/lateService';
+import { FacebookPublishService } from './services/facebookPublishService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
 import { LateConnectButton } from './components/LateConnectButton';
@@ -1067,32 +1068,27 @@ const Dashboard: React.FC = () => {
   };
 
   const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
-    const verifiedProfileId = verifyLateProfile();
-    if (!verifiedProfileId) return;
-    console.log('[Publish] Profile:', verifiedProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
+    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
+      toast('Connect your Facebook page in Settings first.', 'warning');
+      return;
+    }
+    console.log('[Publish] Direct FB → pageId:', socialTokens.facebookPageId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
-      // Pass stored accountIds to proxy — proxy handles account lookup fallbacks server-side
-      const resolvedAccountIds: Record<string, string> = { ...lateAccountIds };
-      console.log('[Publish] accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
-
       const fullText = generatedHashtags.length > 0
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : generatedContent;
 
-      // Build mediaItems: video > image (uploaded via helper if base64)
-      let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
-      if (generatedVideoUrl) {
-        mediaItems = [{ url: generatedVideoUrl, type: 'video' }];
-      } else if (generatedImage) {
-        const uploaded = await uploadImageToLate(generatedImage);
-        if (uploaded) mediaItems = uploaded;
-        else toast('Image upload failed — posting text only.', 'warning');
-      }
+      // Use image URL if available (fal.ai/Gemini returns URLs, not base64 in most cases)
+      const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
 
-      console.log('[Publish] Final accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', verifiedProfileId);
-      await LateService.post(verifiedProfileId, platforms, fullText, undefined, undefined, mediaItems, resolvedAccountIds);
+      await FacebookPublishService.publish(
+        socialTokens.facebookPageId,
+        socialTokens.facebookPageAccessToken,
+        fullText,
+        imageUrl,
+      );
       setPublishSuccess(true);
       if (publishTimerRef.current) clearTimeout(publishTimerRef.current);
       publishTimerRef.current = setTimeout(() => setPublishSuccess(false), 4000);
@@ -1247,24 +1243,20 @@ const Dashboard: React.FC = () => {
     };
     const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
     setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
-    // If a schedule date is set and Late is connected, hand it off to Late.dev for auto-publishing
-    if (scheduleDate && lateProfileId) {
+    // If a schedule date is set and Facebook is connected, schedule via Graph API
+    if (scheduleDate && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
       try {
         const fullText = generatedHashtags.length ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
-        const mediaItems = generatedImage ? await uploadImageToLate(generatedImage) : undefined;
-        const lateResult = await LateService.post(
-          lateProfileId,
-          [platform.toLowerCase() as 'facebook' | 'instagram'],
-          fullText,
-          undefined,
-          new Date(scheduleDate).toISOString(),
-          mediaItems
+        const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
+        const scheduledUnix = Math.round(new Date(scheduleDate).getTime() / 1000);
+        const fbResult = await FacebookPublishService.publish(
+          socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
+          fullText, imageUrl, scheduledUnix
         );
-        const lateId = lateResult?.id || lateResult?.post?._id || lateResult?.post?.id;
-            if (lateId) await db.updatePost(newPostId, { latePostId: lateId } as any);
-        toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
+        if (fbResult.id) await db.updatePost(newPostId, { latePostId: fbResult.id } as any);
+        toast('Post scheduled — it will auto-publish at the set time!');
       } catch (e: any) {
-        toast(`Post saved but Late scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
+        toast(`Post saved but scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
       }
     } else {
       toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !lateProfileId ? ' Connect social accounts in Settings to enable auto-publishing.' : ''}`);
@@ -1575,35 +1567,20 @@ const Dashboard: React.FC = () => {
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
-          // Schedule via Late.dev so it auto-publishes at the scheduled time (with image if present)
-          if (lateProfileId) {
+          // Schedule via Facebook Graph API for auto-publishing
+          if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
             try {
               const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
-              const imageDataUrl = smartPostImages[i];
-              let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
-              if (imageDataUrl) {
-                try {
-                  mediaItems = await uploadImageToLate(imageDataUrl);
-                } catch (imgErr: any) {
-                  console.warn(`Image upload failed for post ${i}, scheduling text-only:`, imgErr?.message);
-                  // Continue without image rather than skipping the whole Late schedule
-                }
-              }
-              const lateResult = await LateService.post(
-                lateProfileId,
-                [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
-                text,
-                undefined,
-                new Date(sp.scheduledFor).toISOString(),
-                mediaItems,
-                lateAccountIds
+              const imgUrl = smartPostImages[i]?.startsWith('http') ? smartPostImages[i] : undefined;
+              const scheduledUnix = Math.round(new Date(sp.scheduledFor).getTime() / 1000);
+              const fbResult = await FacebookPublishService.publish(
+                socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
+                text, imgUrl, scheduledUnix
               );
-              const lateId = lateResult?.id || lateResult?.post?._id || lateResult?.post?.id;
-              if (lateId) await db.updatePost(batchPostId, { latePostId: lateId } as any);
-              else console.warn(`Late scheduling returned no ID for post ${i}:`, JSON.stringify(lateResult));
-            } catch (lateErr: any) {
+              if (fbResult.id) await db.updatePost(batchPostId, { latePostId: fbResult.id } as any);
+            } catch (fbErr: any) {
               lateFailCount++;
-              console.error(`[Late Schedule] Failed for post ${i} "${sp.content.substring(0, 40)}":`, lateErr?.message);
+              console.error(`[FB Schedule] Failed for post ${i} "${sp.content.substring(0, 40)}":`, fbErr?.message);
             }
           }
           return { id: batchPostId, ...postData } as SocialPost;
@@ -3043,12 +3020,11 @@ const Dashboard: React.FC = () => {
               onSave={handleUpdatePost}
               onPublish={async (post) => {
                 try {
-                  const verifiedId = verifyLateProfile();
-                  if (!verifiedId) return;
+                  if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) { toast('Connect Facebook in Settings first.', 'warning'); return; }
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
                   const imageSource = calendarImages[post.id] || post.image;
-                  const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(verifiedId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
+                  const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
+                  await FacebookPublishService.publish(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   await db.updatePost(post.id, { status: 'Posted' });
                   toast('Published successfully!', 'success');
@@ -3056,12 +3032,11 @@ const Dashboard: React.FC = () => {
               }}
               onRetry={async (post) => {
                 try {
-                  const verifiedId = verifyLateProfile();
-                  if (!verifiedId) return;
+                  if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) { toast('Connect Facebook in Settings first.', 'warning'); return; }
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
                   const imageSource = calendarImages[post.id] || post.image;
-                  const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(verifiedId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
+                  const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
+                  await FacebookPublishService.publish(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
                   await db.updatePost(post.id, { status: 'Posted' });
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Post published successfully!', 'success');
