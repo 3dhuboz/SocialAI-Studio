@@ -686,6 +686,50 @@ export interface SmartScheduledPost {
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`AI response timed out after ${ms / 1000}s — try again or check your API key.`)), ms))]);
 
+/**
+ * Pre-research the campaign focus before generating posts.
+ * Analyses what the user wants to promote — extracts features, benefits,
+ * pricing, URLs, CTAs, and creates a structured brief the AI can use
+ * to write highly specific, targeted posts.
+ */
+const researchCampaignFocus = async (
+  campaignFocus: string,
+  businessName: string,
+  businessType: string,
+  profileDescription?: string,
+  productsServices?: string,
+): Promise<string> => {
+  const prompt = `You are a marketing research analyst. The business "${businessName}" (${businessType}) wants to run a focused social media campaign.
+
+${profileDescription ? `Business description: ${profileDescription}` : ''}
+${productsServices ? `Products/services: ${productsServices}` : ''}
+
+THE USER'S CAMPAIGN BRIEF:
+"${campaignFocus}"
+
+YOUR TASK: Deeply analyse what they want to promote and produce a comprehensive campaign research brief. Think step by step:
+
+1. WHAT is being promoted? (product, service, event, URL, offer — be specific)
+2. WHO is the target audience for this campaign?
+3. WHY should someone care? List 5-8 specific benefits/features/selling points
+4. WHAT pain points does this solve for the audience?
+5. WHAT is the call-to-action? (visit URL, sign up, call, book, etc.)
+6. WHAT tone/angle works best? (urgency, curiosity, social proof, education, FOMO)
+7. WHAT specific content angles should each post take? List 7-10 distinct angles (e.g. "feature spotlight: AI scheduling", "customer success story", "comparison vs doing it manually", "behind the scenes", "FAQ/myth busting", "limited time offer", etc.)
+8. IMAGE DESCRIPTIONS: For each angle, describe what the ideal image should show — be specific about the product/service in action, not generic stock imagery
+
+If a URL was mentioned, describe what the landing page likely contains and how to reference it naturally.
+
+Respond in structured plain text (not JSON). Be thorough — this brief will be used to write 5-14 highly targeted social media posts.`;
+
+  try {
+    return await withTimeout(callAI(prompt, { temperature: 0.6, maxTokens: 2048 }), 30000);
+  } catch (e) {
+    console.warn('[Campaign Research] Failed:', e);
+    return `Campaign focus: ${campaignFocus}`;
+  }
+};
+
 export const generateSmartSchedule = async (
   businessName: string,
   businessType: string,
@@ -758,7 +802,7 @@ BUSINESS PROFILE:
 ${profileBlock ? profileBlock : ''}
 
 ${benchmarkBlock}
-${campaignFocus ? `\n🎯 CAMPAIGN FOCUS (HIGHEST PRIORITY — OVERRIDES ALL OTHER TOPIC RULES):\nThe user has explicitly requested ALL posts focus on: "${campaignFocus}"\n\nRULES:\n- Every single post MUST be about "${campaignFocus}" — no exceptions\n- Describe what "${campaignFocus}" is, its benefits, features, pricing, use cases, success stories, comparisons, how-to guides, testimonials\n- If you don't know details about "${campaignFocus}", use the business profile description and products/services above to fill in specifics\n- Image prompts MUST show the product/service in action — screenshots, dashboards, devices showing the product, happy customers using it. NOT generic stock photo people at desks\n- Hashtags must be relevant to "${campaignFocus}" specifically\n- DO NOT generate generic "visit our website" posts — each post must teach, show, or prove something specific about "${campaignFocus}"\n` : `\nCRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about.\n`}
+${campaignFocus ? `\n🎯 CAMPAIGN FOCUS (HIGHEST PRIORITY — OVERRIDES ALL OTHER TOPIC RULES):\nThe user has explicitly requested ALL posts focus on: "${campaignFocus}"\n\n${campaignBrief ? `CAMPAIGN RESEARCH BRIEF (use this data to write specific, detailed posts):\n${campaignBrief}\n` : ''}\nRULES:\n- Every single post MUST be about "${campaignFocus}" — no exceptions\n- Use the CAMPAIGN RESEARCH BRIEF above as your primary source of facts, features, benefits, and angles\n- Each post must take a DIFFERENT angle from the brief (feature spotlight, success story, pain point, comparison, FAQ, behind-the-scenes, etc.)\n- Image prompts MUST show the product/service in action — screenshots, dashboards, devices showing the product, real scenarios. NOT generic stock photo people at desks\n- Hashtags must be relevant to "${campaignFocus}" specifically\n- DO NOT generate generic "visit our website" posts — each post must teach, show, or prove something specific\n- Include specific details, numbers, features — NOT vague marketing fluff\n` : `\nCRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about.\n`}
 YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, build a saturation campaign strategy for this specific ${businessType} business. You MUST use the researched posting times and days — do NOT invent different times. Adapt the content pillars and hashtags to this specific business while staying within the research guidelines.
 1. Use the researched posting times from the data above — spread posts across those windows
 2. CONTENT FATIGUE PREVENTION: How to post 3-5x/day without alienating followers
@@ -857,6 +901,17 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       platformSplit: { facebook: 40, instagram: 60 },
       engagementTips: bd.engagementNotes
     };
+
+    // ── Campaign Focus deep research (if provided) ──
+    let campaignBrief = '';
+    if (campaignFocus) {
+      onPhase?.('researching');
+      campaignBrief = await researchCampaignFocus(
+        campaignFocus, businessName, businessType,
+        safeProfile?.description, safeProfile?.productsServices
+      );
+      console.log('[Campaign Research] Brief generated:', campaignBrief.substring(0, 200));
+    }
 
     let research: any = {};
     onPhase?.('researching');
