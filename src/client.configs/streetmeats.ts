@@ -11,11 +11,11 @@ export const CLIENT = {
   appName: 'Street Meats Social',
   tagline: 'AI-powered social media — keeping the fire burning online',
 
-  defaultBusinessName: 'Street Meats Barbeque',
+  defaultBusinessName: 'Street Meatz Barbeque',
   defaultBusinessType: 'BBQ food truck & catering',
   defaultLocation: 'Queensland, Australia',
   defaultTone: 'Bold, passionate and community-driven',
-  defaultDescription: 'Queensland\'s finest low & slow BBQ. Award-winning brisket, pulled pork, and ribs cooked over real wood fire.',
+  defaultDescription: 'Queensland\'s finest low & slow BBQ. Award-winning brisket, pulled pork, and ribs cooked over real wood fire. IMPORTANT: The business name is "Street Meatz" — always spell with a Z, never an S.',
 
   accentColor: '#b91c1c',
 

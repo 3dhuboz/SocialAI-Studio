@@ -94,6 +94,26 @@ const parseAiJson = (raw: string): any => {
 const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
+/** Generate business-specific image prompt examples based on business type */
+const getImagePromptExamples = (businessType: string): string => {
+  const t = businessType.toLowerCase();
+  if (t.includes('butcher') || t.includes('meat') || t.includes('agriculture'))
+    return "e.g. 'raw beef ribeye steak on dark wooden cutting board, warm lighting, overhead shot' or 'lamb cutlets on butcher paper with rosemary, natural light'";
+  if (t.includes('bbq') || t.includes('barbeque') || t.includes('food truck'))
+    return "e.g. 'smoked brisket sliced on butcher paper with pickles, golden hour light' or 'pulled pork burger with coleslaw, close-up shot'";
+  if (t.includes('bakery') || t.includes('café') || t.includes('cafe') || t.includes('coffee'))
+    return "e.g. 'sourdough loaf on marble counter, morning light, overhead' or 'flat white coffee with latte art, rustic wooden table'";
+  if (t.includes('pickle') || t.includes('deli') || t.includes('ferment'))
+    return "e.g. 'jar of bread and butter pickles with fresh cucumbers, natural light' or 'cheese board with artisan pickles, overhead shot'";
+  if (t.includes('web') || t.includes('software') || t.includes('tech') || t.includes('it') || t.includes('digital') || t.includes('saas'))
+    return "e.g. 'laptop screen showing social media dashboard with analytics, soft desk lighting' or 'phone displaying content calendar app, clean white desk'";
+  if (t.includes('festival') || t.includes('event'))
+    return "e.g. 'outdoor festival crowd scene from behind, golden sunset light' or 'BBQ competition trophies on display table, dramatic lighting'";
+  if (t.includes('surf') || t.includes('sport') || t.includes('outdoor'))
+    return "e.g. 'surfboard standing in sand with ocean background, golden hour' or 'row of surfboards in shop rack, natural light'";
+  return `e.g. 'the main product/service of ${businessType} in its natural setting, professional lighting, close-up shot'`;
+};
+
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
@@ -247,7 +267,7 @@ ANTI-GENERIC RULES:
 - Do NOT invent events, locations, or facts that aren't in the brand context — stay true to what the business actually does
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "A 10–15 word vivid visual description of the perfect photo/image to accompany this specific post. MUST feature ${businessName}'s actual products or brand (${businessType}). Be concrete — describe the specific product, scene, lighting, colours, mood. NOT generic food or abstract concepts."}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product — ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods' — name the specific item. NO people, NO hands, NO faces."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
@@ -317,7 +337,7 @@ Content must respect the character limits above. No padding. No filler.`;
   return parseRaw(text);
 };
 
-export const generateMarketingImage = async (prompt: string): Promise<string | null> => {
+export const generateMarketingImage = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
   // Helper: convert a remote image URL to a compressed data URL
   const urlToDataUrl = async (imageUrl: string): Promise<string | null> => {
     try {
@@ -338,8 +358,24 @@ export const generateMarketingImage = async (prompt: string): Promise<string | n
     } catch { return null; }
   };
 
-  // Build a clean, concrete visual prompt — emphasise photorealism to avoid "AI look"
-  const imagePrompt = `RAW photo, ${prompt}, shot on Canon EOS R5 with 50mm f/1.8 lens, natural window light, shallow depth of field, slight film grain, imperfect composition, realistic textures, matte finish, editorial food photography style, unedited look`;
+  // Validate the AI's image prompt — reject titles, pillar names, and vague descriptions
+  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
+  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
+  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
+
+  // If the AI wrote a title instead of a visual description, generate a type-specific fallback
+  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague)
+    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
+    : prompt;
+
+  // Strip people/portrait/human descriptions — AI images of people always look fake
+  const cleanPrompt = effectivePrompt
+    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Structure: subject first, then style, then negative — per prompt engineering best practices
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, product photography, natural window light, shallow depth of field, overhead angle, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
@@ -442,10 +478,12 @@ DEEP THINKING REQUIRED:
 - Reference specific products, services, or scenarios from the business context above
 
 ANTI-GENERIC RULES:
-- No stock-video-looking scenes. Every shot must feel specific to THIS business
-- Never describe "a person smiling at camera" — describe WHAT they're doing, WITH what, WHERE
+- NEVER include people, team members, staff, customers, or faces in any shot description — AI video of people looks terrible
+- Focus on PRODUCTS, FOOD, SCREENS, TOOLS, ENVIRONMENTS — things that look good in AI video
+- No stock-video-looking scenes. Every shot must feature a SPECIFIC product or item from this business
 - The hook must provoke curiosity or emotion — not just state the topic
-- Shots should show real action, not talking heads
+- Shots should show close-ups of products, smooth camera moves over scenes, timelapses, or screen recordings — NOT talking heads or people working
+- ${getImagePromptExamples(businessType)} — use similar subjects for video shots
 
 Return ONLY raw JSON, no markdown:
 {
@@ -686,6 +724,93 @@ export interface SmartScheduledPost {
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`AI response timed out after ${ms / 1000}s — try again or check your API key.`)), ms))]);
 
+/**
+ * Fetch a URL's text content via the Worker proxy for AI research.
+ */
+const fetchUrlContent = async (url: string): Promise<string> => {
+  try {
+    const res = await fetch(`${AI_WORKER}/api/web-fetch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.text) return data.text;
+    console.warn('[Web Fetch] Failed:', data.error);
+    return '';
+  } catch (e) {
+    console.warn('[Web Fetch] Error:', e);
+    return '';
+  }
+};
+
+/**
+ * Pre-research the campaign focus before generating posts.
+ * If a URL is mentioned, actually fetches the page content and feeds it
+ * to the AI so it can write posts based on real product data.
+ */
+const researchCampaignFocus = async (
+  campaignFocus: string,
+  businessName: string,
+  businessType: string,
+  profileDescription?: string,
+  productsServices?: string,
+): Promise<string> => {
+  // Extract URLs from the campaign focus and fetch their content
+  const urlMatch = campaignFocus.match(/https?:\/\/[^\s,]+|www\.[^\s,]+/gi);
+  let websiteContent = '';
+  if (urlMatch) {
+    const urls = urlMatch.map(u => u.startsWith('www.') ? `https://${u}` : u);
+    const fetched = await Promise.all(urls.slice(0, 2).map(fetchUrlContent));
+    websiteContent = fetched.filter(Boolean).join('\n\n---\n\n');
+    if (websiteContent) {
+      console.log(`[Campaign Research] Fetched ${urls.length} URL(s), got ${websiteContent.length} chars`);
+    }
+  }
+
+  const prompt = `You are a direct-response copywriter researching a campaign. NO fluff. NO vague marketing speak. Every sentence must contain a SPECIFIC fact, feature name, number, or concrete detail.
+
+BUSINESS: "${businessName}" (${businessType})
+${profileDescription ? `DESCRIPTION: ${profileDescription}` : ''}
+${productsServices ? `PRODUCTS/SERVICES: ${productsServices}` : ''}
+
+CAMPAIGN BRIEF FROM USER:
+"${campaignFocus}"
+
+${websiteContent ? `WEBSITE CONTENT (real data from the URL — use this as primary source):\n---\n${websiteContent}\n---\n` : ''}
+RULES:
+- Use ONLY facts from the business description, products/services, and website content above
+- Name specific features (e.g. "AI Content Autopilot" not "our AI tool")
+- Include specific numbers (e.g. "$29/mo" not "affordable pricing", "7-14 posts/week" not "regular posts")
+- If the description mentions a URL, include it in CTAs
+- NEVER write generic phrases like "boost your engagement", "take your business to the next level", "in today's digital world"
+
+PRODUCE THIS BRIEF:
+
+1. PRODUCT NAME & DESCRIPTION (2 sentences max — what is it, what does it do)
+2. SPECIFIC FEATURES (list each by name with one-line description):
+   - Feature 1: [name] — [what it does]
+   - Feature 2: [name] — [what it does]
+   - (list ALL features mentioned in the profile/website data)
+3. PRICING: Exact prices and plan names if available
+4. TARGET AUDIENCE: Who specifically + their #1 pain point
+5. COMPETITOR COMPARISON: What's the alternative? (doing it manually, hiring a social media manager, etc.) How is this better?
+6. POST ANGLES (7-10, each must spotlight a DIFFERENT specific feature):
+   For each angle provide:
+   - ANGLE NAME: e.g. "Feature: AI Content Autopilot"
+   - HOOK (first line of the post): Must be a question or bold claim with a specific detail
+   - KEY FACT to include in the post body
+   - CTA: specific action (visit URL, sign up, try free, etc.)
+   - IMAGE: describe a concrete visual — product screenshot, dashboard view, before/after, device mockup. NO people, NO stock photos.`;
+
+  try {
+    return await withTimeout(callAI(prompt, { temperature: 0.5, maxTokens: 3000 }), 45000);
+  } catch (e) {
+    console.warn('[Campaign Research] Failed:', e);
+    return `Campaign focus: ${campaignFocus}`;
+  }
+};
+
 export const generateSmartSchedule = async (
   businessName: string,
   businessType: string,
@@ -706,7 +831,8 @@ export const generateSmartSchedule = async (
   includeVideos: boolean = false,
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
   onPhase?: (phase: 'researching' | 'writing') => void,
-  activeCampaigns?: Array<{ name: string; startDate: string; endDate: string; rules: string }>,
+  campaignFocus?: string,
+  activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[],
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   try {
     const now = new Date();
@@ -734,6 +860,9 @@ export const generateSmartSchedule = async (
       return false;
     })();
     const safeProfile = isProfileCorrupted ? undefined : richProfile;
+
+    // Forward-declare campaignBrief so the prompt template can reference it
+    let campaignBrief = '';
 
     // Build campaign injection block
     const campaignBlock = activeCampaigns?.length ? activeCampaigns.map(c => {
@@ -769,9 +898,7 @@ BUSINESS PROFILE:
 ${profileBlock ? profileBlock : ''}
 
 ${benchmarkBlock}
-
-CRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about.
-
+${campaignFocus ? `\n🎯 CAMPAIGN FOCUS (HIGHEST PRIORITY — OVERRIDES ALL OTHER TOPIC RULES):\nThe user has explicitly requested ALL posts focus on: "${campaignFocus}"\n\n${campaignBrief ? `CAMPAIGN RESEARCH BRIEF (use this data to write specific, detailed posts):\n${campaignBrief}\n` : ''}\nRULES:\n- Every single post MUST be about "${campaignFocus}" — no exceptions\n- Use the CAMPAIGN RESEARCH BRIEF above as your primary source of facts, features, benefits, and angles\n- Each post must take a DIFFERENT angle from the brief (feature spotlight, success story, pain point, comparison, FAQ, behind-the-scenes, etc.)\n- Image prompts MUST show the product/service in action — screenshots, dashboards, devices showing the product, real scenarios. NOT generic stock photo people at desks\n- Hashtags must be relevant to "${campaignFocus}" specifically\n- DO NOT generate generic "visit our website" posts — each post must teach, show, or prove something specific\n- Include specific details, numbers, features — NOT vague marketing fluff\n` : `\nCRITICAL: ALL content pillars and topics MUST be about THIS ${businessType} business. NEVER suggest content about social media marketing, AI tools, web design, or technology. Every pillar must be something a ${businessType} business would actually post about.\n`}
 YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, build a saturation campaign strategy for this specific ${businessType} business. You MUST use the researched posting times and days — do NOT invent different times. Adapt the content pillars and hashtags to this specific business while staying within the research guidelines.
 1. Use the researched posting times from the data above — spread posts across those windows
 2. CONTENT FATIGUE PREVENTION: How to post 3-5x/day without alienating followers
@@ -807,9 +934,7 @@ BUSINESS PROFILE:
 ${profileBlock ? profileBlock : ''}
 
 ${benchmarkBlock}
-
-CRITICAL: You are creating content for "${businessName}", which is a ${businessType}. ALL content pillars, topics, and posts MUST be about THIS business. NEVER generate content about social media marketing, AI tools, web design, or technology.
-
+${campaignFocus ? `\n🎯 CAMPAIGN FOCUS (HIGHEST PRIORITY — OVERRIDES ALL OTHER TOPIC RULES):\nThe user has explicitly requested ALL posts focus on: "${campaignFocus}"\n\nRULES:\n- Every single post MUST be about "${campaignFocus}" — no exceptions\n- Describe what "${campaignFocus}" is, its benefits, features, pricing, use cases, success stories, comparisons, how-to guides, testimonials\n- If you don't know details about "${campaignFocus}", use the business profile description and products/services above to fill in specifics\n- Image prompts MUST show the product/service in action — screenshots, dashboards, devices showing the product, happy customers using it. NOT generic stock photo people at desks\n- Hashtags must be relevant to "${campaignFocus}" specifically\n- DO NOT generate generic "visit our website" posts — each post must teach, show, or prove something specific about "${campaignFocus}"\n` : `\nCRITICAL: You are creating content for "${businessName}", which is a ${businessType}. ALL content pillars, topics, and posts MUST be about THIS business. NEVER generate content about social media marketing, AI tools, web design, or technology.\n`}
 YOUR TASK: Using the VERIFIED RESEARCH DATA above as your foundation, refine the strategy for this specific ${businessType} business. You MUST use the researched posting times and best days — do NOT invent different times. Adapt content pillars to this specific business.
 
 1. POSTING TIMES: Use the researched times from the data above. Do NOT change them unless you have a strong, specific reason for this exact business.
@@ -872,6 +997,32 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       platformSplit: { facebook: 40, instagram: 60 },
       engagementTips: bd.engagementNotes
     };
+
+    // ── Campaign Focus deep research (if provided) ──
+    if (campaignFocus) {
+      onPhase?.('researching');
+      campaignBrief = await researchCampaignFocus(
+        campaignFocus, businessName, businessType,
+        safeProfile?.description, safeProfile?.productsServices
+      );
+      console.log('[Campaign Research] Brief generated:', campaignBrief.substring(0, 200));
+    }
+
+    // ── Build structured campaign rules block (from Campaigns feature) ──
+    let structuredCampaignBlock = '';
+    if (activeCampaigns && activeCampaigns.length > 0) {
+      const today = new Date();
+      structuredCampaignBlock = '\n🎯 ACTIVE CAMPAIGNS (weave these into the content calendar):\n' +
+        activeCampaigns.map(c => {
+          const end = new Date(c.endDate);
+          const daysLeft = Math.max(0, Math.ceil((end.getTime() - today.getTime()) / 86400000));
+          const countdownNote = c.type === 'countdown' ? ` — ${daysLeft} days to go! Include countdown language.` : '';
+          return `• ${c.name} (${c.type}${countdownNote})\n  Dates: ${c.startDate} to ${c.endDate}\n  Rules: ${(c.rules || '').substring(0, 500)}\n  Target: ${c.postsPerDay} post(s) per day about this campaign`;
+        }).join('\n') +
+        '\nIMPORTANT: Campaign posts should feel natural alongside regular content — not every post needs to be about the campaign, but ' +
+        `at least ${activeCampaigns.reduce((sum, c) => sum + c.postsPerDay, 0)} post(s) per day MUST reference active campaigns.\n`;
+      console.log('[Campaigns] Injecting', activeCampaigns.length, 'active campaign(s) into prompt');
+    }
 
     let research: any = {};
     onPhase?.('researching');
@@ -956,7 +1107,7 @@ You are an elite social media growth operator running a SATURATION CAMPAIGN for 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${structuredCampaignBlock}
 CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
@@ -977,7 +1128,7 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST be a literal description of a real photograph matching ${businessName}'s ${businessType} business. Format: "[specific product/item/scene] on [surface/setting], [lighting], [angle]". Use the IMAGE PROMPT RULES from the research data above — follow the examples and avoid list EXACTLY. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(businessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
@@ -1004,7 +1155,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${quick24hExtra}${highlightsExtra}
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
@@ -1025,7 +1176,7 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST be a literal description of a real photograph matching ${businessName}'s ${businessType} business. Format: "[specific product/item/scene] on [surface/setting], [lighting], [angle]". Use the IMAGE PROMPT RULES from the research data above — follow the examples and avoid list EXACTLY. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(businessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 

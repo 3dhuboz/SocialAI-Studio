@@ -89,14 +89,16 @@ export interface ClientWorkspace {
   clientSlug?: string;
 }
 
+export type CampaignType = 'countdown' | 'promo' | 'launch' | 'event' | 'custom';
+
 export interface Campaign {
   id: string;
   name: string;
-  type: 'custom' | 'launch' | 'seasonal' | 'event';
+  type: CampaignType;
   startDate: string;
   endDate: string;
   rules: string;
   postsPerDay: number;
   enabled: boolean;
-  createdAt?: string;
+  createdAt: string;
 }

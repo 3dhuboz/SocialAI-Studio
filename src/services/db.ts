@@ -93,7 +93,7 @@ export interface DbCampaign {
   end_date?: string | null;
   rules?: string;
   posts_per_day?: number;
-  enabled?: number; // SQLite boolean
+  enabled?: number;
   created_at?: string;
 }
 
@@ -180,6 +180,28 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       await f(`/api/db/clients/${id}`, del());
     },
 
+    // ── Campaigns ────────────────────────────────────────────────────────────
+    async getCampaigns(clientId?: string | null): Promise<DbCampaign[]> {
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/db/campaigns${qs}`);
+      const data = await res.json() as { campaigns: DbCampaign[] };
+      return data.campaigns ?? [];
+    },
+
+    async createCampaign(campaign: { name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean; clientId?: string | null }): Promise<string> {
+      const res = await f('/api/db/campaigns', j(campaign));
+      const data = await res.json() as { id: string };
+      return data.id;
+    },
+
+    async updateCampaign(id: string, fields: Partial<{ name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number; enabled: boolean }>): Promise<void> {
+      await f(`/api/db/campaigns/${id}`, put(fields));
+    },
+
+    async deleteCampaign(id: string): Promise<void> {
+      await f(`/api/db/campaigns/${id}`, del());
+    },
+
     // ── Portal ────────────────────────────────────────────────────────────────
     async getPortal(slug: string): Promise<{ email: string; password: string } | null> {
       try {
@@ -248,28 +270,6 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     async setSocialTokens(tokens: Record<string, unknown>, clientId?: string | null): Promise<void> {
       const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
       await f(`/api/db/social-tokens${qs}`, put(tokens));
-    },
-
-    // ── Campaigns ──────────────────────────────────────────────────────────────
-    async getCampaigns(clientId?: string | null): Promise<DbCampaign[]> {
-      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
-      const res = await f(`/api/db/campaigns${qs}`);
-      const data = await res.json() as { campaigns: DbCampaign[] };
-      return data.campaigns ?? [];
-    },
-
-    async createCampaign(campaign: { clientId?: string | null; name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean }): Promise<string> {
-      const res = await f('/api/db/campaigns', j(campaign));
-      const data = await res.json() as { id: string };
-      return data.id;
-    },
-
-    async updateCampaign(id: string, fields: Record<string, unknown>): Promise<void> {
-      await f(`/api/db/campaigns/${id}`, put(fields));
-    },
-
-    async deleteCampaign(id: string): Promise<void> {
-      await f(`/api/db/campaigns/${id}`, del());
     },
   };
 }

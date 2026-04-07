@@ -161,7 +161,7 @@ export async function onRequest(context) {
     }
   } catch (err) {
     console.error('Webhook verification error:', err.message);
-    return new Response(`Verification error: ${err.message}`, { status: 400 });
+    return new Response('Webhook verification failed', { status: 400 });
   }
 
   const resource  = webhookEvent.resource || {};

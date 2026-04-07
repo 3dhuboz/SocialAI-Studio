@@ -5,7 +5,8 @@ import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
 import {
   CheckCircle, ArrowRight, Sparkles, Loader2,
-  Building2, MapPin, Facebook, PartyPopper, X,
+  Building2, MapPin, Facebook, Instagram, PartyPopper, X,
+  Wand2, HelpCircle, Calendar,
 } from 'lucide-react';
 
 interface Props {
@@ -16,16 +17,21 @@ interface Props {
   userEmail?: string;
   socialTokens?: SocialTokens;
   onSaveSocialTokens?: (tokens: SocialTokens) => void;
+  onGenerateFirstPosts?: () => Promise<void>;
+  isGenerating?: boolean;
+  generatedCount?: number;
+  onAdvanceSetup?: (status: string) => void;
 }
 
-type Step = 'welcome' | 'business' | 'facebook' | 'done';
+type Step = 'welcome' | 'business' | 'facebook' | 'firstposts' | 'done';
 
-const STEPS: Step[] = ['welcome', 'business', 'facebook', 'done'];
+const STEPS: Step[] = ['welcome', 'business', 'facebook', 'firstposts', 'done'];
 
 const stepLabel: Record<Step, string> = {
   welcome: 'Welcome',
   business: 'Your Business',
   facebook: 'Facebook',
+  firstposts: 'First Posts',
   done: 'Done',
 };
 
@@ -33,6 +39,10 @@ export const OnboardingWizard: React.FC<Props> = ({
   profile, onUpdateProfile, onSave, onDismiss, userEmail,
   socialTokens: socialTokensProp,
   onSaveSocialTokens,
+  onGenerateFirstPosts,
+  isGenerating = false,
+  generatedCount = 0,
+  onAdvanceSetup,
 }) => {
   const socialTokens = socialTokensProp ?? DEFAULT_SOCIAL_TOKENS;
   const [step, setStep] = useState<Step>('welcome');
@@ -122,7 +132,7 @@ export const OnboardingWizard: React.FC<Props> = ({
               <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-left space-y-3">
                 {[
                   { icon: Building2, label: 'Your business profile', sub: 'So the AI writes in your voice' },
-                  { icon: Sparkles, label: 'AI content generation', sub: 'Powered by OpenRouter — included' },
+                  { icon: Sparkles, label: 'AI content generation', sub: 'Included with your plan' },
                   { icon: Facebook, label: 'Facebook page (optional)', sub: 'For one-click publishing' },
                 ].map(({ icon: Icon, label, sub }) => (
                   <div key={label} className="flex items-center gap-3">
@@ -228,10 +238,10 @@ export const OnboardingWizard: React.FC<Props> = ({
             <div className="space-y-5">
               <div>
                 <h2 className="text-xl font-black text-white mb-1 flex items-center gap-2">
-                  <Facebook className="text-blue-400" size={20} /> Connect Facebook
+                  <Facebook className="text-blue-400" size={20} /> Connect Facebook & Instagram
                 </h2>
                 <p className="text-xs text-white/35 leading-relaxed">
-                  Optional — lets the app publish directly to your Facebook Page with one click.
+                  Connect your Facebook Page to enable one-click publishing. Instagram will be linked automatically if connected to your page.
                 </p>
               </div>
               <FacebookConnectButton
@@ -249,6 +259,26 @@ export const OnboardingWizard: React.FC<Props> = ({
                   else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
                 }}
               />
+
+              {/* Instagram setup instructions */}
+              <div className="bg-pink-500/5 border border-pink-500/15 rounded-2xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-pink-300 flex items-center gap-1.5">
+                  <Instagram size={12} /> Want Instagram posting too?
+                </p>
+                <p className="text-[11px] text-white/40 leading-relaxed">
+                  To enable Instagram, your Facebook Page needs a linked Instagram Business account. Here's how:
+                </p>
+                <ol className="text-[11px] text-white/35 leading-relaxed space-y-1 list-decimal list-inside">
+                  <li>Open your Facebook Page on facebook.com</li>
+                  <li>Go to <strong className="text-white/50">Settings</strong> → <strong className="text-white/50">Linked Accounts</strong></li>
+                  <li>Click <strong className="text-white/50">Connect Account</strong> next to Instagram</li>
+                  <li>Log in to your Instagram Business or Creator account</li>
+                  <li>Come back here and reconnect Facebook — Instagram will be detected automatically</li>
+                </ol>
+                <p className="text-[10px] text-white/20">
+                  Note: Instagram must be a Business or Creator account, not a personal one.
+                </p>
+              </div>
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => next(true)}
@@ -263,6 +293,65 @@ export const OnboardingWizard: React.FC<Props> = ({
                 >
                   {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
                   {socialTokens.facebookPageId ? 'Continue' : 'Skip'} <ArrowRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── FIRST POSTS ── */}
+          {step === 'firstposts' && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-xl font-black text-white mb-1 flex items-center gap-2">
+                  <Wand2 className="text-amber-400" size={20} /> Generate Your First Posts
+                </h2>
+                <p className="text-xs text-white/35 leading-relaxed">
+                  Let the AI create 3 posts for your business. You can review and edit them before they go live.
+                </p>
+              </div>
+
+              {generatedCount > 0 ? (
+                <div className="bg-green-500/8 border border-green-500/20 rounded-2xl p-5 text-center space-y-3">
+                  <Calendar size={28} className="text-green-400 mx-auto" />
+                  <p className="text-sm font-semibold text-white">{generatedCount} posts generated!</p>
+                  <p className="text-xs text-white/35">They're ready in your calendar. You can edit or publish them anytime.</p>
+                </div>
+              ) : (
+                <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-center space-y-4">
+                  <div className="text-4xl">✨</div>
+                  <p className="text-sm text-white/50">The AI will research your business type and create 3 tailored posts with images, captions, and hashtags.</p>
+                  <button
+                    onClick={onGenerateFirstPosts}
+                    disabled={isGenerating || !onGenerateFirstPosts}
+                    className="w-full bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
+                  >
+                    {isGenerating ? (
+                      <><Loader2 size={16} className="animate-spin" /> Generating…</>
+                    ) : (
+                      <><Wand2 size={16} /> Generate 3 Posts</>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Need help? */}
+              <div className="bg-blue-500/5 border border-blue-500/15 rounded-2xl p-4 flex items-start gap-3">
+                <HelpCircle size={16} className="text-blue-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs text-white/50">
+                    <span className="font-semibold text-blue-300">Need help getting started?</span>{' '}
+                    Our team can set everything up for you.{' '}
+                    <a href={`mailto:${CLIENT.supportEmail}?subject=Help setting up my ${CLIENT.appName} account`} className="text-blue-400 underline">Email support</a>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => { onAdvanceSetup?.('live'); next(true); }}
+                  className={`flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition ${!generatedCount && !isGenerating ? 'opacity-60' : ''}`}
+                >
+                  {generatedCount > 0 ? 'Finish Setup' : 'Skip for now'} <ArrowRight size={16} />
                 </button>
               </div>
             </div>

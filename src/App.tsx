@@ -428,7 +428,7 @@ const Dashboard: React.FC = () => {
             id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
             startDate: c.start_date || '', endDate: c.end_date || '',
             rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
-            enabled: !!c.enabled, createdAt: c.created_at,
+            enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
           })));
         } catch { /* campaigns will remain empty */ }
       } catch (e: unknown) {
@@ -573,7 +573,7 @@ const Dashboard: React.FC = () => {
             id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
             startDate: c.start_date || '', endDate: c.end_date || '',
             rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
-            enabled: !!c.enabled, createdAt: c.created_at,
+            enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
           })));
         } catch { setCampaigns([]); }
       } catch (e) {
@@ -640,7 +640,7 @@ const Dashboard: React.FC = () => {
           id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
           startDate: c.start_date || '', endDate: c.end_date || '',
           rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
-          enabled: !!c.enabled, createdAt: c.created_at,
+          enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
         })));
       } catch { setCampaigns([]); }
     };
@@ -1270,7 +1270,8 @@ const Dashboard: React.FC = () => {
         includeVideos,
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
-        activeCampaigns
+        undefined,
+        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, postsPerDay: c.postsPerDay }))
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
@@ -4522,7 +4523,7 @@ const Dashboard: React.FC = () => {
                     id, name: 'New Campaign', type: 'custom' as const,
                     startDate: new Date().toISOString().split('T')[0],
                     endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-                    rules: '', postsPerDay: 1, enabled: true,
+                    rules: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
                   }]);
                 }}
                 className="w-full glass rounded-xl py-3 text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition flex items-center justify-center gap-2 press"
