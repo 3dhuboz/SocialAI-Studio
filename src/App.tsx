@@ -90,6 +90,17 @@ const CampaignCard: React.FC<{
             />
             <p className="text-[10px] text-white/15 mt-1">The AI will weave these rules + countdown language into every generated post.</p>
           </div>
+          <div>
+            <label className="text-[10px] text-white/30 block mb-1 flex items-center gap-1"><ImageIcon size={10} /> Image suggestions</label>
+            <textarea
+              value={(c as any).imageNotes || ''}
+              onChange={(e) => onFieldChange(c.id, 'imageNotes', e.target.value)}
+              onBlur={() => onUpdate(c.id, { imageNotes: (c as any).imageNotes })}
+              placeholder='e.g. Show our winter sale banner, laptop with discount prices on screen, cozy office with Penny Wise branding. Avoid generic stock photos.'
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/15 resize-none h-16"
+            />
+            <p className="text-[10px] text-white/15 mt-1">Describes what campaign images should look like. The AI uses this for image prompts.</p>
+          </div>
           <div className="flex items-center justify-between pt-1">
             <button onClick={() => onUpdate(c.id, { enabled: false })} className="text-[11px] text-white/25 hover:text-amber-400 transition">Pause</button>
             <button onClick={() => onDelete(c.id)} className="text-[11px] text-white/25 hover:text-red-400 transition flex items-center gap-1"><Trash2 size={10} /> Delete</button>
@@ -493,7 +504,7 @@ const Dashboard: React.FC = () => {
           setCampaigns(loadedCampaigns.map(c => ({
             id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
             startDate: c.start_date || '', endDate: c.end_date || '',
-            rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
+            rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
             enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
           })));
         } catch { /* campaigns will remain empty */ }
@@ -638,7 +649,7 @@ const Dashboard: React.FC = () => {
           setCampaigns(loadedCampaigns.map(c => ({
             id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
             startDate: c.start_date || '', endDate: c.end_date || '',
-            rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
+            rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
             enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
           })));
         } catch { setCampaigns([]); }
@@ -705,7 +716,7 @@ const Dashboard: React.FC = () => {
         setCampaigns(loadedCampaigns.map(c => ({
           id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
           startDate: c.start_date || '', endDate: c.end_date || '',
-          rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
+          rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
           enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
         })));
       } catch { setCampaigns([]); }
@@ -1337,7 +1348,7 @@ const Dashboard: React.FC = () => {
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
         undefined,
-        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, postsPerDay: c.postsPerDay }))
+        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay }))
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');

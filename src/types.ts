@@ -98,6 +98,7 @@ export interface Campaign {
   startDate: string;
   endDate: string;
   rules: string;
+  imageNotes: string;
   postsPerDay: number;
   enabled: boolean;
   createdAt: string;

@@ -504,7 +504,7 @@ app.put('/api/db/campaigns/:id', async (c) => {
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const campaignId = c.req.param('id');
   const body = await c.req.json<Record<string, unknown>>();
-  const fieldMap: Record<string, string> = { name: 'name', type: 'type', startDate: 'start_date', endDate: 'end_date', rules: 'rules', postsPerDay: 'posts_per_day', enabled: 'enabled' };
+  const fieldMap: Record<string, string> = { name: 'name', type: 'type', startDate: 'start_date', endDate: 'end_date', rules: 'rules', imageNotes: 'image_notes', postsPerDay: 'posts_per_day', enabled: 'enabled' };
   const sets: string[] = []; const vals: unknown[] = [];
   for (const [k, col] of Object.entries(fieldMap)) {
     if (body[k] !== undefined) { sets.push(`${col} = ?`); vals.push(k === 'enabled' ? (body[k] ? 1 : 0) : body[k]); }
