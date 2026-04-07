@@ -89,6 +89,20 @@ export interface DbClient {
   client_slug?: string | null;
 }
 
+export interface DbCampaign {
+  id: string;
+  user_id?: string;
+  client_id?: string | null;
+  name: string;
+  type?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  rules?: string;
+  posts_per_day?: number;
+  enabled?: number;
+  created_at?: string;
+}
+
 // ── DB factory ────────────────────────────────────────────────────────────────
 
 export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
@@ -170,6 +184,28 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async deleteClient(id: string): Promise<void> {
       await f(`/api/db/clients/${id}`, del());
+    },
+
+    // ── Campaigns ────────────────────────────────────────────────────────────
+    async getCampaigns(clientId?: string | null): Promise<DbCampaign[]> {
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/db/campaigns${qs}`);
+      const data = await res.json() as { campaigns: DbCampaign[] };
+      return data.campaigns ?? [];
+    },
+
+    async createCampaign(campaign: { name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean; clientId?: string | null }): Promise<string> {
+      const res = await f('/api/db/campaigns', j(campaign));
+      const data = await res.json() as { id: string };
+      return data.id;
+    },
+
+    async updateCampaign(id: string, fields: Partial<{ name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number; enabled: boolean }>): Promise<void> {
+      await f(`/api/db/campaigns/${id}`, put(fields));
+    },
+
+    async deleteCampaign(id: string): Promise<void> {
+      await f(`/api/db/campaigns/${id}`, del());
     },
 
     // ── Portal ────────────────────────────────────────────────────────────────

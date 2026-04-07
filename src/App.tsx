@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
-import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS } from './types';
+import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign, CampaignType } from './types';
 import { LandingPage } from './components/LandingPage';
 import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
@@ -35,7 +35,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle
+  Key, EyeOff, Home, AlertCircle, Target
 } from 'lucide-react';
 
 const DEFAULT_PROFILE: BusinessProfile = {
@@ -308,6 +308,9 @@ const Dashboard: React.FC = () => {
   // Agency client workspaces
   const [clients, setClients] = useState<ClientWorkspace[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [editingCampaign, setEditingCampaign] = useState<Partial<Campaign> | null>(null);
+  const [isSavingCampaign, setIsSavingCampaign] = useState(false);
 
   // In portal mode, auto-select the client workspace that belongs to this portal
   useEffect(() => {
@@ -453,6 +456,16 @@ const Dashboard: React.FC = () => {
           setPosts(loaded);
           localStorage.setItem('sai_posts', JSON.stringify(loaded));
         }
+        // Load campaigns
+        try {
+          const dbCampaigns = await db.getCampaigns();
+          setCampaigns(dbCampaigns.map(c => ({
+            id: c.id, name: c.name, type: (c.type || 'custom') as CampaignType,
+            startDate: c.start_date || '', endDate: c.end_date || '',
+            rules: c.rules || '', postsPerDay: c.posts_per_day ?? 1,
+            enabled: !!c.enabled, createdAt: c.created_at || '',
+          })));
+        } catch { /* campaigns load failure non-fatal */ }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('D1 sync error:', msg);
@@ -632,6 +645,11 @@ const Dashboard: React.FC = () => {
         } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
         const clientPosts = await db.getPosts(activeClientId);
         setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
+        // Load client campaigns
+        try {
+          const dbCampaigns = await db.getCampaigns(activeClientId);
+          setCampaigns(dbCampaigns.map(c => ({ id: c.id, name: c.name, type: (c.type || 'custom') as CampaignType, startDate: c.start_date || '', endDate: c.end_date || '', rules: c.rules || '', postsPerDay: c.posts_per_day ?? 1, enabled: !!c.enabled, createdAt: c.created_at || '' })));
+        } catch { setCampaigns([]); }
       } catch (e) {
         console.warn('Client load error:', e);
         // Fall back to in-memory clients cache for Late.dev data (survives D1 outage within same session)
@@ -1404,7 +1422,8 @@ const Dashboard: React.FC = () => {
         includeVideos,
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
-        campaignFocus.trim() || undefined
+        campaignFocus.trim() || undefined,
+        campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date()).map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, postsPerDay: c.postsPerDay }))
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
@@ -1762,7 +1781,8 @@ const Dashboard: React.FC = () => {
         profile.name, profile.type, profile.tone, stats, 3,
         profile.location || 'Australia',
         { facebook: true, instagram: false },
-        false, profile, false, 'quick24h', undefined, undefined
+        false, profile, false, 'quick24h', undefined, undefined,
+        campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date()).map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, postsPerDay: c.postsPerDay }))
       );
       if (result.posts.length > 0) {
         const saved = await Promise.all(result.posts.map(async (sp) => {
@@ -4495,6 +4515,142 @@ const Dashboard: React.FC = () => {
             </div>}
             </div>
 
+            {/* ── SECTION: Campaigns ── */}
+            <div className="flex items-center gap-3 mt-2">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Campaigns</span>
+              <div className="h-px flex-1 bg-white/6" />
+            </div>
+            <div className="glass-card rounded-2xl p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-white flex items-center gap-2"><Target size={16} className="text-amber-400" /> Active Campaigns</h3>
+                  <p className="text-xs text-white/30 mt-0.5">Time-boxed rules that shape AI-generated content</p>
+                </div>
+                <button
+                  onClick={() => setEditingCampaign({ type: 'countdown', postsPerDay: 1, enabled: true })}
+                  className="text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/20 text-amber-400 px-3 py-1.5 rounded-xl transition press flex items-center gap-1.5"
+                >
+                  <Plus size={12} /> New Campaign
+                </button>
+              </div>
+
+              {/* Campaign list */}
+              {campaigns.length === 0 && !editingCampaign && (
+                <p className="text-xs text-white/20 text-center py-6">No campaigns yet. Create one to influence AI-generated posts.</p>
+              )}
+              {campaigns.map(c => (
+                <div key={c.id} className={`glass card-hover rounded-xl p-4 flex items-start gap-4 ${!c.enabled ? 'opacity-50' : ''}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-white text-sm">{c.name}</span>
+                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                        c.type === 'countdown' ? 'bg-red-500/15 border-red-500/25 text-red-300' :
+                        c.type === 'event' ? 'bg-purple-500/15 border-purple-500/25 text-purple-300' :
+                        c.type === 'promo' ? 'bg-green-500/15 border-green-500/25 text-green-300' :
+                        c.type === 'launch' ? 'bg-blue-500/15 border-blue-500/25 text-blue-300' :
+                        'bg-white/8 border-white/15 text-white/40'
+                      }`}>{c.type}</span>
+                      {c.type === 'countdown' && new Date(c.endDate) > new Date() && (
+                        <span className="text-[9px] text-amber-400 font-bold">{Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000)}d left</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/30 mt-1">{c.startDate && c.endDate ? `${new Date(c.startDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} — ${new Date(c.endDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}` : 'No dates set'} · {c.postsPerDay} post{c.postsPerDay > 1 ? 's' : ''}/day</p>
+                    {c.rules && <p className="text-[11px] text-white/20 mt-1 line-clamp-2">{c.rules}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={async () => { await db.updateCampaign(c.id, { enabled: !c.enabled }); setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, enabled: !x.enabled } : x)); }}
+                      className={`w-8 h-5 rounded-full transition ${c.enabled ? 'bg-amber-500' : 'bg-white/10'} flex items-center`}
+                    >
+                      <div className={`w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${c.enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                    </button>
+                    <button onClick={() => setEditingCampaign(c)} className="text-white/20 hover:text-white/50 transition"><Edit2 size={13} /></button>
+                    <button onClick={async () => { if (!confirm('Delete this campaign?')) return; await db.deleteCampaign(c.id); setCampaigns(prev => prev.filter(x => x.id !== c.id)); }} className="text-white/20 hover:text-red-400 transition"><Trash2 size={13} /></button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Create/Edit form */}
+              {editingCampaign && (
+                <div className="glass rounded-xl p-4 space-y-3 border border-amber-500/20 animate-fadeSlideUp">
+                  <input
+                    value={editingCampaign.name || ''}
+                    onChange={e => setEditingCampaign(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                    placeholder="Campaign name (e.g. Meatstock Toowoomba 2026)"
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {(['countdown', 'event', 'promo', 'launch', 'custom'] as CampaignType[]).map(t => (
+                      <button
+                        key={t}
+                        onClick={() => setEditingCampaign(prev => prev ? { ...prev, type: t } : prev)}
+                        className={`text-[10px] font-bold px-3 py-1.5 rounded-full border transition press ${
+                          editingCampaign.type === t ? 'bg-amber-500 border-amber-500 text-black' : 'bg-white/5 border-white/10 text-white/40 hover:border-amber-500/30'
+                        }`}
+                      >{t}</button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-white/30 font-bold block mb-1">Start Date</label>
+                      <input type="date" value={editingCampaign.startDate || ''} onChange={e => setEditingCampaign(prev => prev ? { ...prev, startDate: e.target.value } : prev)} className="w-full bg-black/40 border border-white/8 rounded-lg px-2.5 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-white/30 font-bold block mb-1">End Date</label>
+                      <input type="date" value={editingCampaign.endDate || ''} onChange={e => setEditingCampaign(prev => prev ? { ...prev, endDate: e.target.value } : prev)} className="w-full bg-black/40 border border-white/8 rounded-lg px-2.5 py-2 text-white text-xs focus:outline-none focus:border-amber-500/40" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-white/30 font-bold block mb-1">AI Rules <span className="text-white/15">(tell the AI what to do)</span></label>
+                    <textarea
+                      value={editingCampaign.rules || ''}
+                      onChange={e => setEditingCampaign(prev => prev ? { ...prev, rules: e.target.value } : prev)}
+                      placeholder="e.g. Mention Meatstock Toowoomba in every post. Include countdown to event. Push catering enquiries. Use #meatstock #toowoomba hashtags."
+                      rows={3}
+                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm min-h-[60px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-white/30 font-bold block mb-1">Posts per day about this campaign</label>
+                    <div className="flex gap-1.5">
+                      {[1, 2, 3].map(n => (
+                        <button
+                          key={n}
+                          onClick={() => setEditingCampaign(prev => prev ? { ...prev, postsPerDay: n } : prev)}
+                          className={`text-xs font-bold px-4 py-2 rounded-lg border transition ${editingCampaign.postsPerDay === n ? 'bg-amber-500 border-amber-500 text-black' : 'bg-white/5 border-white/10 text-white/40'}`}
+                        >{n}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      disabled={isSavingCampaign || !editingCampaign.name?.trim()}
+                      onClick={async () => {
+                        setIsSavingCampaign(true);
+                        try {
+                          if (editingCampaign.id) {
+                            await db.updateCampaign(editingCampaign.id, { name: editingCampaign.name, type: editingCampaign.type, startDate: editingCampaign.startDate, endDate: editingCampaign.endDate, rules: editingCampaign.rules, postsPerDay: editingCampaign.postsPerDay, enabled: editingCampaign.enabled });
+                            setCampaigns(prev => prev.map(c => c.id === editingCampaign.id ? { ...c, ...editingCampaign } as Campaign : c));
+                            toast('Campaign updated!', 'success');
+                          } else {
+                            const id = await db.createCampaign({ name: editingCampaign.name!, type: editingCampaign.type, startDate: editingCampaign.startDate, endDate: editingCampaign.endDate, rules: editingCampaign.rules, postsPerDay: editingCampaign.postsPerDay, enabled: editingCampaign.enabled !== false, clientId: activeClientId });
+                            setCampaigns(prev => [{ ...editingCampaign, id, createdAt: new Date().toISOString(), enabled: editingCampaign.enabled !== false } as Campaign, ...prev]);
+                            toast('Campaign created!', 'success');
+                          }
+                          setEditingCampaign(null);
+                        } catch (e: any) { toast(`Failed: ${e.message}`, 'error'); }
+                        setIsSavingCampaign(false);
+                      }}
+                      className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-2.5 rounded-xl text-sm transition press"
+                    >
+                      {isSavingCampaign ? 'Saving…' : editingCampaign.id ? 'Update Campaign' : 'Create Campaign'}
+                    </button>
+                    <button onClick={() => setEditingCampaign(null)} className="bg-white/5 hover:bg-white/10 border border-white/10 text-white/40 font-bold px-4 py-2.5 rounded-xl text-sm transition press">Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* fal.ai API Key — super-admin only */}
             {isSuperAdmin && (activePlan === 'pro' || activePlan === 'agency') && (
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
@@ -4625,6 +4781,31 @@ const Dashboard: React.FC = () => {
                     toast('Facebook disconnected.', 'warning');
                   }}
                 />
+              </div>
+
+              {/* Instagram setup guide */}
+              <div className={`border rounded-xl p-4 space-y-3 ${socialTokens.instagramBusinessAccountId ? 'bg-green-500/5 border-green-500/15' : 'bg-purple-500/5 border-purple-500/15'}`}>
+                <p className={`text-xs font-bold flex items-center gap-2 ${socialTokens.instagramBusinessAccountId ? 'text-green-300' : 'text-purple-300'}`}>
+                  <Instagram size={13} /> {socialTokens.instagramBusinessAccountId ? 'Instagram connected' : 'Instagram not connected'}
+                </p>
+                {socialTokens.instagramBusinessAccountId ? (
+                  <p className="text-[11px] text-white/40 leading-relaxed">
+                    Your Instagram Business Account is linked through your Facebook Page. Posts created here can be published to both platforms.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-white/40 leading-relaxed">
+                      To enable Instagram posting, link your Instagram to your Facebook Page:
+                    </p>
+                    <ol className="text-[11px] text-white/40 space-y-1.5 list-decimal list-inside leading-relaxed">
+                      <li><strong className="text-white/60">Switch to a Business account</strong> — Open Instagram → Settings → Account type and tools → Switch to Professional Account → choose "Business".</li>
+                      <li><strong className="text-white/60">Link to your Facebook Page</strong> — In Instagram → Settings → Business → Connected accounts → Facebook, select your business page.</li>
+                      <li><strong className="text-white/60">Confirm from Facebook</strong> — Go to your Facebook Page → Settings → Linked Accounts → Instagram, and confirm it shows as connected.</li>
+                      <li><strong className="text-white/60">Reconnect here</strong> — Click "Switch to a different page" above, then reconnect your Facebook Page. Instagram will be auto-detected.</li>
+                    </ol>
+                    <p className="text-[10px] text-purple-300/60">Meta requires all Instagram API access to go through a connected Facebook Page — this is a Meta requirement.</p>
+                  </>
+                )}
               </div>
 
             </div>

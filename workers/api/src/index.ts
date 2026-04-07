@@ -632,6 +632,64 @@ app.delete('/api/db/clients/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── DB: Campaigns ────────────────────────────────────────────────────────────
+
+app.get('/api/db/campaigns', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId');
+  const { results } = clientId
+    ? await c.env.DB.prepare('SELECT * FROM campaigns WHERE user_id = ? AND client_id = ? ORDER BY created_at DESC').bind(uid, clientId).all()
+    : await c.env.DB.prepare('SELECT * FROM campaigns WHERE user_id = ? AND client_id IS NULL ORDER BY created_at DESC').bind(uid).all();
+  return c.json({ campaigns: results });
+});
+
+app.post('/api/db/campaigns', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const body = await c.req.json<Record<string, unknown>>();
+  const id = uuid();
+  await c.env.DB.prepare(
+    'INSERT INTO campaigns (id, user_id, client_id, name, type, start_date, end_date, rules, posts_per_day, enabled) VALUES (?,?,?,?,?,?,?,?,?,?)'
+  ).bind(
+    id, uid, body.clientId ?? null, body.name ?? '', body.type ?? 'custom',
+    body.startDate ?? null, body.endDate ?? null, body.rules ?? '',
+    body.postsPerDay ?? 1, body.enabled !== false ? 1 : 0
+  ).run();
+  return c.json({ id });
+});
+
+app.put('/api/db/campaigns/:id', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const campId = c.req.param('id');
+  const body = await c.req.json<Record<string, unknown>>();
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  const colMap: Record<string, string> = {
+    name: 'name', type: 'type', startDate: 'start_date', endDate: 'end_date',
+    rules: 'rules', postsPerDay: 'posts_per_day', enabled: 'enabled',
+  };
+  const boolFields = new Set(['enabled']);
+  for (const [k, col] of Object.entries(colMap)) {
+    if (!(k in body)) continue;
+    sets.push(`${col} = ?`);
+    vals.push(boolFields.has(k) ? (body[k] ? 1 : 0) : body[k] ?? null);
+  }
+  if (sets.length) {
+    vals.push(campId, uid);
+    await c.env.DB.prepare(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...vals).run();
+  }
+  return c.json({ ok: true });
+});
+
+app.delete('/api/db/campaigns/:id', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  await c.env.DB.prepare('DELETE FROM campaigns WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid).run();
+  return c.json({ ok: true });
+});
+
 // ── DB: Social Tokens ─────────────────────────────────────────────────────────
 // Stored in dedicated column — never mixed into profile blob, never cached client-side
 

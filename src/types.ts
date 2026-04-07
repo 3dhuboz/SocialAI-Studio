@@ -89,3 +89,17 @@ export interface ClientWorkspace {
   /** Vite CLIENT_ID slug for the branded site, e.g. "streetmeats" */
   clientSlug?: string;
 }
+
+export type CampaignType = 'countdown' | 'promo' | 'launch' | 'event' | 'custom';
+
+export interface Campaign {
+  id: string;
+  name: string;
+  type: CampaignType;
+  startDate: string;
+  endDate: string;
+  rules: string;
+  postsPerDay: number;
+  enabled: boolean;
+  createdAt: string;
+}

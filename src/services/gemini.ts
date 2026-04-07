@@ -831,7 +831,8 @@ export const generateSmartSchedule = async (
   includeVideos: boolean = false,
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
   onPhase?: (phase: 'researching' | 'writing') => void,
-  campaignFocus?: string
+  campaignFocus?: string,
+  activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[]
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   try {
     const now = new Date();
@@ -994,6 +995,22 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       console.log('[Campaign Research] Brief generated:', campaignBrief.substring(0, 200));
     }
 
+    // ── Build structured campaign rules block (from Campaigns feature) ──
+    let structuredCampaignBlock = '';
+    if (activeCampaigns && activeCampaigns.length > 0) {
+      const today = new Date();
+      structuredCampaignBlock = '\n🎯 ACTIVE CAMPAIGNS (weave these into the content calendar):\n' +
+        activeCampaigns.map(c => {
+          const end = new Date(c.endDate);
+          const daysLeft = Math.max(0, Math.ceil((end.getTime() - today.getTime()) / 86400000));
+          const countdownNote = c.type === 'countdown' ? ` — ${daysLeft} days to go! Include countdown language.` : '';
+          return `• ${c.name} (${c.type}${countdownNote})\n  Dates: ${c.startDate} to ${c.endDate}\n  Rules: ${(c.rules || '').substring(0, 500)}\n  Target: ${c.postsPerDay} post(s) per day about this campaign`;
+        }).join('\n') +
+        '\nIMPORTANT: Campaign posts should feel natural alongside regular content — not every post needs to be about the campaign, but ' +
+        `at least ${activeCampaigns.reduce((sum, c) => sum + c.postsPerDay, 0)} post(s) per day MUST reference active campaigns.\n`;
+      console.log('[Campaigns] Injecting', activeCampaigns.length, 'active campaign(s) into prompt');
+    }
+
     let research: any = {};
     onPhase?.('researching');
     try {
@@ -1077,7 +1094,7 @@ You are an elite social media growth operator running a SATURATION CAMPAIGN for 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${structuredCampaignBlock}
 CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
@@ -1125,7 +1142,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${quick24hExtra}${highlightsExtra}
+${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
