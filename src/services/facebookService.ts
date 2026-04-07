@@ -38,7 +38,7 @@ export const FacebookService = {
       window.FB.login((response: any) => {
         if (response.authResponse) resolve(response.authResponse);
         else reject(new Error('User cancelled login or did not fully authorize.'));
-      }, { scope: 'pages_show_list,pages_read_engagement,pages_manage_posts' });
+      }, { scope: 'pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,pages_read_user_content' });
     });
   },
 
@@ -211,6 +211,118 @@ export const FacebookService = {
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     return data.id;
+  },
+
+  /** Post with an image URL (not base64) — Facebook fetches the image server-side */
+  postToPageWithImageUrl: async (pageId: string, pageAccessToken: string, message: string, imageUrl: string): Promise<string> => {
+    const base = 'https://graph.facebook.com/v21.0';
+    const res = await fetch(`${base}/${pageId}/photos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: imageUrl, message, access_token: pageAccessToken }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.post_id || data.id;
+  },
+
+  /** Schedule a post for future publishing via Facebook's scheduled_publish_time */
+  postToPageScheduled: async (
+    pageId: string, pageAccessToken: string, message: string,
+    scheduledTime: Date, imageUrl?: string
+  ): Promise<string> => {
+    const base = 'https://graph.facebook.com/v21.0';
+    const scheduledUnix = Math.floor(scheduledTime.getTime() / 1000);
+
+    if (imageUrl) {
+      const res = await fetch(`${base}/${pageId}/photos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: imageUrl, message, access_token: pageAccessToken,
+          published: false, scheduled_publish_time: scheduledUnix,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      return data.post_id || data.id;
+    }
+
+    const res = await fetch(`${base}/${pageId}/feed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message, access_token: pageAccessToken,
+        published: false, scheduled_publish_time: scheduledUnix,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.id;
+  },
+
+  // ── Instagram Publishing ─────────────────────────────────────────────────
+
+  /** Publish a photo to Instagram via the Content Publishing API */
+  postToInstagram: async (igAccountId: string, pageAccessToken: string, caption: string, imageUrl: string): Promise<string> => {
+    const base = 'https://graph.facebook.com/v21.0';
+    // Step 1: Create media container
+    const containerRes = await fetch(`${base}/${igAccountId}/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_url: imageUrl, caption, access_token: pageAccessToken }),
+    });
+    const containerData = await containerRes.json();
+    if (containerData.error) throw new Error(`IG container: ${containerData.error.message}`);
+    const containerId = containerData.id;
+
+    // Step 2: Publish the container
+    const publishRes = await fetch(`${base}/${igAccountId}/media_publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ creation_id: containerId, access_token: pageAccessToken }),
+    });
+    const publishData = await publishRes.json();
+    if (publishData.error) throw new Error(`IG publish: ${publishData.error.message}`);
+    return publishData.id;
+  },
+
+  /** Publish a Reel to Instagram via the Content Publishing API */
+  postReelToInstagram: async (igAccountId: string, pageAccessToken: string, caption: string, videoUrl: string): Promise<string> => {
+    const base = 'https://graph.facebook.com/v21.0';
+    // Step 1: Create reel container
+    const containerRes = await fetch(`${base}/${igAccountId}/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_url: videoUrl, caption, media_type: 'REELS',
+        access_token: pageAccessToken,
+      }),
+    });
+    const containerData = await containerRes.json();
+    if (containerData.error) throw new Error(`IG reel container: ${containerData.error.message}`);
+    const containerId = containerData.id;
+
+    // Step 2: Poll until container is ready (video processing)
+    const maxWait = 120_000; // 2 minutes
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      const statusRes = await fetch(`${base}/${containerId}?fields=status_code&access_token=${pageAccessToken}`);
+      const statusData = await statusRes.json();
+      if (statusData.status_code === 'FINISHED') break;
+      if (statusData.status_code === 'ERROR') throw new Error('IG reel processing failed');
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    // Step 3: Publish
+    const publishRes = await fetch(`${base}/${igAccountId}/media_publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ creation_id: containerId, access_token: pageAccessToken }),
+    });
+    const publishData = await publishRes.json();
+    if (publishData.error) throw new Error(`IG reel publish: ${publishData.error.message}`);
+    return publishData.id;
   },
 };
 

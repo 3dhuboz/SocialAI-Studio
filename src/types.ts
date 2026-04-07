@@ -5,7 +5,6 @@ export interface SocialPost {
   hashtags: string[];
   scheduledFor: string;
   status: 'Draft' | 'Scheduled' | 'Posted' | 'Missed';
-  latePostId?: string;
   image?: string;
   imagePrompt?: string;
   reasoning?: string;
@@ -23,6 +22,9 @@ export interface SocialTokens {
   facebookPageAccessToken: string;
   facebookConnected: boolean;
   instagramBusinessAccountId: string;
+  instagramConnected: boolean;
+  /** Long-lived user token (60 days) — used by worker cron to refresh page tokens */
+  longLivedUserToken?: string;
   /** ISO timestamp when the Facebook connection was granted */
   connectedAt?: string;
   /** Name of the connected page, for display only */
@@ -34,6 +36,8 @@ export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
   facebookPageAccessToken: '',
   facebookConnected: false,
   instagramBusinessAccountId: '',
+  instagramConnected: false,
+  longLivedUserToken: undefined,
   connectedAt: undefined,
   facebookPageName: undefined,
 };
@@ -78,12 +82,21 @@ export interface ClientWorkspace {
   name: string;
   businessType: string;
   createdAt: string;
-  lateProfileId?: string;
-  lateConnectedPlatforms?: string[];
-  lateAccountIds?: Record<string, string>;
   plan?: PlanTier;
   lastPostAt?: string;
   scheduledPostCount?: number;
   /** Vite CLIENT_ID slug for the branded site, e.g. "streetmeats" */
   clientSlug?: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  type: 'custom' | 'launch' | 'seasonal' | 'event';
+  startDate: string;
+  endDate: string;
+  rules: string;
+  postsPerDay: number;
+  enabled: boolean;
+  createdAt?: string;
 }

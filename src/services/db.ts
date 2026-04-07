@@ -42,9 +42,6 @@ export interface DbUserData {
   onboarding_done?: number;
   intake_form_done?: number;
   agency_billing_url?: string | null;
-  late_profile_id?: string | null;
-  late_connected_platforms?: string | string[];
-  late_account_ids?: string | Record<string, string>;
   fal_api_key?: string | null;
   paypal_subscription_id?: string | null;
   profile?: string | object;
@@ -83,10 +80,21 @@ export interface DbClient {
   profile?: object;
   stats?: object;
   insightReport?: object | null;
-  late_profile_id?: string | null;
-  lateConnectedPlatforms?: string[];
-  lateAccountIds?: Record<string, string>;
   client_slug?: string | null;
+}
+
+export interface DbCampaign {
+  id: string;
+  user_id?: string;
+  client_id?: string | null;
+  name: string;
+  type?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  rules?: string;
+  posts_per_day?: number;
+  enabled?: number; // SQLite boolean
+  created_at?: string;
 }
 
 // ── DB factory ────────────────────────────────────────────────────────────────
@@ -188,6 +196,19 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       await f(`/api/db/portal/${encodeURIComponent(slug.toLowerCase())}`, put({ email, password }));
     },
 
+    async getPortalContent(slug: string): Promise<{ hero_title: string; hero_subtitle: string; hero_cta_text: string }> {
+      try {
+        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(slug.toLowerCase())}/content`);
+        if (!res.ok) return { hero_title: '', hero_subtitle: '', hero_cta_text: '' };
+        const data = await res.json() as { content: { hero_title: string; hero_subtitle: string; hero_cta_text: string } };
+        return data.content;
+      } catch { return { hero_title: '', hero_subtitle: '', hero_cta_text: '' }; }
+    },
+
+    async setPortalContent(slug: string, content: { hero_title?: string; hero_subtitle?: string; hero_cta_text?: string }): Promise<void> {
+      await f(`/api/db/portal/${encodeURIComponent(slug.toLowerCase())}/content`, put(content));
+    },
+
     // ── Activations / Cancellations ───────────────────────────────────────────
     async getActivation(email?: string | null): Promise<Record<string, unknown> | null> {
       const qs = email ? `?email=${encodeURIComponent(email)}` : '';
@@ -227,6 +248,28 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     async setSocialTokens(tokens: Record<string, unknown>, clientId?: string | null): Promise<void> {
       const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
       await f(`/api/db/social-tokens${qs}`, put(tokens));
+    },
+
+    // ── Campaigns ──────────────────────────────────────────────────────────────
+    async getCampaigns(clientId?: string | null): Promise<DbCampaign[]> {
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/db/campaigns${qs}`);
+      const data = await res.json() as { campaigns: DbCampaign[] };
+      return data.campaigns ?? [];
+    },
+
+    async createCampaign(campaign: { clientId?: string | null; name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean }): Promise<string> {
+      const res = await f('/api/db/campaigns', j(campaign));
+      const data = await res.json() as { id: string };
+      return data.id;
+    },
+
+    async updateCampaign(id: string, fields: Record<string, unknown>): Promise<void> {
+      await f(`/api/db/campaigns/${id}`, put(fields));
+    },
+
+    async deleteCampaign(id: string): Promise<void> {
+      await f(`/api/db/campaigns/${id}`, del());
     },
   };
 }

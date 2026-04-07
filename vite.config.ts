@@ -10,6 +10,17 @@ const clientId = process.env.VITE_CLIENT_ID;
 export default defineConfig({
   plugins: [react()],
   server: { port: 5174 },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          clerk: ['@clerk/react'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+  },
   resolve: clientId ? {
     alias: [
       {

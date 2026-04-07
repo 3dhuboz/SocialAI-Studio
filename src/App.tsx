@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
-import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS } from './types';
+import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
 import { LandingPage } from './components/LandingPage';
 import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
@@ -16,10 +16,10 @@ import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
-import { LateService } from './services/lateService';
+import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
-import { LateConnectButton } from './components/LateConnectButton';
+import { FacebookConnectButton } from './components/FacebookConnectButton';
 import { CalendarGrid } from './components/CalendarGrid';
 import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
@@ -264,11 +264,11 @@ const Dashboard: React.FC = () => {
   const [acceptSaved, setAcceptSaved] = useState(0);
   const [isScanningPosts, setIsScanningPosts] = useState(false);
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
-  const [lateProfileId, setLateProfileId] = useState<string>('');
-  const [lateConnectedPlatforms, setLateConnectedPlatforms] = useState<string[]>([]);
-  const [lateAccountIds, setLateAccountIds] = useState<Record<string, string>>({});
-  // Cache agency's own Late profile + name so workspace switching is instant (no async race)
-  const agencyLateRef = useRef<{ profileId: string; platforms: string[]; profileName: string; accountIds: Record<string, string> }>({ profileId: '', platforms: [], profileName: CLIENT.defaultBusinessName, accountIds: {} });
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [portalContent, setPortalContent] = useState<{ hero_title: string; hero_subtitle: string; hero_cta_text: string }>({ hero_title: '', hero_subtitle: '', hero_cta_text: '' });
+
+  // Cache agency profile name for display
+  const agencyNameRef = useRef(CLIENT.defaultBusinessName);
   // Track workspace switches to prevent persistence writing client data to agency doc
   const prevClientIdRef = useRef<string | null | undefined>(undefined);
   // Block profile/stats persistence until D1 initial sync + workspace loads have completed
@@ -338,9 +338,6 @@ const Dashboard: React.FC = () => {
             onboardingDone: !!row.onboarding_done,
             intakeFormDone: !!row.intake_form_done,
             agencyBillingUrl: row.agency_billing_url,
-            lateProfileId: row.late_profile_id,
-            lateConnectedPlatforms: typeof row.late_connected_platforms === 'string' ? JSON.parse(row.late_connected_platforms as string) : (row.late_connected_platforms ?? []),
-            lateAccountIds: typeof row.late_account_ids === 'string' ? JSON.parse(row.late_account_ids as string) : (row.late_account_ids ?? {}),
             insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
           };
           // In portal mode, skip user-level profile/stats/tokens — the client workspace effect handles those
@@ -351,13 +348,13 @@ const Dashboard: React.FC = () => {
               // Strip deprecated token fields before caching in localStorage
               const { facebookPageId: _fpid, facebookPageAccessToken: _fpat, facebookConnected: _fc, instagramBusinessAccountId: _ig, ...safeProfile } = p;
               setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(safeProfile));
-              agencyLateRef.current.profileName = p.name;
+              agencyNameRef.current = p.name;
             } else if (isAdmin) {
               // D1 has no profile yet — clear any stale localStorage (e.g. from a previous client session)
               const fresh = { ...DEFAULT_PROFILE, name: CLIENT.defaultBusinessName };
               setProfile(fresh);
               localStorage.setItem('sai_profile', JSON.stringify(fresh));
-              agencyLateRef.current.profileName = CLIENT.defaultBusinessName;
+              agencyNameRef.current = CLIENT.defaultBusinessName;
             }
             // Load social tokens from dedicated D1 column (separate from profile blob)
             try {
@@ -375,9 +372,6 @@ const Dashboard: React.FC = () => {
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.intakeFormDone) setIntakeFormDone(true);
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
-          if (d.lateProfileId) { setLateProfileId(d.lateProfileId); agencyLateRef.current.profileId = d.lateProfileId; }
-          if (d.lateConnectedPlatforms?.length) { setLateConnectedPlatforms(d.lateConnectedPlatforms); agencyLateRef.current.platforms = d.lateConnectedPlatforms; }
-          if (d.lateAccountIds && Object.keys(d.lateAccountIds).length) { setLateAccountIds(d.lateAccountIds); agencyLateRef.current.accountIds = d.lateAccountIds; }
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
             const ageMs = Date.now() - new Date((d.insightReport as InsightReport).generatedAt).getTime();
@@ -411,9 +405,6 @@ const Dashboard: React.FC = () => {
         setClients(loadedClients.map(c => ({
           id: c.id, name: c.name, businessType: c.business_type ?? '', createdAt: c.created_at ?? '',
           plan: c.plan as PlanTier | undefined, clientSlug: c.client_slug ?? undefined,
-          lateProfileId: (c as any).late_profile_id ?? undefined,
-          lateConnectedPlatforms: c.lateConnectedPlatforms ?? [],
-          lateAccountIds: c.lateAccountIds ?? {},
         } as ClientWorkspace)));
         // Load posts for own workspace — skip in portal mode (client workspace effect handles posts)
         if (authMode !== 'portal') {
@@ -423,7 +414,6 @@ const Dashboard: React.FC = () => {
             status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
             hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
             image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
-            latePostId: p.late_post_id ?? undefined,
             imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined,
             postType: p.post_type as SocialPost['postType'] ?? undefined,
             videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined,
@@ -431,6 +421,16 @@ const Dashboard: React.FC = () => {
           setPosts(loaded);
           localStorage.setItem('sai_posts', JSON.stringify(loaded));
         }
+        // Load campaigns
+        try {
+          const loadedCampaigns = await db.getCampaigns(null);
+          setCampaigns(loadedCampaigns.map(c => ({
+            id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
+            startDate: c.start_date || '', endDate: c.end_date || '',
+            rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
+            enabled: !!c.enabled, createdAt: c.created_at,
+          })));
+        } catch { /* campaigns will remain empty */ }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('D1 sync error:', msg);
@@ -453,65 +453,15 @@ const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
-  // ── Sync post statuses with Late.dev ──
+  // ── Sync post statuses (cron handles missed-post detection now) ──
   const syncPostStatuses = async () => {
-    if (!lateProfileId || posts.length === 0) return;
-    
-    try {
-      // Get all posts that have a latePostId (handed to Late.dev)
-      const latePosts = posts.filter(p => p.latePostId && p.status === 'Scheduled');
-      if (latePosts.length === 0) return;
-
-      console.log(`[SYNC] Checking ${latePosts.length} scheduled posts against Late.dev`);
-
-      // Get analytics which should include published posts
-      const analytics = await LateService.getAnalytics(lateProfileId);
-      console.log('[SYNC] Late.dev analytics:', analytics);
-
-      // Try different possible structures for published posts
-      const publishedPosts = (analytics.posts || analytics.published || analytics.data || []) as any[];
-      console.log(`[SYNC] Found ${publishedPosts.length} published posts in analytics`);
-
-      // Update posts that were actually published
-      const actuallyPublished = latePosts.filter(localPost => {
-        return publishedPosts.some((publishedPost: any) => {
-          const publishedId = publishedPost.id || publishedPost.latePostId || publishedPost.post_id;
-          return publishedId === localPost.latePostId;
-        });
-      });
-
-      console.log(`[SYNC] ${actuallyPublished.length} posts actually published`);
-
-      if (actuallyPublished.length > 0) {
-        await db.bulkUpdatePostStatus(actuallyPublished.map(p => p.id), 'Posted');
-        setPosts(prev => prev.map(p => 
-          actuallyPublished.find(ap => ap.id === p.id) 
-            ? { ...p, status: 'Posted' as const } 
-            : p
-        ));
-        toast(`${actuallyPublished.length} post${actuallyPublished.length > 1 ? 's' : ''} published successfully!`, 'success');
-      }
-    } catch (e: any) {
-      console.error('[SYNC] Failed to sync post statuses:', e);
-      // Don't show error to user as this runs in background
-    }
+    // No-op: post status sync is handled by the cron worker
   };
-
-  // Sync statuses every 5 minutes and on component mount
-  // NOTE: 'posts' intentionally excluded — adding it would reset the interval on every
-  // post change and create a stale closure over the posts array inside setInterval.
-  useEffect(() => {
-    if (!user || !lateProfileId) return;
-    syncPostStatuses();
-    const interval = setInterval(syncPostStatuses, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid, lateProfileId]);
 
   // Manual sync function for user-triggered refresh
   const handleManualSync = async () => {
-    if (!lateProfileId) {
-      toast('Connect social accounts first', 'warning');
+    if (!fbConnected) {
+      toast('Connect your Facebook page first', 'warning');
       return;
     }
     await syncPostStatuses();
@@ -521,7 +471,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!user || posts.length === 0) return;
     const now = new Date();
-    // Give Late.dev 10 minutes grace period after scheduled time
+    // Give 10 minutes grace period after scheduled time
     const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
     // Only mark as missed if scheduled time was more than 10 minutes ago
     const overdue = posts.filter(p => 
@@ -575,7 +525,7 @@ const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, user, clients.length]);
 
-  // Reload profile+posts+Late profile when switching client workspace
+  // Reload profile+posts+tokens when switching client workspace
   useEffect(() => {
     if (!user || activeClientId === null) return;
     let isMounted = true;
@@ -595,15 +545,6 @@ const Dashboard: React.FC = () => {
           setProfile(cp);
           if (clientRow.stats && Object.keys(clientRow.stats).length) setStats({ ...DEFAULT_STATS, ...clientRow.stats });
           else setStats(DEFAULT_STATS);
-          const lp = clientRow.late_profile_id ?? '';
-          const lc = clientRow.lateConnectedPlatforms ?? [];
-          const la = clientRow.lateAccountIds ?? {};
-          console.log(`[Workspace Switch] Client "${wsName}" lateProfileId:`, lp || '(none)', 'accountIds:', JSON.stringify(la), 'agency ref:', agencyLateRef.current.profileId);
-          setLateProfileId(lp);
-          setLateConnectedPlatforms(lc);
-          setLateAccountIds(la);
-          // Keep in-memory clients cache in sync with D1 so fallback is accurate
-          setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: lp || undefined, lateConnectedPlatforms: lc, lateAccountIds: la } : c));
           if (clientRow.insightReport) {
             setInsightReport(clientRow.insightReport as InsightReport);
             const ageMs = Date.now() - new Date((clientRow.insightReport as InsightReport).generatedAt).getTime();
@@ -615,9 +556,6 @@ const Dashboard: React.FC = () => {
         } else {
           setProfile({ ...DEFAULT_PROFILE, name: wsName, type: wsType });
           setStats(DEFAULT_STATS);
-          setLateProfileId('');
-          setLateConnectedPlatforms([]);
-          setLateAccountIds({});
           setInsightReport(null);
           setInsightStale(true);
         }
@@ -627,16 +565,21 @@ const Dashboard: React.FC = () => {
           setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
         } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
         const clientPosts = await db.getPosts(activeClientId);
-        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
+        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
+        // Load campaigns for this client workspace
+        try {
+          const loadedCampaigns = await db.getCampaigns(activeClientId);
+          setCampaigns(loadedCampaigns.map(c => ({
+            id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
+            startDate: c.start_date || '', endDate: c.end_date || '',
+            rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
+            enabled: !!c.enabled, createdAt: c.created_at,
+          })));
+        } catch { setCampaigns([]); }
       } catch (e) {
         console.warn('Client load error:', e);
-        // Fall back to in-memory clients cache for Late.dev data (survives D1 outage within same session)
-        const cached = clients.find(c => c.id === activeClientId);
         setProfile({ ...DEFAULT_PROFILE, name: wsName, type: wsType });
         setStats(DEFAULT_STATS);
-        setLateProfileId(cached?.lateProfileId ?? '');
-        setLateConnectedPlatforms(cached?.lateConnectedPlatforms ?? []);
-        setLateAccountIds(cached?.lateAccountIds ?? {});
         setSocialTokens(DEFAULT_SOCIAL_TOKENS);
         setPosts([]);
         if (isSuperAdmin) toast('Could not load client workspace from database — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
@@ -647,14 +590,20 @@ const Dashboard: React.FC = () => {
     return () => { isMounted = false; };
   }, [activeClientId, user?.uid]);
 
-  // Restore own workspace (profile, posts, Late profile) when switching back from a client
+  // Load portal branding content when active client changes
+  useEffect(() => {
+    const client = clients.find(c => c.id === activeClientId);
+    if (client?.clientSlug) {
+      db.getPortalContent(client.clientSlug).then(setPortalContent).catch(() => {});
+    } else {
+      setPortalContent({ hero_title: '', hero_subtitle: '', hero_cta_text: '' });
+    }
+  }, [activeClientId, clients]);
+
+  // Restore own workspace (profile, posts, tokens) when switching back from a client
   useEffect(() => {
     if (!user || activeClientId !== null || authMode === 'portal') return;
     let isMounted = true;
-    // IMMEDIATELY restore cached agency Late profile (prevents publishing to wrong page during async fetch)
-    setLateProfileId(agencyLateRef.current.profileId);
-    setLateConnectedPlatforms(agencyLateRef.current.platforms);
-    setLateAccountIds(agencyLateRef.current.accountIds);
     setSocialTokens(DEFAULT_SOCIAL_TOKENS); // Reset tokens until own workspace loads from D1
     isSyncingRef.current = true;
     const restoreOwn = async () => {
@@ -665,12 +614,6 @@ const Dashboard: React.FC = () => {
         const rs = typeof row.stats === 'string' ? JSON.parse(row.stats as string) : (row.stats ?? {});
         if (rp && Object.keys(rp).length) { const p = { ...DEFAULT_PROFILE, ...rp }; setProfile(p); localStorage.setItem('sai_profile', JSON.stringify(p)); }
         if (rs && Object.keys(rs).length) { const st = { ...DEFAULT_STATS, ...rs }; setStats(st); localStorage.setItem('sai_stats', JSON.stringify(st)); }
-        const lp = row.late_profile_id ?? agencyLateRef.current.profileId;
-        const lc = typeof row.late_connected_platforms === 'string' ? JSON.parse(row.late_connected_platforms) : (row.late_connected_platforms ?? agencyLateRef.current.platforms);
-        const la = typeof row.late_account_ids === 'string' ? JSON.parse(row.late_account_ids as string) : (row.late_account_ids ?? agencyLateRef.current.accountIds);
-        setLateProfileId(lp);
-        setLateConnectedPlatforms(lc);
-        setLateAccountIds(la);
         const ir = row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null;
         if (ir) {
           setInsightReport(ir as InsightReport);
@@ -687,9 +630,19 @@ const Dashboard: React.FC = () => {
         setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
       } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
       const ownPosts = await db.getPosts();
-      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, latePostId: p.late_post_id ?? undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined }));
+      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined }));
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
+      // Load campaigns for own workspace
+      try {
+        const loadedCampaigns = await db.getCampaigns(null);
+        setCampaigns(loadedCampaigns.map(c => ({
+          id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
+          startDate: c.start_date || '', endDate: c.end_date || '',
+          rules: c.rules || '', postsPerDay: c.posts_per_day || 1,
+          enabled: !!c.enabled, createdAt: c.created_at,
+        })));
+      } catch { setCampaigns([]); }
     };
     restoreOwn().catch(() => {}).finally(() => { if (isMounted) isSyncingRef.current = false; });
     return () => { isMounted = false; };
@@ -958,7 +911,7 @@ const Dashboard: React.FC = () => {
   const [insightStale, setInsightStale] = useState(false);
 
   const hasApiKey = true; // AI is server-side via OpenRouter worker
-  const fbConnected = !!lateProfileId;
+  const fbConnected = !!socialTokens.facebookPageId && socialTokens.facebookConnected;
 
   // Auto-run daily insight analysis when stale — only in own workspace, never in client workspaces
   useEffect(() => {
@@ -972,7 +925,7 @@ const Dashboard: React.FC = () => {
   const [activePlan, setActivePlan] = useState<PlanTier | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatus>('ordered');
   const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
-  // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai/Late credits, API keys).
+  // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai credits, API keys).
   // isAdminMode may be broadened to client admins in future; isSuperAdmin never will be.
   const isSuperAdmin = !CLIENT.clientMode && !!user?.email && CLIENT.adminEmails.some(e => e === user.email);
 
@@ -1005,28 +958,7 @@ const Dashboard: React.FC = () => {
   const handlePullStats = async (silent = false) => {
     setIsPullingStats(true);
     try {
-      // Path 1 — Late analytics (preferred: no token needed, uses connected account)
-      if (lateProfileId) {
-        try {
-          const raw = await LateService.getAnalytics(lateProfileId);
-          const d = (raw as any);
-          const followers = d.followers ?? d.followersCount ?? d.fans ?? d.fanCount ?? 0;
-          const reach = d.reach ?? d.reach28d ?? d.impressions ?? 0;
-          const engagement = d.engagementRate ?? d.engagement_rate ?? d.engagement ?? 0;
-          const posts = d.postsCount ?? d.posts ?? d.postsLast30Days ?? 0;
-          if (followers > 0 || reach > 0) {
-            const mapped: LiveFbStats = { fanCount: followers, followersCount: followers, reach28d: reach, engagedUsers28d: 0, engagementRate: engagement };
-            setLiveStats(mapped);
-            setLastPulled(new Date());
-            setStats(prev => ({ ...prev, followers, reach, engagement: engagement || prev.engagement, postsLast30Days: posts || prev.postsLast30Days }));
-            if (!silent) toast('Stats updated from Late analytics!', 'success');
-            setIsPullingStats(false);
-            return;
-          }
-        } catch { /* fall through to FB Graph */ }
-      }
-
-      if (!silent) toast('Connect your social accounts in Settings to pull live stats.', 'warning');
+      if (!silent) toast('Connect your Facebook page in Settings to pull live stats.', 'warning');
     } catch (e: any) {
       const msg = e?.message || '';
       if (!silent) {
@@ -1042,39 +974,36 @@ const Dashboard: React.FC = () => {
 
   // Stats are fetched manually via Refresh Stats button only — auto-fetch removed (was firing on every workspace switch)
 
-  const handlePublishViaLate = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
-    if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
-    // Safety: warn if Late profile doesn't match expected workspace
-    if (!activeClientId && agencyLateRef.current.profileId && lateProfileId !== agencyLateRef.current.profileId) {
-      console.warn('Publish safety: lateProfileId mismatch — forcing restore from agency cache');
-      setLateProfileId(agencyLateRef.current.profileId);
-      toast('Workspace was out of sync — please try publishing again.', 'warning');
-      return;
+  const handlePublishDirect = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
+    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
+      toast('Connect your Facebook page in Settings first.', 'warning'); return;
     }
-    console.log('[Publish] Profile:', lateProfileId, activeClientId ? `(client: ${activeClientId})` : '(own workspace)');
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
-      // Pass stored accountIds to proxy — proxy handles account lookup fallbacks server-side
-      const resolvedAccountIds: Record<string, string> = { ...lateAccountIds };
-      console.log('[Publish] accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
-
       const fullText = generatedHashtags.length > 0
         ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : generatedContent;
 
-      // Build mediaItems: video > image (uploaded via helper if base64)
-      let mediaItems: { url: string; type: 'image' | 'video' }[] | undefined;
-      if (generatedVideoUrl) {
-        mediaItems = [{ url: generatedVideoUrl, type: 'video' }];
-      } else if (generatedImage) {
-        const uploaded = await uploadImageToLate(generatedImage);
-        if (uploaded) mediaItems = uploaded;
-        else toast('Image upload failed — posting text only.', 'warning');
+      for (const plat of platforms) {
+        if (plat === 'facebook') {
+          if (generatedImage) {
+            await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText, generatedImage);
+          } else {
+            await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText);
+          }
+        } else if (plat === 'instagram' && socialTokens.instagramBusinessAccountId) {
+          if (generatedImage) {
+            // Instagram requires a public image URL — if base64, we can't use it directly
+            const imgUrl = generatedImage.startsWith('http') ? generatedImage : undefined;
+            if (imgUrl) {
+              await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, fullText, imgUrl);
+            } else {
+              toast('Instagram requires a public image URL. Generate or upload an image first.', 'warning');
+            }
+          }
+        }
       }
-
-      console.log('[Publish] Final accountIds:', JSON.stringify(resolvedAccountIds), 'profileId:', lateProfileId);
-      await LateService.post(lateProfileId, platforms, fullText, undefined, undefined, mediaItems, resolvedAccountIds);
       setPublishSuccess(true);
       setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
@@ -1190,23 +1119,6 @@ const Dashboard: React.FC = () => {
     setIsGeneratingImage(false);
   };
 
-  // Upload a base64 data URL image to Late.dev and return a mediaItems array (or undefined on failure)
-  const uploadImageToLate = async (dataUrl: string): Promise<{ url: string; type: 'image' }[] | undefined> => {
-    if (!dataUrl) return undefined;
-    if (!dataUrl.startsWith('data:')) return [{ url: dataUrl, type: 'image' }];
-    try {
-      const mimeType = dataUrl.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-      const ext = mimeType === 'image/png' ? 'png' : 'jpg';
-      const { uploadUrl, publicUrl } = await LateService.getPresignedUrl(`post_${Date.now()}.${ext}`, mimeType);
-      const bytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
-      await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': mimeType }, body: bytes });
-      return [{ url: publicUrl, type: 'image' }];
-    } catch (e: any) {
-      console.warn('Image upload to Late failed:', e?.message);
-      return undefined;
-    }
-  };
-
   const handleSavePost = async () => {
     if (!generatedContent) { toast('Generate content first.', 'warning'); return; }
     if (!user) return;
@@ -1221,26 +1133,20 @@ const Dashboard: React.FC = () => {
     };
     const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
     setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
-    // If a schedule date is set and Late is connected, hand it off to Late.dev for auto-publishing
-    if (scheduleDate && lateProfileId) {
+    if (scheduleDate && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
       try {
         const fullText = generatedHashtags.length ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
-        const mediaItems = generatedImage ? await uploadImageToLate(generatedImage) : undefined;
-        const lateResult = await LateService.post(
-          lateProfileId,
-          [platform.toLowerCase() as 'facebook' | 'instagram'],
-          fullText,
-          undefined,
-          new Date(scheduleDate).toISOString(),
-          mediaItems
+        const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
+        await FacebookService.postToPageScheduled(
+          socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
+          fullText, new Date(scheduleDate), imageUrl
         );
-        if (lateResult?.id) await db.updatePost(newPostId, { latePostId: lateResult.id } as any);
-        toast('Post scheduled via Late.dev — it will auto-publish at the set time!');
+        toast('Post scheduled on Facebook — it will auto-publish at the set time!');
       } catch (e: any) {
-        toast(`Post saved but Late scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. Publish manually from the calendar.`, 'warning');
+        toast(`Post saved but Facebook scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. The cron will catch it.`, 'warning');
       }
     } else {
-      toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !lateProfileId ? ' Connect social accounts in Settings to enable auto-publishing.' : ''}`);
+      toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
     }
     setGeneratedContent('');
     setGeneratedHashtags([]);
@@ -1354,6 +1260,7 @@ const Dashboard: React.FC = () => {
       instagram: autopilotPlatform === 'both' || autopilotPlatform === 'instagram',
     };
     try {
+      const activeCampaigns = campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date());
       const result = await generateSmartSchedule(
         profile.name, profile.type, profile.tone, stats, smartCount,
         profile.location || 'Australia',
@@ -1362,7 +1269,8 @@ const Dashboard: React.FC = () => {
         profile,
         includeVideos,
         autopilotMode,
-        (phase) => setSmartGenPhase(phase)
+        (phase) => setSmartGenPhase(phase),
+        activeCampaigns
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
@@ -1510,7 +1418,7 @@ const Dashboard: React.FC = () => {
     setAcceptProgress(0);
     setAcceptSaved(0);
     let completedCount = 0;
-    let lateFailCount = 0;
+    let scheduleFailCount = 0;
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
@@ -1534,25 +1442,18 @@ const Dashboard: React.FC = () => {
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
-          // Schedule via Late.dev so it auto-publishes at the scheduled time (with image if present)
-          if (lateProfileId) {
+          // Schedule via Facebook Graph API so it auto-publishes at the scheduled time
+          if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
             try {
               const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
-              const imageDataUrl = smartPostImages[i];
-              const mediaItems = imageDataUrl ? await uploadImageToLate(imageDataUrl) : undefined;
-              const lateResult = await LateService.post(
-                lateProfileId,
-                [sp.platform.toLowerCase() as 'facebook' | 'instagram'],
-                text,
-                undefined,
-                new Date(sp.scheduledFor).toISOString(),
-                mediaItems,
-                lateAccountIds
+              const imageUrl = smartPostImages[i]?.startsWith('http') ? smartPostImages[i] : undefined;
+              await FacebookService.postToPageScheduled(
+                socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
+                text, new Date(sp.scheduledFor), imageUrl
               );
-              if (lateResult?.id) await db.updatePost(batchPostId, { latePostId: lateResult.id } as any);
-            } catch (lateErr: any) {
-              lateFailCount++;
-              console.warn(`Late scheduling failed for post ${i}:`, lateErr?.message);
+            } catch (schedErr: any) {
+              scheduleFailCount++;
+              console.warn(`Facebook scheduling failed for post ${i}:`, schedErr?.message);
             }
           }
           return { id: batchPostId, ...postData } as SocialPost;
@@ -1560,12 +1461,12 @@ const Dashboard: React.FC = () => {
       );
       setPosts(prev => [...results, ...prev]);
       clearDraft(activeClientId);
-      if (!lateProfileId) {
-        toast(`${results.length} posts saved to calendar. Connect social accounts in Settings to enable auto-publishing.`, 'success');
-      } else if (lateFailCount > 0) {
-        toast(`${results.length} posts saved. ${lateFailCount} failed to schedule via Late — publish those manually from the calendar.`, 'warning');
+      if (!fbConnected) {
+        toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
+      } else if (scheduleFailCount > 0) {
+        toast(`${results.length} posts saved. ${scheduleFailCount} failed to schedule on Facebook — publish those manually from the calendar.`, 'warning');
       } else {
-        toast(`${results.length} posts scheduled via Late.dev — they'll auto-publish at the set times! 🎉`, 'success');
+        toast(`${results.length} posts scheduled on Facebook — they'll auto-publish at the set times!`, 'success');
       }
       setSmartPosts([]);
       setSmartStrategy('');
@@ -1630,48 +1531,9 @@ const Dashboard: React.FC = () => {
           comments: 0,
           shares: 0,
         }));
-      // Keep same reference so the Late fallback checks (scanPosts === appPosts) work
+      // Keep same reference so the fallback checks (scanPosts === appPosts) work
       // correctly even when there are zero local posts.
       let scanPosts = appPosts;
-
-      // Path 1 — Late list-posts (published posts via Late's managed OAuth)
-      if (scanPosts === appPosts && lateProfileId) {
-        try {
-          const res = await fetch(`/api/late-proxy?action=list-posts&profileId=${encodeURIComponent(lateProfileId)}&limit=30`);
-          const lateData = await res.json();
-          const rawPosts: any[] = lateData?.posts ?? lateData?.data ?? lateData?.items ?? (Array.isArray(lateData) ? lateData : []);
-          if (rawPosts.length) {
-            scanPosts = rawPosts.map((p: any) => ({
-              message: p.text ?? p.message ?? p.content ?? p.body ?? p.caption ?? '',
-              created_time: p.publishedAt ?? p.published_at ?? p.scheduledAt ?? p.created_time ?? p.created_at ?? '',
-              likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
-              comments: p.comments ?? p.commentsCount ?? p.metrics?.comments ?? 0,
-              shares: p.shares ?? p.sharesCount ?? p.metrics?.shares ?? 0,
-            })).filter((p: any) => p.message);
-          }
-        } catch {
-          // Late list-posts unavailable — keep app posts
-        }
-      }
-
-      // Path 2 — Late analytics fallback
-      if (scanPosts === appPosts && lateProfileId) {
-        try {
-          const lateData = await LateService.getAnalytics(lateProfileId);
-          const rawPosts: any[] = (lateData as any)?.posts ?? (lateData as any)?.data ?? (lateData as any)?.items ?? [];
-          if (rawPosts.length) {
-            scanPosts = rawPosts.map((p: any) => ({
-              message: p.text ?? p.message ?? p.content ?? p.body ?? '',
-              created_time: p.publishedAt ?? p.published_at ?? p.created_time ?? p.created_at ?? '',
-              likes: p.likes ?? p.likesCount ?? p.reactions ?? p.metrics?.likes ?? 0,
-              comments: p.comments ?? p.commentsCount ?? p.metrics?.comments ?? 0,
-              shares: p.shares ?? p.sharesCount ?? p.metrics?.shares ?? 0,
-            })).filter((p: any) => p.message);
-          }
-        } catch {
-          // Late analytics unavailable — keep app posts
-        }
-      }
 
       if (!scanPosts.length) {
         // No external posts found — fall back to generating insights from profile data alone
@@ -1817,7 +1679,7 @@ const Dashboard: React.FC = () => {
       );
     }
     if (showLanding && !CLIENT.clientMode) {
-      return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} />;
+      return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} portalContent={portalContent} />;
     }
     return <AuthScreen onShowLanding={() => setShowLanding(false)} />;
   }
@@ -1831,6 +1693,7 @@ const Dashboard: React.FC = () => {
         if (user) await db.upsertUser({ plan, setupStatus: 'ordered' }).catch(() => {});
       }}
       onSignIn={() => setShowLanding(false)}
+      portalContent={portalContent}
     />;
   }
 
@@ -2140,7 +2003,7 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="px-4 pb-4">
               <button
-                onClick={() => { setShowPreview(false); handlePublishViaLate([platform.toLowerCase() as 'facebook' | 'instagram']); }}
+                onClick={() => { setShowPreview(false); handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram']); }}
                 disabled={!fbConnected || isGeneratingReel}
                 className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 transition text-sm"
               >
@@ -2192,7 +2055,7 @@ const Dashboard: React.FC = () => {
                       onAdd={addClient}
                       onRename={renameClient}
                       onDelete={deleteClient}
-                      agencyName={agencyLateRef.current.profileName || profile.name}
+                      agencyName={agencyNameRef.current || profile.name}
                       clientLimit={agencyClientLimit}
                     />
                   )}
@@ -2328,7 +2191,7 @@ const Dashboard: React.FC = () => {
       })()}
 
       {/* Content */}
-      <main className={`max-w-6xl mx-auto px-4 flex-1 w-full ${CLIENT.clientMode ? 'py-4' : 'py-8'}`}>
+      <main key={activeTab} className={`max-w-6xl mx-auto px-4 flex-1 w-full animate-tab-enter ${CLIENT.clientMode ? 'py-4' : 'py-8'}`}>
         {!CLIENT.clientMode && (
         <SetupBanner
           status={setupStatus}
@@ -2347,7 +2210,7 @@ const Dashboard: React.FC = () => {
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Platform</label>
                   <div className="flex rounded-xl overflow-hidden border border-white/10">
                     {(['Instagram', 'Facebook'] as const)
-                      .filter(p => p === 'Facebook' ? !!lateAccountIds?.facebook : !!lateAccountIds?.instagram)
+                      .filter(p => p === 'Facebook' ? fbConnected : !!socialTokens.instagramBusinessAccountId)
                       .map(p => (
                       <button key={p} onClick={() => setPlatform(p)}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition ${
@@ -2358,7 +2221,7 @@ const Dashboard: React.FC = () => {
                         {p === 'Instagram' ? <Instagram size={14} /> : <Facebook size={14} />} {p}
                       </button>
                     ))}
-                    {!lateAccountIds?.facebook && !lateAccountIds?.instagram && (
+                    {!fbConnected && !socialTokens.instagramBusinessAccountId && (
                       <div className="flex items-center gap-2 px-4 py-2.5 text-xs text-white/30">
                         No platforms connected. <button onClick={() => setActiveTab('settings')} className="text-amber-400 underline">Settings →</button>
                       </div>
@@ -2844,7 +2707,7 @@ const Dashboard: React.FC = () => {
                   )}
                   {fbConnected && (
                     <button
-                      onClick={() => handlePublishViaLate([platform.toLowerCase() as 'facebook' | 'instagram'])}
+                      onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
                       disabled={isPublishing || isGeneratingReel}
                       title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : `Publish to ${platform}`}
                       className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
@@ -2910,7 +2773,7 @@ const Dashboard: React.FC = () => {
                 {/* Sync statuses button */}
                 <button
                   onClick={handleManualSync}
-                  disabled={!lateProfileId}
+                  disabled={!fbConnected}
                   className="flex items-center gap-1.5 text-xs font-bold text-blue-300 hover:text-white bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/25 px-3 py-1.5 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Check if scheduled posts were published"
                 >
@@ -2959,10 +2822,20 @@ const Dashboard: React.FC = () => {
               onPublish={async (post) => {
                 try {
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
-                  if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
+                  if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
-                  const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
+                  const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
+                  if (post.platform === 'Facebook') {
+                    if (imageUrl) {
+                      await FacebookService.postToPageWithImageUrl(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
+                    } else if (imageSource?.startsWith('data:')) {
+                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageSource);
+                    } else {
+                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
+                    }
+                  } else if (post.platform === 'Instagram' && socialTokens.instagramBusinessAccountId && imageUrl) {
+                    await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
+                  }
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   await db.updatePost(post.id, { status: 'Posted' });
                   toast('Published successfully!', 'success');
@@ -2971,10 +2844,20 @@ const Dashboard: React.FC = () => {
               onRetry={async (post) => {
                 try {
                   const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
-                  if (!lateProfileId) { toast('Connect your social accounts in Settings first.', 'warning'); return; }
+                  if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
-                  const mediaItems = imageSource ? await uploadImageToLate(imageSource) : undefined;
-                  await LateService.post(lateProfileId, [post.platform.toLowerCase() as 'facebook' | 'instagram'], text, undefined, undefined, mediaItems, lateAccountIds);
+                  const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
+                  if (post.platform === 'Facebook') {
+                    if (imageUrl) {
+                      await FacebookService.postToPageWithImageUrl(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
+                    } else if (imageSource?.startsWith('data:')) {
+                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageSource);
+                    } else {
+                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
+                    }
+                  } else if (post.platform === 'Instagram' && socialTokens.instagramBusinessAccountId && imageUrl) {
+                    await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
+                  }
                   await db.updatePost(post.id, { status: 'Posted' });
                   setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
                   toast('Post published successfully!', 'success');
@@ -3049,6 +2932,30 @@ const Dashboard: React.FC = () => {
                   </h2>
                   <p className="text-white/35 text-sm mt-1">Researches your industry, audience & platform algorithms — then writes your entire content calendar in one click.</p>
                 </div>
+
+                {/* Active campaign banner */}
+                {(() => {
+                  const active = campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date());
+                  if (!active.length) return null;
+                  return (
+                    <div className="mb-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 animate-fadeSlideDown">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-amber-400 text-xs font-black uppercase tracking-wider">Active Campaigns</span>
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                      </div>
+                      {active.map(c => {
+                        const daysToGo = Math.max(0, Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000));
+                        return (
+                          <div key={c.id} className="flex items-center justify-between text-xs mt-1">
+                            <span className="text-white font-semibold">{c.name}</span>
+                            <span className="text-amber-400/70">{daysToGo} days left</span>
+                          </div>
+                        );
+                      })}
+                      <p className="text-[10px] text-white/30 mt-2">Campaign themes will be woven into generated posts</p>
+                    </div>
+                  );
+                })()}
 
                 {/* Vibe Mode selector */}
                 <div>
@@ -3135,8 +3042,8 @@ const Dashboard: React.FC = () => {
                 <div>
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Post to</label>
                   {(() => {
-                    const hasFb = !!lateAccountIds?.facebook;
-                    const hasIg = !!lateAccountIds?.instagram;
+                    const hasFb = fbConnected;
+                    const hasIg = !!socialTokens.instagramBusinessAccountId;
                     const availableOpts = [
                       ...(hasFb && hasIg ? ['both' as const] : []),
                       ...(hasFb ? ['facebook' as const] : []),
@@ -3753,8 +3660,8 @@ const Dashboard: React.FC = () => {
                   <p className="text-[10px] text-white/30 uppercase tracking-wider">Active</p>
                 </div>
                 <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
-                  <p className="text-xl font-black text-emerald-400">{clients.filter(c => c.lateProfileId).length}</p>
-                  <p className="text-[10px] text-white/30 uppercase tracking-wider">Connected</p>
+                  <p className="text-xl font-black text-emerald-400">{clients.length}</p>
+                  <p className="text-[10px] text-white/30 uppercase tracking-wider">Total</p>
                 </div>
                 <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
                   <p className="text-xl font-black text-white/40">{Math.max(0, agencyClientLimit - clients.length)}</p>
@@ -3785,8 +3692,8 @@ const Dashboard: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {clients.map(client => {
                   const isActive = activeClientId === client.id;
-                  const connected = !!client.lateProfileId;
-                  const platforms = client.lateConnectedPlatforms ?? [];
+                  const connected = false; // Connection status is per-workspace tokens, not stored on client object
+                  const platforms: string[] = [];
                   const health = clientHealthMap[client.id];
                   const lastPostDate = health?.lastPostAt ? new Date(health.lastPostAt) : null;
                   const daysSincePost = lastPostDate ? Math.floor((Date.now() - lastPostDate.getTime()) / 86400000) : null;
@@ -4491,7 +4398,7 @@ const Dashboard: React.FC = () => {
               <div className="h-px flex-1 bg-white/6" />
             </div>
 
-            {/* Social Media Connection — Late only */}
+            {/* Social Media Connection — Facebook Graph API */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
@@ -4499,49 +4406,33 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-white">Social Media Connection</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Connect Facebook &amp; Instagram via Late — one click, no tokens to manage</p>
+                  <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page &amp; Instagram via the official Facebook API</p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <LateConnectButton
-                  profileId={lateProfileId}
-                  connectedPlatforms={lateConnectedPlatforms}
-                  businessName={profile.name}
-                  onConnected={async (pid, platforms, accountIds) => {
-                    setLateProfileId(pid);
-                    setLateConnectedPlatforms(platforms);
-                    const resolvedAccountIds = accountIds || {};
-                    console.log('[onConnected] profileId:', pid, 'platforms:', platforms, 'accountIds:', JSON.stringify(resolvedAccountIds));
-                    setLateAccountIds(resolvedAccountIds);
-                    if (user) {
-                      upsertActiveWorkspace({ lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds }).catch(() => {
-                        toast('Facebook connection could not be saved to database. Check that VITE_AI_WORKER_URL is set in CF Pages.', 'error');
-                      });
-                      // Also update agency cache if on own workspace
-                      if (!activeClientId) {
-                        agencyLateRef.current.profileId = pid;
-                        agencyLateRef.current.platforms = platforms;
-                        agencyLateRef.current.accountIds = resolvedAccountIds;
-                      }
-                      if (activeClientId) {
-                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: pid, lateConnectedPlatforms: platforms, lateAccountIds: resolvedAccountIds } : c));
-                      }
-                    }
-                    toast(`Connected to ${platforms.join(' & ')} successfully!`, 'success');
+                <FacebookConnectButton
+                  connectedPageId={socialTokens.facebookPageId}
+                  connectedPageName={socialTokens.facebookPageName || profile.name}
+                  instagramConnected={!!socialTokens.instagramBusinessAccountId}
+                  tokenNeverExpires={socialTokens.facebookConnected ? true : undefined}
+                  onConnected={async (pageId, pageAccessToken, pageName, longLivedUserToken, instagramBusinessAccountId) => {
+                    const updated: SocialTokens = {
+                      ...socialTokens,
+                      facebookPageId: pageId,
+                      facebookPageAccessToken: pageAccessToken,
+                      facebookConnected: true,
+                      connectedAt: new Date().toISOString(),
+                      facebookPageName: pageName,
+                      longLivedUserToken: longLivedUserToken || undefined,
+                      instagramBusinessAccountId: instagramBusinessAccountId || '',
+                      instagramConnected: !!instagramBusinessAccountId,
+                    };
+                    saveSocialTokens(updated);
+                    toast(`Connected to ${pageName}${instagramBusinessAccountId ? ' + Instagram' : ''} successfully!`, 'success');
                   }}
                   onDisconnect={() => {
-                    setLateProfileId('');
-                    setLateConnectedPlatforms([]);
-                    setLateAccountIds({});
-                    if (user) {
-                      upsertActiveWorkspace({ lateProfileId: null, lateConnectedPlatforms: [], lateAccountIds: {} }).catch(() => {
-                        toast('Could not save disconnection to database.', 'error');
-                      });
-                      if (activeClientId) {
-                        setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, lateProfileId: undefined, lateConnectedPlatforms: [], lateAccountIds: {} } : c));
-                      }
-                    }
+                    saveSocialTokens(DEFAULT_SOCIAL_TOKENS);
                     toast('Social accounts disconnected.', 'warning');
                   }}
                 />
@@ -4549,6 +4440,148 @@ const Dashboard: React.FC = () => {
 
             </div>
 
+            {/* ── SECTION: Campaigns ── */}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Campaigns</span>
+              <div className="h-px flex-1 bg-white/6" />
+            </div>
+
+            <div className="space-y-3">
+              {campaigns.map(c => (
+                <div key={c.id} className="glass rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${c.enabled ? 'bg-emerald-400' : 'bg-white/20'}`} />
+                      <span className="text-sm font-bold text-white">{c.name}</span>
+                      <span className="text-[10px] text-white/30 bg-white/5 px-2 py-0.5 rounded-full">{c.type}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          await db.updateCampaign(c.id, { enabled: !c.enabled });
+                          setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, enabled: !x.enabled } : x));
+                        }}
+                        className={`text-xs px-2 py-1 rounded-lg transition ${c.enabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-white/30'}`}
+                      >
+                        {c.enabled ? 'Active' : 'Paused'}
+                      </button>
+                      <button
+                        onClick={async () => {
+                          await db.deleteCampaign(c.id);
+                          setCampaigns(prev => prev.filter(x => x.id !== c.id));
+                        }}
+                        className="text-white/20 hover:text-red-400 transition"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">Start</label>
+                      <input type="date" value={c.startDate} onChange={async (e) => {
+                        const v = e.target.value;
+                        await db.updateCampaign(c.id, { startDate: v });
+                        setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, startDate: v } : x));
+                      }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">End</label>
+                      <input type="date" value={c.endDate} onChange={async (e) => {
+                        const v = e.target.value;
+                        await db.updateCampaign(c.id, { endDate: v });
+                        setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, endDate: v } : x));
+                      }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-white/30 block mb-1">Campaign Rules / Instructions for AI</label>
+                    <textarea
+                      value={c.rules}
+                      onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value } : x))}
+                      onBlur={async () => { await db.updateCampaign(c.id, { rules: c.rules }); }}
+                      placeholder="e.g. Mention our grand opening event, use festive language, include countdown..."
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/20 resize-none h-16"
+                    />
+                  </div>
+                </div>
+              ))}
+              <button
+                onClick={async () => {
+                  const id = await db.createCampaign({
+                    clientId: activeClientId,
+                    name: 'New Campaign',
+                    type: 'custom',
+                    startDate: new Date().toISOString().split('T')[0],
+                    endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+                    rules: '',
+                    postsPerDay: 1,
+                    enabled: true,
+                  });
+                  setCampaigns(prev => [...prev, {
+                    id, name: 'New Campaign', type: 'custom' as const,
+                    startDate: new Date().toISOString().split('T')[0],
+                    endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+                    rules: '', postsPerDay: 1, enabled: true,
+                  }]);
+                }}
+                className="w-full glass rounded-xl py-3 text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition flex items-center justify-center gap-2 press"
+              >
+                <Plus size={14} /> Add Campaign
+              </button>
+            </div>
+
+
+            {/* ── SECTION: Portal Branding ── */}
+            {(() => {
+              const client = clients.find(c => c.id === activeClientId);
+              const slug = client?.clientSlug;
+              if (!slug) return null;
+              return (
+                <>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Portal Branding</span>
+                    <div className="h-px flex-1 bg-white/6" />
+                  </div>
+                  <div className="glass rounded-2xl p-5 space-y-4">
+                    <p className="text-xs text-white/40">Customize the hero section on the <span className="text-amber-400">{slug}</span> client portal landing page.</p>
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">Hero Title</label>
+                      <input
+                        type="text"
+                        value={portalContent.hero_title}
+                        onChange={(e) => setPortalContent(prev => ({ ...prev, hero_title: e.target.value }))}
+                        onBlur={() => db.setPortalContent(slug, { hero_title: portalContent.hero_title }).catch(() => {})}
+                        placeholder="e.g. WE DON'T DO FAST FOOD"
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">Hero Subtitle</label>
+                      <input
+                        type="text"
+                        value={portalContent.hero_subtitle}
+                        onChange={(e) => setPortalContent(prev => ({ ...prev, hero_subtitle: e.target.value }))}
+                        onBlur={() => db.setPortalContent(slug, { hero_subtitle: portalContent.hero_subtitle }).catch(() => {})}
+                        placeholder="e.g. Premium BBQ — crafted slow, served with soul"
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">Call-to-Action Button Text</label>
+                      <input
+                        type="text"
+                        value={portalContent.hero_cta_text}
+                        onChange={(e) => setPortalContent(prev => ({ ...prev, hero_cta_text: e.target.value }))}
+                        onBlur={() => db.setPortalContent(slug, { hero_cta_text: portalContent.hero_cta_text }).catch(() => {})}
+                        placeholder="e.g. Start Today — $99 Setup"
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/20"
+                      />
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
 
             {/* ── SECTION: Plan & Admin ── */}
             <div className="flex items-center gap-3">
@@ -4613,15 +4646,6 @@ const Dashboard: React.FC = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          {client.lateProfileId ? (
-                            <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
-                              <Link2 size={10} /> Social Connected
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1.5 text-[11px] text-white/30 bg-white/5 border border-white/10 px-2.5 py-1 rounded-full">
-                              <Link2Off size={10} /> Not Connected
-                            </span>
-                          )}
                           <button
                             onClick={() => setActiveClientId(client.id)}
                             className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
