@@ -909,11 +909,12 @@ app.post('/api/paypal-verify', async (c) => {
 // 0 */6 * * * → fal.ai credit check (every 6 hours)
 
 async function cronPublishMissedPosts(env: Env) {
-  const now = new Date().toISOString();
+  // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
+  const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
   const rows = await env.DB.prepare(
     `SELECT p.id, p.content, p.hashtags, p.image_url, p.platform, p.user_id, p.client_id
      FROM posts p WHERE p.status = 'Scheduled' AND p.scheduled_for <= ? LIMIT 20`
-  ).bind(now).all();
+  ).bind(nowAEST).all();
   const posts = rows.results ?? [];
   if (posts.length === 0) { console.log('[CRON] No missed posts'); return; }
   console.log(`[CRON] Publishing ${posts.length} missed posts`);
