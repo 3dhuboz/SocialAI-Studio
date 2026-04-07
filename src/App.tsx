@@ -2934,26 +2934,100 @@ const Dashboard: React.FC = () => {
                   <p className="text-white/35 text-sm mt-1">Researches your industry, audience & platform algorithms — then writes your entire content calendar in one click.</p>
                 </div>
 
-                {/* Active campaign banner */}
+                {/* Campaign manager — inline in Create tab */}
                 {(() => {
                   const active = campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date());
-                  if (!active.length) return null;
                   return (
-                    <div className="mb-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 animate-fadeSlideDown">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-amber-400 text-xs font-black uppercase tracking-wider">Active Campaigns</span>
-                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                      </div>
-                      {active.map(c => {
+                    <div className="mb-4 space-y-2">
+                      {active.length > 0 && active.map(c => {
                         const daysToGo = Math.max(0, Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000));
+                        const [expanded, setExpanded] = React.useState(false);
                         return (
-                          <div key={c.id} className="flex items-center justify-between text-xs mt-1">
-                            <span className="text-white font-semibold">{c.name}</span>
-                            <span className="text-amber-400/70">{daysToGo} days left</span>
+                          <div key={c.id} className="bg-amber-500/10 border border-amber-500/20 rounded-2xl overflow-hidden animate-fadeSlideDown">
+                            <button onClick={() => setExpanded(!expanded)} className="w-full p-4 flex items-center justify-between text-left group">
+                              <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                <span className="text-white text-sm font-bold">{c.name}</span>
+                                <span className="text-[10px] text-amber-400/50 bg-amber-500/10 px-2 py-0.5 rounded-full">{c.type}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className="text-amber-400 text-xs font-bold">{daysToGo} days left</span>
+                                <ChevronRight size={14} className={`text-white/30 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                              </div>
+                            </button>
+                            {expanded && (
+                              <div className="px-4 pb-4 space-y-3 border-t border-amber-500/10 pt-3 animate-fadeSlideDown">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="text-[10px] text-white/30 block mb-1">Start</label>
+                                    <input type="date" value={c.startDate} onChange={async (e) => {
+                                      const v = e.target.value;
+                                      await db.updateCampaign(c.id, { startDate: v });
+                                      setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, startDate: v } : x));
+                                    }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-white/30 block mb-1">End</label>
+                                    <input type="date" value={c.endDate} onChange={async (e) => {
+                                      const v = e.target.value;
+                                      await db.updateCampaign(c.id, { endDate: v });
+                                      setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, endDate: v } : x));
+                                    }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-white/30 block mb-1">Rules for AI</label>
+                                  <textarea
+                                    value={c.rules}
+                                    onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value } : x))}
+                                    onBlur={() => db.updateCampaign(c.id, { rules: c.rules })}
+                                    placeholder="e.g. Mention 30% off, use urgency, target locals..."
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/20 resize-none h-16"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <button onClick={async () => {
+                                    await db.updateCampaign(c.id, { enabled: false });
+                                    setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, enabled: false } : x));
+                                    toast('Campaign paused', 'warning');
+                                  }} className="text-xs text-white/30 hover:text-amber-400 transition">Pause campaign</button>
+                                  <button onClick={async () => {
+                                    await db.deleteCampaign(c.id);
+                                    setCampaigns(prev => prev.filter(x => x.id !== c.id));
+                                    toast('Campaign deleted');
+                                  }} className="text-xs text-white/30 hover:text-red-400 transition flex items-center gap-1"><Trash2 size={11} /> Delete</button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
-                      <p className="text-[10px] text-white/30 mt-2">Campaign themes will be woven into generated posts</p>
+                      <button
+                        onClick={async () => {
+                          const id = await db.createCampaign({
+                            clientId: activeClientId,
+                            name: 'New Campaign',
+                            type: 'custom',
+                            startDate: new Date().toISOString().split('T')[0],
+                            endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+                            rules: '',
+                            postsPerDay: 1,
+                            enabled: true,
+                          });
+                          setCampaigns(prev => [...prev, {
+                            id, name: 'New Campaign', type: 'custom' as const,
+                            startDate: new Date().toISOString().split('T')[0],
+                            endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+                            rules: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
+                          }]);
+                        }}
+                        className="w-full glass rounded-xl py-2.5 text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition flex items-center justify-center gap-2 press"
+                      >
+                        <Plus size={14} /> {active.length > 0 ? 'Add Another Campaign' : 'Add Campaign'}
+                      </button>
+                      {active.length > 0 && (
+                        <p className="text-[10px] text-white/30 text-center">Campaign themes will be woven into generated posts automatically</p>
+                      )}
                     </div>
                   );
                 })()}
