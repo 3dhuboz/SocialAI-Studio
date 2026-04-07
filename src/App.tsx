@@ -34,6 +34,72 @@ import {
   Key, EyeOff, Home, AlertCircle
 } from 'lucide-react';
 
+/** Expandable campaign card — extracted so useState works correctly inside .map() */
+const CampaignCard: React.FC<{
+  campaign: Campaign;
+  onUpdate: (id: string, fields: Record<string, unknown>) => void;
+  onDelete: (id: string) => void;
+  onFieldChange: (id: string, field: string, value: unknown) => void;
+}> = ({ campaign: c, onUpdate, onDelete, onFieldChange }) => {
+  const [expanded, setExpanded] = useState(false);
+  const daysToGo = Math.max(0, Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000));
+  return (
+    <div className="bg-amber-500/8 border border-amber-500/15 rounded-xl overflow-hidden">
+      <button onClick={() => setExpanded(!expanded)} className="w-full px-4 py-3 flex items-center justify-between text-left">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
+          <input
+            value={c.name}
+            onChange={(e) => onFieldChange(c.id, 'name', e.target.value)}
+            onBlur={() => onUpdate(c.id, { name: c.name })}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-transparent text-white text-sm font-bold border-none outline-none min-w-0 flex-1"
+          />
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <span className="text-amber-400 text-xs font-bold">{daysToGo}d left</span>
+          <ChevronRight size={13} className={`text-white/25 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3 border-t border-amber-500/10 pt-3 animate-fadeSlideDown">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-white/30 block mb-1">Start date</label>
+              <input type="date" value={c.startDate} onChange={(e) => {
+                onFieldChange(c.id, 'startDate', e.target.value);
+                onUpdate(c.id, { startDate: e.target.value });
+              }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+            </div>
+            <div>
+              <label className="text-[10px] text-white/30 block mb-1">End date</label>
+              <input type="date" value={c.endDate} onChange={(e) => {
+                onFieldChange(c.id, 'endDate', e.target.value);
+                onUpdate(c.id, { endDate: e.target.value });
+              }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-white/30 block mb-1">What should the AI do?</label>
+            <textarea
+              value={c.rules}
+              onChange={(e) => onFieldChange(c.id, 'rules', e.target.value)}
+              onBlur={() => onUpdate(c.id, { rules: c.rules })}
+              placeholder='e.g. Mention our 30% off winter sale in every post. Use urgency — "only X days left!" Target Gladstone locals.'
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/15 resize-none h-20"
+            />
+            <p className="text-[10px] text-white/15 mt-1">The AI will weave these rules + countdown language into every generated post.</p>
+          </div>
+          <div className="flex items-center justify-between pt-1">
+            <button onClick={() => onUpdate(c.id, { enabled: false })} className="text-[11px] text-white/25 hover:text-amber-400 transition">Pause</button>
+            <button onClick={() => onDelete(c.id)} className="text-[11px] text-white/25 hover:text-red-400 transition flex items-center gap-1"><Trash2 size={10} /> Delete</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const DEFAULT_PROFILE: BusinessProfile = {
   name: CLIENT.defaultBusinessName,
   type: CLIENT.defaultBusinessType,
@@ -2959,73 +3025,27 @@ const Dashboard: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date()).map(c => {
-                    const daysToGo = Math.max(0, Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000));
-                    const [expanded, setExpanded] = React.useState(false);
-                    return (
-                      <div key={c.id} className="bg-amber-500/8 border border-amber-500/15 rounded-xl overflow-hidden">
-                        <button onClick={() => setExpanded(!expanded)} className="w-full px-4 py-3 flex items-center justify-between text-left">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
-                            <input
-                              value={c.name}
-                              onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, name: e.target.value } : x))}
-                              onBlur={() => db.updateCampaign(c.id, { name: c.name })}
-                              onClick={(e) => e.stopPropagation()}
-                              className="bg-transparent text-white text-sm font-bold border-none outline-none min-w-0 flex-1"
-                            />
-                          </div>
-                          <div className="flex items-center gap-3 flex-shrink-0">
-                            <span className="text-amber-400 text-xs font-bold">{daysToGo}d left</span>
-                            <ChevronRight size={13} className={`text-white/25 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
-                          </div>
-                        </button>
-                        {expanded && (
-                          <div className="px-4 pb-4 space-y-3 border-t border-amber-500/10 pt-3 animate-fadeSlideDown">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="text-[10px] text-white/30 block mb-1">Start date</label>
-                                <input type="date" value={c.startDate} onChange={async (e) => {
-                                  await db.updateCampaign(c.id, { startDate: e.target.value });
-                                  setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, startDate: e.target.value } : x));
-                                }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
-                              </div>
-                              <div>
-                                <label className="text-[10px] text-white/30 block mb-1">End date</label>
-                                <input type="date" value={c.endDate} onChange={async (e) => {
-                                  await db.updateCampaign(c.id, { endDate: e.target.value });
-                                  setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, endDate: e.target.value } : x));
-                                }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-white/30 block mb-1">What should the AI do?</label>
-                              <textarea
-                                value={c.rules}
-                                onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value } : x))}
-                                onBlur={() => db.updateCampaign(c.id, { rules: c.rules })}
-                                placeholder="e.g. Mention our 30% off winter sale in every post. Use urgency — &quot;only X days left!&quot; Target Gladstone locals."
-                                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/15 resize-none h-20"
-                              />
-                              <p className="text-[10px] text-white/15 mt-1">The AI will weave these rules + countdown language into every generated post.</p>
-                            </div>
-                            <div className="flex items-center justify-between pt-1">
-                              <button onClick={async () => {
-                                await db.updateCampaign(c.id, { enabled: false });
-                                setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, enabled: false } : x));
-                                toast('Campaign paused');
-                              }} className="text-[11px] text-white/25 hover:text-amber-400 transition">Pause</button>
-                              <button onClick={async () => {
-                                await db.deleteCampaign(c.id);
-                                setCampaigns(prev => prev.filter(x => x.id !== c.id));
-                                toast('Campaign deleted');
-                              }} className="text-[11px] text-white/25 hover:text-red-400 transition flex items-center gap-1"><Trash2 size={10} /> Delete</button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date()).map(c => (
+                    <CampaignCard
+                      key={c.id}
+                      campaign={c}
+                      onUpdate={async (id, fields) => {
+                        await db.updateCampaign(id, fields);
+                        if (fields.enabled === false) {
+                          setCampaigns(prev => prev.map(x => x.id === id ? { ...x, enabled: false } : x));
+                          toast('Campaign paused');
+                        }
+                      }}
+                      onFieldChange={(id, field, value) => {
+                        setCampaigns(prev => prev.map(x => x.id === id ? { ...x, [field]: value } : x));
+                      }}
+                      onDelete={async (id) => {
+                        await db.deleteCampaign(id);
+                        setCampaigns(prev => prev.filter(x => x.id !== id));
+                        toast('Campaign deleted');
+                      }}
+                    />
+                  ))}
                 </div>
               )}
             </div>
