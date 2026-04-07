@@ -871,7 +871,8 @@ export const generateSmartSchedule = async (
       const daysToGo = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (86400000)));
       const daysIn = Math.max(0, Math.ceil((now.getTime() - start.getTime()) / (86400000)));
       const countdown = daysToGo <= 14 ? ` (${daysToGo} days to go!)` : daysIn <= 7 ? ` (just launched ${daysIn} days ago!)` : '';
-      return `ACTIVE CAMPAIGN: "${c.name}" runs ${c.startDate} to ${c.endDate}${countdown}\nCampaign rules: ${c.rules}`;
+      const imageLine = (c as any).imageNotes ? `\nCampaign image direction: ${(c as any).imageNotes}` : '';
+      return `ACTIVE CAMPAIGN: "${c.name}" runs ${c.startDate} to ${c.endDate}${countdown}\nCampaign rules: ${c.rules}${imageLine}`;
     }).join('\n\n') : '';
 
     const profileBlock = [
