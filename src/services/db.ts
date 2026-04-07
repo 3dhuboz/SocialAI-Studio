@@ -42,9 +42,6 @@ export interface DbUserData {
   onboarding_done?: number;
   intake_form_done?: number;
   agency_billing_url?: string | null;
-  late_profile_id?: string | null;
-  late_connected_platforms?: string | string[];
-  late_account_ids?: string | Record<string, string>;
   fal_api_key?: string | null;
   paypal_subscription_id?: string | null;
   profile?: string | object;
@@ -83,9 +80,6 @@ export interface DbClient {
   profile?: object;
   stats?: object;
   insightReport?: object | null;
-  late_profile_id?: string | null;
-  lateConnectedPlatforms?: string[];
-  lateAccountIds?: Record<string, string>;
   client_slug?: string | null;
 }
 
@@ -222,6 +216,19 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async setPortal(slug: string, email: string, password: string): Promise<void> {
       await f(`/api/db/portal/${encodeURIComponent(slug.toLowerCase())}`, put({ email, password }));
+    },
+
+    async getPortalContent(slug: string): Promise<{ hero_title: string; hero_subtitle: string; hero_cta_text: string }> {
+      try {
+        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(slug.toLowerCase())}/content`);
+        if (!res.ok) return { hero_title: '', hero_subtitle: '', hero_cta_text: '' };
+        const data = await res.json() as { content: { hero_title: string; hero_subtitle: string; hero_cta_text: string } };
+        return data.content;
+      } catch { return { hero_title: '', hero_subtitle: '', hero_cta_text: '' }; }
+    },
+
+    async setPortalContent(slug: string, content: { hero_title?: string; hero_subtitle?: string; hero_cta_text?: string }): Promise<void> {
+      await f(`/api/db/portal/${encodeURIComponent(slug.toLowerCase())}/content`, put(content));
     },
 
     // ── Activations / Cancellations ───────────────────────────────────────────

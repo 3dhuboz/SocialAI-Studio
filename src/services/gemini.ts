@@ -832,7 +832,7 @@ export const generateSmartSchedule = async (
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
   onPhase?: (phase: 'researching' | 'writing') => void,
   campaignFocus?: string,
-  activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[]
+  activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[],
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
   try {
     const now = new Date();
@@ -861,6 +861,19 @@ export const generateSmartSchedule = async (
     })();
     const safeProfile = isProfileCorrupted ? undefined : richProfile;
 
+    // Forward-declare campaignBrief so the prompt template can reference it
+    let campaignBrief = '';
+
+    // Build campaign injection block
+    const campaignBlock = activeCampaigns?.length ? activeCampaigns.map(c => {
+      const start = new Date(c.startDate);
+      const end = new Date(c.endDate);
+      const daysToGo = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (86400000)));
+      const daysIn = Math.max(0, Math.ceil((now.getTime() - start.getTime()) / (86400000)));
+      const countdown = daysToGo <= 14 ? ` (${daysToGo} days to go!)` : daysIn <= 7 ? ` (just launched ${daysIn} days ago!)` : '';
+      return `ACTIVE CAMPAIGN: "${c.name}" runs ${c.startDate} to ${c.endDate}${countdown}\nCampaign rules: ${c.rules}`;
+    }).join('\n\n') : '';
+
     const profileBlock = [
       safeProfile?.description && `Business description: ${safeProfile.description}`,
       safeProfile?.targetAudience && `Target audience: ${safeProfile.targetAudience}`,
@@ -868,6 +881,7 @@ export const generateSmartSchedule = async (
       safeProfile?.productsServices && `Products/services: ${safeProfile.productsServices}`,
       safeProfile?.socialGoal && `Social media goal: ${safeProfile.socialGoal}`,
       safeProfile?.contentTopics && `Preferred content topics: ${safeProfile.contentTopics}`,
+      campaignBlock && `\n${campaignBlock}\nIMPORTANT: Weave the active campaign themes into your posts. Use countdown language where appropriate ("X days to go!", "Only X days left!", "Coming soon!"). At least 30% of posts should reference the campaign.`,
     ].filter(Boolean).join('\n');
 
     // ── Inject real research data ──
@@ -985,7 +999,6 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     };
 
     // ── Campaign Focus deep research (if provided) ──
-    let campaignBrief = '';
     if (campaignFocus) {
       onPhase?.('researching');
       campaignBrief = await researchCampaignFocus(

@@ -1,10 +1,33 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Calendar, TrendingUp, Users, CheckCircle, Clock, Brain,
   Facebook, Instagram, X, Info, AlertTriangle, Zap, Target,
   BarChart3, MessageSquare, Eye, Heart, ArrowRight, ChevronRight,
 } from 'lucide-react';
 import { SocialPost, ContentCalendarStats } from '../types';
+
+/** Animated count-up hook — smoothly counts from 0 to target */
+function useCountUp(target: number, duration = 800): number {
+  const [value, setValue] = useState(0);
+  const prevTarget = useRef(0);
+  useEffect(() => {
+    if (target === prevTarget.current) return;
+    const start = prevTarget.current;
+    prevTarget.current = target;
+    if (target === 0) { setValue(0); return; }
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.round(start + (target - start) * eased));
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }, [target, duration]);
+  return value;
+}
 
 interface LiveFbStats {
   fanCount: number;
@@ -56,6 +79,10 @@ export const DashboardStats: React.FC<Props> = ({
   const toggle = (id: CardId) => setOpen(o => o === id ? null : id);
 
   const now = new Date();
+  // Animated count-up for headline numbers
+  const followersTarget = liveStats?.followersCount ?? stats.followers;
+  const animatedFollowers = useCountUp(followersTarget);
+  const animatedEngagement = useCountUp(Math.round((liveStats ? liveStats.engagementRate : stats.engagement) * 10)) / 10;
   const upcomingPosts = posts
     .filter(p => new Date(p.scheduledFor) > now)
     .sort((a, b) => new Date(a.scheduledFor).getTime() - new Date(b.scheduledFor).getTime());
@@ -287,12 +314,12 @@ export const DashboardStats: React.FC<Props> = ({
             <Info size={11} className="text-white/15 group-hover:text-white/40 transition" />
           </div>
           <p className="text-3xl font-black text-white">
-            {liveStats ? liveStats.engagementRate : stats.engagement}
+            {animatedEngagement}
             <span className="text-lg text-white/40">%</span>
           </p>
           <div className="mt-1 flex items-center justify-between">
             <p className="text-xs text-white/25">
-              {(liveStats?.followersCount ?? stats.followers).toLocaleString()} followers
+              {animatedFollowers.toLocaleString()} followers
             </p>
             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${engagementBg} ${engagementColor}`}>
               {engagementStatus}

@@ -4,20 +4,21 @@ import { CLIENT } from '../client.config';
 import { Facebook, Loader2, CheckCircle, ChevronRight, AlertCircle, ExternalLink, X, Shield } from 'lucide-react';
 
 interface Props {
-  onConnected: (pageId: string, pageAccessToken: string, pageName: string, longLivedUserToken?: string) => void;
+  onConnected: (pageId: string, pageAccessToken: string, pageName: string, longLivedUserToken?: string, instagramBusinessAccountId?: string) => void;
   onDisconnect: () => void;
   connectedPageId?: string;
   connectedPageName?: string;
+  instagramConnected?: boolean;
   tokenNeverExpires?: boolean | undefined;  // true=permanent, false=known short-lived, undefined=unknown
 }
 
 type Step = 'idle' | 'logging_in' | 'picking' | 'error';
 
 export const FacebookConnectButton: React.FC<Props> = ({
-  onConnected, onDisconnect, connectedPageId, connectedPageName, tokenNeverExpires,
+  onConnected, onDisconnect, connectedPageId, connectedPageName, instagramConnected, tokenNeverExpires,
 }) => {
   const [step, setStep] = useState<Step>('idle');
-  const [pages, setPages] = useState<FacebookPage[]>([]);
+  const [pages, setPages] = useState<(FacebookPage & { instagramBusinessAccountId?: string })[]>([]);
   const [longLivedToken, setLongLivedToken] = useState<string | undefined>();
   const [usingPermanentTokens, setUsingPermanentTokens] = useState(false);
   const [error, setError] = useState('');
@@ -56,8 +57,8 @@ export const FacebookConnectButton: React.FC<Props> = ({
         return;
       }
       if (fetchedPages.length === 1) {
-        const p = fetchedPages[0];
-        onConnected(p.id, p.access_token, p.name, llt);
+        const p = fetchedPages[0] as any;
+        onConnected(p.id, p.access_token, p.name, llt, p.instagramBusinessAccountId);
         setStep('idle');
         return;
       }
@@ -80,8 +81,8 @@ export const FacebookConnectButton: React.FC<Props> = ({
     }
   };
 
-  const handlePickPage = (page: FacebookPage) => {
-    onConnected(page.id, page.access_token, page.name, longLivedToken);
+  const handlePickPage = (page: FacebookPage & { instagramBusinessAccountId?: string }) => {
+    onConnected(page.id, page.access_token, page.name, longLivedToken, page.instagramBusinessAccountId);
     setPages([]);
     setStep('idle');
   };
@@ -106,9 +107,16 @@ export const FacebookConnectButton: React.FC<Props> = ({
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <CheckCircle size={11} /> Connected · auto-publishing active
             </p>
-            {tokenNeverExpires === true && (
+            <p className="text-[11px] mt-0.5">
+              <span className="text-emerald-400/80 flex items-center gap-1"><Shield size={10} /> Token auto-refreshes daily — never expires</span>
+            </p>
+            {instagramConnected ? (
               <p className="text-[11px] mt-0.5">
-                <span className="text-emerald-400/80 flex items-center gap-1"><Shield size={10} /> Permanent token — never expires</span>
+                <span className="text-fuchsia-400/80 flex items-center gap-1"><CheckCircle size={10} /> Instagram connected</span>
+              </p>
+            ) : (
+              <p className="text-[11px] mt-0.5">
+                <span className="text-white/25 flex items-center gap-1">Instagram not linked — add this account as a Test User in your Facebook App to enable</span>
               </p>
             )}
             {tokenNeverExpires === false && (

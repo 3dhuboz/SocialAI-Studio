@@ -15,6 +15,7 @@ type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq' | 'contact';
 interface Props {
   onActivate: (plan: 'starter' | 'growth' | 'pro') => void;
   onSignIn: () => void;
+  portalContent?: { hero_title: string; hero_subtitle: string; hero_cta_text: string };
 }
 
 const faqs = [
@@ -57,7 +58,7 @@ const planIncludes: Record<string, string> = {
   agency: 'Built for agencies:',
 };
 
-export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
+export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalContent }) => {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [showPricing, setShowPricing] = useState(false);
   const [videoLightbox, setVideoLightbox] = useState(false);
@@ -180,20 +181,28 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn }) => {
                   <Zap size={12} /> AI-Powered Social Media — Done For You
                 </div>
                 <h1 className="text-5xl md:text-6xl font-black mb-5 leading-[1.05] tracking-tight">
-                  Your social media,{' '}
-                  <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
-                    on autopilot.
-                  </span>
+                  {portalContent?.hero_title ? (
+                    <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
+                      {portalContent.hero_title}
+                    </span>
+                  ) : (
+                    <>
+                      Your social media,{' '}
+                      <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
+                        on autopilot.
+                      </span>
+                    </>
+                  )}
                 </h1>
                 <p className="text-lg text-white/50 mb-8 max-w-xl mx-auto leading-relaxed">
-                  AI writes, designs, and schedules your Facebook & Instagram posts every week — so you can focus on running your business.
+                  {portalContent?.hero_subtitle || "AI writes, designs, and schedules your Facebook & Instagram posts every week — so you can focus on running your business."}
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
                   <button
                     onClick={() => setShowPricing(true)}
                     className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-base hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/25"
                   >
-                    Start Today — $99 Setup
+                    {portalContent?.hero_cta_text || 'Start Today — $99 Setup'}
                     <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                   </button>
                   <p className="text-sm text-white/30">From $29/month · Cancel anytime</p>

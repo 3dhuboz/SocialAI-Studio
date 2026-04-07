@@ -90,191 +90,6 @@ const uuid = () => crypto.randomUUID();
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
 
-// ── Facebook Graph API — direct publishing (replaces Late.dev) ───────────────
-const FB_GRAPH = 'https://graph.facebook.com/v21.0';
-
-app.post('/api/facebook/publish', async (c) => {
-  const { pageId, pageAccessToken, text, imageUrl, scheduledTime } = await c.req.json<{
-    pageId: string; pageAccessToken: string; text: string;
-    imageUrl?: string; scheduledTime?: number;
-  }>();
-  if (!pageId || !pageAccessToken || !text) return c.json({ error: 'pageId, pageAccessToken, and text required' }, 400);
-
-  try {
-    let fbUrl: string;
-    const params: Record<string, string> = { access_token: pageAccessToken };
-
-    if (imageUrl) {
-      // Photo post — image URL + message
-      fbUrl = `${FB_GRAPH}/${pageId}/photos`;
-      params.url = imageUrl;
-      params.message = text;
-    } else {
-      // Text-only post
-      fbUrl = `${FB_GRAPH}/${pageId}/feed`;
-      params.message = text;
-    }
-
-    if (scheduledTime) {
-      params.scheduled_publish_time = String(scheduledTime);
-      params.published = 'false';
-    }
-
-    const res = await fetch(fbUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(params).toString(),
-    });
-    const data = await res.json() as any;
-    if (!res.ok || data.error) {
-      return c.json({ error: data.error?.message || `Facebook API error (${res.status})` }, res.status as any);
-    }
-    return c.json({ id: data.id || data.post_id, success: true });
-  } catch (e: any) {
-    return c.json({ error: e?.message || 'Facebook publish failed' }, 500);
-  }
-});
-
-app.get('/api/facebook/posts', async (c) => {
-  const pageId = c.req.query('pageId');
-  const token = c.req.query('pageAccessToken');
-  if (!pageId || !token) return c.json({ error: 'pageId and pageAccessToken required' }, 400);
-  try {
-    const res = await fetch(`${FB_GRAPH}/${pageId}/published_posts?fields=message,created_time,full_picture,permalink_url,likes.summary(true),comments.summary(true),shares&limit=30&access_token=${encodeURIComponent(token)}`);
-    const data = await res.json() as any;
-    if (data.error) return c.json({ error: data.error.message }, 400);
-    return c.json({ posts: data.data || [] });
-  } catch (e: any) {
-    return c.json({ error: e?.message || 'Failed to fetch posts' }, 500);
-  }
-});
-
-// Discover Instagram Business Account linked to a Facebook Page
-app.get('/api/facebook/instagram', async (c) => {
-  const pageId = c.req.query('pageId');
-  const token = c.req.query('pageAccessToken');
-  if (!pageId || !token) return c.json({ error: 'pageId and pageAccessToken required' }, 400);
-  try {
-    const res = await fetch(`${FB_GRAPH}/${pageId}?fields=instagram_business_account&access_token=${encodeURIComponent(token)}`);
-    const data = await res.json() as any;
-    if (data.error) return c.json({ error: data.error.message }, 400);
-    const igId = data.instagram_business_account?.id || null;
-    return c.json({ instagramAccountId: igId });
-  } catch (e: any) {
-    return c.json({ error: e?.message || 'Failed to check Instagram' }, 500);
-  }
-});
-
-// Publish to Instagram (photo or reel)
-app.post('/api/facebook/instagram-publish', async (c) => {
-  const { instagramAccountId, pageAccessToken, caption, imageUrl, videoUrl, mediaType } = await c.req.json<{
-    instagramAccountId: string; pageAccessToken: string; caption: string;
-    imageUrl?: string; videoUrl?: string; mediaType?: 'IMAGE' | 'REELS';
-  }>();
-  if (!instagramAccountId || !pageAccessToken || !caption) return c.json({ error: 'instagramAccountId, pageAccessToken, and caption required' }, 400);
-
-  try {
-    // Step 1: Create media container
-    const containerParams: Record<string, string> = {
-      access_token: pageAccessToken,
-      caption,
-    };
-    if (mediaType === 'REELS' && videoUrl) {
-      containerParams.media_type = 'REELS';
-      containerParams.video_url = videoUrl;
-    } else if (imageUrl) {
-      containerParams.image_url = imageUrl;
-    } else {
-      return c.json({ error: 'imageUrl or videoUrl required' }, 400);
-    }
-
-    const createRes = await fetch(`${FB_GRAPH}/${instagramAccountId}/media`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(containerParams).toString(),
-    });
-    const createData = await createRes.json() as any;
-    if (createData.error) return c.json({ error: createData.error.message }, 400);
-    const containerId = createData.id;
-    if (!containerId) return c.json({ error: 'Failed to create media container' }, 500);
-
-    // Step 2: For reels, poll until ready (video processing takes time)
-    if (mediaType === 'REELS') {
-      let ready = false;
-      for (let i = 0; i < 30; i++) { // Max 5 min wait (30 * 10s)
-        await new Promise(r => setTimeout(r, 10000));
-        const statusRes = await fetch(`${FB_GRAPH}/${containerId}?fields=status_code&access_token=${encodeURIComponent(pageAccessToken)}`);
-        const statusData = await statusRes.json() as any;
-        if (statusData.status_code === 'FINISHED') { ready = true; break; }
-        if (statusData.status_code === 'ERROR') return c.json({ error: 'Instagram video processing failed' }, 500);
-      }
-      if (!ready) return c.json({ error: 'Instagram video processing timed out' }, 504);
-    }
-
-    // Step 3: Publish the container
-    const publishRes = await fetch(`${FB_GRAPH}/${instagramAccountId}/media_publish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ creation_id: containerId, access_token: pageAccessToken }).toString(),
-    });
-    const publishData = await publishRes.json() as any;
-    if (publishData.error) return c.json({ error: publishData.error.message }, 400);
-    return c.json({ id: publishData.id, success: true });
-  } catch (e: any) {
-    return c.json({ error: e?.message || 'Instagram publish failed' }, 500);
-  }
-});
-
-// Publish Facebook Reel
-app.post('/api/facebook/reel', async (c) => {
-  const { pageId, pageAccessToken, description, videoUrl } = await c.req.json<{
-    pageId: string; pageAccessToken: string; description: string; videoUrl: string;
-  }>();
-  if (!pageId || !pageAccessToken || !videoUrl) return c.json({ error: 'pageId, pageAccessToken, and videoUrl required' }, 400);
-  try {
-    const res = await fetch(`${FB_GRAPH}/${pageId}/video_reels`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        access_token: pageAccessToken,
-        upload_phase: 'finish',
-        video_url: videoUrl,
-        description,
-      }).toString(),
-    });
-    const data = await res.json() as any;
-    if (data.error) return c.json({ error: data.error.message }, 400);
-    return c.json({ id: data.id || data.video_id, success: true });
-  } catch (e: any) {
-    return c.json({ error: e?.message || 'Facebook Reel publish failed' }, 500);
-  }
-});
-
-// ── Web Fetch — fetch a URL and return text content for AI research ──────────
-app.post('/api/web-fetch', async (c) => {
-  const { url } = await c.req.json<{ url: string }>();
-  if (!url || !url.startsWith('http')) return c.json({ error: 'Valid URL required' }, 400);
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SocialAI-Research/1.0)' },
-      redirect: 'follow',
-    });
-    if (!res.ok) return c.json({ error: `HTTP ${res.status}` }, 502);
-    const html = await res.text();
-    // Strip HTML tags, scripts, styles — extract text content
-    const text = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .substring(0, 8000); // Cap at 8K chars for AI context
-    return c.json({ text, url });
-  } catch (e: any) {
-    return c.json({ error: e?.message || 'Failed to fetch URL' }, 502);
-  }
-});
-
 /**
  * POST /api/ai/generate
  * Body: { prompt, systemPrompt?, temperature?, maxTokens?, responseFormat? }
@@ -632,64 +447,6 @@ app.delete('/api/db/clients/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── DB: Campaigns ────────────────────────────────────────────────────────────
-
-app.get('/api/db/campaigns', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const clientId = c.req.query('clientId');
-  const { results } = clientId
-    ? await c.env.DB.prepare('SELECT * FROM campaigns WHERE user_id = ? AND client_id = ? ORDER BY created_at DESC').bind(uid, clientId).all()
-    : await c.env.DB.prepare('SELECT * FROM campaigns WHERE user_id = ? AND client_id IS NULL ORDER BY created_at DESC').bind(uid).all();
-  return c.json({ campaigns: results });
-});
-
-app.post('/api/db/campaigns', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const body = await c.req.json<Record<string, unknown>>();
-  const id = uuid();
-  await c.env.DB.prepare(
-    'INSERT INTO campaigns (id, user_id, client_id, name, type, start_date, end_date, rules, posts_per_day, enabled) VALUES (?,?,?,?,?,?,?,?,?,?)'
-  ).bind(
-    id, uid, body.clientId ?? null, body.name ?? '', body.type ?? 'custom',
-    body.startDate ?? null, body.endDate ?? null, body.rules ?? '',
-    body.postsPerDay ?? 1, body.enabled !== false ? 1 : 0
-  ).run();
-  return c.json({ id });
-});
-
-app.put('/api/db/campaigns/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const campId = c.req.param('id');
-  const body = await c.req.json<Record<string, unknown>>();
-  const sets: string[] = [];
-  const vals: unknown[] = [];
-  const colMap: Record<string, string> = {
-    name: 'name', type: 'type', startDate: 'start_date', endDate: 'end_date',
-    rules: 'rules', postsPerDay: 'posts_per_day', enabled: 'enabled',
-  };
-  const boolFields = new Set(['enabled']);
-  for (const [k, col] of Object.entries(colMap)) {
-    if (!(k in body)) continue;
-    sets.push(`${col} = ?`);
-    vals.push(boolFields.has(k) ? (body[k] ? 1 : 0) : body[k] ?? null);
-  }
-  if (sets.length) {
-    vals.push(campId, uid);
-    await c.env.DB.prepare(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...vals).run();
-  }
-  return c.json({ ok: true });
-});
-
-app.delete('/api/db/campaigns/:id', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  await c.env.DB.prepare('DELETE FROM campaigns WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid).run();
-  return c.json({ ok: true });
-});
-
 // ── DB: Social Tokens ─────────────────────────────────────────────────────────
 // Stored in dedicated column — never mixed into profile blob, never cached client-side
 
@@ -718,15 +475,61 @@ app.put('/api/db/social-tokens', async (c) => {
   return c.json({ ok: true });
 });
 
+// ── DB: Campaigns ────────────────────────────────────────────────────────────
+
+app.get('/api/db/campaigns', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId') ?? null;
+  const rows = clientId
+    ? await c.env.DB.prepare('SELECT * FROM campaigns WHERE user_id = ? AND client_id = ? ORDER BY start_date ASC').bind(uid, clientId).all()
+    : await c.env.DB.prepare('SELECT * FROM campaigns WHERE user_id = ? AND client_id IS NULL ORDER BY start_date ASC').bind(uid).all();
+  return c.json({ campaigns: rows.results ?? [] });
+});
+
+app.post('/api/db/campaigns', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const body = await c.req.json<{ clientId?: string; name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean }>();
+  const id = crypto.randomUUID();
+  await c.env.DB.prepare(
+    `INSERT INTO campaigns (id, user_id, client_id, name, type, start_date, end_date, rules, posts_per_day, enabled)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(id, uid, body.clientId ?? null, body.name, body.type ?? 'custom', body.startDate ?? null, body.endDate ?? null, body.rules ?? '', body.postsPerDay ?? 1, body.enabled !== false ? 1 : 0).run();
+  return c.json({ id });
+});
+
+app.put('/api/db/campaigns/:id', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const campaignId = c.req.param('id');
+  const body = await c.req.json<Record<string, unknown>>();
+  const fieldMap: Record<string, string> = { name: 'name', type: 'type', startDate: 'start_date', endDate: 'end_date', rules: 'rules', postsPerDay: 'posts_per_day', enabled: 'enabled' };
+  const sets: string[] = []; const vals: unknown[] = [];
+  for (const [k, col] of Object.entries(fieldMap)) {
+    if (body[k] !== undefined) { sets.push(`${col} = ?`); vals.push(k === 'enabled' ? (body[k] ? 1 : 0) : body[k]); }
+  }
+  if (sets.length === 0) return c.json({ ok: true });
+  vals.push(campaignId, uid);
+  await c.env.DB.prepare(`UPDATE campaigns SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...vals).run();
+  return c.json({ ok: true });
+});
+
+app.delete('/api/db/campaigns/:id', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  await c.env.DB.prepare('DELETE FROM campaigns WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid).run();
+  return c.json({ ok: true });
+});
+
 // ── DB: Portal ────────────────────────────────────────────────────────────────
 
-// Public — returns portal token for client-mode auth (no Clerk needed).
-// password intentionally excluded — only portal_token is needed for API auth.
+// Public — returns portal token for client-mode auth (no Clerk needed)
 app.get('/api/db/portal/:slug', async (c) => {
   const slug = c.req.param('slug').toLowerCase();
   const row = await c.env.DB.prepare(
-    'SELECT email, portal_token, user_id, client_id FROM portal WHERE slug = ?'
-  ).bind(slug).first<{ email: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
+    'SELECT email, password, portal_token, user_id, client_id FROM portal WHERE slug = ?'
+  ).bind(slug).first<{ email: string; password: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
   return c.json({ portal: row ?? null });
 });
 
@@ -743,6 +546,30 @@ app.put('/api/db/portal/:slug', async (c) => {
        portal_token=excluded.portal_token, user_id=excluded.user_id, client_id=excluded.client_id`
   ).bind(slug, body.email, body.password, portalToken, uid, body.client_id ?? null).run();
   return c.json({ ok: true, portalToken });
+});
+
+// Portal content — public GET (for rendering), authenticated PUT (for editing)
+app.get('/api/db/portal/:slug/content', async (c) => {
+  const slug = c.req.param('slug').toLowerCase();
+  const row = await c.env.DB.prepare(
+    'SELECT hero_title, hero_subtitle, hero_cta_text FROM portal WHERE slug = ?'
+  ).bind(slug).first<{ hero_title: string | null; hero_subtitle: string | null; hero_cta_text: string | null }>();
+  return c.json({ content: row ?? { hero_title: '', hero_subtitle: '', hero_cta_text: '' } });
+});
+
+app.put('/api/db/portal/:slug/content', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const slug = c.req.param('slug').toLowerCase();
+  const body = await c.req.json<{ hero_title?: string; hero_subtitle?: string; hero_cta_text?: string }>();
+  const sets: string[] = []; const vals: unknown[] = [];
+  if (body.hero_title !== undefined) { sets.push('hero_title = ?'); vals.push(body.hero_title); }
+  if (body.hero_subtitle !== undefined) { sets.push('hero_subtitle = ?'); vals.push(body.hero_subtitle); }
+  if (body.hero_cta_text !== undefined) { sets.push('hero_cta_text = ?'); vals.push(body.hero_cta_text); }
+  if (sets.length === 0) return c.json({ ok: true });
+  vals.push(slug);
+  await c.env.DB.prepare(`UPDATE portal SET ${sets.join(', ')} WHERE slug = ?`).bind(...vals).run();
+  return c.json({ ok: true });
 });
 
 // ── DB: Activations / Cancellations ──────────────────────────────────────────
@@ -838,146 +665,6 @@ app.get('/api/ai/stats', async (c) => {
   }
 });
 
-// ── Late API Proxy ─────────────────────────────────────────────────────────────
-// Match both /api/late-proxy (query-param based) and /api/late-proxy/* (path based)
-app.all('/api/late-proxy', async (c) => {
-  // Forward to the Pages Function logic — query-param based actions
-  // This handler exists so portal builds (which route through the worker) can reach Late
-  const apiKey = c.env.LATE_API_KEY;
-  if (!apiKey) return c.json({ error: 'LATE_API_KEY not configured' }, 500);
-  const url = new URL(c.req.url);
-  const action = url.searchParams.get('action');
-  if (!action) return c.json({ error: 'action query param required' }, 400);
-
-  const LATE_BASE = 'https://getlate.dev/api/v1';
-  const authHeader = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
-  const getBody = async () => { try { return await c.req.json(); } catch { return {}; } };
-
-  if (action === 'connect-url') {
-    const profileId = url.searchParams.get('profileId');
-    const platform = url.searchParams.get('platform') || 'facebook';
-    const redirectUrl = url.searchParams.get('redirectUrl') || '';
-    if (!profileId) return c.json({ error: 'profileId required' }, 400);
-    const params = new URLSearchParams({ profileId, redirect_url: redirectUrl });
-    const res = await fetch(`${LATE_BASE}/connect/${platform}?${params}`, { headers: authHeader });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'create-profile') {
-    const { title } = await getBody() as any;
-    const res = await fetch(`${LATE_BASE}/profiles`, { method: 'POST', headers: authHeader, body: JSON.stringify({ name: title || 'SocialAI Client' }) });
-    const data = await res.json() as any;
-    if (data.profile) data.id = data.profile._id;
-    return c.json(data, { status: res.status as any });
-  }
-  if (action === 'list-profiles') {
-    const res = await fetch(`${LATE_BASE}/profiles`, { headers: authHeader });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'list-accounts' || action === 'get-accounts') {
-    const profileId = url.searchParams.get('profileId');
-    const accountsUrl = profileId ? `${LATE_BASE}/accounts?profileId=${encodeURIComponent(profileId)}` : `${LATE_BASE}/accounts`;
-    const res = await fetch(accountsUrl, { headers: authHeader });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'list-pages') {
-    const connectToken = url.searchParams.get('connectToken');
-    if (!connectToken) return c.json({ error: 'connectToken required' }, 400);
-    const res = await fetch(`${LATE_BASE}/connect/facebook/pages`, { headers: { ...authHeader, 'X-Connect-Token': connectToken } });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'select-page') {
-    const { connectToken, pageId } = await getBody() as any;
-    if (!connectToken || !pageId) return c.json({ error: 'connectToken and pageId required' }, 400);
-    const res = await fetch(`${LATE_BASE}/connect/facebook/select-page`, { method: 'POST', headers: { ...authHeader, 'X-Connect-Token': connectToken }, body: JSON.stringify({ pageId }) });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'post') {
-    const body = await getBody() as any;
-    const { profileId, platforms, text, mediaUrls, scheduleDate, mediaItems, accountIds } = body;
-    if (!platforms?.length || !text) return c.json({ error: 'platforms and text are required' }, 400);
-    const requestedPlatforms = platforms.map((p: string) => p.toLowerCase());
-    let platformObjs: any[] = [];
-    if (accountIds && typeof accountIds === 'object') {
-      platformObjs = requestedPlatforms.filter((p: string) => accountIds[p]).map((p: string) => ({ platform: p, accountId: accountIds[p] }));
-    }
-    if (platformObjs.length === 0 && profileId) {
-      try {
-        const filteredRes = await fetch(`${LATE_BASE}/accounts?profileId=${profileId}`, { headers: authHeader });
-        if (filteredRes.ok) {
-          const filteredData = await filteredRes.json() as any;
-          const filteredAccounts = filteredData.accounts || filteredData || [];
-          if (Array.isArray(filteredAccounts) && filteredAccounts.length > 0) {
-            platformObjs = requestedPlatforms.map((p: string) => {
-              const acc = filteredAccounts.find((a: any) => (a.platform || '').toLowerCase() === p);
-              const accId = acc?._id || acc?.id || acc?.accountId;
-              return acc && accId ? { platform: p, accountId: accId } : null;
-            }).filter(Boolean);
-          }
-        }
-      } catch {}
-    }
-    if (platformObjs.length === 0) return c.json({ error: 'Could not determine which page to post to.' }, 422);
-    const postBody = {
-      content: text, platforms: platformObjs,
-      ...(profileId ? { profileId } : {}),
-      ...(scheduleDate ? { scheduledFor: scheduleDate, timezone: 'UTC' } : { publishNow: true }),
-      ...(mediaItems?.length ? { mediaItems } : mediaUrls?.length ? { mediaUrls } : {}),
-    };
-    const res = await fetch(`${LATE_BASE}/posts`, { method: 'POST', headers: authHeader, body: JSON.stringify(postBody) });
-    const data = await res.json() as any;
-    if (!res.ok) return c.json({ error: data?.message || data?.error || `Late API HTTP ${res.status}` }, res.status as any);
-    return c.json(data, { status: res.status as any });
-  }
-  if (action === 'profile-info') {
-    const profileId = url.searchParams.get('profileId');
-    if (!profileId) return c.json({ error: 'profileId required' }, 400);
-    const res = await fetch(`${LATE_BASE}/profiles/${profileId}`, { headers: authHeader });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'analytics') {
-    const profileId = url.searchParams.get('profileId');
-    if (!profileId) return c.json({ error: 'profileId required' }, 400);
-    const res = await fetch(`${LATE_BASE}/analytics?profileId=${profileId}`, { headers: authHeader });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'media-presign') {
-    const { fileName, fileType } = await getBody() as any;
-    if (!fileName || !fileType) return c.json({ error: 'fileName and fileType required' }, 400);
-    // Late.dev API expects 'filename' (lowercase) and 'contentType' (not 'fileType')
-    const res = await fetch(`${LATE_BASE}/media/presign`, { method: 'POST', headers: authHeader, body: JSON.stringify({ filename: fileName, contentType: fileType }) });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'list-posts') {
-    const profileId = url.searchParams.get('profileId');
-    const limit = url.searchParams.get('limit') || '30';
-    if (!profileId) return c.json({ error: 'profileId required' }, 400);
-    const res = await fetch(`${LATE_BASE}/profiles/${profileId}/posts?limit=${limit}&status=published`, { headers: authHeader });
-    return c.json(await res.json() as any, { status: res.status as any });
-  }
-  if (action === 'get-credits') {
-    const res = await fetch(`${LATE_BASE}/user/me`, { headers: authHeader });
-    const data = await res.json() as any;
-    if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
-    return c.json({ credits: data?.credits ?? null, plan: data?.plan ?? null, raw: data });
-  }
-  return c.json({ error: `Unknown action: ${action}` }, 400);
-});
-
-app.all('/api/late-proxy/*', async (c) => {
-  const apiKey = c.env.LATE_API_KEY;
-  if (!apiKey) return c.json({ error: 'LATE_API_KEY not configured' }, 500);
-
-  const path = c.req.path.replace('/api/late-proxy', '');
-  const url = `https://getlate.dev/api/v1${path}`;
-  const method = c.req.method;
-  const body = method !== 'GET' && method !== 'HEAD' ? await c.req.text() : undefined;
-  const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
-
-  const res = await fetch(url, { method, headers, body });
-  const data = await res.json();
-  return c.json(data, { status: res.status as any });
-});
-
 // ── Facebook Token Exchange ───────────────────────────────────────────────────────
 app.post('/api/facebook-exchange-token', async (c) => {
   const appId = c.env.FACEBOOK_APP_ID;
@@ -993,15 +680,22 @@ app.post('/api/facebook-exchange-token', async (c) => {
   const exchangeData = await exchangeRes.json() as any;
   if (!exchangeData.access_token) return c.json({ error: 'Failed to exchange token' }, 400);
 
-  // Get page access tokens
-  const pagesUrl = `https://graph.facebook.com/v21.0/me/accounts?access_token=${exchangeData.access_token}`;
+  // Get page access tokens with fields for Instagram Business Account
+  const pagesUrl = `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture,instagram_business_account&access_token=${exchangeData.access_token}`;
   const pagesRes = await fetch(pagesUrl);
   const pagesData = await pagesRes.json() as any;
+
+  // Enrich pages with instagram_business_account ID
+  const pages = (pagesData.data || []).map((page: any) => ({
+    ...page,
+    instagramBusinessAccountId: page.instagram_business_account?.id || null,
+  }));
 
   return c.json({
     longLivedUserToken: exchangeData.access_token,
     expiresInSeconds: exchangeData.expires_in,
-    pages: pagesData.data || [],
+    pages,
+    pageTokensNeverExpire: true,
   });
 });
 
@@ -1209,217 +903,179 @@ app.post('/api/paypal-verify', async (c) => {
 // NOTE: PayPal webhook is handled by the Cloudflare Pages Function at
 // functions/api/paypal-webhook.js — do not duplicate it here.
 
-// ── Cron Trigger: Auto-publish overdue posts (every 5 min) + fal.ai credits ──
+// ── Cron Triggers ────────────────────────────────────────────────────────────
+// */5 * * * *  → missed post publisher (every 5 min)
+// 0 3 * * *   → token refresh (daily at 3am UTC)
+// 0 */6 * * * → fal.ai credit check (every 6 hours)
+
+async function cronPublishMissedPosts(env: Env) {
+  const now = new Date().toISOString();
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.content, p.hashtags, p.image_url, p.platform, p.user_id, p.client_id
+     FROM posts p WHERE p.status = 'Scheduled' AND p.scheduled_for <= ? LIMIT 20`
+  ).bind(now).all();
+  const posts = rows.results ?? [];
+  if (posts.length === 0) { console.log('[CRON] No missed posts'); return; }
+  console.log(`[CRON] Publishing ${posts.length} missed posts`);
+
+  for (const post of posts) {
+    try {
+      // Get social tokens for this workspace
+      const tokensRaw = (post as any).client_id
+        ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind((post as any).client_id).first<{ social_tokens: string | null }>()
+        : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind((post as any).user_id).first<{ social_tokens: string | null }>();
+      const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+      if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
+        console.warn(`[CRON] No FB tokens for post ${(post as any).id} — marking missed`);
+        await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
+        continue;
+      }
+
+      const hashtags = (post as any).hashtags ? JSON.parse((post as any).hashtags as string) : [];
+      const fullText = hashtags.length > 0
+        ? `${(post as any).content}\n\n${hashtags.join(' ')}`
+        : (post as any).content;
+
+      const base = 'https://graph.facebook.com/v21.0';
+      const pageId = tokens.facebookPageId;
+      const token = tokens.facebookPageAccessToken;
+
+      if ((post as any).image_url && (post as any).image_url.startsWith('http')) {
+        await fetch(`${base}/${pageId}/photos`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: (post as any).image_url, message: fullText, access_token: token }),
+        });
+      } else {
+        await fetch(`${base}/${pageId}/feed`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: fullText, access_token: token }),
+        });
+      }
+
+      await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Posted', (post as any).id).run();
+      console.log(`[CRON] Published post ${(post as any).id}`);
+    } catch (e: any) {
+      console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message);
+      await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
+    }
+  }
+}
+
+async function cronRefreshTokens(env: Env) {
+  const appId = env.FACEBOOK_APP_ID;
+  const appSecret = env.FACEBOOK_APP_SECRET;
+  if (!appId || !appSecret) { console.log('[CRON] No FB app credentials — skipping token refresh'); return; }
+
+  // Collect all workspaces (users + clients) that have a longLivedUserToken
+  const users = await env.DB.prepare('SELECT id, social_tokens FROM users WHERE social_tokens IS NOT NULL').all();
+  const clients = await env.DB.prepare('SELECT id, social_tokens FROM clients WHERE social_tokens IS NOT NULL').all();
+  const workspaces = [...(users.results ?? []).map((r: any) => ({ id: r.id, table: 'users', tokens: r.social_tokens })),
+                       ...(clients.results ?? []).map((r: any) => ({ id: r.id, table: 'clients', tokens: r.social_tokens }))];
+
+  let refreshed = 0, failed = 0;
+  for (const ws of workspaces) {
+    try {
+      const tokens = JSON.parse(ws.tokens as string);
+      if (!tokens.longLivedUserToken) continue;
+
+      // Exchange for a fresh long-lived token
+      const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${tokens.longLivedUserToken}`;
+      const res = await fetch(exchangeUrl);
+      const data = await res.json() as any;
+      if (!data.access_token) { failed++; continue; }
+
+      // Get fresh page tokens
+      const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${data.access_token}`);
+      const pagesData = await pagesRes.json() as any;
+      const pages = pagesData.data || [];
+
+      // Find the matching page
+      const page = pages.find((p: any) => p.id === tokens.facebookPageId) || pages[0];
+      if (!page) { failed++; continue; }
+
+      const updated = {
+        ...tokens,
+        longLivedUserToken: data.access_token,
+        facebookPageAccessToken: page.access_token,
+        facebookPageId: page.id,
+        facebookPageName: page.name,
+        instagramBusinessAccountId: page.instagram_business_account?.id || tokens.instagramBusinessAccountId || '',
+        instagramConnected: !!(page.instagram_business_account?.id || tokens.instagramBusinessAccountId),
+      };
+
+      const col = ws.table === 'users' ? 'users' : 'clients';
+      await env.DB.prepare(`UPDATE ${col} SET social_tokens = ? WHERE id = ?`).bind(JSON.stringify(updated), ws.id).run();
+      refreshed++;
+    } catch (e: any) {
+      console.error(`[CRON] Token refresh failed for ${ws.table}/${ws.id}:`, e.message);
+      failed++;
+    }
+  }
+  console.log(`[CRON] Token refresh complete: ${refreshed} refreshed, ${failed} failed`);
+
+  // Alert if any failures
+  if (failed > 0 && env.RESEND_API_KEY) {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'SocialAI Studio <noreply@socialaistudio.au>',
+        to: 'steve@3dhub.au',
+        subject: `Token refresh: ${failed} workspace(s) failed`,
+        html: `<p>${refreshed} tokens refreshed, ${failed} failed. Check worker logs.</p>`,
+      }),
+    });
+  }
+}
+
+async function cronCheckFalCredits(env: Env) {
+  const apiKey = env.FAL_API_KEY;
+  const resendKey = env.RESEND_API_KEY;
+  if (!apiKey || !resendKey) return;
+
+  try {
+    const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
+    const data = await res.json() as any;
+    const balance = data?.balance ?? data?.credits ?? null;
+    console.log(`[CRON] fal.ai balance: $${balance}`);
+
+    const threshold = 5;
+    if (balance !== null && balance < threshold) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'SocialAI Studio <noreply@socialaistudio.au>',
+          to: 'steve@3dhub.au',
+          subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
+          html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a></div>`,
+        }),
+      });
+      console.log(`[CRON] Low balance alert sent ($${balance})`);
+    }
+  } catch (e: any) {
+    console.error('[CRON] Credit check failed:', e.message);
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-
-    // ── 1. AUTO-PUBLISH OVERDUE POSTS ──
-    // Server-side safety net: catches any post the client missed (browser closed,
-    // token was expired at schedule time, Facebook scheduler glitch, etc.)
-    try {
-      const now = new Date().toISOString();
-      const overdue = await env.DB.prepare(
-        `SELECT p.id, p.content, p.hashtags, p.platform, p.image_url,
-                p.user_id, p.client_id, p.late_post_id, p.scheduled_for
-         FROM posts p
-         WHERE p.status = 'Scheduled' AND p.scheduled_for < ?
-         ORDER BY p.scheduled_for ASC LIMIT 20`
-      ).bind(now).all<{
-        id: string; content: string; hashtags: string; platform: string;
-        image_url: string | null; user_id: string; client_id: string | null;
-        late_post_id: string | null; scheduled_for: string;
-      }>();
-
-      const posts = overdue.results || [];
-      if (posts.length > 0) console.log(`[CRON] ${posts.length} overdue post(s) found.`);
-
-      const tokenCache: Record<string, { pageId: string; token: string } | null> = {};
-
-      for (const post of posts) {
-        // Post already has a Facebook post ID — FB scheduler handled it, just mark Posted
-        if (post.late_post_id && post.late_post_id.includes('_')) {
-          await env.DB.prepare(`UPDATE posts SET status = 'Posted' WHERE id = ?`).bind(post.id).run();
-          console.log(`[CRON] Marked Posted (FB scheduled): ${post.id}`);
-          continue;
-        }
-
-        // Look up Facebook token for this workspace
-        const cacheKey = post.client_id || post.user_id;
-        if (!(cacheKey in tokenCache)) {
-          try {
-            const table = post.client_id ? 'clients' : 'users';
-            const col = post.client_id ? 'id' : 'id';
-            const row = await env.DB.prepare(
-              `SELECT social_tokens FROM ${table} WHERE ${col} = ?`
-            ).bind(cacheKey).first<{ social_tokens: string }>();
-            const st = row?.social_tokens ? JSON.parse(row.social_tokens) : null;
-            tokenCache[cacheKey] = st?.facebookPageId && st?.facebookPageAccessToken
-              ? { pageId: st.facebookPageId, token: st.facebookPageAccessToken } : null;
-          } catch { tokenCache[cacheKey] = null; }
-        }
-
-        const creds = tokenCache[cacheKey];
-        if (!creds) {
-          await env.DB.prepare(`UPDATE posts SET status = 'Missed' WHERE id = ?`).bind(post.id).run();
-          console.log(`[CRON] No FB token for ${post.id} — Missed.`);
-          continue;
-        }
-
-        // Build text with hashtags
-        let text = post.content;
-        try {
-          const tags = JSON.parse(post.hashtags || '[]');
-          if (Array.isArray(tags) && tags.length) text += '\n\n' + tags.join(' ');
-        } catch {}
-
-        // Publish immediately via Facebook Graph API
-        try {
-          const params: Record<string, string> = { access_token: creds.token, message: text };
-          let fbUrl: string;
-          if (post.image_url && post.image_url.startsWith('http')) {
-            fbUrl = `${FB_GRAPH}/${creds.pageId}/photos`;
-            params.url = post.image_url;
-          } else {
-            fbUrl = `${FB_GRAPH}/${creds.pageId}/feed`;
-          }
-
-          const fbRes = await fetch(fbUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams(params).toString(),
-          });
-          const fbData = await fbRes.json() as any;
-
-          if (fbData.error) {
-            console.error(`[CRON] FB error for ${post.id}: ${fbData.error.message}`);
-            // Expired token — mark Missed immediately, don't retry
-            if (fbData.error.code === 190 || (fbData.error.message || '').includes('expired')) {
-              await env.DB.prepare(`UPDATE posts SET status = 'Missed' WHERE id = ?`).bind(post.id).run();
-            }
-            continue;
-          }
-
-          const fbId = fbData.id || fbData.post_id;
-          await env.DB.prepare(
-            `UPDATE posts SET status = 'Posted', late_post_id = ? WHERE id = ?`
-          ).bind(fbId, post.id).run();
-          console.log(`[CRON] Published: ${post.id} -> ${fbId}`);
-        } catch (e: any) {
-          console.error(`[CRON] Publish error ${post.id}:`, e.message);
-        }
-      }
-    } catch (e: any) {
-      console.error('[CRON] Auto-publish sweep failed:', e.message);
+    const cron = event.cron;
+    // Every 5 minutes — publish missed posts
+    if (cron === '*/5 * * * *') {
+      await cronPublishMissedPosts(env);
+      return;
     }
-
-    // ── 2. AUTO-REFRESH FACEBOOK TOKENS (once daily at 3am UTC / 1pm AEST) ──
-    // Long-lived user tokens last 60 days. Refreshing them before expiry gives
-    // a new 60-day token — so tokens effectively never expire as long as cron runs.
-    const hour = new Date(event.scheduledTime).getUTCHours();
-    const minute = new Date(event.scheduledTime).getUTCMinutes();
-    if (hour === 3 && minute < 5) {
-      const appId = env.FACEBOOK_APP_ID;
-      const appSecret = env.FACEBOOK_APP_SECRET;
-      if (appId && appSecret) {
-        try {
-          // Refresh tokens for main user accounts
-          const users = await env.DB.prepare(
-            `SELECT id, social_tokens FROM users WHERE social_tokens IS NOT NULL AND social_tokens != '{}'`
-          ).all<{ id: string; social_tokens: string }>();
-
-          // Refresh tokens for client workspaces
-          const clients = await env.DB.prepare(
-            `SELECT id, social_tokens FROM clients WHERE social_tokens IS NOT NULL AND social_tokens != '{}'`
-          ).all<{ id: string; social_tokens: string }>();
-
-          const allAccounts = [
-            ...(users.results || []).map(r => ({ ...r, table: 'users' })),
-            ...(clients.results || []).map(r => ({ ...r, table: 'clients' })),
-          ];
-
-          for (const account of allAccounts) {
-            try {
-              const st = JSON.parse(account.social_tokens);
-              if (!st.longLivedUserToken || !st.facebookPageId) continue;
-
-              // Step 1: Refresh the long-lived user token
-              const refreshUrl = `${FB_GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${encodeURIComponent(st.longLivedUserToken)}`;
-              const refreshRes = await fetch(refreshUrl);
-              const refreshData = await refreshRes.json() as any;
-
-              if (refreshData.error) {
-                console.error(`[CRON] Token refresh failed for ${account.table}/${account.id}: ${refreshData.error.message}`);
-                continue;
-              }
-
-              const newUserToken = refreshData.access_token;
-
-              // Step 2: Get fresh page tokens using the new user token
-              const pagesRes = await fetch(`${FB_GRAPH}/me/accounts?fields=id,access_token&access_token=${newUserToken}`);
-              const pagesData = await pagesRes.json() as any;
-
-              if (pagesData.error || !pagesData.data) {
-                console.error(`[CRON] Pages fetch failed for ${account.table}/${account.id}: ${pagesData.error?.message || 'no data'}`);
-                continue;
-              }
-
-              // Find the matching page
-              const page = pagesData.data.find((p: any) => p.id === st.facebookPageId);
-              if (!page) {
-                console.log(`[CRON] Page ${st.facebookPageId} not found for ${account.table}/${account.id} — skipping.`);
-                continue;
-              }
-
-              // Step 3: Update DB with fresh tokens
-              const updatedTokens = {
-                ...st,
-                facebookPageAccessToken: page.access_token,
-                longLivedUserToken: newUserToken,
-                connectedAt: new Date().toISOString(),
-              };
-
-              await env.DB.prepare(
-                `UPDATE ${account.table} SET social_tokens = ? WHERE id = ?`
-              ).bind(JSON.stringify(updatedTokens), account.id).run();
-
-              console.log(`[CRON] Refreshed token for ${account.table}/${account.id} (page: ${st.facebookPageId})`);
-            } catch (e: any) {
-              console.error(`[CRON] Token refresh error for ${account.table}/${account.id}:`, e.message);
-            }
-          }
-        } catch (e: any) {
-          console.error('[CRON] Token refresh sweep failed:', e.message);
-        }
-      }
+    // Daily at 3am UTC — refresh Facebook tokens
+    if (cron === '0 3 * * *') {
+      await cronRefreshTokens(env);
+      return;
     }
-
-    // ── 3. FAL.AI CREDIT CHECK (only at 0,6,12,18 UTC) ──
-    if (hour % 6 === 0) {
-      const apiKey = env.FAL_API_KEY;
-      const resendKey = env.RESEND_API_KEY;
-      if (apiKey && resendKey) {
-        try {
-          const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
-          const data = await res.json() as any;
-          const balance = data?.balance ?? data?.credits ?? null;
-          console.log(`[CRON] fal.ai balance: $${balance}`);
-          if (balance !== null && balance < 5) {
-            await fetch('https://api.resend.com/emails', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                from: 'SocialAI Studio <noreply@socialaistudio.au>',
-                to: 'steve@3dhub.au',
-                subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
-                html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a></div>`,
-              }),
-            });
-          }
-        } catch (e: any) {
-          console.error('[CRON] Credit check failed:', e.message);
-        }
-      }
-    }
+    // Fallback: run all (for 6-hourly credit check and any unmatched triggers)
+    await cronPublishMissedPosts(env);
+    await cronCheckFalCredits(env);
   },
 };

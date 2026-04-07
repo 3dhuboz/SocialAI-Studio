@@ -5,7 +5,6 @@ export interface SocialPost {
   hashtags: string[];
   scheduledFor: string;
   status: 'Draft' | 'Scheduled' | 'Posted' | 'Missed';
-  latePostId?: string;
   image?: string;
   imagePrompt?: string;
   reasoning?: string;
@@ -23,12 +22,13 @@ export interface SocialTokens {
   facebookPageAccessToken: string;
   facebookConnected: boolean;
   instagramBusinessAccountId: string;
+  instagramConnected: boolean;
+  /** Long-lived user token (60 days) — used by worker cron to refresh page tokens */
+  longLivedUserToken?: string;
   /** ISO timestamp when the Facebook connection was granted */
   connectedAt?: string;
   /** Name of the connected page, for display only */
   facebookPageName?: string;
-  /** Long-lived user token for server-side auto-refresh (60-day, renewable) */
-  longLivedUserToken?: string;
 }
 
 export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
@@ -36,6 +36,8 @@ export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
   facebookPageAccessToken: '',
   facebookConnected: false,
   instagramBusinessAccountId: '',
+  instagramConnected: false,
+  longLivedUserToken: undefined,
   connectedAt: undefined,
   facebookPageName: undefined,
 };
@@ -80,9 +82,6 @@ export interface ClientWorkspace {
   name: string;
   businessType: string;
   createdAt: string;
-  lateProfileId?: string;
-  lateConnectedPlatforms?: string[];
-  lateAccountIds?: Record<string, string>;
   plan?: PlanTier;
   lastPostAt?: string;
   scheduledPostCount?: number;
