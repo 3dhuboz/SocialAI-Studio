@@ -9,14 +9,12 @@ interface Post {
   scheduled_for?: string | null;
   image_url?: string | null;
   client_id?: string | null;
-  late_post_id?: string | null;
 }
 
 interface Client {
   id: string;
   name: string;
   businessType?: string | null;
-  lateProfileId?: string;
   facebookConnected?: boolean;
   facebookPageName?: string;
 }
@@ -136,7 +134,6 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
                         <span className="text-[9px] text-white/20">{post.scheduled_for ? new Date(post.scheduled_for).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
                         <span className="text-[9px] text-amber-400/60 font-semibold">{getClientName(post.client_id)}</span>
                       </div>
-                      {post.late_post_id && <span className="text-[8px] text-white/10 font-mono block truncate">{post.late_post_id}</span>}
                     </div>
                   </div>
                 );
@@ -188,7 +185,6 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
                   {isConnected ? <><CheckCircle size={10} /> Connected</> : <><X size={10} /> Not Connected</>}
                 </div>
                 {client.facebookPageName && <p className="text-[10px] text-white/30">Page: {client.facebookPageName}</p>}
-                {client.lateProfileId && <p className="text-[8px] text-white/10 font-mono truncate">Profile: {client.lateProfileId}</p>}
               </div>
             );
           })}
