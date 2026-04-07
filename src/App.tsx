@@ -69,14 +69,14 @@ const CampaignCard: React.FC<{
               <input type="date" value={c.startDate} onChange={(e) => {
                 onFieldChange(c.id, 'startDate', e.target.value);
                 onUpdate(c.id, { startDate: e.target.value });
-              }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+              }} className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" style={{ colorScheme: 'dark' }} />
             </div>
             <div>
               <label className="text-[10px] text-white/30 block mb-1">End date</label>
               <input type="date" value={c.endDate} onChange={(e) => {
                 onFieldChange(c.id, 'endDate', e.target.value);
                 onUpdate(c.id, { endDate: e.target.value });
-              }} className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" />
+              }} className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white" style={{ colorScheme: 'dark' }} />
             </div>
           </div>
           <div>
@@ -86,9 +86,9 @@ const CampaignCard: React.FC<{
               onChange={(e) => onFieldChange(c.id, 'rules', e.target.value)}
               onBlur={() => onUpdate(c.id, { rules: c.rules })}
               placeholder='e.g. Mention our 30% off winter sale in every post. Use urgency — "only X days left!" Target Gladstone locals.'
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/15 resize-none h-20"
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white/80 placeholder-white/25 resize-none h-20 focus:border-amber-500/30 focus:outline-none transition"
             />
-            <p className="text-[10px] text-white/15 mt-1">The AI will weave these rules + countdown language into every generated post.</p>
+            <p className="text-[10px] text-white/20 mt-1">The AI will weave these rules + countdown language into every generated post.</p>
           </div>
           <div>
             <label className="text-[10px] text-white/30 block mb-1 flex items-center gap-1"><ImageIcon size={10} /> Image suggestions</label>
@@ -97,9 +97,9 @@ const CampaignCard: React.FC<{
               onChange={(e) => onFieldChange(c.id, 'imageNotes', e.target.value)}
               onBlur={() => onUpdate(c.id, { imageNotes: (c as any).imageNotes })}
               placeholder='e.g. Show our winter sale banner, laptop with discount prices on screen, cozy office with Penny Wise branding. Avoid generic stock photos.'
-              className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/15 resize-none h-16"
+              className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white/80 placeholder-white/25 resize-none h-16 focus:border-amber-500/30 focus:outline-none transition"
             />
-            <p className="text-[10px] text-white/15 mt-1">Describes what campaign images should look like. The AI uses this for image prompts.</p>
+            <p className="text-[10px] text-white/20 mt-1">Describes what campaign images should look like. The AI uses this for image prompts.</p>
           </div>
           <div className="flex items-center justify-between pt-1">
             <button onClick={() => onUpdate(c.id, { enabled: false })} className="text-[11px] text-white/25 hover:text-amber-400 transition">Pause</button>
