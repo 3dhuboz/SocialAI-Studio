@@ -3000,6 +3000,9 @@ const Dashboard: React.FC = () => {
             {smartSubMode === 'autopilot' && (<>
 
             {/* ── CAMPAIGNS — Create Hub Section ── */}
+            {(() => {
+              const canUseCampaigns = effectivePlan === 'growth' || effectivePlan === 'pro' || effectivePlan === 'agency' || isAdminMode;
+              return canUseCampaigns ? (
             <div className="glass rounded-2xl p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -3020,7 +3023,7 @@ const Dashboard: React.FC = () => {
                       id, name: 'New Campaign', type: 'custom' as const,
                       startDate: new Date().toISOString().split('T')[0],
                       endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-                      rules: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
+                      rules: '', imageNotes: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
                     }]);
                   }}
                   className="flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg transition press flex-shrink-0"
@@ -3060,6 +3063,49 @@ const Dashboard: React.FC = () => {
                 </div>
               )}
             </div>
+              ) : (
+            <div className="relative glass rounded-2xl p-5 overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-transparent to-purple-500/5" />
+              <div className="relative z-10 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black text-white flex items-center gap-2">
+                    <Target size={16} className="text-amber-400" /> Campaigns
+                    <span className="text-[9px] font-bold bg-gradient-to-r from-amber-500 to-orange-500 text-black px-2 py-0.5 rounded-full">GROWTH</span>
+                  </h3>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="bg-white/3 rounded-xl p-3.5 border border-white/5">
+                    <div className="text-amber-400 mb-2"><Zap size={18} /></div>
+                    <p className="text-xs font-bold text-white">AI-Powered Campaigns</p>
+                    <p className="text-[10px] text-white/30 mt-1">Set rules like "30% off sale" — the AI weaves your campaign into every post with countdown language.</p>
+                  </div>
+                  <div className="bg-white/3 rounded-xl p-3.5 border border-white/5">
+                    <div className="text-amber-400 mb-2"><Clock size={18} /></div>
+                    <p className="text-xs font-bold text-white">Time-Boxed Goals</p>
+                    <p className="text-[10px] text-white/30 mt-1">Set start/end dates — AI auto-generates "5 days to go!", "Last chance!", "Just launched!" language.</p>
+                  </div>
+                  <div className="bg-white/3 rounded-xl p-3.5 border border-white/5">
+                    <div className="text-amber-400 mb-2"><ImageIcon size={18} /></div>
+                    <p className="text-xs font-bold text-white">Image Direction</p>
+                    <p className="text-[10px] text-white/30 mt-1">Describe what images should look like — the AI shapes every image prompt to match your campaign vision.</p>
+                  </div>
+                </div>
+                <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-white">Run sales, launches, events & seasonal pushes on autopilot</p>
+                    <p className="text-[10px] text-white/30 mt-0.5">Upgrade to Growth to unlock Campaigns + AI image generation</p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('settings')}
+                    className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-xs px-4 py-2 rounded-lg press flex-shrink-0"
+                  >
+                    Upgrade
+                  </button>
+                </div>
+              </div>
+            </div>
+              );
+            })()}
 
             {/* ── AI Content Generator ── */}
             <div className="bg-gradient-to-br from-[#0d0d14] via-[#111118] to-[#0d0d14] rounded-3xl p-7 relative overflow-hidden border border-white/10">
