@@ -31,7 +31,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle
+  Key, EyeOff, Home, AlertCircle, Target, ChevronRight
 } from 'lucide-react';
 
 /** Expandable campaign card — extracted so useState works correctly inside .map() */
