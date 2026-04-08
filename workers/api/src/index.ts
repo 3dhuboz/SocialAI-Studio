@@ -90,6 +90,20 @@ const uuid = () => crypto.randomUUID();
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
 
+// Public post schedule feed — used by deploy monitor widget
+app.get('/api/post-schedule', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT p.scheduled_for, p.status, p.platform,
+            substr(p.content, 1, 80) as preview,
+            COALESCE(c.name, 'Penny Wise I.T') as workspace
+     FROM posts p LEFT JOIN clients c ON p.client_id = c.id
+     WHERE p.status IN ('Scheduled','Posted','Missed')
+       AND p.scheduled_for >= date('now','-1 day')
+     ORDER BY p.scheduled_for ASC LIMIT 30`
+  ).all();
+  return c.json({ posts: rows.results ?? [] });
+});
+
 /**
  * POST /api/ai/generate
  * Body: { prompt, systemPrompt?, temperature?, maxTokens?, responseFormat? }
