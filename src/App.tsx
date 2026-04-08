@@ -1500,13 +1500,29 @@ const Dashboard: React.FC = () => {
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
+          // Ensure image is a public URL for D1 persistence
+          let postImage = smartPostImages[i] || undefined;
+          if (postImage && postImage.startsWith('data:')) {
+            // Browser has base64 — upload to fal.ai to get a public URL
+            try {
+              const url = await FalService.generateImage(sp.imagePrompt || sp.topic);
+              if (url) postImage = url;
+            } catch { /* keep base64 as fallback */ }
+          } else if (!postImage && sp.imagePrompt && sp.imagePrompt !== 'N/A') {
+            // No image at all — generate one via fal.ai (returns public URL)
+            try {
+              const url = await FalService.generateImage(sp.imagePrompt);
+              if (url) postImage = url;
+            } catch { /* post will go without image */ }
+          }
+
           const postData = {
             platform: sp.platform,
             content: sp.content,
             hashtags: sp.hashtags,
             scheduledFor: sp.scheduledFor,
             status: 'Scheduled' as const,
-            image: smartPostImages[i] || undefined,
+            image: postImage,
             imagePrompt: sp.imagePrompt || undefined,
             reasoning: sp.reasoning || undefined,
             pillar: sp.pillar || undefined,
@@ -4677,7 +4693,7 @@ const Dashboard: React.FC = () => {
                     id, name: 'New Campaign', type: 'custom' as const,
                     startDate: new Date().toISOString().split('T')[0],
                     endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-                    rules: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
+                    rules: '', imageNotes: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
                   }]);
                 }}
                 className="w-full glass rounded-xl py-3 text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition flex items-center justify-center gap-2 press"
