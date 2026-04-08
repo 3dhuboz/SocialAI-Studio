@@ -417,6 +417,39 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   return null;
 };
 
+/**
+ * Same smart prompt logic as generateMarketingImage, but returns a public URL
+ * instead of base64. Used by Accept All to persist images to D1.
+ */
+export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
+  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
+  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
+  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
+
+  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague)
+    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
+    : prompt;
+
+  const cleanPrompt = effectivePrompt
+    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, product photography, natural window light, shallow depth of field, overhead angle, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
+
+  try {
+    const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: imagePrompt }),
+    });
+    const data = await res.json() as { imageUrl?: string; error?: string };
+    if (res.ok && data.imageUrl) return data.imageUrl;
+  } catch { /* fall through */ }
+
+  return null;
+};
+
 export interface VideoScript {
   script: string;
   shots: string[];
