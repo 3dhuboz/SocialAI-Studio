@@ -961,25 +961,9 @@ async function cronPublishMissedPosts(env: Env) {
       const pageId = tokens.facebookPageId;
       const token = tokens.facebookPageAccessToken;
 
-      // Generate image if missing but prompt exists
-      let imageUrl = (post as any).image_url;
-      if ((!imageUrl || !imageUrl.startsWith('http')) && (post as any).image_prompt && env.FAL_API_KEY) {
-        try {
-          const falRes = await fetch('https://fal.run/fal-ai/flux/schnell', {
-            method: 'POST',
-            headers: { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: (post as any).image_prompt, image_size: 'landscape_16_9', num_images: 1 }),
-          });
-          const falData = await falRes.json() as any;
-          imageUrl = falData?.images?.[0]?.url || null;
-          if (imageUrl) {
-            await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(imageUrl, (post as any).id).run();
-            console.log(`[CRON] Generated image for post ${(post as any).id}`);
-          }
-        } catch (imgErr: any) {
-          console.warn(`[CRON] Image gen failed for ${(post as any).id}: ${imgErr.message}`);
-        }
-      }
+      // Use the image URL stored at accept time — no fallback generation here
+      // (image quality must come from the client-side smart generation, not raw fal.ai)
+      const imageUrl = (post as any).image_url;
 
       // Publish to Facebook
       if (imageUrl && imageUrl.startsWith('http')) {

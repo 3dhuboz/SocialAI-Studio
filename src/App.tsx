@@ -15,7 +15,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ClientIntakeForm } from './components/ClientIntakeForm';
-import { generateSocialPost, generateMarketingImage, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -1500,20 +1500,21 @@ const Dashboard: React.FC = () => {
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
-          // Ensure image is a public URL for D1 persistence
+          // Persist image as a public URL using the same smart prompt logic
+          // (business-type aware, anti-generic, no people/faces)
           let postImage = smartPostImages[i] || undefined;
           if (postImage && postImage.startsWith('data:')) {
-            // Browser has base64 — upload to fal.ai to get a public URL
+            // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
-              const url = await FalService.generateImage(sp.imagePrompt || sp.topic);
+              const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type);
               if (url) postImage = url;
             } catch { /* keep base64 as fallback */ }
           } else if (!postImage && sp.imagePrompt && sp.imagePrompt !== 'N/A') {
-            // No image at all — generate one via fal.ai (returns public URL)
+            // No image — generate with full smart logic (returns public URL)
             try {
-              const url = await FalService.generateImage(sp.imagePrompt);
+              const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type);
               if (url) postImage = url;
-            } catch { /* post will go without image */ }
+            } catch { /* post goes without image */ }
           }
 
           const postData = {
