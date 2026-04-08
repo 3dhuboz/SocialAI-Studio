@@ -3617,13 +3617,6 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* No API key */}
-            {/* AI Insights are always available */}
-            <div className="bg-green-500/8 border border-green-500/20 rounded-2xl p-6 text-center space-y-3">
-              <Sparkles size={28} className="text-green-400 mx-auto" />
-              <p className="text-white/60 font-semibold">AI Insights are powered by OpenRouter</p>
-              <button onClick={() => setActiveTab('settings')} className="text-xs text-amber-400 underline hover:text-amber-300 transition">Go to Settings →</button>
-            </div>
 
             {/* Progress ticker */}
             {(isAnalyzing || isScanningPosts) && (
@@ -4260,7 +4253,7 @@ const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* AI Engine Panel — agents + live OpenRouter stats */}
+            {/* AI Engine Panel */}
             <AiEnginePanel isSuperAdmin={isSuperAdmin} />
 
             {/* ── SECTION: Business Profile ── */}
