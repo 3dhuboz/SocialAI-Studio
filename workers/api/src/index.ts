@@ -926,12 +926,18 @@ async function cronPublishMissedPosts(env: Env) {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
   const rows = await env.DB.prepare(
-    `SELECT p.id, p.content, p.hashtags, p.image_url, p.platform, p.user_id, p.client_id
-     FROM posts p WHERE p.status = 'Scheduled' AND p.scheduled_for <= ? LIMIT 20`
+    `SELECT p.id, p.content, p.hashtags, p.image_url, p.image_prompt, p.platform, p.user_id, p.client_id
+     FROM posts p WHERE p.status IN ('Scheduled') AND p.scheduled_for <= ? LIMIT 20`
   ).bind(nowAEST).all();
   const posts = rows.results ?? [];
   if (posts.length === 0) { console.log('[CRON] No missed posts'); return; }
   console.log(`[CRON] Publishing ${posts.length} missed posts`);
+
+  // Mark all as "Publishing" FIRST to prevent duplicate runs
+  const postIds = posts.map((p: any) => p.id);
+  for (const id of postIds) {
+    await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ? AND status = ?').bind('Publishing', id, 'Scheduled').run();
+  }
 
   for (const post of posts) {
     try {
@@ -955,11 +961,32 @@ async function cronPublishMissedPosts(env: Env) {
       const pageId = tokens.facebookPageId;
       const token = tokens.facebookPageAccessToken;
 
-      if ((post as any).image_url && (post as any).image_url.startsWith('http')) {
+      // Generate image if missing but prompt exists
+      let imageUrl = (post as any).image_url;
+      if ((!imageUrl || !imageUrl.startsWith('http')) && (post as any).image_prompt && env.FAL_API_KEY) {
+        try {
+          const falRes = await fetch('https://fal.run/fal-ai/flux/schnell', {
+            method: 'POST',
+            headers: { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: (post as any).image_prompt, image_size: 'landscape_16_9', num_images: 1 }),
+          });
+          const falData = await falRes.json() as any;
+          imageUrl = falData?.images?.[0]?.url || null;
+          if (imageUrl) {
+            await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(imageUrl, (post as any).id).run();
+            console.log(`[CRON] Generated image for post ${(post as any).id}`);
+          }
+        } catch (imgErr: any) {
+          console.warn(`[CRON] Image gen failed for ${(post as any).id}: ${imgErr.message}`);
+        }
+      }
+
+      // Publish to Facebook
+      if (imageUrl && imageUrl.startsWith('http')) {
         await fetch(`${base}/${pageId}/photos`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: (post as any).image_url, message: fullText, access_token: token }),
+          body: JSON.stringify({ url: imageUrl, message: fullText, access_token: token }),
         });
       } else {
         await fetch(`${base}/${pageId}/feed`, {
