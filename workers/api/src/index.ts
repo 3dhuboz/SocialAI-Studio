@@ -925,19 +925,21 @@ app.post('/api/paypal-verify', async (c) => {
 async function cronPublishMissedPosts(env: Env) {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
+
+  // Atomic claim: UPDATE + SELECT in one step — only picks up Scheduled posts
+  // and immediately marks them as Publishing so no other cron run can grab them
+  await env.DB.prepare(
+    `UPDATE posts SET status = 'Publishing' WHERE status = 'Scheduled' AND scheduled_for <= ?`
+  ).bind(nowAEST).run();
+
+  // Now fetch the ones we just claimed
   const rows = await env.DB.prepare(
-    `SELECT p.id, p.content, p.hashtags, p.image_url, p.image_prompt, p.platform, p.user_id, p.client_id
-     FROM posts p WHERE p.status IN ('Scheduled') AND p.scheduled_for <= ? LIMIT 20`
-  ).bind(nowAEST).all();
+    `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id
+     FROM posts WHERE status = 'Publishing' LIMIT 20`
+  ).all();
   const posts = rows.results ?? [];
   if (posts.length === 0) { console.log('[CRON] No missed posts'); return; }
-  console.log(`[CRON] Publishing ${posts.length} missed posts`);
-
-  // Mark all as "Publishing" FIRST to prevent duplicate runs
-  const postIds = posts.map((p: any) => p.id);
-  for (const id of postIds) {
-    await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ? AND status = ?').bind('Publishing', id, 'Scheduled').run();
-  }
+  console.log(`[CRON] Publishing ${posts.length} posts`);
 
   for (const post of posts) {
     try {
@@ -965,23 +967,29 @@ async function cronPublishMissedPosts(env: Env) {
       // (image quality must come from the client-side smart generation, not raw fal.ai)
       const imageUrl = (post as any).image_url;
 
-      // Publish to Facebook
+      // Publish to Facebook — check response for errors
+      let fbRes: Response;
       if (imageUrl && imageUrl.startsWith('http')) {
-        await fetch(`${base}/${pageId}/photos`, {
+        fbRes = await fetch(`${base}/${pageId}/photos`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: imageUrl, message: fullText, access_token: token }),
         });
       } else {
-        await fetch(`${base}/${pageId}/feed`, {
+        fbRes = await fetch(`${base}/${pageId}/feed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: fullText, access_token: token }),
         });
       }
 
+      const fbData = await fbRes.json() as any;
+      if (fbData.error) {
+        throw new Error(`FB API: ${fbData.error.message || JSON.stringify(fbData.error)}`);
+      }
+
       await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Posted', (post as any).id).run();
-      console.log(`[CRON] Published post ${(post as any).id}`);
+      console.log(`[CRON] Published post ${(post as any).id} -> ${fbData.id || fbData.post_id || 'ok'}`);
     } catch (e: any) {
       console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message);
       await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
