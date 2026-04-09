@@ -746,14 +746,15 @@ app.all('/api/fal-proxy', async (c) => {
   if (action === 'task-status') {
     const requestId = url.searchParams.get('requestId');
     if (!requestId) return c.json({ error: 'requestId required' }, 400);
-    const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/${requestId}/status`, { headers: authHeader });
+    // Use the fal queue URL format returned by generate-video (without version/model path)
+    const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/requests/${requestId}/status`, { headers: authHeader });
     const data = await res.json() as any;
     return c.json(data, { status: res.status as any });
   }
   if (action === 'task-result') {
     const requestId = url.searchParams.get('requestId');
     if (!requestId) return c.json({ error: 'requestId required' }, 400);
-    const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/${requestId}`, { headers: authHeader });
+    const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/requests/${requestId}`, { headers: authHeader });
     const data = await res.json() as any;
     return c.json(data, { status: res.status as any });
   }
