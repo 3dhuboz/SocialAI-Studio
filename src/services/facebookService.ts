@@ -38,7 +38,7 @@ export const FacebookService = {
       window.FB.login((response: any) => {
         if (response.authResponse) resolve(response.authResponse);
         else reject(new Error('User cancelled login or did not fully authorize.'));
-      }, { scope: 'pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,pages_read_user_content' });
+      }, { scope: 'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video,instagram_basic,instagram_content_publish,pages_read_user_content' });
     });
   },
 
