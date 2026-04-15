@@ -213,14 +213,18 @@ export const FacebookService = {
     return data.id;
   },
 
-  /** Post with an image URL (not base64) — Facebook fetches the image server-side */
+  /** Post with an image URL — downloads the image and uploads as multipart FormData for reliability */
   postToPageWithImageUrl: async (pageId: string, pageAccessToken: string, message: string, imageUrl: string): Promise<string> => {
     const base = 'https://graph.facebook.com/v21.0';
-    const res = await fetch(`${base}/${pageId}/photos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: imageUrl, message, access_token: pageAccessToken }),
-    });
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error(`Failed to download image: ${imgRes.status}`);
+    const imageBlob = await imgRes.blob();
+    const form = new FormData();
+    form.append('source', imageBlob, 'image.jpg');
+    form.append('message', message);
+    form.append('access_token', pageAccessToken);
+    form.append('published', 'true');
+    const res = await fetch(`${base}/${pageId}/photos`, { method: 'POST', body: form });
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     return data.post_id || data.id;
@@ -235,14 +239,16 @@ export const FacebookService = {
     const scheduledUnix = Math.floor(scheduledTime.getTime() / 1000);
 
     if (imageUrl) {
-      const res = await fetch(`${base}/${pageId}/photos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: imageUrl, message, access_token: pageAccessToken,
-          published: false, scheduled_publish_time: scheduledUnix,
-        }),
-      });
+      const imgRes = await fetch(imageUrl);
+      if (!imgRes.ok) throw new Error(`Failed to download image for scheduling: ${imgRes.status}`);
+      const imageBlob = await imgRes.blob();
+      const form = new FormData();
+      form.append('source', imageBlob, 'image.jpg');
+      form.append('message', message);
+      form.append('access_token', pageAccessToken);
+      form.append('published', 'false');
+      form.append('scheduled_publish_time', String(scheduledUnix));
+      const res = await fetch(`${base}/${pageId}/photos`, { method: 'POST', body: form });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
       return data.post_id || data.id;
