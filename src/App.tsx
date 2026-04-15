@@ -1058,9 +1058,10 @@ const Dashboard: React.FC = () => {
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
+      const _postNowBase = generatedContent.replace(/(\s+#\w+)+\s*$/, '').trim();
       const fullText = generatedHashtags.length > 0
-        ? `${generatedContent}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
-        : generatedContent;
+        ? `${_postNowBase}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
+        : _postNowBase;
 
       for (const plat of platforms) {
         if (plat === 'facebook') {
@@ -1212,7 +1213,8 @@ const Dashboard: React.FC = () => {
     setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
     if (scheduleDate && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
       try {
-        const fullText = generatedHashtags.length ? `${generatedContent}\n\n${generatedHashtags.join(' ')}` : generatedContent;
+        const _schedBase = generatedContent.replace(/(\s+#\w+)+\s*$/, '').trim();
+        const fullText = generatedHashtags.length ? `${_schedBase}\n\n${generatedHashtags.join(' ')}` : _schedBase;
         const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
         await FacebookService.postToPageScheduled(
           socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
@@ -1540,7 +1542,8 @@ const Dashboard: React.FC = () => {
           // Schedule via Facebook Graph API so it auto-publishes at the scheduled time
           if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
             try {
-              const text = sp.hashtags?.length ? `${sp.content}\n\n${sp.hashtags.join(' ')}` : sp.content;
+              const _spBase = sp.content.replace(/(\s+#\w+)+\s*$/, '').trim();
+              const text = sp.hashtags?.length ? `${_spBase}\n\n${sp.hashtags.join(' ')}` : _spBase;
               const imageUrl = smartPostImages[i]?.startsWith('http') ? smartPostImages[i] : undefined;
               await FacebookService.postToPageScheduled(
                 socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
@@ -2916,7 +2919,8 @@ const Dashboard: React.FC = () => {
               onSave={handleUpdatePost}
               onPublish={async (post) => {
                 try {
-                  const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
+                  const _pubBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
+                  const text = post.hashtags?.length ? `${_pubBase}\n\n${post.hashtags.join(' ')}` : _pubBase;
                   if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
                   const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
@@ -2938,7 +2942,8 @@ const Dashboard: React.FC = () => {
               }}
               onRetry={async (post) => {
                 try {
-                  const text = post.hashtags?.length ? `${post.content}\n\n${post.hashtags.join(' ')}` : post.content;
+                  const _retryBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
+                  const text = post.hashtags?.length ? `${_retryBase}\n\n${post.hashtags.join(' ')}` : _retryBase;
                   if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
                   const imageSource = calendarImages[post.id] || post.image;
                   const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
