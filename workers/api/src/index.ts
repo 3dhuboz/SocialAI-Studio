@@ -90,6 +90,7 @@ const uuid = () => crypto.randomUUID();
 
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
 
+
 // Public post schedule feed — used by deploy monitor widget
 app.get('/api/post-schedule', async (c) => {
   const rows = await c.env.DB.prepare(
@@ -927,20 +928,29 @@ async function cronPublishMissedPosts(env: Env) {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
 
-  // Atomic claim: UPDATE + SELECT in one step — only picks up Scheduled posts
-  // and immediately marks them as Publishing so no other cron run can grab them
+  // Clean up zombie Publishing posts — only if they've been stuck for >10 min
+  // (previous code reset ALL Publishing posts every 5-min cron tick, which
+  // caused posts to be marked Missed while still actively being published)
+  const tenMinAgo = new Date(Date.now() + 10 * 60 * 60 * 1000 - 10 * 60 * 1000).toISOString().replace('Z', '');
   await env.DB.prepare(
-    `UPDATE posts SET status = 'Publishing' WHERE status = 'Scheduled' AND scheduled_for <= ?`
-  ).bind(nowAEST).run();
+    `UPDATE posts SET status = 'Missed' WHERE status = 'Publishing' AND scheduled_for <= ?`
+  ).bind(tenMinAgo).run();
 
-  // Now fetch the ones we just claimed
+  // Claim posts with a unique ID so concurrent cron instances don't double-post.
+  // Each instance stamps its own claimId, then only selects posts it claimed.
+  const claimId = crypto.randomUUID();
+  await env.DB.prepare(
+    `UPDATE posts SET status = 'Publishing', image_prompt = COALESCE(image_prompt, '') || '|claim:' || ?
+     WHERE status = 'Scheduled' AND scheduled_for <= ?`
+  ).bind(claimId, nowAEST).run();
+
   const rows = await env.DB.prepare(
     `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id
-     FROM posts WHERE status = 'Publishing' LIMIT 20`
-  ).all();
+     FROM posts WHERE status = 'Publishing' AND image_prompt LIKE '%' || ? LIMIT 20`
+  ).bind(claimId).all();
   const posts = rows.results ?? [];
-  if (posts.length === 0) { console.log('[CRON] No missed posts'); return; }
-  console.log(`[CRON] Publishing ${posts.length} posts`);
+  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return; }
+  console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
   for (const post of posts) {
     try {
@@ -956,43 +966,95 @@ async function cronPublishMissedPosts(env: Env) {
       }
 
       const hashtags = (post as any).hashtags ? JSON.parse((post as any).hashtags as string) : [];
+      const contentText = (post as any).content as string;
+      // Strip any trailing hashtags from content (idempotent: handles inline hashtags and double-appended cases)
+      const cleanContent = contentText.replace(/(\s+#\w+)+\s*$/, '').trim();
       const fullText = hashtags.length > 0
-        ? `${(post as any).content}\n\n${hashtags.join(' ')}`
-        : (post as any).content;
+        ? `${cleanContent}\n\n${hashtags.join(' ')}`
+        : cleanContent;
 
       const base = 'https://graph.facebook.com/v21.0';
       const pageId = tokens.facebookPageId;
       const token = tokens.facebookPageAccessToken;
 
       // Use the image URL stored at accept time — no fallback generation here
-      // (image quality must come from the client-side smart generation, not raw fal.ai)
       const imageUrl = (post as any).image_url;
+      let publishMethod = 'text-only';
 
-      // Publish to Facebook — check response for errors
-      let fbRes: Response;
+      let fbRes: Response | null = null;
+
       if (imageUrl && imageUrl.startsWith('http')) {
-        fbRes = await fetch(`${base}/${pageId}/photos`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: imageUrl, message: fullText, access_token: token }),
-        });
-      } else {
+        // Download image and upload via manual multipart body construction.
+        // CF Workers FormData API silently drops binary data in cron context,
+        // so we build the multipart body from raw bytes.
+        try {
+          const imgRes = await fetch(imageUrl);
+          if (imgRes.ok) {
+            const imageBuffer = await imgRes.arrayBuffer();
+            const imageBytes = new Uint8Array(imageBuffer);
+            console.log(`[CRON] Downloaded image (${imageBytes.length} bytes) for post ${(post as any).id}`);
+
+            const boundary = '----CFBoundary' + Date.now();
+            const enc = new TextEncoder();
+
+            const head = enc.encode(
+              `--${boundary}\r\n` +
+              `Content-Disposition: form-data; name="source"; filename="image.jpg"\r\n` +
+              `Content-Type: image/jpeg\r\n\r\n`
+            );
+            const mid = enc.encode(
+              `\r\n--${boundary}\r\n` +
+              `Content-Disposition: form-data; name="message"\r\n\r\n` +
+              fullText +
+              `\r\n--${boundary}\r\n` +
+              `Content-Disposition: form-data; name="published"\r\n\r\n` +
+              `true` +
+              `\r\n--${boundary}--\r\n`
+            );
+
+            const body = new Uint8Array(head.length + imageBytes.length + mid.length);
+            body.set(head, 0);
+            body.set(imageBytes, head.length);
+            body.set(mid, head.length + imageBytes.length);
+
+            fbRes = await fetch(`${base}/${pageId}/photos?access_token=${encodeURIComponent(token)}`, {
+              method: 'POST',
+              headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+              body: body,
+            });
+            publishMethod = `multipart-raw (${imageBytes.length}b)`;
+            console.log(`[CRON] Multipart upload status: ${fbRes.status} for post ${(post as any).id}`);
+          } else {
+            console.warn(`[CRON] Image download returned ${imgRes.status} for post ${(post as any).id}`);
+          }
+        } catch (dlErr: any) {
+          console.warn(`[CRON] Image download/upload failed for post ${(post as any).id}: ${dlErr.message}`);
+        }
+      }
+
+      // Text-only fallback
+      if (!fbRes) {
         fbRes = await fetch(`${base}/${pageId}/feed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: fullText, access_token: token }),
         });
+        publishMethod = 'text-only-fallback';
       }
 
-      const fbData = await fbRes.json() as any;
+      const fbText = await fbRes.text();
+      console.log(`[CRON] FB response [${publishMethod}] for post ${(post as any).id}: ${fbText.substring(0, 300)}`);
+      const fbData = JSON.parse(fbText);
       if (fbData.error) {
-        throw new Error(`FB API: ${fbData.error.message || JSON.stringify(fbData.error)}`);
+        throw new Error(`FB API [${publishMethod}]: ${fbData.error.message || JSON.stringify(fbData.error)}`);
       }
 
-      await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Posted', (post as any).id).run();
-      console.log(`[CRON] Published post ${(post as any).id} -> ${fbData.id || fbData.post_id || 'ok'}`);
+      // Log publish method to D1 for debugging
+      await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ? WHERE id = ?')
+        .bind('Posted', publishMethod, (post as any).id).run();
+      console.log(`[CRON] Published post ${(post as any).id} via ${publishMethod} -> ${fbData.id || fbData.post_id || 'ok'}`);
     } catch (e: any) {
-      console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message);
+      console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message, e.stack);
       await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
     }
   }
