@@ -259,12 +259,13 @@ ${platformRules}
 
 ANTI-GENERIC RULES:
 - Never start with "Exciting news!" or "We're thrilled to announce"
-- Never use filler phrases like "In today's fast-paced world" or "As a business owner"
+- Never use filler phrases like "In today's fast-paced world", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level"
+- BANNED phrases — never write: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "In today's digital age". If you catch yourself writing these, stop and replace with a concrete specific detail.
 - Every sentence must earn its place — if it could apply to any business, rewrite it
 - MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name
 - If content topics are provided above, the post MUST relate to one of those topics or themes
 - Write like you're texting a smart friend, not writing a press release
-- Do NOT invent events, locations, or facts that aren't in the brand context — stay true to what the business actually does
+- Do NOT invent events, campaigns, countdown language, or facts that aren't in the brand context — stay true to what the business actually does
 
 Write a ${platform} post about: "${topic}".
 Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product — ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods' — name the specific item. NO people, NO hands, NO faces."}
@@ -918,8 +919,25 @@ export const generateSmartSchedule = async (
       campaignBlock && `\n${campaignBlock}\nIMPORTANT: Weave the active campaign themes into your posts. Use countdown language where appropriate ("X days to go!", "Only X days left!", "Coming soon!"). At least 30% of posts should reference the campaign.`,
     ].filter(Boolean).join('\n');
 
+    // Derive a more specific business type when the stored value is too generic (e.g. "small business")
+    // Uses description and productsServices to infer the actual industry for better benchmark data and prompting
+    const effectiveBusinessType = (() => {
+      const genericTerms = ['small business', 'business', 'company', 'service provider', 'local business'];
+      if (!genericTerms.includes(businessType.toLowerCase().trim())) return businessType;
+      const combined = ((safeProfile?.description || '') + ' ' + (safeProfile?.productsServices || '')).toLowerCase();
+      if (combined.includes('saas') || combined.includes('software platform') || combined.includes('ai platform') || combined.includes('social media platform') || combined.includes('social media tool') || combined.includes('social media management')) return 'SaaS & software';
+      if (combined.includes('web design') || combined.includes('web development') || combined.includes('website builder')) return 'web design & development';
+      if (combined.includes('food') || combined.includes('restaurant') || combined.includes('cafe') || combined.includes('bbq') || combined.includes('catering')) return 'food & hospitality';
+      if (combined.includes('fitness') || combined.includes('gym') || combined.includes('wellness') || combined.includes('health')) return 'health & wellness';
+      if (combined.includes('law') || combined.includes('legal') || combined.includes('accounting') || combined.includes('bookkeep') || combined.includes('financial')) return 'professional services';
+      if (combined.includes('trade') || combined.includes('plumb') || combined.includes('electric') || combined.includes('construct') || combined.includes('build')) return 'trades & construction';
+      if (combined.includes('real estate') || combined.includes('property')) return 'real estate';
+      if (combined.includes('retail') || combined.includes('shop') || combined.includes('store') || combined.includes('boutique')) return 'retail';
+      return businessType;
+    })();
+
     // ── Inject real research data ──
-    const benchmarks = getIndustryBenchmarks(businessType, location);
+    const benchmarks = getIndustryBenchmarks(effectiveBusinessType, location);
     const benchmarkBlock = formatBenchmarksForPrompt(benchmarks.data, benchmarks.timezone);
 
     const researchPrompt = saturationMode ? `
@@ -1137,12 +1155,12 @@ MODE: QUICK 24HR BURST — Current time is ${nowTimeStr} on ${now.toISOString().
 MODE: HIGHLIGHTS ONLY — schedule posts ONLY at the absolute top 3 researched time slots across the 14-day window. Quality over quantity. Each post must be polished, pillar-defining, and perfectly timed. No filler — every post must be your single best recommendation for that pillar.` : '';
 
     const prompt = saturationMode ? `
-You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${businessType}.
+You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${effectiveBusinessType}.
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${structuredCampaignBlock}
-CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
+${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
+CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
@@ -1162,8 +1180,11 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(businessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
+9. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service, (b) a specific measurable outcome, or (c) a location reference. Vague posts must be rewritten.
+10. BANNED PHRASES — never use: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition". Rewrite with concrete specifics.
+11. NO FAKE URGENCY — Only use countdown language if a real ACTIVE CAMPAIGN with specific dates was listed above. Never invent campaigns or deadlines.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
@@ -1185,12 +1206,12 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     }
   ]
 }` : `
-You are an elite social media strategist writing a data-driven content calendar for "${businessName}", a ${businessType}.
+You are an elite social media strategist writing a data-driven content calendar for "${businessName}", a ${effectiveBusinessType}.
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBusiness context:\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
-CRITICAL: ALL posts must be about "${businessName}" and its ${businessType} business. NEVER write posts about social media marketing, AI tools, web design, software platforms, or any topic unrelated to ${businessType}. Every post must be something a ${businessType} business would actually share with their customers.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
+${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
+CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results — never generic marketing advice that could apply to any business. Do NOT invent campaigns, countdown language, or stats that are not in the business context above.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
 - Best days: ${(research.bestDays || normalFallback.bestDays).join(', ')} | Avoid: ${(research.worstDays || []).join(', ')}
@@ -1210,9 +1231,12 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(businessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
+10. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service from the business context above, (b) a specific measurable outcome (e.g. "saves 5 hours/week", "30% more engagement"), or (c) a location-specific reference to the business's actual area. Generic sentences that pass no specificity test must be rewritten or cut.
+11. BANNED PHRASES — never use any of these: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "We're excited to announce". If you catch yourself writing these, stop and rewrite with a concrete specific detail instead.
+12. NO FAKE URGENCY — Only use countdown language ("Only X days left!", "X days to go!") if a real ACTIVE CAMPAIGN with specific start/end dates was listed in the business context above. Never invent campaigns, deadlines, or limited-time offers.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
