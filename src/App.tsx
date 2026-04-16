@@ -1211,22 +1211,9 @@ const Dashboard: React.FC = () => {
     };
     const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
     setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
-    if (scheduleDate && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
-      try {
-        const _schedBase = generatedContent.replace(/(\s+#\w+)+\s*$/, '').trim();
-        const fullText = generatedHashtags.length ? `${_schedBase}\n\n${generatedHashtags.join(' ')}` : _schedBase;
-        const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
-        await FacebookService.postToPageScheduled(
-          socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
-          fullText, new Date(scheduleDate), imageUrl
-        );
-        toast('Post scheduled on Facebook — it will auto-publish at the set time!');
-      } catch (e: any) {
-        toast(`Post saved but Facebook scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. The cron will catch it.`, 'warning');
-      }
-    } else {
-      toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
-    }
+    // Scheduled posts are published by the cron (5-min tick). We do NOT hand them to Facebook's
+    // scheduled_publish_time — that would create an uncancellable duplicate on Facebook's side.
+    toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
     setGeneratedContent('');
     setGeneratedHashtags([]);
     setGeneratedImage(null);
@@ -1498,7 +1485,6 @@ const Dashboard: React.FC = () => {
     setAcceptProgress(0);
     setAcceptSaved(0);
     let completedCount = 0;
-    let scheduleFailCount = 0;
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
@@ -1539,21 +1525,8 @@ const Dashboard: React.FC = () => {
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
-          // Schedule via Facebook Graph API so it auto-publishes at the scheduled time
-          if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
-            try {
-              const _spBase = sp.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-              const text = sp.hashtags?.length ? `${_spBase}\n\n${sp.hashtags.join(' ')}` : _spBase;
-              const imageUrl = smartPostImages[i]?.startsWith('http') ? smartPostImages[i] : undefined;
-              await FacebookService.postToPageScheduled(
-                socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
-                text, new Date(sp.scheduledFor), imageUrl
-              );
-            } catch (schedErr: any) {
-              scheduleFailCount++;
-              console.warn(`Facebook scheduling failed for post ${i}:`, schedErr?.message);
-            }
-          }
+          // Cron publishes at scheduled time — no Facebook scheduled_publish_time (would create
+          // uncancellable duplicate on Facebook's side that ignores on_hold / DB deletions).
           return { id: batchPostId, ...postData } as SocialPost;
         })
       );
@@ -1561,10 +1534,8 @@ const Dashboard: React.FC = () => {
       clearDraft(activeClientId);
       if (!fbConnected) {
         toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
-      } else if (scheduleFailCount > 0) {
-        toast(`${results.length} posts saved. ${scheduleFailCount} failed to schedule on Facebook — publish those manually from the calendar.`, 'warning');
       } else {
-        toast(`${results.length} posts scheduled on Facebook — they'll auto-publish at the set times!`, 'success');
+        toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
       }
       setSmartPosts([]);
       setSmartStrategy('');
