@@ -42,7 +42,6 @@ app.use(
         'https://socialaistudio.au',
         'https://social.picklenick.au', 'https://social.streetmeatzbbq.com.au',
         'https://social.hugheseysque.au', 'https://hugheseysque.au',
-        'https://social.oconnoragriculture.com.au',
       ];
       if (allowed.includes(origin)) return origin;
       // Allow all *.pages.dev subdomains (CF Pages preview/prod deployments)
