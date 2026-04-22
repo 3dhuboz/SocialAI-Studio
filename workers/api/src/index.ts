@@ -940,7 +940,8 @@ async function cronPublishMissedPosts(env: Env) {
   const claimId = crypto.randomUUID();
   await env.DB.prepare(
     `UPDATE posts SET status = 'Publishing', image_prompt = COALESCE(image_prompt, '') || '|claim:' || ?
-     WHERE status = 'Scheduled' AND scheduled_for <= ?`
+     WHERE status = 'Scheduled' AND scheduled_for <= ?
+       AND (client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`
   ).bind(claimId, nowAEST).run();
 
   const rows = await env.DB.prepare(
