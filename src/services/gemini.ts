@@ -496,10 +496,15 @@ Content must respect the character limits above. No padding. No filler.`;
     });
     parsed = parseRaw(text);
     if (typeof parsed.content !== 'string') break;
-    const violation = detectFabrication(parsed.content);
-    if (!violation) break;
-    lastReason = violation;
-    console.warn(`[gemini] attempt ${attempt} rejected: ${violation}`);
+    // Layer A: regex detector (cheap, instant, catches known patterns)
+    const regexViolation = detectFabrication(parsed.content);
+    if (regexViolation) { lastReason = regexViolation; console.warn(`[gemini] attempt ${attempt} rejected (regex): ${regexViolation}`); continue; }
+    // Layer B: LLM judge (semantic — catches what regex misses). Only on attempts 1-2.
+    if (attempt < 3) {
+      const judgement = await judgePost(parsed.content, facts, profileContext || '');
+      if (!judgement.pass) { lastReason = judgement.reason || 'judge flagged fabrication'; console.warn(`[gemini] attempt ${attempt} rejected (judge): ${lastReason}`); continue; }
+    }
+    break;
   }
   // Final scrub for anything that survived all attempts
   const limit = platform === 'Facebook' ? HASHTAG_LIMITS.facebook.optimal : HASHTAG_LIMITS.instagram.optimal;
@@ -516,6 +521,52 @@ Content must respect the character limits above. No padding. No filler.`;
 // Returns the offending phrase as a rejection reason, or null if clean.
 // This is the LAST line of defence: prompt rules try to prevent these,
 // retry logic gives the AI a second chance, and this catches everything else.
+// LLM judge — semantic fabrication detection that the regex bank misses.
+// Cheap (~$0.001 per call with Haiku at temp 0). Returns pass=true if the post
+// is clean, or pass=false with a reason and an optional suggested rewrite.
+// Defaults to PASS on any error so a flaky judge never blocks generation entirely.
+async function judgePost(
+  content: string,
+  facts: ClientFact[],
+  brandContext: string,
+): Promise<{ pass: boolean; reason?: string }> {
+  const factsText = facts.slice(0, 12)
+    .map(f => `[${f.fact_type}] ${(f.content || '').substring(0, 180)}`)
+    .join('\n') || '(no verified facts)';
+  const prompt = `You are a strict editor. Reject any social media draft that invents specifics not in the verified data below. Reply with ONLY JSON.
+
+DRAFT TO EVALUATE:
+"""
+${content}
+"""
+
+VERIFIED FACTS (the only allowed source for specific claims):
+${factsText}
+
+BRAND CONTEXT:
+${(brandContext || '').substring(0, 1000)}
+
+Score each rule 0 or 1:
+- specifics_grounded: Every named customer/product/stat in the draft must appear in VERIFIED FACTS or BRAND CONTEXT. Generic phrases like "our customers" are OK; specific names/places/numbers must be sourced.
+- no_invented_testimonials: NO fake customer quotes, names ("Sarah J", "a local cafe in Brisbane"), or made-up success stories.
+- no_invented_stats: NO percentages, time-savings, multipliers, or counts unless they appear verbatim in BRAND CONTEXT or VERIFIED FACTS.
+- no_fake_urgency: NO countdowns, "today only", "limited time", "ends tomorrow" unless a real event with date appears in VERIFIED FACTS.
+
+Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_stats":0|1,"no_fake_urgency":0|1,"reason":"one short sentence if any rule is 0, else empty"}`;
+  try {
+    const text = await callAI(prompt, { temperature: 0, maxTokens: 300, responseFormat: 'json' });
+    const result = JSON.parse(text);
+    const allPass = result.specifics_grounded === 1
+      && result.no_invented_testimonials === 1
+      && result.no_invented_stats === 1
+      && result.no_fake_urgency === 1;
+    return { pass: allPass, reason: allPass ? undefined : (result.reason || 'judge flagged content') };
+  } catch (e: any) {
+    console.warn('[judge] failed (defaulting to pass):', e?.message);
+    return { pass: true };
+  }
+}
+
 function detectFabrication(content: string): string | null {
   const checks: Array<[RegExp, string]> = [
     // Fake customer testimonials
@@ -1506,26 +1557,34 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const data = parseAiJson(scheduleText) || { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
 
-    // ── Hallucination defence: scan every generated post for fabricated
-    // testimonials / fake stats / invented urgency. Tag offenders so the UI can
-    // flag them, and scrub via regex as a last-resort patch.
-    posts = posts.map((p: any) => {
+    // ── Hallucination defence: regex scan + LLM judge per post.
+    // Both layers run in parallel via Promise.all so judging 14 posts only adds
+    // ~2-3s instead of 14× call latency. Posts that fail either layer get
+    // _needsReview flag — UI shows red badge so user knows what to scan.
+    posts = await Promise.all(posts.map(async (p: any) => {
       if (typeof p.content !== 'string') return p;
-      const violation = detectFabrication(p.content);
-      if (violation) {
-        console.warn(`[smart-schedule] fabrication detected in post: ${violation}`);
+      // Layer A: regex (instant)
+      const regexViolation = detectFabrication(p.content);
+      if (regexViolation) {
         p.content = scrubBannedPhrases(p.content);
-        // Re-check after scrub; if still bad, tag for manual review
-        const stillBad = detectFabrication(p.content);
-        if (stillBad) {
+        if (detectFabrication(p.content)) {
           p._needsReview = true;
-          p._reviewReason = stillBad;
+          p._reviewReason = regexViolation;
+          return p;
         }
       } else {
         p.content = scrubBannedPhrases(p.content);
       }
+      // Layer B: LLM judge (semantic — catches what regex misses)
+      try {
+        const judgement = await judgePost(p.content, facts, profileBlock || '');
+        if (!judgement.pass) {
+          p._needsReview = true;
+          p._reviewReason = judgement.reason || 'judge flagged content';
+        }
+      } catch { /* judge failure should never block */ }
       return p;
-    });
+    }));
 
     // Format a Date as local time string (NOT UTC) — "YYYY-MM-DDTHH:MM:SS"
     const toLocalISO = (d: Date): string => {
