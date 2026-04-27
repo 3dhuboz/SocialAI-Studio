@@ -18,9 +18,10 @@ database_id = "6295841e-e5f7-4355-b0e0-c5f22e58d99d"
 # Cron triggers:
 # */5 * * * *  — publish missed posts (every 5 min)
 # 0 3 * * *   — refresh Facebook tokens (daily 3am UTC)
+# 0 4 * * *   — refresh client_facts from connected FB Pages (daily 4am UTC)
 # 0 */6 * * * — check fal.ai credits (every 6 hours)
 [triggers]
-crons = ["*/5 * * * *", "0 3 * * *", "0 */6 * * *"]
+crons = ["*/5 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *"]
 
 [dev]
 port = 8787

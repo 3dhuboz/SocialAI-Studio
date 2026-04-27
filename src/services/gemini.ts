@@ -133,18 +133,37 @@ export async function fetchClientFacts(clientId?: string | null): Promise<Client
   if (_factsCache && _factsCache.key === key && Date.now() - _factsCache.ts < FACTS_TTL_MS) {
     return _factsCache.facts;
   }
-  try {
+  const fetchOnce = async (): Promise<ClientFact[]> => {
     const headers = await aiAuthHeaders();
     const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
     const res = await fetch(`${AI_WORKER}/api/db/facts${qs}`, { headers });
     if (!res.ok) return [];
     const data = await res.json() as { facts?: any[] };
-    const facts: ClientFact[] = (data.facts || []).map((f: any) => ({
+    return (data.facts || []).map((f: any) => ({
       fact_type: f.fact_type,
       content: f.content,
       metadata: typeof f.metadata === 'string' ? (() => { try { return JSON.parse(f.metadata); } catch { return {}; } })() : f.metadata,
       engagement_score: f.engagement_score || 0,
     }));
+  };
+  try {
+    let facts = await fetchOnce();
+    // Auto-bootstrap: if facts table is empty for this workspace, trigger a
+    // refresh from Facebook ONCE before giving up. This means a brand-new
+    // user runs Smart Schedule and gets real data without needing to click
+    // the Refresh button first.
+    if (facts.length === 0) {
+      console.log('[gemini] no facts found — attempting one-time auto-refresh from Facebook');
+      try {
+        const headers = await aiAuthHeaders();
+        const path = clientId ? `/api/db/refresh-facts/${encodeURIComponent(clientId)}` : '/api/db/refresh-facts';
+        const refreshRes = await fetch(`${AI_WORKER}${path}`, { method: 'POST', headers });
+        if (refreshRes.ok) {
+          facts = await fetchOnce();
+          console.log(`[gemini] auto-refresh populated ${facts.length} facts`);
+        }
+      } catch { /* fall through with empty facts */ }
+    }
     _factsCache = { key, ts: Date.now(), facts };
     return facts;
   } catch {

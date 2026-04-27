@@ -859,6 +859,50 @@ const Dashboard: React.FC = () => {
   const [autopilotPlatform, setAutopilotPlatform] = useState<'both' | 'facebook' | 'instagram'>('both');
   const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | null>(null);
 
+  // ── FB-scraped knowledge state — shows facts count + manual refresh ──
+  const [factCount, setFactCount] = useState<number | null>(null);
+  const [factsLastUpdate, setFactsLastUpdate] = useState<string | null>(null);
+  const [factsRefreshing, setFactsRefreshing] = useState(false);
+
+  const loadFactsStatus = async () => {
+    try {
+      const { aiAuthHeaders } = await import('./services/gemini');
+      const headers = await aiAuthHeaders();
+      const qs = activeClientId ? `?clientId=${encodeURIComponent(activeClientId)}` : '';
+      const res = await fetch(`${(import.meta.env as any).VITE_AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev'}/api/db/facts${qs}`, { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      const facts = data.facts || [];
+      setFactCount(facts.length);
+      setFactsLastUpdate(facts[0]?.verified_at || null);
+    } catch { /* ignore */ }
+  };
+
+  const refreshFactsFromFacebook = async () => {
+    setFactsRefreshing(true);
+    try {
+      const { aiAuthHeaders, clearFactsCache } = await import('./services/gemini');
+      const headers = await aiAuthHeaders();
+      const path = activeClientId ? `/api/db/refresh-facts/${encodeURIComponent(activeClientId)}` : '/api/db/refresh-facts';
+      const res = await fetch(`${(import.meta.env as any).VITE_AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev'}${path}`, { method: 'POST', headers });
+      const data = await res.json();
+      if (res.ok) {
+        toast(`Refreshed ${data.inserted} facts from Facebook${data.errors?.length ? ` (${data.errors.length} warnings)` : ''}`, 'success');
+        clearFactsCache();
+        await loadFactsStatus();
+      } else {
+        toast(`Refresh failed: ${data.error || 'unknown'}`, 'error');
+      }
+    } catch (e: any) {
+      toast(`Refresh failed: ${e.message}`, 'error');
+    } finally {
+      setFactsRefreshing(false);
+    }
+  };
+
+  // Load facts status when workspace changes
+  useEffect(() => { loadFactsStatus(); }, [activeClientId]);
+
   // Load/clear smart drafts when switching client workspaces
   useEffect(() => {
     const draft = readDraft(activeClientId);
@@ -3281,18 +3325,38 @@ const Dashboard: React.FC = () => {
                       }
                     </select>
                   </div>
-                  <button
-                    onClick={handleSmartSchedule}
-                    disabled={isSmartGenerating || !hasApiKey}
-                    className={`font-black px-8 py-3 rounded-2xl transition flex items-center gap-2 text-base shadow-xl disabled:opacity-60 ${
-                      saturationMode
-                        ? 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white shadow-red-900/30'
-                        : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black shadow-amber-900/30'
-                    }`}
-                  >
-                    {isSmartGenerating ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
-                    {isSmartGenerating ? 'Researching & Writing…' : saturationMode ? 'Launch Saturation Campaign' : 'Generate My Content Calendar'}
-                  </button>
+                  <div className="flex flex-col items-end gap-2">
+                    {/* AI knowledge from Facebook — status + refresh */}
+                    <div className="flex items-center gap-2 text-[11px]">
+                      {factCount === null ? (
+                        <span className="text-white/30">Checking AI knowledge…</span>
+                      ) : factCount === 0 ? (
+                        <span className="text-amber-400">⚠️ No real data yet — AI may invent</span>
+                      ) : (
+                        <span className="text-emerald-400">✓ {factCount} facts from Facebook ready</span>
+                      )}
+                      <button
+                        onClick={refreshFactsFromFacebook}
+                        disabled={factsRefreshing}
+                        className="text-[11px] text-blue-300 hover:text-blue-200 underline underline-offset-2 disabled:opacity-50"
+                        title="Pull the latest posts, comments, about info, photos and events from this workspace's connected Facebook Page so the AI writes from real data instead of inventing details."
+                      >
+                        {factsRefreshing ? 'Refreshing…' : factCount === 0 ? 'Pull from Facebook now' : 'Refresh'}
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleSmartSchedule}
+                      disabled={isSmartGenerating || !hasApiKey}
+                      className={`font-black px-8 py-3 rounded-2xl transition flex items-center gap-2 text-base shadow-xl disabled:opacity-60 ${
+                        saturationMode
+                          ? 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white shadow-red-900/30'
+                          : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black shadow-amber-900/30'
+                      }`}
+                    >
+                      {isSmartGenerating ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
+                      {isSmartGenerating ? 'Researching & Writing…' : saturationMode ? 'Launch Saturation Campaign' : 'Generate My Content Calendar'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

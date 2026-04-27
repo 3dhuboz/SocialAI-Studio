@@ -28,6 +28,7 @@ type Env = {
   PAYPAL_CLIENT_SECRET?: string;
   PAYPAL_WEBHOOK_ID?: string;
   RESEND_API_KEY?: string;
+  FACTS_BOOTSTRAP_SECRET?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -955,6 +956,32 @@ app.post('/api/db/refresh-facts/:clientId', async (c) => {
   return c.json(result);
 });
 
+// One-shot bootstrap — scrape ALL workspaces with FB tokens. Used to seed the
+// table for existing connected accounts. Protected by FACTS_BOOTSTRAP_SECRET
+// env var (set via wrangler secret) — anyone with the secret can re-seed.
+app.post('/api/admin/bootstrap-all-facts', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const users = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL`
+  ).all();
+  const clients = await c.env.DB.prepare(
+    `SELECT id, user_id FROM clients WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL AND COALESCE(status,'active') != 'on_hold'`
+  ).all();
+  const results: any[] = [];
+  for (const u of (users.results || [])) {
+    const r = await refreshFactsForWorkspace(c.env.DB, (u as any).id, null);
+    results.push({ workspace: 'user:' + (u as any).id, ...r });
+  }
+  for (const cl of (clients.results || [])) {
+    const r = await refreshFactsForWorkspace(c.env.DB, (cl as any).user_id, (cl as any).id);
+    results.push({ workspace: 'client:' + (cl as any).id, ...r });
+  }
+  return c.json({ workspaces_processed: results.length, results });
+});
+
 // Read facts back — used by the frontend to inject into AI prompts.
 app.get('/api/db/facts', async (c) => {
   const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
@@ -1333,6 +1360,28 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
   return { posts_processed: posts.length };
 }
 
+// Daily — refresh client_facts for every workspace with a connected FB Page.
+// Keeps the AI's ground-truth data current without the user clicking Refresh.
+async function cronRefreshFacts(env: Env): Promise<{ posts_processed: number }> {
+  const users = await env.DB.prepare(
+    `SELECT id FROM users WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL`
+  ).all();
+  const clients = await env.DB.prepare(
+    `SELECT id, user_id FROM clients WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL AND COALESCE(status,'active') != 'on_hold'`
+  ).all();
+  let processed = 0;
+  for (const u of (users.results || [])) {
+    try { await refreshFactsForWorkspace(env.DB, (u as any).id, null); processed++; }
+    catch (e: any) { console.warn(`[CRON facts] user ${(u as any).id}: ${e.message}`); }
+  }
+  for (const cl of (clients.results || [])) {
+    try { await refreshFactsForWorkspace(env.DB, (cl as any).user_id, (cl as any).id); processed++; }
+    catch (e: any) { console.warn(`[CRON facts] client ${(cl as any).id}: ${e.message}`); }
+  }
+  console.log(`[CRON facts] refreshed ${processed} workspaces`);
+  return { posts_processed: processed };
+}
+
 async function cronRefreshTokens(env: Env) {
   const appId = env.FACEBOOK_APP_ID;
   const appSecret = env.FACEBOOK_APP_SECRET;
@@ -1472,6 +1521,11 @@ export default {
     // Daily at 3am UTC — refresh Facebook tokens
     if (cron === '0 3 * * *') {
       await trackCron(env, 'token_refresh', () => cronRefreshTokens(env));
+      return;
+    }
+    // Daily at 4am UTC — refresh client_facts from connected Facebook Pages
+    if (cron === '0 4 * * *') {
+      await trackCron(env, 'facts_refresh', () => cronRefreshFacts(env));
       return;
     }
     // Fallback: run all (for 6-hourly credit check and any unmatched triggers)
