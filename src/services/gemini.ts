@@ -257,15 +257,16 @@ ${formatInstr ? `\n${formatInstr}` : ''}
 
 ${platformRules}
 
-ANTI-GENERIC RULES:
-- Never start with "Exciting news!" or "We're thrilled to announce"
-- Never use filler phrases like "In today's fast-paced world", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level"
-- BANNED phrases — never write: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "In today's digital age". If you catch yourself writing these, stop and replace with a concrete specific detail.
-- Every sentence must earn its place — if it could apply to any business, rewrite it
-- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name
-- If content topics are provided above, the post MUST relate to one of those topics or themes
-- Write like you're texting a smart friend, not writing a press release
-- Do NOT invent events, campaigns, countdown language, or facts that aren't in the brand context — stay true to what the business actually does
+STRICT ANTI-GENERIC RULES (treat as forbidden tokens — DO NOT WRITE under any condition):
+- FORBIDDEN openers: "Exciting news!", "We're thrilled to announce", "Big news!", "Have you heard?"
+- FORBIDDEN filler: "In today's fast-paced world", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "Game-changer", "Revolutionise"
+- FORBIDDEN CTAs: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "Click the link in bio!"
+- If you draft any forbidden phrase, STOP, delete it, and replace with a concrete specific detail (named product, location, customer action, or measurable outcome).
+- ZERO HALLUCINATION: Do NOT invent statistics, percentages, customer testimonials/quotes, fake countdowns, fake URLs, or made-up campaign names. If the brand context lacks a real number, write the qualitative benefit instead.
+- Every sentence must earn its place — if it could apply to any business, rewrite it.
+- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name.
+- If content topics are provided above, the post MUST relate to one of those topics or themes.
+- Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
 Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product — ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods' — name the specific item. NO people, NO hands, NO faces."}
@@ -335,8 +336,46 @@ Content must respect the character limits above. No padding. No filler.`;
   };
 
   const text = await callAI(prompt, { temperature: 0.8, maxTokens: 512, responseFormat: 'json' });
-  return parseRaw(text);
+  const parsed = parseRaw(text);
+  // Post-process: enforce hashtag count limits and strip any banned phrases that
+  // slipped through the prompt. Both have failed in production before.
+  const limit = platform === 'Facebook' ? HASHTAG_LIMITS.facebook.optimal : HASHTAG_LIMITS.instagram.optimal;
+  if (Array.isArray(parsed.hashtags) && parsed.hashtags.length > limit) {
+    console.warn(`[gemini] truncating ${parsed.hashtags.length} → ${limit} hashtags for ${platform}`);
+    parsed.hashtags = parsed.hashtags.slice(0, limit);
+  }
+  if (typeof parsed.content === 'string') {
+    parsed.content = scrubBannedPhrases(parsed.content);
+  }
+  return parsed;
 };
+
+// Catch banned phrases that slipped past the prompt. Replace with neutral
+// alternatives or strip outright. Logs on every hit so quality can be tracked.
+const BANNED_PATTERNS: Array<[RegExp, string]> = [
+  [/\bWant to boost your [^?.!]+[?.!]/gi, ''],
+  [/\bEngage with your audience!?/gi, ''],
+  [/\bCheck out our website[^.!?]*[.!?]/gi, ''],
+  [/\bVisit our website[^.!?]*[.!?]/gi, ''],
+  [/\bLet [^.]+ handle the rest!?/gi, ''],
+  [/\bIn today's (digital age|fast-paced world)[,.]?\s*/gi, ''],
+  [/\bAs a business owner[,.]?\s*/gi, ''],
+  [/\bStay ahead of the competition!?/gi, ''],
+  [/\bTake your [^.!?]+ to the next level!?/gi, ''],
+  [/\bExciting news!\s*/gi, ''],
+  [/\bWe('?re| are) thrilled to announce[^.!?]*[.!?]\s*/gi, ''],
+];
+function scrubBannedPhrases(content: string): string {
+  let out = content;
+  for (const [pattern, replacement] of BANNED_PATTERNS) {
+    if (pattern.test(out)) {
+      console.warn(`[gemini] scrubbing banned phrase: ${pattern}`);
+      out = out.replace(pattern, replacement);
+    }
+  }
+  // Tidy double-spaces and stray punctuation left after deletions.
+  return out.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
+}
 
 export const generateMarketingImage = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
   // Helper: convert a remote image URL to a compressed data URL

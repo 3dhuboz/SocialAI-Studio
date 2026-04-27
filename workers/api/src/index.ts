@@ -87,7 +87,56 @@ async function getAuthUserId(req: Request, secretKey: string, jwtKey?: string, d
 // ── UUID helper ──────────────────────────────────────────────────────────────
 const uuid = () => crypto.randomUUID();
 
+// ── Business-rule: posts for on-hold clients must NEVER be claimed by the cron.
+// This filter has been reverted twice in the past when the SQL was inline; keep
+// it named and centralised so any future cron query can include it explicitly.
+// Append to a WHERE clause: ` AND ${ACTIVE_CLIENT_FILTER}` (no leading AND).
+const ACTIVE_CLIENT_FILTER =
+  `(client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`;
+
+// ── Rate limiter (D1-backed sliding window).
+// Returns true if the caller is OVER the limit (i.e. the request should be blocked),
+// false if the request is allowed.
+async function isRateLimited(
+  db: D1Database, key: string, maxPerMinute: number,
+): Promise<boolean> {
+  const now = Date.now();
+  const windowStart = now - 60_000;
+  await db.exec(
+    `CREATE TABLE IF NOT EXISTS rate_limit_log (key TEXT NOT NULL, ts INTEGER NOT NULL)`
+  );
+  const row = await db.prepare(
+    `SELECT COUNT(*) as cnt FROM rate_limit_log WHERE key = ? AND ts > ?`
+  ).bind(key, windowStart).first<{ cnt: number }>();
+  const count = row?.cnt ?? 0;
+  if (count >= maxPerMinute) return true;
+  await db.prepare(`INSERT INTO rate_limit_log (key, ts) VALUES (?,?)`).bind(key, now).run();
+  // Opportunistic GC of old rows on ~1% of calls.
+  if (Math.random() < 0.01) {
+    await db.prepare(`DELETE FROM rate_limit_log WHERE ts < ?`).bind(now - 5 * 60_000).run();
+  }
+  return false;
+}
+
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
+
+// Cron observability — last 30 cron runs (public so the deploy-monitor widget
+// can poll without an auth token; emits no PII).
+app.get('/api/cron-health', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT run_at, cron_type, success, posts_processed, duration_ms,
+            substr(COALESCE(error,''),1,200) as error
+     FROM cron_runs ORDER BY run_at DESC LIMIT 30`
+  ).all();
+  const runs = rows.results ?? [];
+  const lastSuccess = runs.find((r: any) => r.success === 1);
+  const lastFailure = runs.find((r: any) => r.success === 0);
+  return c.json({
+    runs,
+    last_success_at: (lastSuccess as any)?.run_at ?? null,
+    last_failure_at: (lastFailure as any)?.run_at ?? null,
+  });
+});
 
 
 // Public post schedule feed — used by deploy monitor widget
@@ -114,6 +163,15 @@ app.post('/api/ai/generate', async (c) => {
   const apiKey = c.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return c.json({ error: 'OpenRouter API key not configured on worker.' }, 500);
+  }
+
+  // AUTH GATE — require Clerk JWT or Portal token. Stops anonymous abuse of OpenRouter credits.
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+  // RATE LIMIT — 30 generations per minute per user.
+  if (await isRateLimited(c.env.DB, `ai:${uid}`, 30)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
   }
 
   let body: {
@@ -538,13 +596,29 @@ app.delete('/api/db/campaigns/:id', async (c) => {
 
 // ── DB: Portal ────────────────────────────────────────────────────────────────
 
-// Public — returns portal token for client-mode auth (no Clerk needed)
+// Portal authentication endpoint.
+// PUBLIC: GET /api/db/portal/:slug returns ONLY non-sensitive existence info.
+//   Used by the portal frontend to confirm the slug is recognised.
+// AUTHENTICATED: GET /api/db/portal/:slug?secret=<x> returns the portal_token
+//   ONLY when the caller proves knowledge of a per-portal shared secret
+//   (set as VITE_PORTAL_SECRET env var on each Pages deploy).
 app.get('/api/db/portal/:slug', async (c) => {
   const slug = c.req.param('slug').toLowerCase();
   const row = await c.env.DB.prepare(
     'SELECT email, password, portal_token, user_id, client_id FROM portal WHERE slug = ?'
   ).bind(slug).first<{ email: string; password: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
-  return c.json({ portal: row ?? null });
+  if (!row) return c.json({ portal: null }, 404);
+
+  // Caller proved knowledge of the shared secret — return full record.
+  // The "password" column is reused as the per-portal shared secret.
+  const url = new URL(c.req.url);
+  const providedSecret = url.searchParams.get('secret') || c.req.header('X-Portal-Secret');
+  if (providedSecret && row.password && providedSecret === row.password) {
+    return c.json({ portal: row });
+  }
+
+  // Anonymous response: no PII, no token. Just confirms slug exists.
+  return c.json({ portal: { exists: true, client_id: row.client_id } });
 });
 
 app.put('/api/db/portal/:slug', async (c) => {
@@ -717,6 +791,15 @@ app.post('/api/facebook-exchange-token', async (c) => {
 app.all('/api/fal-proxy', async (c) => {
   const apiKey = c.env.FAL_API_KEY;
   if (!apiKey) return c.json({ error: 'fal.ai API key not configured' }, 401);
+
+  // AUTH GATE — fal.ai is paid per-image/video; never let it run anonymous.
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  // RATE LIMIT — 20 fal.ai calls per minute per user (images are the dominant cost).
+  if (await isRateLimited(c.env.DB, `fal:${uid}`, 20)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+
   const url = new URL(c.req.url);
   const action = url.searchParams.get('action');
   const authHeader = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
@@ -791,15 +874,21 @@ app.all('/api/fal-proxy', async (c) => {
 
 // ── fal.ai Proxy (path-based passthrough) ───────────────────────────────────
 app.all('/api/fal-proxy/*', async (c) => {
+  // AUTH GATE — required to use the proxied fal.ai endpoint with our key.
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  if (await isRateLimited(c.env.DB, `fal:${uid}`, 20)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+
   const path = c.req.path.replace('/api/fal-proxy', '');
   const url = `https://api.fal.ai${path}`;
   const method = c.req.method;
   const body = method !== 'GET' && method !== 'HEAD' ? await c.req.text() : undefined;
-  
-  // Get key from Authorization header or fallback to env var
-  const authHeader = c.req.header('Authorization');
-  const apiKey = authHeader?.replace('Bearer ', '') || c.env.FAL_API_KEY;
-  if (!apiKey) return c.json({ error: 'fal.ai API key required' }, 401);
+
+  // Server uses its own key; ignore client-supplied keys to prevent abuse.
+  const apiKey = c.env.FAL_API_KEY;
+  if (!apiKey) return c.json({ error: 'fal.ai API key not configured' }, 500);
 
   const headers = { 
     Authorization: `Bearer ${apiKey}`,
@@ -923,7 +1012,7 @@ app.post('/api/paypal-verify', async (c) => {
 // 0 3 * * *   → token refresh (daily at 3am UTC)
 // 0 */6 * * * → fal.ai credit check (every 6 hours)
 
-async function cronPublishMissedPosts(env: Env) {
+async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
 
@@ -941,7 +1030,7 @@ async function cronPublishMissedPosts(env: Env) {
   await env.DB.prepare(
     `UPDATE posts SET status = 'Publishing', image_prompt = COALESCE(image_prompt, '') || '|claim:' || ?
      WHERE status = 'Scheduled' AND scheduled_for <= ?
-       AND (client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`
+       AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(claimId, nowAEST).run();
 
   const rows = await env.DB.prepare(
@@ -949,7 +1038,7 @@ async function cronPublishMissedPosts(env: Env) {
      FROM posts WHERE status = 'Publishing' AND image_prompt LIKE '%' || ? LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
-  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return; }
+  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: 0 }; }
   console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
   for (const post of posts) {
@@ -1058,6 +1147,7 @@ async function cronPublishMissedPosts(env: Env) {
       await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
     }
   }
+  return { posts_processed: posts.length };
 }
 
 async function cronRefreshTokens(env: Env) {
@@ -1157,22 +1247,52 @@ async function cronCheckFalCredits(env: Env) {
   }
 }
 
+// Wrap a cron function with try/catch + duration tracking + cron_runs logging.
+// Returns void; never throws (so a failure in one cron doesn't kill the worker).
+async function trackCron(
+  env: Env,
+  cronType: string,
+  fn: () => Promise<{ posts_processed?: number } | void>,
+): Promise<void> {
+  const start = Date.now();
+  let success = 1;
+  let posts = 0;
+  let error: string | null = null;
+  try {
+    const result = await fn();
+    posts = result?.posts_processed ?? 0;
+  } catch (e: any) {
+    success = 0;
+    error = (e?.message || String(e)).slice(0, 1000);
+    console.error(`[CRON ${cronType}] FAILED:`, error);
+  }
+  const duration = Date.now() - start;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms)
+       VALUES (?,?,?,?,?)`
+    ).bind(cronType, success, posts, error, duration).run();
+  } catch (logErr: any) {
+    console.error(`[CRON ${cronType}] Failed to log run:`, logErr?.message);
+  }
+}
+
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const cron = event.cron;
     // Every 5 minutes — publish missed posts
     if (cron === '*/5 * * * *') {
-      await cronPublishMissedPosts(env);
+      await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
       return;
     }
     // Daily at 3am UTC — refresh Facebook tokens
     if (cron === '0 3 * * *') {
-      await cronRefreshTokens(env);
+      await trackCron(env, 'token_refresh', () => cronRefreshTokens(env));
       return;
     }
     // Fallback: run all (for 6-hourly credit check and any unmatched triggers)
-    await cronPublishMissedPosts(env);
-    await cronCheckFalCredits(env);
+    await trackCron(env, 'publish_fallback', () => cronPublishMissedPosts(env));
+    await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
   },
 };

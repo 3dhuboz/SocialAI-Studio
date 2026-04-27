@@ -38,10 +38,18 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           return;
         }
 
-        // Fetch portal record (public endpoint, no auth needed)
+        // Fetch portal record. The endpoint requires a per-portal shared secret
+        // (set as VITE_PORTAL_SECRET env var on each Pages deploy) — without it,
+        // the API returns only `{exists}` and no token, so a slug guess from a
+        // stranger doesn't grant access. Whitelabel deploys must have this set.
         const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
           || 'https://socialai-api.steve-700.workers.dev';
-        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(clientId.toLowerCase())}`);
+        const portalSecret = (import.meta.env as Record<string, string>).VITE_PORTAL_SECRET || '';
+        if (!portalSecret) {
+          console.warn('[PortalAuth] VITE_PORTAL_SECRET not set — portal token will not be returned by API.');
+        }
+        const headers: Record<string, string> = portalSecret ? { 'X-Portal-Secret': portalSecret } : {};
+        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(clientId.toLowerCase())}`, { headers });
         const data = await res.json() as {
           portal: {
             email: string;
