@@ -204,8 +204,14 @@ app.post('/api/ai/generate', async (c) => {
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
 
+  // Model is selectable per-request via body.model. Defaults to Claude Haiku
+  // for content generation — significantly better instruction-following and
+  // hallucination resistance than Gemini Flash, ~3-5x more expensive but still
+  // pennies per Smart Schedule. Gemini still available as a cheap fallback for
+  // low-stakes calls (e.g. best-times tips) by passing model in the body.
+  const requestedModel = (body as any).model as string | undefined;
   const orBody: Record<string, unknown> = {
-    model: 'google/gemini-2.0-flash-001',
+    model: requestedModel || 'anthropic/claude-haiku-4.5',
     messages,
     temperature,
     max_tokens: maxTokens,
@@ -785,6 +791,183 @@ app.post('/api/facebook-exchange-token', async (c) => {
     pages,
     pageTokensNeverExpire: true,
   });
+});
+
+// ── Facebook Page Insights Scraper ─────────────────────────────────────────
+// Pulls a connected Page's REAL data (own posts, comments, about, photos,
+// events) into the client_facts table. The AI then writes from real ground
+// truth instead of inventing testimonials and stats.
+//
+// POST /api/db/refresh-facts            → scrapes the calling user's own page
+// POST /api/db/refresh-facts/:clientId  → scrapes a specific client's page
+async function refreshFactsForWorkspace(
+  db: D1Database,
+  uid: string,
+  clientId: string | null,
+): Promise<{ inserted: number; errors: string[] }> {
+  const errors: string[] = [];
+  // Get tokens
+  const tokenRow = clientId
+    ? await db.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
+    : await db.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
+  const tokens = tokenRow?.social_tokens ? JSON.parse(tokenRow.social_tokens) : null;
+  const pageId = tokens?.facebookPageId;
+  const pageToken = tokens?.facebookPageAccessToken;
+  if (!pageId || !pageToken) {
+    return { inserted: 0, errors: ['No Facebook page connected for this workspace.'] };
+  }
+
+  const base = 'https://graph.facebook.com/v21.0';
+  const inserts: Array<{ type: string; content: string; meta: any; fb_id: string; eng: number }> = [];
+
+  // 1. Page about/description/products/hours (1 row)
+  try {
+    const r = await fetch(`${base}/${pageId}?fields=about,description,category,founded,mission,products,phone,hours,website,location,fan_count&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d && !d.error) {
+      const blob = [
+        d.about && `About: ${d.about}`,
+        d.description && `Description: ${d.description}`,
+        d.category && `Category: ${d.category}`,
+        d.products && `Products: ${d.products}`,
+        d.mission && `Mission: ${d.mission}`,
+        d.hours && `Hours: ${JSON.stringify(d.hours)}`,
+        d.location && `Location: ${[d.location.street, d.location.city, d.location.state, d.location.country].filter(Boolean).join(', ')}`,
+        d.website && `Website: ${d.website}`,
+      ].filter(Boolean).join('\n');
+      if (blob) inserts.push({ type: 'about', content: blob, meta: { fan_count: d.fan_count }, fb_id: pageId, eng: 0 });
+    } else if (d?.error) errors.push(`about: ${d.error.message}`);
+  } catch (e: any) { errors.push(`about: ${e.message}`); }
+
+  // 2. Last 50 posts with engagement
+  let topPostIds: string[] = [];
+  try {
+    const r = await fetch(`${base}/${pageId}/posts?fields=id,message,created_time,likes.summary(true),comments.summary(true),shares&limit=50&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d?.error) errors.push(`posts: ${d.error.message}`);
+    const posts = d?.data || [];
+    for (const p of posts) {
+      if (!p.message || p.message.length < 20) continue;
+      const eng = (p.likes?.summary?.total_count || 0) + ((p.comments?.summary?.total_count || 0) * 3) + ((p.shares?.count || 0) * 5);
+      inserts.push({
+        type: 'own_post',
+        content: p.message,
+        meta: { likes: p.likes?.summary?.total_count, comments: p.comments?.summary?.total_count, shares: p.shares?.count, created: p.created_time },
+        fb_id: p.id,
+        eng,
+      });
+    }
+    // Pick top 5 posts by engagement to mine for comments
+    topPostIds = posts
+      .filter((p: any) => p.message)
+      .sort((a: any, b: any) => ((b.likes?.summary?.total_count || 0) + (b.comments?.summary?.total_count || 0)) - ((a.likes?.summary?.total_count || 0) + (a.comments?.summary?.total_count || 0)))
+      .slice(0, 5)
+      .map((p: any) => p.id);
+  } catch (e: any) { errors.push(`posts: ${e.message}`); }
+
+  // 3. Comments on top-engagement posts (real customer voice)
+  for (const pid of topPostIds) {
+    try {
+      const r = await fetch(`${base}/${pid}/comments?fields=id,message,from,like_count&limit=20&access_token=${pageToken}`);
+      const d: any = await r.json();
+      if (d?.error) continue;
+      for (const c of d?.data || []) {
+        if (!c.message || c.message.length < 8 || c.message.length > 500) continue;
+        // Skip comments from the page itself (replies)
+        if (c.from?.id === pageId) continue;
+        inserts.push({
+          type: 'comment',
+          content: c.message,
+          meta: { like_count: c.like_count, from: c.from?.name },
+          fb_id: c.id,
+          eng: c.like_count || 0,
+        });
+      }
+    } catch { /* skip this post */ }
+  }
+
+  // 4. Recent photos (URLs only — for AI to reference real imagery)
+  try {
+    const r = await fetch(`${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d?.error) errors.push(`photos: ${d.error.message}`);
+    for (const ph of d?.data || []) {
+      const url = ph.images?.[0]?.source;
+      if (!url) continue;
+      inserts.push({
+        type: 'photo',
+        content: ph.name || 'Untitled photo',
+        meta: { url },
+        fb_id: ph.id,
+        eng: 0,
+      });
+    }
+  } catch (e: any) { errors.push(`photos: ${e.message}`); }
+
+  // 5. Upcoming events (real future dates AI can reference)
+  try {
+    const r = await fetch(`${base}/${pageId}/events?fields=id,name,description,start_time,place&time_filter=upcoming&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (!d?.error) {
+      for (const ev of d?.data || []) {
+        inserts.push({
+          type: 'event',
+          content: `${ev.name}${ev.description ? ' — ' + ev.description.substring(0, 200) : ''}`,
+          meta: { start_time: ev.start_time, place: ev.place?.name },
+          fb_id: ev.id,
+          eng: 0,
+        });
+      }
+    }
+    // events permission often missing — silently skip
+  } catch { /* skip */ }
+
+  // Wipe old rows for this workspace + replace (UNIQUE constraint covers de-dup
+  // but a fresh wipe ensures stale facts are removed)
+  await db.prepare('DELETE FROM client_facts WHERE user_id = ? AND COALESCE(client_id, \'\') = ?').bind(uid, clientId || '').run();
+
+  let inserted = 0;
+  for (const f of inserts) {
+    try {
+      await db.prepare(
+        `INSERT OR IGNORE INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score)
+         VALUES (?,?,?,?,?,?,?)`
+      ).bind(uid, clientId, f.type, f.content, JSON.stringify(f.meta || {}), f.fb_id, f.eng).run();
+      inserted++;
+    } catch { /* duplicate or constraint — skip */ }
+  }
+
+  return { inserted, errors };
+}
+
+app.post('/api/db/refresh-facts', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const result = await refreshFactsForWorkspace(c.env.DB, uid, null);
+  return c.json(result);
+});
+
+app.post('/api/db/refresh-facts/:clientId', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.param('clientId');
+  const result = await refreshFactsForWorkspace(c.env.DB, uid, clientId);
+  return c.json(result);
+});
+
+// Read facts back — used by the frontend to inject into AI prompts.
+app.get('/api/db/facts', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId') || null;
+  const rows = await c.env.DB.prepare(
+    `SELECT fact_type, content, metadata, engagement_score, verified_at
+     FROM client_facts
+     WHERE user_id = ? AND COALESCE(client_id, '') = ?
+     ORDER BY engagement_score DESC, verified_at DESC
+     LIMIT 200`
+  ).bind(uid, clientId || '').all();
+  return c.json({ facts: rows.results || [] });
 });
 
 // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────────

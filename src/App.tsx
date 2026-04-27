@@ -1095,7 +1095,7 @@ const Dashboard: React.FC = () => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
     setIsGenerating(true);
     try {
-      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat);
+      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat, activeClientId);
       setGeneratedContent(result.content);
       setGeneratedHashtags(result.hashtags || []);
       if (result.imagePrompt) setLastImagePrompt(result.imagePrompt);
@@ -1337,7 +1337,8 @@ const Dashboard: React.FC = () => {
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
         undefined,
-        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay }))
+        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay })),
+        activeClientId,
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');

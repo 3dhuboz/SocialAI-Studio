@@ -114,6 +114,79 @@ const getImagePromptExamples = (businessType: string): string => {
   return `e.g. 'the main product/service of ${businessType} in its natural setting, professional lighting, close-up shot'`;
 };
 
+// ── Real-data ground-truth fetcher (FB-scraped facts) ──
+// The AI used to invent testimonials and stats because it had nothing real.
+// Now we pull a slice of the client_facts table (populated by the Worker
+// scraping their connected FB Page) and inject only verified, real content
+// into prompts. Falls back gracefully if the workspace has no facts yet.
+export interface ClientFact {
+  fact_type: 'about' | 'own_post' | 'comment' | 'photo' | 'event';
+  content: string;
+  metadata: any;
+  engagement_score: number;
+}
+let _factsCache: { key: string; ts: number; facts: ClientFact[] } | null = null;
+const FACTS_TTL_MS = 5 * 60 * 1000; // 5 min in-memory cache
+
+export async function fetchClientFacts(clientId?: string | null): Promise<ClientFact[]> {
+  const key = clientId || '_self';
+  if (_factsCache && _factsCache.key === key && Date.now() - _factsCache.ts < FACTS_TTL_MS) {
+    return _factsCache.facts;
+  }
+  try {
+    const headers = await aiAuthHeaders();
+    const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+    const res = await fetch(`${AI_WORKER}/api/db/facts${qs}`, { headers });
+    if (!res.ok) return [];
+    const data = await res.json() as { facts?: any[] };
+    const facts: ClientFact[] = (data.facts || []).map((f: any) => ({
+      fact_type: f.fact_type,
+      content: f.content,
+      metadata: typeof f.metadata === 'string' ? (() => { try { return JSON.parse(f.metadata); } catch { return {}; } })() : f.metadata,
+      engagement_score: f.engagement_score || 0,
+    }));
+    _factsCache = { key, ts: Date.now(), facts };
+    return facts;
+  } catch {
+    return [];
+  }
+}
+export function clearFactsCache() { _factsCache = null; }
+
+/** Build a ground-truth block to inject into AI prompts.
+ * Returns "" if no facts available so the prompt degrades gracefully. */
+export function buildGroundTruthBlock(facts: ClientFact[]): string {
+  if (!facts.length) return '';
+  const about = facts.find(f => f.fact_type === 'about');
+  const topPosts = facts.filter(f => f.fact_type === 'own_post').slice(0, 5);
+  const comments = facts.filter(f => f.fact_type === 'comment').slice(0, 5);
+  const events = facts.filter(f => f.fact_type === 'event').slice(0, 3);
+
+  const sections: string[] = [];
+  sections.push('═══════════════════════════════════════════════════════════════════');
+  sections.push('VERIFIED FACTS — scraped from this business\'s real Facebook Page.');
+  sections.push('These are the ONLY facts you may cite. Anything not below is invention.');
+  sections.push('═══════════════════════════════════════════════════════════════════');
+  if (about) sections.push(`\nPAGE INFO:\n${about.content}`);
+  if (topPosts.length) {
+    sections.push(`\nTHEIR TOP-PERFORMING PAST POSTS (write in this same voice):`);
+    topPosts.forEach((p, i) => {
+      const eng = p.engagement_score ? ` [${p.engagement_score} engagement]` : '';
+      sections.push(`${i + 1}.${eng} ${p.content.substring(0, 280)}`);
+    });
+  }
+  if (comments.length) {
+    sections.push(`\nREAL CUSTOMER COMMENTS (use this language; quote sparingly with attribution like "one customer wrote"):`);
+    comments.forEach((c, i) => sections.push(`${i + 1}. ${c.content.substring(0, 200)}`));
+  }
+  if (events.length) {
+    sections.push(`\nREAL UPCOMING EVENTS (only events you may reference):`);
+    events.forEach(e => sections.push(`• ${e.content} (${e.metadata?.start_time || 'TBA'})`));
+  }
+  sections.push('═══════════════════════════════════════════════════════════════════\n');
+  return sections.join('\n');
+}
+
 // Auth wiring — /api/ai/generate now requires Clerk JWT or Portal token.
 // Each auth context calls setGeminiAuth() at startup so callAI can attach
 // the right Authorization header.
@@ -196,8 +269,13 @@ export const generateSocialPost = async (
     location?: string;
     contentTopics?: string;
   },
-  contentFormat?: string
+  contentFormat?: string,
+  /** When provided, AI is restricted to citing only these scraped FB facts. */
+  clientId?: string | null,
 ): Promise<{ content: string; hashtags: string[]; imagePrompt?: string }> => {
+  // Pull verified FB-scraped facts for this workspace (zero invention possible)
+  const facts = await fetchClientFacts(clientId);
+  const groundTruthBlock = buildGroundTruthBlock(facts);
   // Sanity check: detect corrupted profile data (e.g. agency profile leaked into client workspace)
   const isSinglePostProfileCorrupted = (() => {
     if (!profile) return false;
@@ -303,7 +381,7 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 
 You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
-${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
+${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
@@ -1002,7 +1080,12 @@ export const generateSmartSchedule = async (
   onPhase?: (phase: 'researching' | 'writing') => void,
   campaignFocus?: string,
   activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[],
+  /** When provided, AI is restricted to citing only these scraped FB facts. */
+  clientId?: string | null,
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
+  // Pull verified FB-scraped facts up-front (cached for 5 min)
+  const facts = await fetchClientFacts(clientId);
+  const groundTruthBlock = buildGroundTruthBlock(facts);
   try {
     const now = new Date();
     const isQuick24h = scheduleMode === 'quick24h';
@@ -1294,7 +1377,7 @@ You are an elite social media growth operator running a SATURATION CAMPAIGN for 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
+${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
@@ -1345,7 +1428,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
+${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results — never generic marketing advice that could apply to any business. Do NOT invent campaigns, countdown language, or stats that are not in the business context above.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
