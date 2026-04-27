@@ -3452,7 +3452,7 @@ const Dashboard: React.FC = () => {
                     <p className="text-sm font-bold text-white">{smartPosts.length} posts ready</p>
                     {autoGenSet.size > 0 ? (
                       <p className="text-xs text-amber-400 flex items-center gap-1">
-                        <Loader2 size={10} className="animate-spin" /> Generating images… {imgGenDone}/{smartPosts.length}
+                        <Loader2 size={10} className="animate-spin" /> Generating images… {imgGenDone}/{smartPosts.length} — Accept disabled until done
                       </p>
                     ) : (
                       <p className="text-xs text-white/30">Review below, then add all to your calendar</p>
@@ -3461,11 +3461,14 @@ const Dashboard: React.FC = () => {
                   <div className="flex flex-col items-end gap-1.5">
                     <button
                       onClick={handleAcceptSmartPosts}
-                      disabled={isAccepting}
-                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
+                      disabled={isAccepting || autoGenSet.size > 0}
+                      title={autoGenSet.size > 0 ? `Wait for image generation to finish (${imgGenDone}/${smartPosts.length})` : ''}
+                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
                     >
                       {isAccepting ? (
                         <><Loader2 size={16} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
+                      ) : autoGenSet.size > 0 ? (
+                        <><Loader2 size={16} className="animate-spin" /> Waiting for images ({imgGenDone}/{smartPosts.length})</>
                       ) : (
                         <><CheckCircle size={16} /> Accept All & Add to Calendar</>
                       )}

@@ -982,6 +982,90 @@ app.post('/api/db/refresh-facts/:clientId', async (c) => {
 // One-shot bootstrap — scrape ALL workspaces with FB tokens. Used to seed the
 // table for existing connected accounts. Protected by FACTS_BOOTSTRAP_SECRET
 // env var (set via wrangler secret) — anyone with the secret can re-seed.
+// Backfill images for any Scheduled post that has an image_prompt but no image_url.
+// Authenticated variant: only the calling user's posts (own + their clients').
+app.post('/api/db/backfill-images', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  return c.json(await backfillImagesForUser(c.env, uid));
+});
+
+// Admin variant: backfill across every workspace. Gated by FACTS_BOOTSTRAP_SECRET.
+app.post('/api/admin/backfill-images-all', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const users = await c.env.DB.prepare('SELECT id FROM users').all();
+  const results: any[] = [];
+  for (const u of (users.results || [])) {
+    const r = await backfillImagesForUser(c.env, (u as any).id);
+    results.push({ user_id: (u as any).id, ...r });
+  }
+  return c.json({ users_processed: results.length, results });
+});
+
+async function backfillImagesForUser(env: Env, uid: string) {
+  const apiKey = env.FAL_API_KEY;
+  if (!apiKey) return { error: 'fal.ai not configured', found: 0, succeeded: 0, failed: 0 };
+
+  // Find Scheduled posts owned by this user (own + via client) that have a
+  // prompt but no URL. Cap at 30 per call so a single backfill can't blow the
+  // fal.ai budget.
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.image_prompt, p.client_id
+     FROM posts p
+     LEFT JOIN clients c ON p.client_id = c.id
+     WHERE p.status = 'Scheduled'
+       AND (p.user_id = ? OR c.user_id = ?)
+       AND (p.image_url IS NULL OR p.image_url = '')
+       AND p.image_prompt IS NOT NULL
+       AND p.image_prompt != 'N/A'
+       AND p.image_prompt != ''
+     LIMIT 30`
+  ).bind(uid, uid).all();
+
+  const posts = rows.results || [];
+  let succeeded = 0; let failed = 0; const errors: string[] = [];
+
+  for (const post of posts) {
+    try {
+      // Strip people/face vocabulary from the prompt (mirrors gemini.ts logic)
+      const raw = String((post as any).image_prompt || '');
+      const cleaned = raw
+        .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const finalPrompt = `${cleaned}, product photography, natural light, shallow depth of field, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
+
+      const res = await fetch('https://fal.run/fal-ai/flux/dev', {
+        method: 'POST',
+        headers: { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: finalPrompt, image_size: 'square_hd',
+          num_inference_steps: 25, num_images: 1,
+          enable_safety_checker: true, guidance_scale: 3.5,
+        }),
+      });
+      const data: any = await res.json();
+      const url = data?.images?.[0]?.url;
+      if (res.ok && url) {
+        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(url, (post as any).id).run();
+        succeeded++;
+      } else {
+        failed++;
+        errors.push(`${(post as any).id}: ${(data?.detail || data?.message || res.status)}`);
+      }
+    } catch (e: any) {
+      failed++;
+      errors.push(`${(post as any).id}: ${e.message}`);
+    }
+    // Pace fal.ai — 700ms between calls so 30 posts = ~21s, well under any rate limit
+    await new Promise(r => setTimeout(r, 700));
+  }
+  return { found: posts.length, succeeded, failed, errors: errors.slice(0, 5) };
+}
+
 app.post('/api/admin/bootstrap-all-facts', async (c) => {
   const provided = c.req.header('X-Bootstrap-Secret');
   if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
