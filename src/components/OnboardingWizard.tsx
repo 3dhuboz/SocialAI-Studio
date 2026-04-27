@@ -68,7 +68,7 @@ export const OnboardingWizard: React.FC<Props> = ({
   // ── Overlay backdrop ──────────────────────────────────
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-      <div className="relative w-full max-w-lg bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl overflow-hidden animate-spring-in">
+      <div className="relative w-full max-w-[calc(100vw-1rem)] sm:max-w-lg max-h-[90vh] overflow-y-auto bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl animate-spring-in">
 
         {/* Progress bar */}
         <div className="h-1 bg-white/5">

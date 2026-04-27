@@ -80,18 +80,20 @@ export const CalendarGrid: React.FC<Props> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={() => setViewDate(new Date(year, month - 1, 1))}
-            className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/8 transition text-white/50 hover:text-white"
+            aria-label="Previous month"
+            className="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/8 transition text-white/50 hover:text-white"
           >
-            <ChevronLeft size={15} />
+            <ChevronLeft size={16} />
           </button>
-          <h2 className="text-xl font-bold text-white min-w-[180px]">
+          <h2 className="text-base sm:text-xl font-bold text-white min-w-[120px] sm:min-w-[180px]">
             {MONTHS[month]} <span className="text-white/40 font-normal">{year}</span>
           </h2>
           <button
             onClick={() => setViewDate(new Date(year, month + 1, 1))}
-            className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/8 transition text-white/50 hover:text-white"
+            aria-label="Next month"
+            className="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/8 transition text-white/50 hover:text-white"
           >
-            <ChevronRight size={15} />
+            <ChevronRight size={16} />
           </button>
         </div>
         <button
@@ -127,7 +129,7 @@ export const CalendarGrid: React.FC<Props> = ({
               <button
                 key={idx}
                 onClick={() => setSelectedDay(date)}
-                className={`min-h-[80px] p-2 text-left border-b border-r border-white/5 transition relative
+                className={`min-h-[64px] sm:min-h-[80px] p-1 sm:p-2 text-left border-b border-r border-white/5 transition relative
                   ${idx % 7 === 6 ? 'border-r-0' : ''}
                   ${idx >= 35 ? 'border-b-0' : ''}
                   ${isSelected ? 'bg-amber-500/8 border-amber-500/20 shadow-[inset_0_0_30px_rgba(245,158,11,0.05)]' : isCurrentMonth ? 'hover:bg-white/[0.04] hover:shadow-[inset_0_0_20px_rgba(255,255,255,0.02)]' : 'hover:bg-white/2'}
