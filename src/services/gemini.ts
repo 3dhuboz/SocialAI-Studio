@@ -623,7 +623,13 @@ Score each rule 0 or 1:
 
 Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_stats":0|1,"no_fake_urgency":0|1,"reason":"one short sentence if any rule is 0, else empty"}`;
   try {
-    const text = await callAI(prompt, { temperature: 0, maxTokens: 300, responseFormat: 'json' });
+    // Hard timeout — one slow judge call must NEVER block the whole batch.
+    // Promise.all of 21 judges blocked on a stalled fetch is what hung the
+    // user's Saturation generation at 96% complete.
+    const text = await Promise.race<string>([
+      callAI(prompt, { temperature: 0, maxTokens: 300, responseFormat: 'json' }),
+      new Promise<string>((_, rej) => setTimeout(() => rej(new Error('judge timeout 8s')), 8000)),
+    ]);
     const result = JSON.parse(text);
     const allPass = result.specifics_grounded === 1
       && result.no_invented_testimonials === 1
@@ -1632,12 +1638,11 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
 
     // ── Hallucination defence: regex scan + LLM judge per post.
-    // Both layers run in parallel via Promise.all so judging 14 posts only adds
-    // ~2-3s instead of 14× call latency. Posts that fail either layer get
-    // _needsReview flag — UI shows red badge so user knows what to scan.
-    posts = await Promise.all(posts.map(async (p: any) => {
+    // Regex runs instantly. Judges fire in BATCHES OF 5 (not 21-at-once) so we
+    // don't hit the worker's 30/min user rate limit and one stall doesn't block
+    // all the rest. Each judge has an 8s timeout (see judgePost).
+    const processOne = async (p: any) => {
       if (typeof p.content !== 'string') return p;
-      // Layer A: regex (instant)
       const regexViolation = detectFabrication(p.content);
       if (regexViolation) {
         p.content = scrubBannedPhrases(p.content);
@@ -1649,7 +1654,6 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       } else {
         p.content = scrubBannedPhrases(p.content);
       }
-      // Layer B: LLM judge (semantic — catches what regex misses)
       try {
         const judgement = await judgePost(p.content, facts, profileBlock || '');
         if (!judgement.pass) {
@@ -1658,7 +1662,16 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
         }
       } catch { /* judge failure should never block */ }
       return p;
-    }));
+    };
+    // Concurrency-limited batching (5 at a time)
+    const judged: any[] = [];
+    const BATCH = 5;
+    for (let i = 0; i < posts.length; i += BATCH) {
+      const slice = posts.slice(i, i + BATCH);
+      const results = await Promise.all(slice.map(processOne));
+      judged.push(...results);
+    }
+    posts = judged;
 
     // Format a Date as local time string (NOT UTC) — "YYYY-MM-DDTHH:MM:SS"
     const toLocalISO = (d: Date): string => {
