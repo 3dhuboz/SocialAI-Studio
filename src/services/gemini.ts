@@ -114,13 +114,35 @@ const getImagePromptExamples = (businessType: string): string => {
   return `e.g. 'the main product/service of ${businessType} in its natural setting, professional lighting, close-up shot'`;
 };
 
+// Auth wiring — /api/ai/generate now requires Clerk JWT or Portal token.
+// Each auth context calls setGeminiAuth() at startup so callAI can attach
+// the right Authorization header.
+type GeminiAuthMode = 'clerk' | 'portal';
+let _getAiToken: (() => Promise<string | null>) | null = null;
+let _aiAuthMode: GeminiAuthMode = 'clerk';
+export function setGeminiAuth(getToken: () => Promise<string | null>, mode: GeminiAuthMode = 'clerk') {
+  _getAiToken = getToken;
+  _aiAuthMode = mode;
+}
+// Shared header builder — used by both /api/ai/generate and /api/fal-proxy callers.
+// Both endpoints require auth (Clerk JWT or Portal token) since rate limiting was added.
+export async function aiAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(extra || {}) };
+  if (_getAiToken) {
+    const tok = await _getAiToken();
+    if (tok) headers['Authorization'] = _aiAuthMode === 'portal' ? `Portal ${tok}` : `Bearer ${tok}`;
+  }
+  return headers;
+}
+
 const callAI = async (
   prompt: string,
   options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
 ): Promise<string> => {
+  const headers = await aiAuthHeaders();
   const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       prompt,
       temperature: options?.temperature ?? 0.8,
@@ -422,7 +444,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     console.log('fal.ai FLUX →', prompt.substring(0, 80));
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await aiAuthHeaders(),
       body: JSON.stringify({ prompt: imagePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
@@ -480,7 +502,7 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await aiAuthHeaders(),
       body: JSON.stringify({ prompt: imagePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };

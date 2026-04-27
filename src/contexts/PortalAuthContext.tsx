@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { AuthContext } from './AuthContext';
 import type { AppUser } from './AuthContext';
 import { createDb } from '../services/db';
+import { setGeminiAuth } from '../services/gemini';
 import { CLIENT } from '../client.config';
 
 interface UserDoc {
@@ -25,6 +26,10 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [portalClientId, setPortalClientId] = useState<string | null>(null);
+
+  // Wire up the AI worker auth — /api/ai/generate and /api/fal-proxy now require
+  // a Portal token. Without this, every AI/image call 401s.
+  useEffect(() => { setGeminiAuth(async () => _portalToken, 'portal'); }, []);
 
   useEffect(() => {
     const run = async () => {

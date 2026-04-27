@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useUser, useClerk, useAuth as useClerkAuth } from '@clerk/react';
 import { createDb } from '../services/db';
+import { setGeminiAuth } from '../services/gemini';
 
 interface UserDoc {
   email: string;
@@ -57,6 +58,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loading = !isLoaded;
 
   const { getToken } = useClerkAuth();
+
+  // Wire up the AI worker auth — /api/ai/generate and /api/fal-proxy now require
+  // either a Clerk JWT or Portal token. Without this, every AI/image call 401s.
+  useEffect(() => { setGeminiAuth(getToken, 'clerk'); }, [getToken]);
 
   const fetchUserDoc = async (uid: string, email: string | null) => {
     const dbClient = createDb(getToken);
