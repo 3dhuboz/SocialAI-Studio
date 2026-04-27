@@ -3488,7 +3488,17 @@ const Dashboard: React.FC = () => {
                           </span>
                           {sp.pillar && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">{sp.pillar}</span>}
                           {isVideo && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">🎬 Reel</span>}
+                          {(sp as any)._needsReview && (
+                            <span title={(sp as any)._reviewReason || 'AI may have invented details — please review'} className="text-[10px] bg-red-900/50 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-bold">
+                              ⚠️ Needs review
+                            </span>
+                          )}
                         </div>
+                        {(sp as any)._needsReview && (
+                          <div className="text-[11px] text-red-300 bg-red-950/30 border border-red-500/20 rounded-lg px-3 py-2">
+                            <strong>Possible fabrication:</strong> {(sp as any)._reviewReason}. Edit or regenerate before accepting.
+                          </div>
+                        )}
                         <p className="text-sm text-white/80 leading-relaxed">{sp.content}</p>
                         <div className="flex flex-wrap gap-1">
                           {sp.hashtags.map((t, j) => (

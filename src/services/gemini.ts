@@ -270,24 +270,52 @@ export const generateSocialPost = async (
 - CTA: prioritise saves ("Save this ✓"), shares ("Tag someone"), or comments (open question).
 - Avoid: hashtag dumps >10 (penalised), generic captions, posting without a scroll-stopping hook.`;
 
-  const prompt = `You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
+  const prompt = `═══════════════════════════════════════════════════════════════════
+GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
+═══════════════════════════════════════════════════════════════════
+
+1. NO INVENTED CUSTOMERS, REVIEWS, OR STORIES.
+   You do NOT have real customer data. NEVER write phrases like:
+     ✗ "A local cafe in [city] said..."
+     ✗ "Rockhampton owner saw..."
+     ✗ "One of our happy clients..."
+     ✗ "A customer told us..."
+     ✗ "Sarah J., Brisbane, says..."
+   You have NO testimonials. Don't invent any. Period.
+
+2. NO INVENTED STATISTICS OR PERCENTAGES.
+   You do NOT have analytics data. NEVER write phrases like:
+     ✗ "increased engagement by 30%"
+     ✗ "saw a 45% boost"
+     ✗ "saved them 10 hours a week"
+     ✗ "generated 5x more leads"
+   No numbers unless they appear verbatim in BRAND CONTEXT below.
+
+3. NO INVENTED EVENTS, CAMPAIGNS, COUNTDOWNS, URLS.
+   No "tomorrow!", no "this weekend only", no "limited spots left",
+   no fake URLs, no fake hashtag campaigns. Only what's in BRAND CONTEXT.
+
+4. EVERY POST MUST NAME A REAL THING from BRAND CONTEXT — an actual
+   product, service, or location explicitly listed below. If you can't
+   tie the post to something specific in BRAND CONTEXT, the post is wrong.
+
+═══════════════════════════════════════════════════════════════════
+
+You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
-${profileContext ? `\nBRAND CONTEXT:\n${profileContext}` : ''}
+${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
 
 ${platformRules}
 
-STRICT ANTI-GENERIC RULES (treat as forbidden tokens — DO NOT WRITE under any condition):
+STRICT ANTI-GENERIC RULES (forbidden tokens — DO NOT WRITE under any condition):
 - FORBIDDEN openers: "Exciting news!", "We're thrilled to announce", "Big news!", "Have you heard?"
 - FORBIDDEN filler: "In today's fast-paced world", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "Game-changer", "Revolutionise"
 - FORBIDDEN CTAs: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "Click the link in bio!"
-- If you draft any forbidden phrase, STOP, delete it, and replace with a concrete specific detail (named product, location, customer action, or measurable outcome).
-- ZERO HALLUCINATION: Do NOT invent statistics, percentages, customer testimonials/quotes, fake countdowns, fake URLs, or made-up campaign names. If the brand context lacks a real number, write the qualitative benefit instead.
+- If you draft any forbidden phrase, STOP, delete it, and replace with a concrete specific detail.
 - Every sentence must earn its place — if it could apply to any business, rewrite it.
-- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name.
-- If content topics are provided above, the post MUST relate to one of those topics or themes.
 - Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
@@ -357,13 +385,28 @@ Content must respect the character limits above. No padding. No filler.`;
     return { content: stripped || 'Could not parse AI response.', hashtags: [] };
   };
 
-  const text = await callAI(prompt, { temperature: 0.8, maxTokens: 512, responseFormat: 'json' });
-  const parsed = parseRaw(text);
-  // Post-process: enforce hashtag count limits and strip any banned phrases that
-  // slipped through the prompt. Both have failed in production before.
+  // Up to 3 attempts: generate → validate → reject if hallucinated → regenerate.
+  // Lower temperature (0.5 not 0.8) to reduce invention without going stiff.
+  let parsed: any;
+  let attempt = 0;
+  let lastReason = '';
+  while (attempt < 3) {
+    attempt++;
+    const text = await callAI(prompt + (attempt > 1 ? `\n\nATTEMPT #${attempt} — your previous draft was rejected because: "${lastReason}". Do not repeat that mistake.` : ''), {
+      temperature: attempt === 1 ? 0.5 : 0.35,
+      maxTokens: 512,
+      responseFormat: 'json',
+    });
+    parsed = parseRaw(text);
+    if (typeof parsed.content !== 'string') break;
+    const violation = detectFabrication(parsed.content);
+    if (!violation) break;
+    lastReason = violation;
+    console.warn(`[gemini] attempt ${attempt} rejected: ${violation}`);
+  }
+  // Final scrub for anything that survived all attempts
   const limit = platform === 'Facebook' ? HASHTAG_LIMITS.facebook.optimal : HASHTAG_LIMITS.instagram.optimal;
   if (Array.isArray(parsed.hashtags) && parsed.hashtags.length > limit) {
-    console.warn(`[gemini] truncating ${parsed.hashtags.length} → ${limit} hashtags for ${platform}`);
     parsed.hashtags = parsed.hashtags.slice(0, limit);
   }
   if (typeof parsed.content === 'string') {
@@ -371,6 +414,33 @@ Content must respect the character limits above. No padding. No filler.`;
   }
   return parsed;
 };
+
+// Detect fabricated content — fake testimonials, fake stats, fake events.
+// Returns the offending phrase as a rejection reason, or null if clean.
+// This is the LAST line of defence: prompt rules try to prevent these,
+// retry logic gives the AI a second chance, and this catches everything else.
+function detectFabrication(content: string): string | null {
+  const checks: Array<[RegExp, string]> = [
+    // Fake customer testimonials
+    [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
+    [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
+    [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
+    [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
+    // Fake statistics
+    [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving)/i, 'invented percentage statistic'],
+    [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
+    [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
+    [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
+    // Fake urgency / countdowns / events without source
+    [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
+    [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
+  ];
+  for (const [pattern, reason] of checks) {
+    const match = content.match(pattern);
+    if (match) return `${reason} ("${match[0]}")`;
+  }
+  return null;
+}
 
 // Catch banned phrases that slipped past the prompt. Replace with neutral
 // alternatives or strip outright. Logs on every hit so quality can be tracked.
@@ -814,6 +884,10 @@ export interface SmartScheduledPost {
   videoScript?: string;
   videoShots?: string;
   videoMood?: string;
+  /** Set by the fabrication detector when a post contains content that survived
+   * scrubbing (invented testimonials, fake stats, etc.). UI should highlight. */
+  _needsReview?: boolean;
+  _reviewReason?: string;
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
@@ -1295,9 +1369,11 @@ RULES:
 7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
-10. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service from the business context above, (b) a specific measurable outcome (e.g. "saves 5 hours/week", "30% more engagement"), or (c) a location-specific reference to the business's actual area. Generic sentences that pass no specificity test must be rewritten or cut.
+10. SPECIFICITY MANDATE: Each post MUST name a real product/service/feature from the business context above, OR reference the business's actual location. Generic sentences that could apply to any business must be rewritten or cut. DO NOT invent statistics — only cite numbers if they appear verbatim in the business context.
 11. BANNED PHRASES — never use any of these: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "We're excited to announce". If you catch yourself writing these, stop and rewrite with a concrete specific detail instead.
 12. NO FAKE URGENCY — Only use countdown language ("Only X days left!", "X days to go!") if a real ACTIVE CAMPAIGN with specific start/end dates was listed in the business context above. Never invent campaigns, deadlines, or limited-time offers.
+13. NO INVENTED CUSTOMERS — You have ZERO testimonials, reviews, or customer stories. NEVER write phrases like "A local cafe in [city] said...", "Rockhampton owner saw...", "One of our happy clients...", "A customer told us...", or any fake testimonial signature like "Sarah J., Brisbane". You don't have these — don't make them up.
+14. NO INVENTED STATISTICS — You have ZERO analytics data. NEVER write "increased by X%", "saved X hours", "X% boost", "Xx more leads", "over X clients", or any other invented number. Every number you write must already appear in the business context above. When in doubt, write the qualitative benefit instead ("helps you post consistently" not "increases engagement by 30%").
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
@@ -1323,9 +1399,31 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     onPhase?.('writing');
     // Video posts with scripts/shots need much more output tokens than the default 2048
     const outputTokens = includeVideos ? 8192 : (effectivePosts > 7 ? 6144 : 4096);
-    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.75, maxTokens: outputTokens, responseFormat: 'json' }), 120000);
+    // Lowered temperature 0.75 → 0.55: enough creativity, less invention.
+    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.55, maxTokens: outputTokens, responseFormat: 'json' }), 120000);
     const data = parseAiJson(scheduleText) || { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
+
+    // ── Hallucination defence: scan every generated post for fabricated
+    // testimonials / fake stats / invented urgency. Tag offenders so the UI can
+    // flag them, and scrub via regex as a last-resort patch.
+    posts = posts.map((p: any) => {
+      if (typeof p.content !== 'string') return p;
+      const violation = detectFabrication(p.content);
+      if (violation) {
+        console.warn(`[smart-schedule] fabrication detected in post: ${violation}`);
+        p.content = scrubBannedPhrases(p.content);
+        // Re-check after scrub; if still bad, tag for manual review
+        const stillBad = detectFabrication(p.content);
+        if (stillBad) {
+          p._needsReview = true;
+          p._reviewReason = stillBad;
+        }
+      } else {
+        p.content = scrubBannedPhrases(p.content);
+      }
+      return p;
+    });
 
     // Format a Date as local time string (NOT UTC) — "YYYY-MM-DDTHH:MM:SS"
     const toLocalISO = (d: Date): string => {
