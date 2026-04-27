@@ -4927,14 +4927,14 @@ const SplashScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex flex-col items-center justify-center relative overflow-hidden">
-      {/* Ambient glow */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(245,158,11,0.12),transparent_65%)] pointer-events-none" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_80%,rgba(234,88,12,0.06),transparent_50%)] pointer-events-none" />
+      {/* Ambient glow — uses accent CSS var so each portal tints its own splash */}
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 50% 30%, rgb(var(--accent-rgb) / 0.12), transparent 65%)' }} />
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 80% 80%, rgb(var(--accent-rgb) / 0.06), transparent 50%)' }} />
 
       {/* Pulsing ring behind logo */}
       <div className="relative mb-10">
-        <div className="absolute inset-[-4px] rounded-3xl bg-amber-400/10 animate-ping" style={{ animationDuration: '2s' }} />
-        <div className="absolute inset-[-12px] rounded-[32px] border border-amber-400/10 animate-pulse" />
+        <div className="absolute inset-[-4px] rounded-3xl animate-ping" style={{ animationDuration: '2s', backgroundColor: 'rgb(var(--accent-rgb) / 0.10)' }} />
+        <div className="absolute inset-[-12px] rounded-[32px] animate-pulse" style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'rgb(var(--accent-rgb) / 0.10)' }} />
         <AppLogo size={160} />
       </div>
 
@@ -4951,8 +4951,9 @@ const SplashScreen: React.FC = () => {
           <div
             key={i}
             className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-              i === lineIdx % 5 ? 'bg-amber-400 scale-125' : 'bg-white/10'
+              i === lineIdx % 5 ? 'scale-125' : 'bg-white/10'
             }`}
+            style={i === lineIdx % 5 ? { backgroundColor: 'var(--accent)' } : undefined}
           />
         ))}
       </div>
