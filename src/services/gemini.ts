@@ -86,10 +86,55 @@ const parseAiJson = (raw: string): any => {
     return JSON.parse(sanitizeJson(fixed));
   } catch {
     // Second attempt: strip all backslash-escapes that aren't valid JSON
-    const stripped = fixed.replace(/\\(?!["\\/bfnrtu])/g, '');
-    return JSON.parse(sanitizeJson(stripped));
+    try {
+      const stripped = fixed.replace(/\\(?!["\\/bfnrtu])/g, '');
+      return JSON.parse(sanitizeJson(stripped));
+    } catch {
+      // Third attempt: TRUNCATED OUTPUT recovery — model hit maxTokens mid-array.
+      // Find the last fully-completed object inside "posts": [...], close the
+      // array + brace, and try again. Better to return 12 valid posts than 0.
+      return tryRecoverTruncated(cleaned);
+    }
   }
 };
+
+// Recover from a truncated JSON response by trimming back to the last complete
+// object inside the posts array. Returns null if recovery isn't possible.
+function tryRecoverTruncated(raw: string): any {
+  // Locate "posts": [ ... — find each complete object boundary and trim.
+  const postsKey = raw.search(/"posts"\s*:\s*\[/);
+  if (postsKey < 0) return null;
+  const arrStart = raw.indexOf('[', postsKey);
+  if (arrStart < 0) return null;
+
+  // Walk through, tracking depth and string state, find the last closing }
+  // that's at depth=1 (immediate child of the posts array).
+  let depth = 0; let inStr = false; let esc = false;
+  let lastClose = -1;
+  for (let i = arrStart; i < raw.length; i++) {
+    const ch = raw[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\') { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 1) lastClose = i;  // depth=1 means "this closing brace finishes a post object"
+    }
+  }
+  if (lastClose < 0) return null;
+  // Reconstruct: everything up to lastClose, then close the array + outer object.
+  const reconstructed = raw.substring(0, lastClose + 1) + ']}';
+  try {
+    const parsed = JSON.parse(sanitizeJson(escapeJsonStrings(reconstructed)));
+    if (parsed && Array.isArray(parsed.posts)) {
+      console.warn(`[parseAiJson] truncation recovered: kept ${parsed.posts.length} complete posts`);
+      return parsed;
+    }
+  } catch { /* fall through */ }
+  return null;
+}
 
 const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -173,11 +218,16 @@ export async function fetchClientFacts(clientId?: string | null): Promise<Client
 export function clearFactsCache() { _factsCache = null; }
 
 /** Build a ground-truth block to inject into AI prompts.
- * Returns "" if no facts available so the prompt degrades gracefully. */
+ * Returns "" if no facts available so the prompt degrades gracefully.
+ * Engagement-feedback loop: top-2 past posts get STAR PERFORMER treatment so
+ * the AI explicitly mimics what's already worked for THIS business. */
 export function buildGroundTruthBlock(facts: ClientFact[]): string {
   if (!facts.length) return '';
   const about = facts.find(f => f.fact_type === 'about');
-  const topPosts = facts.filter(f => f.fact_type === 'own_post').slice(0, 5);
+  // Posts come pre-sorted by engagement_score DESC from the API
+  const allPosts = facts.filter(f => f.fact_type === 'own_post');
+  const starPosts = allPosts.filter(p => p.engagement_score > 0).slice(0, 2);
+  const restPosts = allPosts.filter(p => !starPosts.includes(p)).slice(0, 4);
   const comments = facts.filter(f => f.fact_type === 'comment').slice(0, 5);
   const events = facts.filter(f => f.fact_type === 'event').slice(0, 3);
 
@@ -187,15 +237,22 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
   sections.push('These are the ONLY facts you may cite. Anything not below is invention.');
   sections.push('═══════════════════════════════════════════════════════════════════');
   if (about) sections.push(`\nPAGE INFO:\n${about.content}`);
-  if (topPosts.length) {
-    sections.push(`\nTHEIR TOP-PERFORMING PAST POSTS (write in this same voice):`);
-    topPosts.forEach((p, i) => {
-      const eng = p.engagement_score ? ` [${p.engagement_score} engagement]` : '';
-      sections.push(`${i + 1}.${eng} ${p.content.substring(0, 280)}`);
+
+  if (starPosts.length) {
+    sections.push(`\n★ STAR PERFORMERS — these posts ALREADY worked for this business.`);
+    sections.push(`MATCH THIS VOICE, FORMAT, AND APPROACH. Don't copy the words — copy the rhythm, length, hook style, and energy.`);
+    starPosts.forEach((p, i) => {
+      const meta = p.metadata || {};
+      const stats = `${meta.likes || 0}❤️ ${meta.comments || 0}💬 ${meta.shares || 0}🔁`;
+      sections.push(`★ ${i + 1}. [${stats}] ${p.content.substring(0, 320)}`);
     });
   }
+  if (restPosts.length) {
+    sections.push(`\nOTHER PAST POSTS (additional voice samples):`);
+    restPosts.forEach((p, i) => sections.push(`${i + 1}. ${p.content.substring(0, 220)}`));
+  }
   if (comments.length) {
-    sections.push(`\nREAL CUSTOMER COMMENTS (use this language; quote sparingly with attribution like "one customer wrote"):`);
+    sections.push(`\nREAL CUSTOMER COMMENTS (real audience language; quote sparingly with attribution like "one customer wrote"):`);
     comments.forEach((c, i) => sections.push(`${i + 1}. ${c.content.substring(0, 200)}`));
   }
   if (events.length) {
@@ -229,7 +286,17 @@ export async function aiAuthHeaders(extra?: Record<string, string>): Promise<Rec
 
 const callAI = async (
   prompt: string,
-  options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
+  options?: {
+    temperature?: number;
+    maxTokens?: number;
+    responseFormat?: 'json' | 'text';
+    /** When supplied, sent with Anthropic prompt caching (cache_control: ephemeral).
+     * Use for the large static block (GOLDEN RULES + verified facts + brand context)
+     * that repeats across every Smart Schedule call. Cuts ~70% off cost on cache hits. */
+    cachedPrefix?: string;
+    /** Model override — defaults to Claude Haiku 4.5 in the worker */
+    model?: string;
+  }
 ): Promise<string> => {
   const headers = await aiAuthHeaders();
   const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
@@ -237,6 +304,8 @@ const callAI = async (
     headers,
     body: JSON.stringify({
       prompt,
+      cachedPrefix: options?.cachedPrefix,
+      model: options?.model,
       temperature: options?.temperature ?? 0.8,
       maxTokens: options?.maxTokens ?? 2048,
       responseFormat: options?.responseFormat ?? 'text',
@@ -1551,9 +1620,14 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 
     onPhase?.('writing');
     // Video posts with scripts/shots need much more output tokens than the default 2048
-    const outputTokens = includeVideos ? 8192 : (effectivePosts > 7 ? 6144 : 4096);
+    // Each post in JSON form is ~600-800 tokens (content + hashtags + imagePrompt
+    // + reasoning + pillar). Claude Haiku 4.5 is more verbose than Gemini Flash.
+    // Allocate ~700/post + 1500 overhead, capped at Anthropic's 16k output limit.
+    // (Was previously 6144 — caused mid-JSON truncation on Saturation 21-post runs.)
+    const tokensPerPost = includeVideos ? 1100 : 750;
+    const outputTokens = Math.min(16384, 1500 + effectivePosts * tokensPerPost);
     // Lowered temperature 0.75 → 0.55: enough creativity, less invention.
-    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.55, maxTokens: outputTokens, responseFormat: 'json' }), 120000);
+    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.55, maxTokens: outputTokens, responseFormat: 'json' }), 180000);
     const data = parseAiJson(scheduleText) || { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
 

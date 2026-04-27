@@ -178,6 +178,12 @@ app.post('/api/ai/generate', async (c) => {
   let body: {
     prompt?: string;
     systemPrompt?: string;
+    /** Optional static prefix to send with cache_control (Anthropic prompt caching).
+     * If supplied AND the model is an Anthropic one AND the prefix is large enough
+     * (~1024+ tokens), Anthropic caches the block for 5 min and bills the rest at
+     * a 90% discount on cache hits. Use for the GOLDEN RULES + ground-truth blocks
+     * that repeat across every Smart Schedule call. */
+    cachedPrefix?: string;
     temperature?: number;
     maxTokens?: number;
     responseFormat?: 'json' | 'text';
@@ -192,6 +198,7 @@ app.post('/api/ai/generate', async (c) => {
   const {
     prompt,
     systemPrompt,
+    cachedPrefix,
     temperature = 0.8,
     maxTokens = 2048,
     responseFormat = 'text',
@@ -201,18 +208,34 @@ app.post('/api/ai/generate', async (c) => {
     return c.json({ error: 'prompt is required.' }, 400);
   }
 
-  const messages: Array<{ role: string; content: string }> = [];
+  const requestedModel = (body as any).model as string | undefined;
+  const effectiveModel = requestedModel || 'anthropic/claude-haiku-4.5';
+  const useAnthropicCaching = !!cachedPrefix && effectiveModel.startsWith('anthropic/');
+
+  // Build messages with optional Anthropic-style cache_control on the prefix.
+  // OpenRouter passes cache_control through to Anthropic verbatim.
+  const messages: Array<{ role: string; content: any }> = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-  messages.push({ role: 'user', content: prompt });
+  if (useAnthropicCaching) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: prompt },
+      ],
+    });
+  } else {
+    const combined = cachedPrefix ? `${cachedPrefix}\n\n${prompt}` : prompt;
+    messages.push({ role: 'user', content: combined });
+  }
 
   // Model is selectable per-request via body.model. Defaults to Claude Haiku
   // for content generation — significantly better instruction-following and
   // hallucination resistance than Gemini Flash, ~3-5x more expensive but still
   // pennies per Smart Schedule. Gemini still available as a cheap fallback for
   // low-stakes calls (e.g. best-times tips) by passing model in the body.
-  const requestedModel = (body as any).model as string | undefined;
   const orBody: Record<string, unknown> = {
-    model: requestedModel || 'anthropic/claude-haiku-4.5',
+    model: effectiveModel,
     messages,
     temperature,
     max_tokens: maxTokens,
