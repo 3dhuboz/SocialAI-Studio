@@ -1523,7 +1523,7 @@ Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().spl
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
 ${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
-CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
+CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. EVERY post MUST be postType="image" — never "text". Image posts get 2-3x more Facebook reach than text-only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
@@ -1584,7 +1584,7 @@ RESEARCH INSIGHTS — apply every finding precisely:
 - Hashtag pool (mix ALL tiers, Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
 - Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Platform split: ${fbCount} Facebook, ${igCount} Instagram
-- Post format mix: ${JSON.stringify(includeVideos ? (research.postFormatMix || { image: 50, video: 30, text: 20 }) : { image: 70, text: 30 })}
+- Post format mix: ${JSON.stringify(includeVideos ? (research.postFormatMix || { image: 70, video: 30 }) : { image: 100 })} — DEFAULT TO IMAGE POSTS. Only use postType="text" if a post genuinely cannot be illustrated (rare). Image posts get 2-3x more reach than text on Facebook in 2026.
 - Key engagement tactic: ${research.engagementTips || 'Ask a question every post'}
 ${videoInstructions}
 RULES:
