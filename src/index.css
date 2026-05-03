@@ -289,9 +289,15 @@ body {
  * site keeps its amber default because --accent defaults to #f59e0b.
  * ════════════════════════════════════════════════════════════════════════════ */
 
-/* Solid text/background/border colours */
-.text-amber-300, .text-amber-400, .text-amber-500, .text-amber-600,
-.text-orange-400, .text-orange-500, .text-orange-600 { color: var(--accent) !important; }
+/* Solid text/background/border colours.
+ * Text uses --accent-light (a brightened version computed in main.tsx) so dark
+ * brand colours like Street Meatz red (#b91c1c) stay readable on the dark UI.
+ * Without this, "text-amber-300" — designed to be a bright readable amber —
+ * would map to a muddy unreadable dark red. */
+.text-amber-300, .text-amber-400,
+.text-orange-400 { color: var(--accent-light, var(--accent)) !important; }
+.text-amber-500, .text-amber-600,
+.text-orange-500, .text-orange-600 { color: var(--accent) !important; }
 
 .bg-amber-400, .bg-amber-500, .bg-amber-600,
 .bg-orange-400, .bg-orange-500, .bg-orange-600 { background-color: var(--accent) !important; }
