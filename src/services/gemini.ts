@@ -139,24 +139,111 @@ function tryRecoverTruncated(raw: string): any {
 const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
-/** Generate business-specific image prompt examples based on business type */
+/** Generate business-specific image prompt examples based on business type.
+ * Provides 6-8 DIFFERENT compositions per industry so the AI doesn't fall
+ * back to the same "device on desk" / "product on board" template every post.
+ * Each call returns ALL examples so the model has a wide variety palette. */
 const getImagePromptExamples = (businessType: string): string => {
   const t = businessType.toLowerCase();
-  if (t.includes('butcher') || t.includes('meat') || t.includes('agriculture'))
-    return "e.g. 'raw beef ribeye steak on dark wooden cutting board, warm lighting, overhead shot' or 'lamb cutlets on butcher paper with rosemary, natural light'";
-  if (t.includes('bbq') || t.includes('barbeque') || t.includes('food truck'))
-    return "e.g. 'smoked brisket sliced on butcher paper with pickles, golden hour light' or 'pulled pork burger with coleslaw, close-up shot'";
-  if (t.includes('bakery') || t.includes('café') || t.includes('cafe') || t.includes('coffee'))
-    return "e.g. 'sourdough loaf on marble counter, morning light, overhead' or 'flat white coffee with latte art, rustic wooden table'";
-  if (t.includes('pickle') || t.includes('deli') || t.includes('ferment'))
-    return "e.g. 'jar of bread and butter pickles with fresh cucumbers, natural light' or 'cheese board with artisan pickles, overhead shot'";
-  if (t.includes('web') || t.includes('software') || t.includes('tech') || t.includes('it') || t.includes('digital') || t.includes('saas'))
-    return "e.g. 'laptop screen showing social media dashboard with analytics, soft desk lighting' or 'phone displaying content calendar app, clean white desk'";
-  if (t.includes('festival') || t.includes('event'))
-    return "e.g. 'outdoor festival crowd scene from behind, golden sunset light' or 'BBQ competition trophies on display table, dramatic lighting'";
-  if (t.includes('surf') || t.includes('sport') || t.includes('outdoor'))
-    return "e.g. 'surfboard standing in sand with ocean background, golden hour' or 'row of surfboards in shop rack, natural light'";
-  return `e.g. 'the main product/service of ${businessType} in its natural setting, professional lighting, close-up shot'`;
+  // Use word-boundary check for short tokens to avoid false matches (e.g. "it"
+  // matching "kit", "fit", "with"). Long tokens use plain substring.
+  const has = (...needles: string[]) => needles.some(n =>
+    n.length <= 3 ? new RegExp(`\\b${n}\\b`).test(t) : t.includes(n)
+  );
+
+  if (has('butcher', 'meat', 'agriculture')) return [
+    "'raw beef ribeye steak on dark wooden cutting board, warm lighting, overhead shot'",
+    "'rack of lamb on butcher paper with rosemary sprigs, natural side light'",
+    "'glass display case of fresh sausages and cuts, shop interior, soft daylight'",
+    "'aged dry-rubbed brisket close-up showing bark texture, dramatic lighting'",
+    "'butcher's marble counter with herbs and twine, overhead flatlay'",
+    "'cast iron pan searing thick pork chops with garlic, moody warm light'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('bbq', 'barbeque', 'barbecue', 'food truck', 'smokehouse')) return [
+    "'sliced smoked brisket fanned on butcher paper, golden hour light'",
+    "'pulled pork burger with coleslaw and pickles, close-up macro'",
+    "'BBQ ribs glistening with glaze on cedar plank, smoke wisps in background'",
+    "'food truck exterior at dusk with warm window light and queue'",
+    "'overhead flatlay: brisket, slaw, beans, white bread on red checkered paper'",
+    "'pitmaster's smoker open showing meat, atmospheric smoke, late afternoon sun'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('bakery', 'café', 'cafe', 'coffee')) return [
+    "'sourdough loaf cross-section on marble counter, morning window light'",
+    "'flat white coffee with latte art on rustic wooden table, top-down'",
+    "'croissants stacked in wicker basket, soft golden bakery light'",
+    "'barista pouring milk in motion, espresso machine bokeh background'",
+    "'pastry display case interior, warm lighting, bakery atmosphere'",
+    "'overhead flatlay of breakfast spread: coffee, pastries, jam, butter'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('pickle', 'deli', 'ferment')) return [
+    "'jar of bread and butter pickles next to fresh cucumbers, natural light'",
+    "'wooden cheese board with artisan pickles, crackers, and grapes, overhead'",
+    "'colourful row of fermentation jars on shelf, daylight from window'",
+    "'cross-section of kimchi in a glass jar showing texture, side angle'",
+    "'sandwich loaded with deli meat and pickles, overhead on butcher paper'",
+    "'kraut being lifted with wooden tongs above jar, action shot'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('web', 'software', 'tech', 'digital', 'saas') || /\bit\b/.test(t) || /\bi\.t\b/.test(t)) return [
+    "'modern office workspace with multiple monitors showing code, dramatic blue glow'",
+    "'close-up of fingers typing on mechanical keyboard, dark moody desk setup'",
+    "'minimalist phone screen showing clean app UI, marble surface, top-down'",
+    "'rack of glowing server hardware, abstract tech atmosphere, neon accents'",
+    "'small business owner reviewing tablet at coffee shop counter, warm natural light'",
+    "'creative wall of sticky notes and wireframe sketches, daylight window'",
+    "'aerial view of clean desk with notebook, pen, plant, and laptop, beige aesthetic'",
+    "'abstract close-up of glowing fibre cables in dark room, blue+orange contrast'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('festival', 'event')) return [
+    "'outdoor festival crowd from behind facing stage, golden sunset light'",
+    "'competition trophies and ribbons on draped table, dramatic spotlight'",
+    "'food truck row at dusk with festoon lights, atmospheric'",
+    "'overhead aerial of festival grounds with marquees and crowds'",
+    "'festival entrance gate with banners, golden hour, anticipation feel'",
+    "'judges tasting at competition table, focused candid moment'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('surf', 'sport', 'outdoor')) return [
+    "'surfboard standing upright in sand with ocean background, golden hour'",
+    "'row of surfboards in shop rack, natural daylight from window'",
+    "'wave breaking with surfer silhouette, dramatic backlight'",
+    "'overhead flatlay of beach gear: board wax, sunscreen, towel, sandals'",
+    "'aerial shot of empty surf break at dawn, dramatic clouds'",
+    "'wetsuit hanging on weathered wooden fence, salty atmosphere'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('jewel', 'jewelry', 'jewellery')) return [
+    "'single ring on velvet pad with soft directional lighting'",
+    "'overhead flatlay of necklaces fanned on linen background'",
+    "'close-up macro of gemstone showing facets and light play'",
+    "'workbench with tools and an in-progress piece, atmospheric warm light'",
+    "'jewellery in display case with reflections, boutique interior'",
+    "'open jewellery box with multiple pieces, overhead, soft shadows'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('mechanic', 'garage', 'auto', 'workshop')) return [
+    "'classic car in garage bay under work lights, atmospheric'",
+    "'mechanic's tool wall with organised wrenches, industrial light'",
+    "'engine bay close-up with chrome detail, shallow focus'",
+    "'oil change action shot from below the lift, dramatic angle'",
+    "'detailed leather steering wheel close-up after restoration'",
+    "'workshop exterior with vintage signage, golden hour'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('breath', 'wellness', 'yoga', 'meditation', 'mindful')) return [
+    "'serene candle on stone with soft window light, minimal composition'",
+    "'meditation cushion in sunlit room with linen curtains'",
+    "'overhead flatlay of journal, herbal tea, and dried flowers, calm aesthetic'",
+    "'misty forest path at dawn, atmospheric grounding nature shot'",
+    "'close-up of hands holding warm ceramic mug, cozy lighting'",
+    "'studio interior with plants, soft daylight, peaceful empty space'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one item' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
 };
 
 // ── Real-data ground-truth fetcher (FB-scraped facts) ──
@@ -1543,7 +1630,8 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself writing "laptop on desk" for the third time, STOP and pick a totally different scene from the examples above.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 9. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service, (b) a specific measurable outcome, or (c) a location reference. Vague posts must be rewritten.
 10. BANNED PHRASES — never use: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition". Rewrite with concrete specifics.
@@ -1594,7 +1682,8 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself reusing the same scene, STOP and pick a totally different one from the examples above.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 10. SPECIFICITY MANDATE: Each post MUST name a real product/service/feature from the business context above, OR reference the business's actual location. Generic sentences that could apply to any business must be rewritten or cut. DO NOT invent statistics — only cite numbers if they appear verbatim in the business context.
