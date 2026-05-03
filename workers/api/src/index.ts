@@ -43,13 +43,21 @@ app.use(
         'https://socialaistudio.au',
         'https://social.picklenick.au', 'https://social.streetmeatzbbq.com.au',
         'https://social.hugheseysque.au', 'https://hugheseysque.au',
+        // Additional whitelabel portal origins
+        'https://social.gladstonebbq.com.au', 'https://social.blackcat.com.au',
+        'https://social.jonesysgarage.com.au', 'https://social.jenniannesjewels.com.au',
+        'https://littlestomp.com.au', 'https://www.littlestomp.com.au',
+        'https://streetmeatzbbq.com.au', 'https://www.streetmeatzbbq.com.au',
       ];
       if (allowed.includes(origin)) return origin;
       // Allow all *.pages.dev subdomains (CF Pages preview/prod deployments)
       if (origin.endsWith('.pages.dev')) return origin;
       return 'https://socialaistudio.au';
     },
-    allowHeaders: ['Content-Type', 'Authorization'],
+    // X-Portal-Secret is sent by whitelabel portal frontends to authenticate
+    // their slug-based portal lookup. Without this, browser preflight blocks
+    // the request and the portal shows "Portal not configured".
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Portal-Secret', 'X-Bootstrap-Secret'],
     allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
   })
 );
