@@ -1626,7 +1626,7 @@ async function trackCron(
 
 export default {
   fetch: app.fetch,
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     const cron = event.cron;
     // Every 5 minutes — publish missed posts
     if (cron === '*/5 * * * *') {

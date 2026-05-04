@@ -1474,7 +1474,10 @@ const Dashboard: React.FC = () => {
           if (img) {
             // CRITICAL: persist to DB. Without this the cron sees image_url=NULL
             // when scheduled_for arrives and publishes the post text-only.
-            try { await db.updatePost(post.id, { imageUrl: img }); }
+            // Wire format uses camelCase imageUrl (worker translates to image_url
+            // for SQL). Cast through Record<> because Partial<DbPost> uses the
+            // SQL column names — same pattern as handleUpdatePost above.
+            try { await db.updatePost(post.id, { imageUrl: img } as Record<string, unknown>); }
             catch (e: any) { console.warn('[autoGen] persist failed for', post.id, e?.message); }
             setCalendarImages(prev => ({ ...prev, [post.id]: img }));
             // Mirror into posts state so re-renders see the image without a refetch
@@ -1496,7 +1499,7 @@ const Dashboard: React.FC = () => {
       const img = await generateImage(prompt);
       if (img) {
         // Persist to DB so cron uses the image at publish time
-        try { await db.updatePost(postId, { imageUrl: img }); }
+        try { await db.updatePost(postId, { imageUrl: img } as Record<string, unknown>); }
         catch (e: any) { console.warn('[regenImage] persist failed:', e?.message); }
         setCalendarImages(prev => ({ ...prev, [postId]: img }));
         setPosts(prev => prev.map(p => p.id === postId ? { ...p, image: img } : p));
@@ -1523,7 +1526,7 @@ const Dashboard: React.FC = () => {
       // Persist to DB so cron sees the image at publish time. Note: data URLs
       // are large but D1 accepts them; for huge files prefer R2 upload.
       try {
-        await db.updatePost(id, { imageUrl: dataUrl });
+        await db.updatePost(id, { imageUrl: dataUrl } as Record<string, unknown>);
         setPosts(prev => prev.map(p => p.id === id ? { ...p, image: dataUrl } : p));
       } catch (err: any) { console.warn('[upload] persist failed:', err?.message); }
     };
