@@ -1471,8 +1471,18 @@ const Dashboard: React.FC = () => {
         setCalendarGenSet(prev => new Set(prev).add(post.id));
         try {
           const img = await generateImage(post.imagePrompt!);
-          if (img) setCalendarImages(prev => ({ ...prev, [post.id]: img }));
-        } catch { /* silently skip */ }
+          if (img) {
+            // CRITICAL: persist to DB. Without this the cron sees image_url=NULL
+            // when scheduled_for arrives and publishes the post text-only.
+            try { await db.updatePost(post.id, { imageUrl: img }); }
+            catch (e: any) { console.warn('[autoGen] persist failed for', post.id, e?.message); }
+            setCalendarImages(prev => ({ ...prev, [post.id]: img }));
+            // Mirror into posts state so re-renders see the image without a refetch
+            setPosts(prev => prev.map(p => p.id === post.id ? { ...p, image: img } : p));
+          }
+        } catch (e: any) {
+          console.warn('[autoGen] image generation failed for', post.id, e?.message);
+        }
         setCalendarGenSet(prev => { const s = new Set(prev); s.delete(post.id); return s; });
       }
     };
@@ -1484,7 +1494,13 @@ const Dashboard: React.FC = () => {
     setCalendarGenSet(prev => new Set(prev).add(postId));
     try {
       const img = await generateImage(prompt);
-      if (img) setCalendarImages(prev => ({ ...prev, [postId]: img }));
+      if (img) {
+        // Persist to DB so cron uses the image at publish time
+        try { await db.updatePost(postId, { imageUrl: img }); }
+        catch (e: any) { console.warn('[regenImage] persist failed:', e?.message); }
+        setCalendarImages(prev => ({ ...prev, [postId]: img }));
+        setPosts(prev => prev.map(p => p.id === postId ? { ...p, image: img } : p));
+      }
       else toast('Image generation failed — try uploading instead.', 'warning');
     } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
     setCalendarGenSet(prev => { const s = new Set(prev); s.delete(postId); return s; });
@@ -1500,9 +1516,16 @@ const Dashboard: React.FC = () => {
     if (!file || !calendarUploadId) return;
     const reader = new FileReader();
     const id = calendarUploadId;
-    reader.onload = ev => {
+    reader.onload = async ev => {
       const dataUrl = ev.target?.result as string;
-      if (dataUrl) setCalendarImages(prev => ({ ...prev, [id]: dataUrl }));
+      if (!dataUrl) return;
+      setCalendarImages(prev => ({ ...prev, [id]: dataUrl }));
+      // Persist to DB so cron sees the image at publish time. Note: data URLs
+      // are large but D1 accepts them; for huge files prefer R2 upload.
+      try {
+        await db.updatePost(id, { imageUrl: dataUrl });
+        setPosts(prev => prev.map(p => p.id === id ? { ...p, image: dataUrl } : p));
+      } catch (err: any) { console.warn('[upload] persist failed:', err?.message); }
     };
     reader.readAsDataURL(file);
     e.target.value = '';
