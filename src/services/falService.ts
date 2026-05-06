@@ -1,14 +1,13 @@
+import { aiAuthHeaders } from './gemini';
+
 const WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 const PROXY = `${WORKER}/api/fal-proxy`;
 
-const proxyHeaders = () => {
-  const key = localStorage.getItem('sai_fal_key');
-  return {
-    'Content-Type': 'application/json',
-    ...(key ? { 'X-Fal-Key': key } : {}),
-  };
-};
+// /api/fal-proxy now requires Clerk JWT or Portal token. Reuse the gemini auth
+// header builder so all callers stay in sync. Server uses its own FAL_API_KEY,
+// so X-Fal-Key from localStorage is no longer accepted (security).
+const proxyHeaders = () => aiAuthHeaders();
 
 export const FalService = {
   /**
@@ -24,7 +23,7 @@ export const FalService = {
   ): Promise<string> => {
     const res = await fetch(`${PROXY}?action=generate-video`, {
       method: 'POST',
-      headers: proxyHeaders(),
+      headers: await proxyHeaders(),
       body: JSON.stringify({ promptText, promptImage, duration }),
     });
     const data = await res.json();
@@ -42,7 +41,7 @@ export const FalService = {
       await new Promise(r => setTimeout(r, 6000));
       const pollRes = await fetch(
         `${PROXY}?${pollQuery.toString()}`,
-        { headers: proxyHeaders() },
+        { headers: await proxyHeaders() },
       );
       const poll = await pollRes.json();
 
@@ -69,7 +68,7 @@ export const FalService = {
   generateImage: async (prompt: string): Promise<string> => {
     const res = await fetch(`${PROXY}?action=generate-image`, {
       method: 'POST',
-      headers: proxyHeaders(),
+      headers: await proxyHeaders(),
       body: JSON.stringify({ prompt }),
     });
     const data = await res.json();

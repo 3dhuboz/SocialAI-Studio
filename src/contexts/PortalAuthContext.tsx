@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { AuthContext } from './AuthContext';
 import type { AppUser } from './AuthContext';
 import { createDb } from '../services/db';
+import { setGeminiAuth } from '../services/gemini';
 import { CLIENT } from '../client.config';
 
 interface UserDoc {
@@ -26,6 +27,10 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [loading, setLoading] = useState(true);
   const [portalClientId, setPortalClientId] = useState<string | null>(null);
 
+  // Wire up the AI worker auth — /api/ai/generate and /api/fal-proxy now require
+  // a Portal token. Without this, every AI/image call 401s.
+  useEffect(() => { setGeminiAuth(async () => _portalToken, 'portal'); }, []);
+
   useEffect(() => {
     const run = async () => {
       try {
@@ -38,10 +43,18 @@ export const PortalAuthProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           return;
         }
 
-        // Fetch portal record (public endpoint, no auth needed)
+        // Fetch portal record. The endpoint requires a per-portal shared secret
+        // (set as VITE_PORTAL_SECRET env var on each Pages deploy) — without it,
+        // the API returns only `{exists}` and no token, so a slug guess from a
+        // stranger doesn't grant access. Whitelabel deploys must have this set.
         const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
           || 'https://socialai-api.steve-700.workers.dev';
-        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(clientId.toLowerCase())}`);
+        const portalSecret = (import.meta.env as Record<string, string>).VITE_PORTAL_SECRET || '';
+        if (!portalSecret) {
+          console.warn('[PortalAuth] VITE_PORTAL_SECRET not set — portal token will not be returned by API.');
+        }
+        const headers: Record<string, string> = portalSecret ? { 'X-Portal-Secret': portalSecret } : {};
+        const res = await fetch(`${BASE}/api/db/portal/${encodeURIComponent(clientId.toLowerCase())}`, { headers });
         const data = await res.json() as {
           portal: {
             email: string;

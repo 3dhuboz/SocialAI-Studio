@@ -110,7 +110,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto" style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)' }}>
-      <div className="bg-[#0e0e1a] border border-white/10 rounded-3xl w-full max-w-2xl shadow-2xl my-4">
+      <div className="bg-[#0e0e1a] border border-white/10 rounded-3xl w-full max-w-[calc(100vw-1rem)] sm:max-w-2xl shadow-2xl my-4">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/8">
@@ -148,7 +148,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Phone Number</label>
-                <input value={form.phone} onChange={set('phone')} placeholder="e.g. 0412 345 678"
+                <input type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} placeholder="e.g. 0412 345 678"
                   className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
             </div>

@@ -1,23 +1,24 @@
 /// <reference types="vite/client" />
 /**
  * ─────────────────────────────────────────────────────────
- *  CLIENT CONFIG  —  O'Connor Agriculture
- *  Deployed at: social.oconnoragriculture.com.au (or similar)
+ *  CLIENT CONFIG  —  Jonesy's Garage
+ *  Deployed at: social.jonesysgarage.com.au (pending domain)
+ *  Netlify env: VITE_CLIENT_ID=jonesysgarage
  * ─────────────────────────────────────────────────────────
  */
 export const CLIENT = {
-  clientId: 'oconnor',
-  appName: 'O\'Connor Agriculture Social',
-  tagline: 'AI-powered social media — from paddock to plate',
+  clientId: 'jonesysgarage',
+  appName: "Jonesy's Social",
+  tagline: 'AI-powered social — keeping the workshop in front of Rocky',
 
-  defaultBusinessName: 'O\'Connor Agriculture',
-  defaultBusinessType: 'Butcher & Delivery',
-  defaultLocation: 'Queensland, Australia',
-  defaultTone: 'Warm & Authentic',
-  defaultDescription: 'Premium farm-fresh meats delivered to your door. From paddock to plate, quality you can taste.',
+  defaultBusinessName: "Jonesy's Garage",
+  defaultBusinessType: 'Automotive mechanical workshop',
+  defaultLocation: 'Rockhampton, QLD, Australia',
+  defaultTone: 'Blunt, blue-collar, straight-talking. No fluff, no corporate speak. Occasional dry Aussie humour. Focus on honest work, fair quotes, and getting the car back on the road.',
+  defaultDescription:
+    "Jonesy's Garage is a Rockhampton mechanical workshop doing logbook servicing, tune-ups, brakes, tyres, diagnostics, safety certificates, and engine rebuilds. Known for blunt honesty, quality work, and fair pricing — no upsell games. Handles everything from daily drivers to classic rotaries.",
 
-  accentColor: '#16a34a',
-  theme: 'light' as const,
+  accentColor: '#f5c518',
 
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',
@@ -75,7 +76,7 @@ export const CLIENT = {
         'Content calendar',
       ],
       limitations: ['Text posts only — no AI images'],
-      color: 'from-amber-600 to-amber-700',
+      color: 'from-yellow-500 to-amber-600',
       badge: null,
     },
     {
@@ -93,7 +94,7 @@ export const CLIENT = {
         'Content calendar',
       ],
       limitations: [],
-      color: 'from-amber-500 to-orange-500',
+      color: 'from-yellow-500 to-red-700',
       badge: 'Most Popular',
     },
     {
@@ -112,7 +113,7 @@ export const CLIENT = {
         'Priority support',
       ],
       limitations: [],
-      color: 'from-orange-500 to-red-600',
+      color: 'from-red-700 to-red-900',
       badge: 'Best Value',
     },
     {
@@ -131,7 +132,7 @@ export const CLIENT = {
         'Priority support',
       ],
       limitations: [],
-      color: 'from-red-600 to-red-800',
+      color: 'from-zinc-700 to-zinc-900',
       badge: 'For Agencies',
     },
   ],

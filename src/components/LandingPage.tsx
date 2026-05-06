@@ -180,7 +180,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-7">
                   <Zap size={12} /> AI-Powered Social Media — Done For You
                 </div>
-                <h1 className="text-5xl md:text-6xl font-black mb-5 leading-[1.05] tracking-tight">
+                <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black mb-5 leading-[1.1] sm:leading-[1.05] tracking-tight px-2 sm:px-0">
                   {portalContent?.hero_title ? (
                     <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
                       {portalContent.hero_title}
@@ -194,7 +194,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     </>
                   )}
                 </h1>
-                <p className="text-lg text-white/50 mb-8 max-w-xl mx-auto leading-relaxed">
+                <p className="text-base sm:text-lg text-white/50 mb-8 max-w-xl mx-auto leading-relaxed px-4 sm:px-0">
                   {portalContent?.hero_subtitle || "AI writes, designs, and schedules your Facebook & Instagram posts every week — so you can focus on running your business."}
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
@@ -281,7 +281,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             <section className="py-12 px-6">
               <div className="max-w-3xl mx-auto">
                 <div className="text-center mb-8">
-                  <h2 className="text-2xl md:text-3xl font-black mb-2">See it in action</h2>
+                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-2">See it in action</h2>
                   <p className="text-white/40 text-sm">Watch AI write, schedule, and publish your posts in real time</p>
                 </div>
                 <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d1a] aspect-video">
@@ -306,7 +306,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             <section className="py-12 px-6 border-t border-white/5">
               <div className="max-w-4xl mx-auto">
                 <div className="text-center mb-10">
-                  <h2 className="text-2xl md:text-3xl font-black mb-2">Up and running in 5 minutes</h2>
+                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-2">Up and running in 5 minutes</h2>
                   <p className="text-white/40 text-sm">Self-service setup — no waiting, no tech skills needed</p>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -333,7 +333,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             <section className="py-16 px-6 text-center relative overflow-hidden">
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(245,158,11,0.10),transparent_70%)]" />
               <div className="relative max-w-xl mx-auto">
-                <h2 className="text-3xl md:text-4xl font-black mb-3">Ready to put social media on autopilot?</h2>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">Ready to put social media on autopilot?</h2>
                 <p className="text-white/40 mb-8 text-sm">Australian businesses already saving 8+ hours a week.</p>
                 <button
                   onClick={() => setShowPricing(true)}
@@ -362,7 +362,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               <div className="inline-flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-300 text-xs font-semibold px-4 py-2 rounded-full mb-6">
                 <Timer size={12} /> The #1 reason small businesses fail at social media
               </div>
-              <h2 className="text-3xl md:text-5xl font-black mb-5 leading-tight">
+              <h2 className="text-2xl sm:text-3xl md:text-5xl font-black mb-5 leading-tight">
                 You know you <span className="italic text-white/50">should</span> be posting.{' '}
                 <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">But who has the time?</span>
               </h2>
@@ -393,7 +393,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 <div className="inline-flex items-center gap-2 bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
                   <TrendingUp size={12} /> Real Results for Real Businesses
                 </div>
-                <h2 className="text-3xl md:text-4xl font-black mb-3">The numbers speak for themselves</h2>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">The numbers speak for themselves</h2>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
@@ -415,7 +415,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             {/* BEFORE / AFTER COMPARISON */}
             <div>
               <div className="text-center mb-10">
-                <h2 className="text-3xl md:text-4xl font-black mb-3">
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">
                   <span className="text-red-400">Without</span> vs <span className="text-emerald-400">With</span> SocialAI Studio
                 </h2>
               </div>

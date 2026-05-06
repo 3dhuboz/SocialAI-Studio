@@ -79,7 +79,7 @@ export const PostModal: React.FC<Props> = ({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
 
       {/* Modal */}
-      <div className="relative z-10 w-full max-w-lg bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl shadow-black/60 overflow-hidden animate-spring-in">
+      <div className="relative z-10 w-full max-w-[calc(100vw-1rem)] sm:max-w-lg max-h-[90vh] overflow-y-auto bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl shadow-black/60 animate-spring-in">
 
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/6">

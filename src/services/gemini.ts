@@ -86,43 +86,313 @@ const parseAiJson = (raw: string): any => {
     return JSON.parse(sanitizeJson(fixed));
   } catch {
     // Second attempt: strip all backslash-escapes that aren't valid JSON
-    const stripped = fixed.replace(/\\(?!["\\/bfnrtu])/g, '');
-    return JSON.parse(sanitizeJson(stripped));
+    try {
+      const stripped = fixed.replace(/\\(?!["\\/bfnrtu])/g, '');
+      return JSON.parse(sanitizeJson(stripped));
+    } catch {
+      // Third attempt: TRUNCATED OUTPUT recovery — model hit maxTokens mid-array.
+      // Find the last fully-completed object inside "posts": [...], close the
+      // array + brace, and try again. Better to return 12 valid posts than 0.
+      return tryRecoverTruncated(cleaned);
+    }
   }
 };
+
+// Recover from a truncated JSON response by trimming back to the last complete
+// object inside the posts array. Returns null if recovery isn't possible.
+function tryRecoverTruncated(raw: string): any {
+  // Locate "posts": [ ... — find each complete object boundary and trim.
+  const postsKey = raw.search(/"posts"\s*:\s*\[/);
+  if (postsKey < 0) return null;
+  const arrStart = raw.indexOf('[', postsKey);
+  if (arrStart < 0) return null;
+
+  // Walk through, tracking depth and string state, find the last closing }
+  // that's at depth=1 (immediate child of the posts array).
+  let depth = 0; let inStr = false; let esc = false;
+  let lastClose = -1;
+  for (let i = arrStart; i < raw.length; i++) {
+    const ch = raw[i];
+    if (esc) { esc = false; continue; }
+    if (ch === '\\') { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 1) lastClose = i;  // depth=1 means "this closing brace finishes a post object"
+    }
+  }
+  if (lastClose < 0) return null;
+  // Reconstruct: everything up to lastClose, then close the array + outer object.
+  const reconstructed = raw.substring(0, lastClose + 1) + ']}';
+  try {
+    const parsed = JSON.parse(sanitizeJson(escapeJsonStrings(reconstructed)));
+    if (parsed && Array.isArray(parsed.posts)) {
+      console.warn(`[parseAiJson] truncation recovered: kept ${parsed.posts.length} complete posts`);
+      return parsed;
+    }
+  } catch { /* fall through */ }
+  return null;
+}
 
 const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
-/** Generate business-specific image prompt examples based on business type */
+/** Generate business-specific image prompt examples based on business type.
+ * Provides 6-8 DIFFERENT compositions per industry so the AI doesn't fall
+ * back to the same "device on desk" / "product on board" template every post.
+ * Each call returns ALL examples so the model has a wide variety palette. */
 const getImagePromptExamples = (businessType: string): string => {
   const t = businessType.toLowerCase();
-  if (t.includes('butcher') || t.includes('meat') || t.includes('agriculture'))
-    return "e.g. 'raw beef ribeye steak on dark wooden cutting board, warm lighting, overhead shot' or 'lamb cutlets on butcher paper with rosemary, natural light'";
-  if (t.includes('bbq') || t.includes('barbeque') || t.includes('food truck'))
-    return "e.g. 'smoked brisket sliced on butcher paper with pickles, golden hour light' or 'pulled pork burger with coleslaw, close-up shot'";
-  if (t.includes('bakery') || t.includes('café') || t.includes('cafe') || t.includes('coffee'))
-    return "e.g. 'sourdough loaf on marble counter, morning light, overhead' or 'flat white coffee with latte art, rustic wooden table'";
-  if (t.includes('pickle') || t.includes('deli') || t.includes('ferment'))
-    return "e.g. 'jar of bread and butter pickles with fresh cucumbers, natural light' or 'cheese board with artisan pickles, overhead shot'";
-  if (t.includes('web') || t.includes('software') || t.includes('tech') || t.includes('it') || t.includes('digital') || t.includes('saas'))
-    return "e.g. 'laptop screen showing social media dashboard with analytics, soft desk lighting' or 'phone displaying content calendar app, clean white desk'";
-  if (t.includes('festival') || t.includes('event'))
-    return "e.g. 'outdoor festival crowd scene from behind, golden sunset light' or 'BBQ competition trophies on display table, dramatic lighting'";
-  if (t.includes('surf') || t.includes('sport') || t.includes('outdoor'))
-    return "e.g. 'surfboard standing in sand with ocean background, golden hour' or 'row of surfboards in shop rack, natural light'";
-  return `e.g. 'the main product/service of ${businessType} in its natural setting, professional lighting, close-up shot'`;
+  // Use word-boundary check for short tokens to avoid false matches (e.g. "it"
+  // matching "kit", "fit", "with"). Long tokens use plain substring.
+  const has = (...needles: string[]) => needles.some(n =>
+    n.length <= 3 ? new RegExp(`\\b${n}\\b`).test(t) : t.includes(n)
+  );
+
+  if (has('butcher', 'meat', 'agriculture')) return [
+    "'raw beef ribeye steak on dark wooden cutting board, warm lighting, overhead shot'",
+    "'rack of lamb on butcher paper with rosemary sprigs, natural side light'",
+    "'glass display case of fresh sausages and cuts, shop interior, soft daylight'",
+    "'aged dry-rubbed brisket close-up showing bark texture, dramatic lighting'",
+    "'butcher's marble counter with herbs and twine, overhead flatlay'",
+    "'cast iron pan searing thick pork chops with garlic, moody warm light'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('bbq', 'barbeque', 'barbecue', 'food truck', 'smokehouse')) return [
+    "'sliced smoked brisket fanned on butcher paper, golden hour light'",
+    "'pulled pork burger with coleslaw and pickles, close-up macro'",
+    "'BBQ ribs glistening with glaze on cedar plank, smoke wisps in background'",
+    "'food truck exterior at dusk with warm window light and queue'",
+    "'overhead flatlay: brisket, slaw, beans, white bread on red checkered paper'",
+    "'pitmaster's smoker open showing meat, atmospheric smoke, late afternoon sun'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('bakery', 'café', 'cafe', 'coffee')) return [
+    "'sourdough loaf cross-section on marble counter, morning window light'",
+    "'flat white coffee with latte art on rustic wooden table, top-down'",
+    "'croissants stacked in wicker basket, soft golden bakery light'",
+    "'barista pouring milk in motion, espresso machine bokeh background'",
+    "'pastry display case interior, warm lighting, bakery atmosphere'",
+    "'overhead flatlay of breakfast spread: coffee, pastries, jam, butter'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('pickle', 'deli', 'ferment')) return [
+    "'jar of bread and butter pickles next to fresh cucumbers, natural light'",
+    "'wooden cheese board with artisan pickles, crackers, and grapes, overhead'",
+    "'colourful row of fermentation jars on shelf, daylight from window'",
+    "'cross-section of kimchi in a glass jar showing texture, side angle'",
+    "'sandwich loaded with deli meat and pickles, overhead on butcher paper'",
+    "'kraut being lifted with wooden tongs above jar, action shot'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('web', 'software', 'tech', 'digital', 'saas') || /\bit\b/.test(t) || /\bi\.t\b/.test(t)) return [
+    "'modern office workspace with multiple monitors showing code, dramatic blue glow'",
+    "'close-up of fingers typing on mechanical keyboard, dark moody desk setup'",
+    "'minimalist phone screen showing clean app UI, marble surface, top-down'",
+    "'rack of glowing server hardware, abstract tech atmosphere, neon accents'",
+    "'small business owner reviewing tablet at coffee shop counter, warm natural light'",
+    "'creative wall of sticky notes and wireframe sketches, daylight window'",
+    "'aerial view of clean desk with notebook, pen, plant, and laptop, beige aesthetic'",
+    "'abstract close-up of glowing fibre cables in dark room, blue+orange contrast'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('festival', 'event')) return [
+    "'outdoor festival crowd from behind facing stage, golden sunset light'",
+    "'competition trophies and ribbons on draped table, dramatic spotlight'",
+    "'food truck row at dusk with festoon lights, atmospheric'",
+    "'overhead aerial of festival grounds with marquees and crowds'",
+    "'festival entrance gate with banners, golden hour, anticipation feel'",
+    "'judges tasting at competition table, focused candid moment'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('surf', 'sport', 'outdoor')) return [
+    "'surfboard standing upright in sand with ocean background, golden hour'",
+    "'row of surfboards in shop rack, natural daylight from window'",
+    "'wave breaking with surfer silhouette, dramatic backlight'",
+    "'overhead flatlay of beach gear: board wax, sunscreen, towel, sandals'",
+    "'aerial shot of empty surf break at dawn, dramatic clouds'",
+    "'wetsuit hanging on weathered wooden fence, salty atmosphere'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('jewel', 'jewelry', 'jewellery')) return [
+    "'single ring on velvet pad with soft directional lighting'",
+    "'overhead flatlay of necklaces fanned on linen background'",
+    "'close-up macro of gemstone showing facets and light play'",
+    "'workbench with tools and an in-progress piece, atmospheric warm light'",
+    "'jewellery in display case with reflections, boutique interior'",
+    "'open jewellery box with multiple pieces, overhead, soft shadows'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('mechanic', 'garage', 'auto', 'workshop')) return [
+    "'classic car in garage bay under work lights, atmospheric'",
+    "'mechanic's tool wall with organised wrenches, industrial light'",
+    "'engine bay close-up with chrome detail, shallow focus'",
+    "'oil change action shot from below the lift, dramatic angle'",
+    "'detailed leather steering wheel close-up after restoration'",
+    "'workshop exterior with vintage signage, golden hour'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  if (has('breath', 'wellness', 'yoga', 'meditation', 'mindful')) return [
+    "'serene candle on stone with soft window light, minimal composition'",
+    "'meditation cushion in sunlit room with linen curtains'",
+    "'overhead flatlay of journal, herbal tea, and dried flowers, calm aesthetic'",
+    "'misty forest path at dawn, atmospheric grounding nature shot'",
+    "'close-up of hands holding warm ceramic mug, cozy lighting'",
+    "'studio interior with plants, soft daylight, peaceful empty space'",
+  ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
+
+  return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one item' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
 };
+
+// ── Real-data ground-truth fetcher (FB-scraped facts) ──
+// The AI used to invent testimonials and stats because it had nothing real.
+// Now we pull a slice of the client_facts table (populated by the Worker
+// scraping their connected FB Page) and inject only verified, real content
+// into prompts. Falls back gracefully if the workspace has no facts yet.
+export interface ClientFact {
+  fact_type: 'about' | 'own_post' | 'comment' | 'photo' | 'event';
+  content: string;
+  metadata: any;
+  engagement_score: number;
+}
+let _factsCache: { key: string; ts: number; facts: ClientFact[] } | null = null;
+const FACTS_TTL_MS = 5 * 60 * 1000; // 5 min in-memory cache
+
+export async function fetchClientFacts(clientId?: string | null): Promise<ClientFact[]> {
+  const key = clientId || '_self';
+  if (_factsCache && _factsCache.key === key && Date.now() - _factsCache.ts < FACTS_TTL_MS) {
+    return _factsCache.facts;
+  }
+  const fetchOnce = async (): Promise<ClientFact[]> => {
+    const headers = await aiAuthHeaders();
+    const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+    const res = await fetch(`${AI_WORKER}/api/db/facts${qs}`, { headers });
+    if (!res.ok) return [];
+    const data = await res.json() as { facts?: any[] };
+    return (data.facts || []).map((f: any) => ({
+      fact_type: f.fact_type,
+      content: f.content,
+      metadata: typeof f.metadata === 'string' ? (() => { try { return JSON.parse(f.metadata); } catch { return {}; } })() : f.metadata,
+      engagement_score: f.engagement_score || 0,
+    }));
+  };
+  try {
+    let facts = await fetchOnce();
+    // Auto-bootstrap: if facts table is empty for this workspace, trigger a
+    // refresh from Facebook ONCE before giving up. This means a brand-new
+    // user runs Smart Schedule and gets real data without needing to click
+    // the Refresh button first.
+    if (facts.length === 0) {
+      console.log('[gemini] no facts found — attempting one-time auto-refresh from Facebook');
+      try {
+        const headers = await aiAuthHeaders();
+        const path = clientId ? `/api/db/refresh-facts/${encodeURIComponent(clientId)}` : '/api/db/refresh-facts';
+        const refreshRes = await fetch(`${AI_WORKER}${path}`, { method: 'POST', headers });
+        if (refreshRes.ok) {
+          facts = await fetchOnce();
+          console.log(`[gemini] auto-refresh populated ${facts.length} facts`);
+        }
+      } catch { /* fall through with empty facts */ }
+    }
+    _factsCache = { key, ts: Date.now(), facts };
+    return facts;
+  } catch {
+    return [];
+  }
+}
+export function clearFactsCache() { _factsCache = null; }
+
+/** Build a ground-truth block to inject into AI prompts.
+ * Returns "" if no facts available so the prompt degrades gracefully.
+ * Engagement-feedback loop: top-2 past posts get STAR PERFORMER treatment so
+ * the AI explicitly mimics what's already worked for THIS business. */
+export function buildGroundTruthBlock(facts: ClientFact[]): string {
+  if (!facts.length) return '';
+  const about = facts.find(f => f.fact_type === 'about');
+  // Posts come pre-sorted by engagement_score DESC from the API
+  const allPosts = facts.filter(f => f.fact_type === 'own_post');
+  const starPosts = allPosts.filter(p => p.engagement_score > 0).slice(0, 2);
+  const restPosts = allPosts.filter(p => !starPosts.includes(p)).slice(0, 4);
+  const comments = facts.filter(f => f.fact_type === 'comment').slice(0, 5);
+  const events = facts.filter(f => f.fact_type === 'event').slice(0, 3);
+
+  const sections: string[] = [];
+  sections.push('═══════════════════════════════════════════════════════════════════');
+  sections.push('VERIFIED FACTS — scraped from this business\'s real Facebook Page.');
+  sections.push('These are the ONLY facts you may cite. Anything not below is invention.');
+  sections.push('═══════════════════════════════════════════════════════════════════');
+  if (about) sections.push(`\nPAGE INFO:\n${about.content}`);
+
+  if (starPosts.length) {
+    sections.push(`\n★ STAR PERFORMERS — these posts ALREADY worked for this business.`);
+    sections.push(`MATCH THIS VOICE, FORMAT, AND APPROACH. Don't copy the words — copy the rhythm, length, hook style, and energy.`);
+    starPosts.forEach((p, i) => {
+      const meta = p.metadata || {};
+      const stats = `${meta.likes || 0}❤️ ${meta.comments || 0}💬 ${meta.shares || 0}🔁`;
+      sections.push(`★ ${i + 1}. [${stats}] ${p.content.substring(0, 320)}`);
+    });
+  }
+  if (restPosts.length) {
+    sections.push(`\nOTHER PAST POSTS (additional voice samples):`);
+    restPosts.forEach((p, i) => sections.push(`${i + 1}. ${p.content.substring(0, 220)}`));
+  }
+  if (comments.length) {
+    sections.push(`\nREAL CUSTOMER COMMENTS (real audience language; quote sparingly with attribution like "one customer wrote"):`);
+    comments.forEach((c, i) => sections.push(`${i + 1}. ${c.content.substring(0, 200)}`));
+  }
+  if (events.length) {
+    sections.push(`\nREAL UPCOMING EVENTS (only events you may reference):`);
+    events.forEach(e => sections.push(`• ${e.content} (${e.metadata?.start_time || 'TBA'})`));
+  }
+  sections.push('═══════════════════════════════════════════════════════════════════\n');
+  return sections.join('\n');
+}
+
+// Auth wiring — /api/ai/generate now requires Clerk JWT or Portal token.
+// Each auth context calls setGeminiAuth() at startup so callAI can attach
+// the right Authorization header.
+type GeminiAuthMode = 'clerk' | 'portal';
+let _getAiToken: (() => Promise<string | null>) | null = null;
+let _aiAuthMode: GeminiAuthMode = 'clerk';
+export function setGeminiAuth(getToken: () => Promise<string | null>, mode: GeminiAuthMode = 'clerk') {
+  _getAiToken = getToken;
+  _aiAuthMode = mode;
+}
+// Shared header builder — used by both /api/ai/generate and /api/fal-proxy callers.
+// Both endpoints require auth (Clerk JWT or Portal token) since rate limiting was added.
+export async function aiAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(extra || {}) };
+  if (_getAiToken) {
+    const tok = await _getAiToken();
+    if (tok) headers['Authorization'] = _aiAuthMode === 'portal' ? `Portal ${tok}` : `Bearer ${tok}`;
+  }
+  return headers;
+}
 
 const callAI = async (
   prompt: string,
-  options?: { temperature?: number; maxTokens?: number; responseFormat?: 'json' | 'text' }
+  options?: {
+    temperature?: number;
+    maxTokens?: number;
+    responseFormat?: 'json' | 'text';
+    /** When supplied, sent with Anthropic prompt caching (cache_control: ephemeral).
+     * Use for the large static block (GOLDEN RULES + verified facts + brand context)
+     * that repeats across every Smart Schedule call. Cuts ~70% off cost on cache hits. */
+    cachedPrefix?: string;
+    /** Model override — defaults to Claude Haiku 4.5 in the worker */
+    model?: string;
+  }
 ): Promise<string> => {
+  const headers = await aiAuthHeaders();
   const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       prompt,
+      cachedPrefix: options?.cachedPrefix,
+      model: options?.model,
       temperature: options?.temperature ?? 0.8,
       maxTokens: options?.maxTokens ?? 2048,
       responseFormat: options?.responseFormat ?? 'text',
@@ -174,8 +444,13 @@ export const generateSocialPost = async (
     location?: string;
     contentTopics?: string;
   },
-  contentFormat?: string
+  contentFormat?: string,
+  /** When provided, AI is restricted to citing only these scraped FB facts. */
+  clientId?: string | null,
 ): Promise<{ content: string; hashtags: string[]; imagePrompt?: string }> => {
+  // Pull verified FB-scraped facts for this workspace (zero invention possible)
+  const facts = await fetchClientFacts(clientId);
+  const groundTruthBlock = buildGroundTruthBlock(facts);
   // Sanity check: detect corrupted profile data (e.g. agency profile leaked into client workspace)
   const isSinglePostProfileCorrupted = (() => {
     if (!profile) return false;
@@ -248,24 +523,56 @@ export const generateSocialPost = async (
 - CTA: prioritise saves ("Save this ✓"), shares ("Tag someone"), or comments (open question).
 - Avoid: hashtag dumps >10 (penalised), generic captions, posting without a scroll-stopping hook.`;
 
-  const prompt = `You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
+  const prompt = `═══════════════════════════════════════════════════════════════════
+GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
+═══════════════════════════════════════════════════════════════════
+
+1. NO INVENTED CUSTOMERS, REVIEWS, OR STORIES.
+   You do NOT have real customer data. NEVER write phrases like:
+     ✗ "A local cafe in [city] said..."
+     ✗ "Rockhampton owner saw..."
+     ✗ "One of our happy clients..."
+     ✗ "A customer told us..."
+     ✗ "Sarah J., Brisbane, says..."
+   You have NO testimonials. Don't invent any. Period.
+
+2. NO INVENTED STATISTICS OR PERCENTAGES.
+   You do NOT have analytics data. NEVER write phrases like:
+     ✗ "increased engagement by 30%"
+     ✗ "saw a 45% boost"
+     ✗ "saved them 10 hours a week"
+     ✗ "generated 5x more leads"
+   No numbers unless they appear verbatim in BRAND CONTEXT below.
+
+3. NO INVENTED EVENTS, CAMPAIGNS, COUNTDOWNS, URLS.
+   No "tomorrow!", no "this weekend only", no "limited spots left",
+   no fake URLs, no fake hashtag campaigns. Only what's in BRAND CONTEXT.
+
+4. EVERY POST MUST NAME A REAL THING from BRAND CONTEXT — an actual
+   product, service, or location explicitly listed below. If you can't
+   tie the post to something specific in BRAND CONTEXT, the post is wrong.
+
+═══════════════════════════════════════════════════════════════════
+
+You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
-${profileContext ? `\nBRAND CONTEXT:\n${profileContext}` : ''}
+${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
 
 ${platformRules}
 
-ANTI-GENERIC RULES:
-- Never start with "Exciting news!" or "We're thrilled to announce"
-- Never use filler phrases like "In today's fast-paced world", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level"
-- BANNED phrases — never write: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "In today's digital age". If you catch yourself writing these, stop and replace with a concrete specific detail.
-- Every sentence must earn its place — if it could apply to any business, rewrite it
-- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name
-- If content topics are provided above, the post MUST relate to one of those topics or themes
-- Write like you're texting a smart friend, not writing a press release
-- Do NOT invent events, campaigns, countdown language, or facts that aren't in the brand context — stay true to what the business actually does
+STRICT ANTI-GENERIC RULES (forbidden tokens — DO NOT WRITE under any condition):
+- FORBIDDEN openers: "Exciting news!", "We're thrilled to announce", "Big news!", "Have you heard?"
+- FORBIDDEN filler: "In today's fast-paced world", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "Game-changer", "Revolutionise"
+- FORBIDDEN CTAs: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "Click the link in bio!"
+- If you draft any forbidden phrase, STOP, delete it, and replace with a concrete specific detail.
+- Every sentence must earn its place — if it could apply to any business, rewrite it.
+- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name.
+- If content topics are provided above, the post MUST relate to one of those topics or themes.
+- Do NOT invent events, campaigns, countdown language, or facts that aren't in the brand context — stay true to what the business actually does.
+- Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
 Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product — ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods' — name the specific item. NO people, NO hands, NO faces."}
@@ -334,9 +641,146 @@ Content must respect the character limits above. No padding. No filler.`;
     return { content: stripped || 'Could not parse AI response.', hashtags: [] };
   };
 
-  const text = await callAI(prompt, { temperature: 0.8, maxTokens: 512, responseFormat: 'json' });
-  return parseRaw(text);
+  // Up to 3 attempts: generate → validate → reject if hallucinated → regenerate.
+  // Lower temperature (0.5 not 0.8) to reduce invention without going stiff.
+  let parsed: any;
+  let attempt = 0;
+  let lastReason = '';
+  while (attempt < 3) {
+    attempt++;
+    const text = await callAI(prompt + (attempt > 1 ? `\n\nATTEMPT #${attempt} — your previous draft was rejected because: "${lastReason}". Do not repeat that mistake.` : ''), {
+      temperature: attempt === 1 ? 0.5 : 0.35,
+      maxTokens: 512,
+      responseFormat: 'json',
+    });
+    parsed = parseRaw(text);
+    if (typeof parsed.content !== 'string') break;
+    // Layer A: regex detector (cheap, instant, catches known patterns)
+    const regexViolation = detectFabrication(parsed.content);
+    if (regexViolation) { lastReason = regexViolation; console.warn(`[gemini] attempt ${attempt} rejected (regex): ${regexViolation}`); continue; }
+    // Layer B: LLM judge (semantic — catches what regex misses). Only on attempts 1-2.
+    if (attempt < 3) {
+      const judgement = await judgePost(parsed.content, facts, profileContext || '');
+      if (!judgement.pass) { lastReason = judgement.reason || 'judge flagged fabrication'; console.warn(`[gemini] attempt ${attempt} rejected (judge): ${lastReason}`); continue; }
+    }
+    break;
+  }
+  // Final scrub for anything that survived all attempts
+  const limit = platform === 'Facebook' ? HASHTAG_LIMITS.facebook.optimal : HASHTAG_LIMITS.instagram.optimal;
+  if (Array.isArray(parsed.hashtags) && parsed.hashtags.length > limit) {
+    parsed.hashtags = parsed.hashtags.slice(0, limit);
+  }
+  if (typeof parsed.content === 'string') {
+    parsed.content = scrubBannedPhrases(parsed.content);
+  }
+  return parsed;
 };
+
+// Detect fabricated content — fake testimonials, fake stats, fake events.
+// Returns the offending phrase as a rejection reason, or null if clean.
+// This is the LAST line of defence: prompt rules try to prevent these,
+// retry logic gives the AI a second chance, and this catches everything else.
+// LLM judge — semantic fabrication detection that the regex bank misses.
+// Cheap (~$0.001 per call with Haiku at temp 0). Returns pass=true if the post
+// is clean, or pass=false with a reason and an optional suggested rewrite.
+// Defaults to PASS on any error so a flaky judge never blocks generation entirely.
+async function judgePost(
+  content: string,
+  facts: ClientFact[],
+  brandContext: string,
+): Promise<{ pass: boolean; reason?: string }> {
+  const factsText = facts.slice(0, 12)
+    .map(f => `[${f.fact_type}] ${(f.content || '').substring(0, 180)}`)
+    .join('\n') || '(no verified facts)';
+  const prompt = `You are a strict editor. Reject any social media draft that invents specifics not in the verified data below. Reply with ONLY JSON.
+
+DRAFT TO EVALUATE:
+"""
+${content}
+"""
+
+VERIFIED FACTS (the only allowed source for specific claims):
+${factsText}
+
+BRAND CONTEXT:
+${(brandContext || '').substring(0, 1000)}
+
+Score each rule 0 or 1:
+- specifics_grounded: Every named customer/product/stat in the draft must appear in VERIFIED FACTS or BRAND CONTEXT. Generic phrases like "our customers" are OK; specific names/places/numbers must be sourced.
+- no_invented_testimonials: NO fake customer quotes, names ("Sarah J", "a local cafe in Brisbane"), or made-up success stories.
+- no_invented_stats: NO percentages, time-savings, multipliers, or counts unless they appear verbatim in BRAND CONTEXT or VERIFIED FACTS.
+- no_fake_urgency: NO countdowns, "today only", "limited time", "ends tomorrow" unless a real event with date appears in VERIFIED FACTS.
+
+Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_stats":0|1,"no_fake_urgency":0|1,"reason":"one short sentence if any rule is 0, else empty"}`;
+  try {
+    // Hard timeout — one slow judge call must NEVER block the whole batch.
+    // Promise.all of 21 judges blocked on a stalled fetch is what hung the
+    // user's Saturation generation at 96% complete.
+    const text = await Promise.race<string>([
+      callAI(prompt, { temperature: 0, maxTokens: 300, responseFormat: 'json' }),
+      new Promise<string>((_, rej) => setTimeout(() => rej(new Error('judge timeout 8s')), 8000)),
+    ]);
+    const result = JSON.parse(text);
+    const allPass = result.specifics_grounded === 1
+      && result.no_invented_testimonials === 1
+      && result.no_invented_stats === 1
+      && result.no_fake_urgency === 1;
+    return { pass: allPass, reason: allPass ? undefined : (result.reason || 'judge flagged content') };
+  } catch (e: any) {
+    console.warn('[judge] failed (defaulting to pass):', e?.message);
+    return { pass: true };
+  }
+}
+
+function detectFabrication(content: string): string | null {
+  const checks: Array<[RegExp, string]> = [
+    // Fake customer testimonials
+    [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
+    [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
+    [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
+    [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
+    // Fake statistics
+    [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving)/i, 'invented percentage statistic'],
+    [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
+    [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
+    [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
+    // Fake urgency / countdowns / events without source
+    [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
+    [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
+  ];
+  for (const [pattern, reason] of checks) {
+    const match = content.match(pattern);
+    if (match) return `${reason} ("${match[0]}")`;
+  }
+  return null;
+}
+
+// Catch banned phrases that slipped past the prompt. Replace with neutral
+// alternatives or strip outright. Logs on every hit so quality can be tracked.
+const BANNED_PATTERNS: Array<[RegExp, string]> = [
+  [/\bWant to boost your [^?.!]+[?.!]/gi, ''],
+  [/\bEngage with your audience!?/gi, ''],
+  [/\bCheck out our website[^.!?]*[.!?]/gi, ''],
+  [/\bVisit our website[^.!?]*[.!?]/gi, ''],
+  [/\bLet [^.]+ handle the rest!?/gi, ''],
+  [/\bIn today's (digital age|fast-paced world)[,.]?\s*/gi, ''],
+  [/\bAs a business owner[,.]?\s*/gi, ''],
+  [/\bStay ahead of the competition!?/gi, ''],
+  [/\bTake your [^.!?]+ to the next level!?/gi, ''],
+  [/\bExciting news!\s*/gi, ''],
+  [/\bWe('?re| are) thrilled to announce[^.!?]*[.!?]\s*/gi, ''],
+];
+function scrubBannedPhrases(content: string): string {
+  let out = content;
+  for (const [pattern, replacement] of BANNED_PATTERNS) {
+    if (pattern.test(out)) {
+      console.warn(`[gemini] scrubbing banned phrase: ${pattern}`);
+      out = out.replace(pattern, replacement);
+    }
+  }
+  // Tidy double-spaces and stray punctuation left after deletions.
+  return out.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
+}
 
 export const generateMarketingImage = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
   // Helper: convert a remote image URL to a compressed data URL
@@ -383,7 +827,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     console.log('fal.ai FLUX →', prompt.substring(0, 80));
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await aiAuthHeaders(),
       body: JSON.stringify({ prompt: imagePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
@@ -441,7 +885,7 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await aiAuthHeaders(),
       body: JSON.stringify({ prompt: imagePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
@@ -753,6 +1197,10 @@ export interface SmartScheduledPost {
   videoScript?: string;
   videoShots?: string;
   videoMood?: string;
+  /** Set by the fabrication detector when a post contains content that survived
+   * scrubbing (invented testimonials, fake stats, etc.). UI should highlight. */
+  _needsReview?: boolean;
+  _reviewReason?: string;
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
@@ -867,7 +1315,12 @@ export const generateSmartSchedule = async (
   onPhase?: (phase: 'researching' | 'writing') => void,
   campaignFocus?: string,
   activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[],
+  /** When provided, AI is restricted to citing only these scraped FB facts. */
+  clientId?: string | null,
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
+  // Pull verified FB-scraped facts up-front (cached for 5 min)
+  const facts = await fetchClientFacts(clientId);
+  const groundTruthBlock = buildGroundTruthBlock(facts);
   try {
     const now = new Date();
     const isQuick24h = scheduleMode === 'quick24h';
@@ -1159,8 +1612,8 @@ You are an elite social media growth operator running a SATURATION CAMPAIGN for 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
-CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only.' : ''}
+${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
+CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. EVERY post MUST be postType="image" — never "text". Image posts get 2-3x more Facebook reach than text-only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
@@ -1180,7 +1633,8 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself writing "laptop on desk" for the third time, STOP and pick a totally different scene from the examples above.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 9. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service, (b) a specific measurable outcome, or (c) a location reference. Vague posts must be rewritten.
 10. BANNED PHRASES — never use: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition". Rewrite with concrete specifics.
@@ -1210,7 +1664,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
+${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results — never generic marketing advice that could apply to any business. Do NOT invent campaigns, countdown language, or stats that are not in the business context above.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
@@ -1221,7 +1675,7 @@ RESEARCH INSIGHTS — apply every finding precisely:
 - Hashtag pool (mix ALL tiers, Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
 - Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Platform split: ${fbCount} Facebook, ${igCount} Instagram
-- Post format mix: ${JSON.stringify(includeVideos ? (research.postFormatMix || { image: 50, video: 30, text: 20 }) : { image: 70, text: 30 })}
+- Post format mix: ${JSON.stringify(includeVideos ? (research.postFormatMix || { image: 70, video: 30 }) : { image: 100 })} — DEFAULT TO IMAGE POSTS. Only use postType="text" if a post genuinely cannot be illustrated (rare). Image posts get 2-3x more reach than text on Facebook in 2026.
 - Key engagement tactic: ${research.engagementTips || 'Ask a question every post'}
 ${videoInstructions}
 RULES:
@@ -1231,12 +1685,15 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST name the EXACT product from this post — ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself reusing the same scene, STOP and pick a totally different one from the examples above.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
-10. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service from the business context above, (b) a specific measurable outcome (e.g. "saves 5 hours/week", "30% more engagement"), or (c) a location-specific reference to the business's actual area. Generic sentences that pass no specificity test must be rewritten or cut.
+10. SPECIFICITY MANDATE: Each post MUST name a real product/service/feature from the business context above, OR reference the business's actual location. Generic sentences that could apply to any business must be rewritten or cut. DO NOT invent statistics — only cite numbers if they appear verbatim in the business context.
 11. BANNED PHRASES — never use any of these: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "We're excited to announce". If you catch yourself writing these, stop and rewrite with a concrete specific detail instead.
 12. NO FAKE URGENCY — Only use countdown language ("Only X days left!", "X days to go!") if a real ACTIVE CAMPAIGN with specific start/end dates was listed in the business context above. Never invent campaigns, deadlines, or limited-time offers.
+13. NO INVENTED CUSTOMERS — You have ZERO testimonials, reviews, or customer stories. NEVER write phrases like "A local cafe in [city] said...", "Rockhampton owner saw...", "One of our happy clients...", "A customer told us...", or any fake testimonial signature like "Sarah J., Brisbane". You don't have these — don't make them up.
+14. NO INVENTED STATISTICS — You have ZERO analytics data. NEVER write "increased by X%", "saved X hours", "X% boost", "Xx more leads", "over X clients", or any other invented number. Every number you write must already appear in the business context above. When in doubt, write the qualitative benefit instead ("helps you post consistently" not "increases engagement by 30%").
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
 {
@@ -1261,10 +1718,52 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
 
     onPhase?.('writing');
     // Video posts with scripts/shots need much more output tokens than the default 2048
-    const outputTokens = includeVideos ? 8192 : (effectivePosts > 7 ? 6144 : 4096);
-    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.75, maxTokens: outputTokens, responseFormat: 'json' }), 120000);
+    // Each post in JSON form is ~600-800 tokens (content + hashtags + imagePrompt
+    // + reasoning + pillar). Claude Haiku 4.5 is more verbose than Gemini Flash.
+    // Allocate ~700/post + 1500 overhead, capped at Anthropic's 16k output limit.
+    // (Was previously 6144 — caused mid-JSON truncation on Saturation 21-post runs.)
+    const tokensPerPost = includeVideos ? 1100 : 750;
+    const outputTokens = Math.min(16384, 1500 + effectivePosts * tokensPerPost);
+    // Lowered temperature 0.75 → 0.55: enough creativity, less invention.
+    const scheduleText = await withTimeout(callAI(prompt, { temperature: 0.55, maxTokens: outputTokens, responseFormat: 'json' }), 180000);
     const data = parseAiJson(scheduleText) || { posts: [], strategy: '' };
     let posts: SmartScheduledPost[] = Array.isArray(data.posts) ? data.posts : [];
+
+    // ── Hallucination defence: regex scan + LLM judge per post.
+    // Regex runs instantly. Judges fire in BATCHES OF 5 (not 21-at-once) so we
+    // don't hit the worker's 30/min user rate limit and one stall doesn't block
+    // all the rest. Each judge has an 8s timeout (see judgePost).
+    const processOne = async (p: any) => {
+      if (typeof p.content !== 'string') return p;
+      const regexViolation = detectFabrication(p.content);
+      if (regexViolation) {
+        p.content = scrubBannedPhrases(p.content);
+        if (detectFabrication(p.content)) {
+          p._needsReview = true;
+          p._reviewReason = regexViolation;
+          return p;
+        }
+      } else {
+        p.content = scrubBannedPhrases(p.content);
+      }
+      try {
+        const judgement = await judgePost(p.content, facts, profileBlock || '');
+        if (!judgement.pass) {
+          p._needsReview = true;
+          p._reviewReason = judgement.reason || 'judge flagged content';
+        }
+      } catch { /* judge failure should never block */ }
+      return p;
+    };
+    // Concurrency-limited batching (5 at a time)
+    const judged: any[] = [];
+    const BATCH = 5;
+    for (let i = 0; i < posts.length; i += BATCH) {
+      const slice = posts.slice(i, i + BATCH);
+      const results = await Promise.all(slice.map(processOne));
+      judged.push(...results);
+    }
+    posts = judged;
 
     // Format a Date as local time string (NOT UTC) — "YYYY-MM-DDTHH:MM:SS"
     const toLocalISO = (d: Date): string => {

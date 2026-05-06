@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  typecheck-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # Frontend
+      - name: Install frontend deps
+        run: npm ci
+      - name: Frontend typecheck
+        run: npx tsc --noEmit
+      - name: Frontend build
+        run: npm run build
+
+      # Worker
+      - name: Install worker deps
+        run: npm ci --prefix workers/api
+      - name: Worker typecheck
+        run: npx --prefix workers/api tsc --noEmit
+        working-directory: workers/api
+
+      # Guard against the on_hold filter being silently removed again.
+      # If this grep fails, the cron query no longer skips paused clients.
+      - name: Guard — on_hold filter present
+        run: |
+          if ! grep -q "ACTIVE_CLIENT_FILTER" workers/api/src/index.ts; then
+            echo "::error::ACTIVE_CLIENT_FILTER constant missing from workers/api/src/index.ts"
+            exit 1
+          fi
+          if ! grep -q "on_hold" workers/api/src/index.ts; then
+            echo "::error::on_hold logic missing from workers/api/src/index.ts"
+            exit 1
+          fi
+
+      # Guard against re-adding Facebook scheduled_publish_time (creates orphans).
+      - name: Guard — no Facebook scheduled_publish_time calls
+        run: |
+          if grep -nE "FacebookService\.postToPageScheduled|await.*postToPageScheduled\(" src/App.tsx; then
+            echo "::error::App.tsx is calling postToPageScheduled — this creates uncancellable Facebook orphan posts. See root_cause_fb_scheduled_publish_time.md."
+            exit 1
+          fi
