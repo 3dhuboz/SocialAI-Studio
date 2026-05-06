@@ -1074,6 +1074,126 @@ async function backfillImagesForUser(env: Env, uid: string) {
   return { found: posts.length, succeeded, failed, errors: errors.slice(0, 5) };
 }
 
+// ── Admin: Provision a whitelabel portal (atomic) ─────────────────────────────
+// Combines the existing 2-step provisioning (client row + portal row) into one
+// call, generates the per-portal shared secret, and returns the full env-var
+// set the agent must paste into the CF Pages project. This is Phase B-Lite —
+// the database side of portal automation. Steps that require external APIs
+// (creating the CF Pages project, adding the custom domain, creating the
+// Clerk auto-login user) are still manual until those credentials are wired
+// in. See .windsurf/workflows/phase-b-portal-automation.md.
+//
+// Auth: gated by FACTS_BOOTSTRAP_SECRET (the same secret used by the existing
+// admin endpoints — keeps the bootstrap-secret surface area at one secret).
+//
+// Request body:
+//   {
+//     slug: "newclient",                    // unique, lowercase, kebab-case
+//     ownerUserId: "user_xxx",              // Clerk user id of the AGENCY admin
+//                                           // who owns this portal (typically Steve)
+//     businessName: "New Client",
+//     businessType: "florist",              // optional
+//     plan: "agency",                       // optional, defaults to 'agency'
+//     autoLoginEmail: "client@example.com", // the Clerk auto-login email
+//                                           // (Clerk user MUST be created
+//                                           //  manually until Phase B step 3)
+//     autoLoginPassword: "...",             // the Clerk auto-login password
+//     customDomain: "social.client.com.au"  // for the docs string only
+//   }
+//
+// Response:
+//   {
+//     ok: true,
+//     clientId: "<uuid>",
+//     portalToken: "<random>",
+//     portalSecret: "<random>",   // also stored as portal.password — set this
+//                                  // as VITE_PORTAL_SECRET on the CF Pages project
+//     envVars: { ... },           // copy-paste block for CF Pages env vars
+//     manualSteps: [ ... ]        // remaining steps that need a human
+//   }
+app.post('/api/admin/portals/provision', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const body = await c.req.json<{
+    slug?: string;
+    ownerUserId?: string;
+    businessName?: string;
+    businessType?: string;
+    plan?: string;
+    autoLoginEmail?: string;
+    autoLoginPassword?: string;
+    customDomain?: string;
+  }>();
+
+  // Validate inputs
+  const slug = (body.slug || '').toLowerCase().trim();
+  if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) {
+    return c.json({ error: 'slug must be lowercase, 2-41 chars, [a-z0-9-]' }, 400);
+  }
+  if (!body.ownerUserId || !body.businessName || !body.autoLoginEmail || !body.autoLoginPassword) {
+    return c.json({ error: 'ownerUserId, businessName, autoLoginEmail, autoLoginPassword are required' }, 400);
+  }
+  if (body.autoLoginPassword.length < 16) {
+    return c.json({ error: 'autoLoginPassword must be at least 16 chars' }, 400);
+  }
+
+  // Refuse if slug is already taken
+  const existing = await c.env.DB.prepare('SELECT slug FROM portal WHERE slug = ?').bind(slug).first();
+  if (existing) return c.json({ error: `slug '${slug}' is already taken` }, 409);
+
+  // Generate the per-portal shared secret + portal token. The "password" column
+  // on the portal table doubles as the shared secret used by VITE_PORTAL_SECRET.
+  // We use crypto.randomUUID twice to widen the entropy beyond a single UUID.
+  const portalSecret = crypto.randomUUID() + '-' + crypto.randomUUID();
+  const portalToken = crypto.randomUUID() + '-' + crypto.randomUUID();
+
+  // Atomic create: client first, then portal pointing at it.
+  const clientId = uuid();
+  const plan = body.plan || 'agency';
+  await c.env.DB.prepare(
+    'INSERT INTO clients (id, user_id, name, business_type, created_at, plan) VALUES (?,?,?,?,?,?)'
+  ).bind(clientId, body.ownerUserId, body.businessName, body.businessType ?? null, new Date().toISOString(), plan).run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id)
+     VALUES (?,?,?,?,?,?)`
+  ).bind(slug, body.autoLoginEmail, portalSecret, portalToken, body.ownerUserId, clientId).run();
+
+  // Build the env-var block the human needs to paste into CF Pages
+  const workerUrl = (c.env as any).PUBLIC_WORKER_URL || 'https://socialai-api.steve-700.workers.dev';
+  const envVars: Record<string, string> = {
+    VITE_CLERK_PUBLISHABLE_KEY: '<copy from main CF Pages project>',
+    VITE_AI_WORKER_URL: workerUrl,
+    VITE_AUTO_LOGIN_EMAIL: body.autoLoginEmail,
+    VITE_AUTO_LOGIN_PASSWORD: body.autoLoginPassword,
+    VITE_PORTAL_SECRET: portalSecret,
+    VITE_CLIENT_ID: slug,
+    FACEBOOK_APP_ID: '<copy from main CF Pages project>',
+    FACEBOOK_APP_SECRET: '<copy from main CF Pages project>',
+  };
+
+  const manualSteps = [
+    `1. Create CF Pages project named '${slug}-social' pointing at the SocialAI-Studio repo`,
+    `2. Build command: cp src/client.configs/${slug}.ts src/client.config.ts && npm run build`,
+    `3. Set the env vars above on the new project`,
+    `4. Add custom domain '${body.customDomain || `social.${slug}.com.au`}' in CF Pages → Custom domains`,
+    `5. In Clerk dashboard, create a user with email '${body.autoLoginEmail}' and the autoLoginPassword you supplied`,
+    `6. Create src/client.configs/${slug}.ts (copy picklenick.ts as template; set clientId='${slug}', clientMode:true, accentColor, defaultBusinessName, etc.)`,
+    `7. Commit + push the new config — CF Pages auto-builds`,
+  ];
+
+  return c.json({
+    ok: true,
+    clientId,
+    portalToken,
+    portalSecret,
+    envVars,
+    manualSteps,
+  });
+});
+
 app.post('/api/admin/bootstrap-all-facts', async (c) => {
   const provided = c.req.header('X-Bootstrap-Secret');
   if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {

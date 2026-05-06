@@ -164,28 +164,55 @@ Set these as **worker secrets** via `npx wrangler secret put NAME`:
 
 ---
 
-## What's already scaffolded
+## What's already scaffolded (Phase B-Lite)
 
-Nothing yet for Option B — this doc is the design. The Phase A commit
-in this branch makes the **direct SaaS** flow self-serve, which was
-the highest-value piece. Whitelabel portal automation can be built
-in a follow-up session once Steve provides the credentials above.
+The DB-side of portal provisioning is now atomic. Re-using the existing
+`clients` and `portal` tables (no new schema needed):
 
----
+* **`POST /api/admin/portals/provision`** (worker) — gated by
+  `FACTS_BOOTSTRAP_SECRET`. Atomically creates the `clients` row + the
+  `portal` row, generates the per-portal shared secret + portal token,
+  and returns the full env-var block + remaining manual steps.
 
-## Suggested first PR for Option B
+* **`scripts/provision-portal.mjs`** — CLI wrapper that calls the
+  endpoint with one flag per input. Auto-generates a strong
+  `autoLoginPassword`, prints it once for copying. Example:
 
-A small, safe starting point:
+  ```
+  FACTS_BOOTSTRAP_SECRET=<secret> \
+  OWNER_USER_ID=<your-clerk-user-id> \
+  node scripts/provision-portal.mjs \
+    --slug newclient \
+    --businessName "New Client" \
+    --businessType florist \
+    --autoLoginEmail client@socialaistudio.au \
+    --customDomain social.newclient.com.au
+  ```
 
-1. Add `tenants` table migration to `workers/api/schema.sql` (or a
-   new `migrations/0001_tenants.sql` if migrations are introduced).
-2. Add `/api/admin/portals/create` worker endpoint that ONLY does
-   step 1 of provisioning (insert tenant row + return config). All
-   external API calls (GitHub, CF, Clerk) deferred to later PRs.
-3. Add a `scripts/provision-portal.mjs` CLI that calls the endpoint
-   and prints the remaining manual steps. Once external APIs are
-   wired in later PRs, the CLI just stops printing those steps as
-   they get automated.
+This cuts the DB side of provisioning from "click around the Clients
+tab + run wrangler queries" to one CLI command. The CF Pages, Clerk,
+and GitHub steps are still manual — see "Manual steps remaining" below
+for what each of them needs.
 
-Ship that, validate, then layer in CF / GitHub / Clerk API calls one
-at a time.
+### Manual steps remaining after the CLI runs
+
+The CLI's output prints these too — keeping them here as a reference:
+
+1. Create CF Pages project in the dashboard, build cmd points at
+   `src/client.configs/<slug>.ts`
+2. Set the printed env vars on the new project
+3. Add the custom domain in CF Pages → Custom domains
+4. Create the Clerk auto-login user (use the printed email + password)
+5. Create `src/client.configs/<slug>.ts` (copy `picklenick.ts` as
+   template), commit, push — CF Pages auto-builds
+
+### Next slices to layer on (need credentials per the table above)
+
+* **CF Pages API**: replace step 1 + 2 + 3 with API calls. Needs
+  `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`.
+* **Clerk admin API**: replace step 4. Needs the existing
+  `CLERK_SECRET_KEY` to have `users:create` (it already does).
+* **GitHub Contents API**: replace step 5. Needs `GITHUB_PAT`.
+
+Each of these is independent — wire them in one at a time, the CLI
+stops printing the corresponding manual step as each gets automated.
