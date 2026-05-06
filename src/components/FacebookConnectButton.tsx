@@ -119,7 +119,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
               </p>
             ) : (
               <p className="text-[11px] mt-0.5">
-                <span className="text-white/25 flex items-center gap-1">Instagram not linked — add this account as a Test User in your Facebook App to enable</span>
+                <span className="text-white/25 flex items-center gap-1">Instagram not linked — link an IG Business account to your Facebook Page, then click <strong className="text-white/40">Switch to a different page</strong> to refresh</span>
               </p>
             )}
             {tokenNeverExpires === false && (
@@ -260,9 +260,58 @@ export const FacebookConnectButton: React.FC<Props> = ({
         }
       </button>
 
+      {/* What happens — step-by-step walkthrough */}
+      {step === 'idle' && (
+        <details className="group">
+          <summary className="text-[11px] text-white/40 hover:text-white/60 cursor-pointer list-none flex items-center gap-1.5 transition">
+            <ChevronRight size={11} className="group-open:rotate-90 transition" />
+            What happens when I click Connect?
+          </summary>
+          <ol className="mt-2 ml-4 text-[11px] text-white/45 leading-relaxed space-y-1 list-decimal list-inside">
+            <li>A real Facebook popup opens (from <code className="bg-white/5 px-1 rounded">facebook.com</code> — not us)</li>
+            <li>If you're not signed in to Facebook, log in first</li>
+            <li>Facebook shows you a list of Pages you admin — tick the one for this business</li>
+            <li>You'll see a summary of permissions (post on your Page, read engagement stats, post to Instagram if linked) — click <strong className="text-white/60">Continue</strong></li>
+            <li>The popup closes and your Page connects automatically. That's it.</li>
+          </ol>
+        </details>
+      )}
+
+      {/* Troubleshooting — common pitfalls */}
+      {step === 'idle' && (
+        <details className="group">
+          <summary className="text-[11px] text-white/40 hover:text-white/60 cursor-pointer list-none flex items-center gap-1.5 transition">
+            <ChevronRight size={11} className="group-open:rotate-90 transition" />
+            Trouble connecting? Common fixes
+          </summary>
+          <div className="mt-2 ml-4 text-[11px] text-white/45 leading-relaxed space-y-2">
+            <div>
+              <p className="text-white/60 font-semibold">"My Page isn't in the list"</p>
+              <p>You need to be an <strong>Admin</strong> on the Page (not Editor or Moderator). Check at <code className="bg-white/5 px-1 rounded">facebook.com</code> → your Page → Settings → Page roles.</p>
+            </div>
+            <div>
+              <p className="text-white/60 font-semibold">"The popup didn't open"</p>
+              <p>Your browser blocked it. Look for a popup-blocker icon in the address bar, allow popups for this site, and click Connect again.</p>
+            </div>
+            <div>
+              <p className="text-white/60 font-semibold">"I logged into the wrong Facebook account"</p>
+              <p>Open <a href="https://www.facebook.com" target="_blank" rel="noopener noreferrer" className="text-blue-400/70 hover:text-blue-300 underline">facebook.com</a> in a new tab, sign out, then come back and click Connect.</p>
+            </div>
+            <div>
+              <p className="text-white/60 font-semibold">"It says permissions are missing"</p>
+              <p>When the popup appears, make sure you keep <strong>all</strong> Pages and Instagram accounts selected, and don't untick any of the requested permissions.</p>
+            </div>
+            <div>
+              <p className="text-white/60 font-semibold">"I want Instagram posting too"</p>
+              <p>Your Facebook Page needs a linked Instagram <em>Business</em> account. On Facebook: Page → Settings → Linked Accounts → Connect Instagram. Then come back and reconnect.</p>
+            </div>
+          </div>
+        </details>
+      )}
+
       <p className="text-[11px] text-white/25 text-center leading-relaxed">
-        A Facebook popup will appear. Log in and pick your Page — that's it.
-        <br />No passwords are stored — only your Page access token.
+        No passwords are stored — only an access token from Facebook that lets us post on your behalf.
+        <br />You can disconnect anytime.
       </p>
     </div>
   );
