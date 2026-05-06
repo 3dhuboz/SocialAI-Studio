@@ -46,8 +46,13 @@ export const CLIENT = {
    */
   facebookAppId: '847198108337884',
 
-  /** Facebook Login for Business Configuration ID. See FACEBOOK APP SETUP above. */
-  facebookLoginConfigId: (import.meta as any).env?.VITE_FACEBOOK_LOGIN_CONFIG_ID || '',
+  /**
+   * Facebook Login for Business Configuration ID.
+   * Default = "SocialAI Studio Connect" Configuration on app 847198108337884
+   * (User access token, all Pages + IG permissions). Override via the env var
+   * if a portal needs a different Configuration. See FACEBOOK APP SETUP above.
+   */
+  facebookLoginConfigId: (import.meta as any).env?.VITE_FACEBOOK_LOGIN_CONFIG_ID || '947627521425720',
 
   /** Admin emails — these accounts auto-get Pro plan + admin mode on login */
   adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],

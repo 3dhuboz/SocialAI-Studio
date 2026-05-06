@@ -22,7 +22,7 @@ export const CLIENT = {
   poweredByUrl: 'https://pennywiseit.com.au',
 
   facebookAppId: '847198108337884',
-  facebookLoginConfigId: import.meta.env.VITE_FACEBOOK_LOGIN_CONFIG_ID ?? '',
+  facebookLoginConfigId: import.meta.env.VITE_FACEBOOK_LOGIN_CONFIG_ID ?? '947627521425720',
 
   adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],
 
