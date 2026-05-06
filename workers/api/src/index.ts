@@ -28,6 +28,7 @@ type Env = {
   PAYPAL_CLIENT_SECRET?: string;
   PAYPAL_WEBHOOK_ID?: string;
   RESEND_API_KEY?: string;
+  FACTS_BOOTSTRAP_SECRET?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -42,7 +43,6 @@ app.use(
         'https://socialaistudio.au',
         'https://social.picklenick.au', 'https://social.streetmeatzbbq.com.au',
         'https://social.hugheseysque.au', 'https://hugheseysque.au',
-        'https://social.oconnoragriculture.com.au',
       ];
       if (allowed.includes(origin)) return origin;
       // Allow all *.pages.dev subdomains (CF Pages preview/prod deployments)
@@ -88,7 +88,56 @@ async function getAuthUserId(req: Request, secretKey: string, jwtKey?: string, d
 // ── UUID helper ──────────────────────────────────────────────────────────────
 const uuid = () => crypto.randomUUID();
 
+// ── Business-rule: posts for on-hold clients must NEVER be claimed by the cron.
+// This filter has been reverted twice in the past when the SQL was inline; keep
+// it named and centralised so any future cron query can include it explicitly.
+// Append to a WHERE clause: ` AND ${ACTIVE_CLIENT_FILTER}` (no leading AND).
+const ACTIVE_CLIENT_FILTER =
+  `(client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`;
+
+// ── Rate limiter (D1-backed sliding window).
+// Returns true if the caller is OVER the limit (i.e. the request should be blocked),
+// false if the request is allowed.
+async function isRateLimited(
+  db: D1Database, key: string, maxPerMinute: number,
+): Promise<boolean> {
+  const now = Date.now();
+  const windowStart = now - 60_000;
+  await db.exec(
+    `CREATE TABLE IF NOT EXISTS rate_limit_log (key TEXT NOT NULL, ts INTEGER NOT NULL)`
+  );
+  const row = await db.prepare(
+    `SELECT COUNT(*) as cnt FROM rate_limit_log WHERE key = ? AND ts > ?`
+  ).bind(key, windowStart).first<{ cnt: number }>();
+  const count = row?.cnt ?? 0;
+  if (count >= maxPerMinute) return true;
+  await db.prepare(`INSERT INTO rate_limit_log (key, ts) VALUES (?,?)`).bind(key, now).run();
+  // Opportunistic GC of old rows on ~1% of calls.
+  if (Math.random() < 0.01) {
+    await db.prepare(`DELETE FROM rate_limit_log WHERE ts < ?`).bind(now - 5 * 60_000).run();
+  }
+  return false;
+}
+
 app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
+
+// Cron observability — last 30 cron runs (public so the deploy-monitor widget
+// can poll without an auth token; emits no PII).
+app.get('/api/cron-health', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT run_at, cron_type, success, posts_processed, duration_ms,
+            substr(COALESCE(error,''),1,200) as error
+     FROM cron_runs ORDER BY run_at DESC LIMIT 30`
+  ).all();
+  const runs = rows.results ?? [];
+  const lastSuccess = runs.find((r: any) => r.success === 1);
+  const lastFailure = runs.find((r: any) => r.success === 0);
+  return c.json({
+    runs,
+    last_success_at: (lastSuccess as any)?.run_at ?? null,
+    last_failure_at: (lastFailure as any)?.run_at ?? null,
+  });
+});
 
 
 // Public post schedule feed — used by deploy monitor widget
@@ -117,9 +166,24 @@ app.post('/api/ai/generate', async (c) => {
     return c.json({ error: 'OpenRouter API key not configured on worker.' }, 500);
   }
 
+  // AUTH GATE — require Clerk JWT or Portal token. Stops anonymous abuse of OpenRouter credits.
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+  // RATE LIMIT — 30 generations per minute per user.
+  if (await isRateLimited(c.env.DB, `ai:${uid}`, 30)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+
   let body: {
     prompt?: string;
     systemPrompt?: string;
+    /** Optional static prefix to send with cache_control (Anthropic prompt caching).
+     * If supplied AND the model is an Anthropic one AND the prefix is large enough
+     * (~1024+ tokens), Anthropic caches the block for 5 min and bills the rest at
+     * a 90% discount on cache hits. Use for the GOLDEN RULES + ground-truth blocks
+     * that repeat across every Smart Schedule call. */
+    cachedPrefix?: string;
     temperature?: number;
     maxTokens?: number;
     responseFormat?: 'json' | 'text';
@@ -134,6 +198,7 @@ app.post('/api/ai/generate', async (c) => {
   const {
     prompt,
     systemPrompt,
+    cachedPrefix,
     temperature = 0.8,
     maxTokens = 2048,
     responseFormat = 'text',
@@ -143,12 +208,34 @@ app.post('/api/ai/generate', async (c) => {
     return c.json({ error: 'prompt is required.' }, 400);
   }
 
-  const messages: Array<{ role: string; content: string }> = [];
-  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
-  messages.push({ role: 'user', content: prompt });
+  const requestedModel = (body as any).model as string | undefined;
+  const effectiveModel = requestedModel || 'anthropic/claude-haiku-4.5';
+  const useAnthropicCaching = !!cachedPrefix && effectiveModel.startsWith('anthropic/');
 
+  // Build messages with optional Anthropic-style cache_control on the prefix.
+  // OpenRouter passes cache_control through to Anthropic verbatim.
+  const messages: Array<{ role: string; content: any }> = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  if (useAnthropicCaching) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: prompt },
+      ],
+    });
+  } else {
+    const combined = cachedPrefix ? `${cachedPrefix}\n\n${prompt}` : prompt;
+    messages.push({ role: 'user', content: combined });
+  }
+
+  // Model is selectable per-request via body.model. Defaults to Claude Haiku
+  // for content generation — significantly better instruction-following and
+  // hallucination resistance than Gemini Flash, ~3-5x more expensive but still
+  // pennies per Smart Schedule. Gemini still available as a cheap fallback for
+  // low-stakes calls (e.g. best-times tips) by passing model in the body.
   const orBody: Record<string, unknown> = {
-    model: 'google/gemini-2.0-flash-001',
+    model: effectiveModel,
     messages,
     temperature,
     max_tokens: maxTokens,
@@ -539,13 +626,29 @@ app.delete('/api/db/campaigns/:id', async (c) => {
 
 // ── DB: Portal ────────────────────────────────────────────────────────────────
 
-// Public — returns portal token for client-mode auth (no Clerk needed)
+// Portal authentication endpoint.
+// PUBLIC: GET /api/db/portal/:slug returns ONLY non-sensitive existence info.
+//   Used by the portal frontend to confirm the slug is recognised.
+// AUTHENTICATED: GET /api/db/portal/:slug?secret=<x> returns the portal_token
+//   ONLY when the caller proves knowledge of a per-portal shared secret
+//   (set as VITE_PORTAL_SECRET env var on each Pages deploy).
 app.get('/api/db/portal/:slug', async (c) => {
   const slug = c.req.param('slug').toLowerCase();
   const row = await c.env.DB.prepare(
     'SELECT email, password, portal_token, user_id, client_id FROM portal WHERE slug = ?'
   ).bind(slug).first<{ email: string; password: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
-  return c.json({ portal: row ?? null });
+  if (!row) return c.json({ portal: null }, 404);
+
+  // Caller proved knowledge of the shared secret — return full record.
+  // The "password" column is reused as the per-portal shared secret.
+  const url = new URL(c.req.url);
+  const providedSecret = url.searchParams.get('secret') || c.req.header('X-Portal-Secret');
+  if (providedSecret && row.password && providedSecret === row.password) {
+    return c.json({ portal: row });
+  }
+
+  // Anonymous response: no PII, no token. Just confirms slug exists.
+  return c.json({ portal: { exists: true, client_id: row.client_id } });
 });
 
 app.put('/api/db/portal/:slug', async (c) => {
@@ -714,10 +817,306 @@ app.post('/api/facebook-exchange-token', async (c) => {
   });
 });
 
+// ── Facebook Page Insights Scraper ─────────────────────────────────────────
+// Pulls a connected Page's REAL data (own posts, comments, about, photos,
+// events) into the client_facts table. The AI then writes from real ground
+// truth instead of inventing testimonials and stats.
+//
+// POST /api/db/refresh-facts            → scrapes the calling user's own page
+// POST /api/db/refresh-facts/:clientId  → scrapes a specific client's page
+async function refreshFactsForWorkspace(
+  db: D1Database,
+  uid: string,
+  clientId: string | null,
+): Promise<{ inserted: number; errors: string[] }> {
+  const errors: string[] = [];
+  // Get tokens
+  const tokenRow = clientId
+    ? await db.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
+    : await db.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
+  const tokens = tokenRow?.social_tokens ? JSON.parse(tokenRow.social_tokens) : null;
+  const pageId = tokens?.facebookPageId;
+  const pageToken = tokens?.facebookPageAccessToken;
+  if (!pageId || !pageToken) {
+    return { inserted: 0, errors: ['No Facebook page connected for this workspace.'] };
+  }
+
+  const base = 'https://graph.facebook.com/v21.0';
+  const inserts: Array<{ type: string; content: string; meta: any; fb_id: string; eng: number }> = [];
+
+  // 1. Page about/description/products/hours (1 row)
+  try {
+    const r = await fetch(`${base}/${pageId}?fields=about,description,category,founded,mission,products,phone,hours,website,location,fan_count&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d && !d.error) {
+      const blob = [
+        d.about && `About: ${d.about}`,
+        d.description && `Description: ${d.description}`,
+        d.category && `Category: ${d.category}`,
+        d.products && `Products: ${d.products}`,
+        d.mission && `Mission: ${d.mission}`,
+        d.hours && `Hours: ${JSON.stringify(d.hours)}`,
+        d.location && `Location: ${[d.location.street, d.location.city, d.location.state, d.location.country].filter(Boolean).join(', ')}`,
+        d.website && `Website: ${d.website}`,
+      ].filter(Boolean).join('\n');
+      if (blob) inserts.push({ type: 'about', content: blob, meta: { fan_count: d.fan_count }, fb_id: pageId, eng: 0 });
+    } else if (d?.error) errors.push(`about: ${d.error.message}`);
+  } catch (e: any) { errors.push(`about: ${e.message}`); }
+
+  // 2. Last 50 posts with engagement
+  let topPostIds: string[] = [];
+  try {
+    const r = await fetch(`${base}/${pageId}/posts?fields=id,message,created_time,likes.summary(true),comments.summary(true),shares&limit=50&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d?.error) errors.push(`posts: ${d.error.message}`);
+    const posts = d?.data || [];
+    for (const p of posts) {
+      if (!p.message || p.message.length < 20) continue;
+      const eng = (p.likes?.summary?.total_count || 0) + ((p.comments?.summary?.total_count || 0) * 3) + ((p.shares?.count || 0) * 5);
+      inserts.push({
+        type: 'own_post',
+        content: p.message,
+        meta: { likes: p.likes?.summary?.total_count, comments: p.comments?.summary?.total_count, shares: p.shares?.count, created: p.created_time },
+        fb_id: p.id,
+        eng,
+      });
+    }
+    // Pick top 5 posts by engagement to mine for comments
+    topPostIds = posts
+      .filter((p: any) => p.message)
+      .sort((a: any, b: any) => ((b.likes?.summary?.total_count || 0) + (b.comments?.summary?.total_count || 0)) - ((a.likes?.summary?.total_count || 0) + (a.comments?.summary?.total_count || 0)))
+      .slice(0, 5)
+      .map((p: any) => p.id);
+  } catch (e: any) { errors.push(`posts: ${e.message}`); }
+
+  // 3. Comments on top-engagement posts (real customer voice)
+  for (const pid of topPostIds) {
+    try {
+      const r = await fetch(`${base}/${pid}/comments?fields=id,message,from,like_count&limit=20&access_token=${pageToken}`);
+      const d: any = await r.json();
+      if (d?.error) continue;
+      for (const c of d?.data || []) {
+        if (!c.message || c.message.length < 8 || c.message.length > 500) continue;
+        // Skip comments from the page itself (replies)
+        if (c.from?.id === pageId) continue;
+        inserts.push({
+          type: 'comment',
+          content: c.message,
+          meta: { like_count: c.like_count, from: c.from?.name },
+          fb_id: c.id,
+          eng: c.like_count || 0,
+        });
+      }
+    } catch { /* skip this post */ }
+  }
+
+  // 4. Recent photos (URLs only — for AI to reference real imagery)
+  try {
+    const r = await fetch(`${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d?.error) errors.push(`photos: ${d.error.message}`);
+    for (const ph of d?.data || []) {
+      const url = ph.images?.[0]?.source;
+      if (!url) continue;
+      inserts.push({
+        type: 'photo',
+        content: ph.name || 'Untitled photo',
+        meta: { url },
+        fb_id: ph.id,
+        eng: 0,
+      });
+    }
+  } catch (e: any) { errors.push(`photos: ${e.message}`); }
+
+  // 5. Upcoming events (real future dates AI can reference)
+  try {
+    const r = await fetch(`${base}/${pageId}/events?fields=id,name,description,start_time,place&time_filter=upcoming&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (!d?.error) {
+      for (const ev of d?.data || []) {
+        inserts.push({
+          type: 'event',
+          content: `${ev.name}${ev.description ? ' — ' + ev.description.substring(0, 200) : ''}`,
+          meta: { start_time: ev.start_time, place: ev.place?.name },
+          fb_id: ev.id,
+          eng: 0,
+        });
+      }
+    }
+    // events permission often missing — silently skip
+  } catch { /* skip */ }
+
+  // Wipe old rows for this workspace + replace (UNIQUE constraint covers de-dup
+  // but a fresh wipe ensures stale facts are removed)
+  await db.prepare('DELETE FROM client_facts WHERE user_id = ? AND COALESCE(client_id, \'\') = ?').bind(uid, clientId || '').run();
+
+  let inserted = 0;
+  for (const f of inserts) {
+    try {
+      await db.prepare(
+        `INSERT OR IGNORE INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score)
+         VALUES (?,?,?,?,?,?,?)`
+      ).bind(uid, clientId, f.type, f.content, JSON.stringify(f.meta || {}), f.fb_id, f.eng).run();
+      inserted++;
+    } catch { /* duplicate or constraint — skip */ }
+  }
+
+  return { inserted, errors };
+}
+
+app.post('/api/db/refresh-facts', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const result = await refreshFactsForWorkspace(c.env.DB, uid, null);
+  return c.json(result);
+});
+
+app.post('/api/db/refresh-facts/:clientId', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.param('clientId');
+  const result = await refreshFactsForWorkspace(c.env.DB, uid, clientId);
+  return c.json(result);
+});
+
+// One-shot bootstrap — scrape ALL workspaces with FB tokens. Used to seed the
+// table for existing connected accounts. Protected by FACTS_BOOTSTRAP_SECRET
+// env var (set via wrangler secret) — anyone with the secret can re-seed.
+// Backfill images for any Scheduled post that has an image_prompt but no image_url.
+// Authenticated variant: only the calling user's posts (own + their clients').
+app.post('/api/db/backfill-images', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  return c.json(await backfillImagesForUser(c.env, uid));
+});
+
+// Admin variant: backfill across every workspace. Gated by FACTS_BOOTSTRAP_SECRET.
+app.post('/api/admin/backfill-images-all', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const users = await c.env.DB.prepare('SELECT id FROM users').all();
+  const results: any[] = [];
+  for (const u of (users.results || [])) {
+    const r = await backfillImagesForUser(c.env, (u as any).id);
+    results.push({ user_id: (u as any).id, ...r });
+  }
+  return c.json({ users_processed: results.length, results });
+});
+
+async function backfillImagesForUser(env: Env, uid: string) {
+  const apiKey = env.FAL_API_KEY;
+  if (!apiKey) return { error: 'fal.ai not configured', found: 0, succeeded: 0, failed: 0 };
+
+  // Find Scheduled posts owned by this user (own + via client) that have a
+  // prompt but no URL. Cap at 30 per call so a single backfill can't blow the
+  // fal.ai budget.
+  const rows = await env.DB.prepare(
+    `SELECT p.id, p.image_prompt, p.client_id
+     FROM posts p
+     LEFT JOIN clients c ON p.client_id = c.id
+     WHERE p.status = 'Scheduled'
+       AND (p.user_id = ? OR c.user_id = ?)
+       AND (p.image_url IS NULL OR p.image_url = '')
+       AND p.image_prompt IS NOT NULL
+       AND p.image_prompt != 'N/A'
+       AND p.image_prompt != ''
+     LIMIT 30`
+  ).bind(uid, uid).all();
+
+  const posts = rows.results || [];
+  let succeeded = 0; let failed = 0; const errors: string[] = [];
+
+  for (const post of posts) {
+    try {
+      // Strip people/face vocabulary from the prompt (mirrors gemini.ts logic)
+      const raw = String((post as any).image_prompt || '');
+      const cleaned = raw
+        .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const finalPrompt = `${cleaned}, product photography, natural light, shallow depth of field, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
+
+      const res = await fetch('https://fal.run/fal-ai/flux/dev', {
+        method: 'POST',
+        headers: { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: finalPrompt, image_size: 'square_hd',
+          num_inference_steps: 25, num_images: 1,
+          enable_safety_checker: true, guidance_scale: 3.5,
+        }),
+      });
+      const data: any = await res.json();
+      const url = data?.images?.[0]?.url;
+      if (res.ok && url) {
+        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(url, (post as any).id).run();
+        succeeded++;
+      } else {
+        failed++;
+        errors.push(`${(post as any).id}: ${(data?.detail || data?.message || res.status)}`);
+      }
+    } catch (e: any) {
+      failed++;
+      errors.push(`${(post as any).id}: ${e.message}`);
+    }
+    // Pace fal.ai — 700ms between calls so 30 posts = ~21s, well under any rate limit
+    await new Promise(r => setTimeout(r, 700));
+  }
+  return { found: posts.length, succeeded, failed, errors: errors.slice(0, 5) };
+}
+
+app.post('/api/admin/bootstrap-all-facts', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const users = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL`
+  ).all();
+  const clients = await c.env.DB.prepare(
+    `SELECT id, user_id FROM clients WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL AND COALESCE(status,'active') != 'on_hold'`
+  ).all();
+  const results: any[] = [];
+  for (const u of (users.results || [])) {
+    const r = await refreshFactsForWorkspace(c.env.DB, (u as any).id, null);
+    results.push({ workspace: 'user:' + (u as any).id, ...r });
+  }
+  for (const cl of (clients.results || [])) {
+    const r = await refreshFactsForWorkspace(c.env.DB, (cl as any).user_id, (cl as any).id);
+    results.push({ workspace: 'client:' + (cl as any).id, ...r });
+  }
+  return c.json({ workspaces_processed: results.length, results });
+});
+
+// Read facts back — used by the frontend to inject into AI prompts.
+app.get('/api/db/facts', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const clientId = c.req.query('clientId') || null;
+  const rows = await c.env.DB.prepare(
+    `SELECT fact_type, content, metadata, engagement_score, verified_at
+     FROM client_facts
+     WHERE user_id = ? AND COALESCE(client_id, '') = ?
+     ORDER BY engagement_score DESC, verified_at DESC
+     LIMIT 200`
+  ).bind(uid, clientId || '').all();
+  return c.json({ facts: rows.results || [] });
+});
+
 // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────────
 app.all('/api/fal-proxy', async (c) => {
   const apiKey = c.env.FAL_API_KEY;
   if (!apiKey) return c.json({ error: 'fal.ai API key not configured' }, 401);
+
+  // AUTH GATE — fal.ai is paid per-image/video; never let it run anonymous.
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  // RATE LIMIT — 20 fal.ai calls per minute per user (images are the dominant cost).
+  if (await isRateLimited(c.env.DB, `fal:${uid}`, 20)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+
   const url = new URL(c.req.url);
   const action = url.searchParams.get('action');
   const authHeader = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
@@ -792,15 +1191,21 @@ app.all('/api/fal-proxy', async (c) => {
 
 // ── fal.ai Proxy (path-based passthrough) ───────────────────────────────────
 app.all('/api/fal-proxy/*', async (c) => {
+  // AUTH GATE — required to use the proxied fal.ai endpoint with our key.
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  if (await isRateLimited(c.env.DB, `fal:${uid}`, 20)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+
   const path = c.req.path.replace('/api/fal-proxy', '');
   const url = `https://api.fal.ai${path}`;
   const method = c.req.method;
   const body = method !== 'GET' && method !== 'HEAD' ? await c.req.text() : undefined;
-  
-  // Get key from Authorization header or fallback to env var
-  const authHeader = c.req.header('Authorization');
-  const apiKey = authHeader?.replace('Bearer ', '') || c.env.FAL_API_KEY;
-  if (!apiKey) return c.json({ error: 'fal.ai API key required' }, 401);
+
+  // Server uses its own key; ignore client-supplied keys to prevent abuse.
+  const apiKey = c.env.FAL_API_KEY;
+  if (!apiKey) return c.json({ error: 'fal.ai API key not configured' }, 500);
 
   const headers = { 
     Authorization: `Bearer ${apiKey}`,
@@ -924,7 +1329,7 @@ app.post('/api/paypal-verify', async (c) => {
 // 0 3 * * *   → token refresh (daily at 3am UTC)
 // 0 */6 * * * → fal.ai credit check (every 6 hours)
 
-async function cronPublishMissedPosts(env: Env) {
+async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
 
@@ -941,7 +1346,8 @@ async function cronPublishMissedPosts(env: Env) {
   const claimId = crypto.randomUUID();
   await env.DB.prepare(
     `UPDATE posts SET status = 'Publishing', image_prompt = COALESCE(image_prompt, '') || '|claim:' || ?
-     WHERE status = 'Scheduled' AND scheduled_for <= ?`
+     WHERE status = 'Scheduled' AND scheduled_for <= ?
+       AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(claimId, nowAEST).run();
 
   const rows = await env.DB.prepare(
@@ -949,7 +1355,7 @@ async function cronPublishMissedPosts(env: Env) {
      FROM posts WHERE status = 'Publishing' AND image_prompt LIKE '%' || ? LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
-  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return; }
+  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: 0 }; }
   console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
   for (const post of posts) {
@@ -1058,6 +1464,29 @@ async function cronPublishMissedPosts(env: Env) {
       await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
     }
   }
+  return { posts_processed: posts.length };
+}
+
+// Daily — refresh client_facts for every workspace with a connected FB Page.
+// Keeps the AI's ground-truth data current without the user clicking Refresh.
+async function cronRefreshFacts(env: Env): Promise<{ posts_processed: number }> {
+  const users = await env.DB.prepare(
+    `SELECT id FROM users WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL`
+  ).all();
+  const clients = await env.DB.prepare(
+    `SELECT id, user_id FROM clients WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL AND COALESCE(status,'active') != 'on_hold'`
+  ).all();
+  let processed = 0;
+  for (const u of (users.results || [])) {
+    try { await refreshFactsForWorkspace(env.DB, (u as any).id, null); processed++; }
+    catch (e: any) { console.warn(`[CRON facts] user ${(u as any).id}: ${e.message}`); }
+  }
+  for (const cl of (clients.results || [])) {
+    try { await refreshFactsForWorkspace(env.DB, (cl as any).user_id, (cl as any).id); processed++; }
+    catch (e: any) { console.warn(`[CRON facts] client ${(cl as any).id}: ${e.message}`); }
+  }
+  console.log(`[CRON facts] refreshed ${processed} workspaces`);
+  return { posts_processed: processed };
 }
 
 async function cronRefreshTokens(env: Env) {
@@ -1157,22 +1586,57 @@ async function cronCheckFalCredits(env: Env) {
   }
 }
 
+// Wrap a cron function with try/catch + duration tracking + cron_runs logging.
+// Returns void; never throws (so a failure in one cron doesn't kill the worker).
+async function trackCron(
+  env: Env,
+  cronType: string,
+  fn: () => Promise<{ posts_processed?: number } | void>,
+): Promise<void> {
+  const start = Date.now();
+  let success = 1;
+  let posts = 0;
+  let error: string | null = null;
+  try {
+    const result = await fn();
+    posts = result?.posts_processed ?? 0;
+  } catch (e: any) {
+    success = 0;
+    error = (e?.message || String(e)).slice(0, 1000);
+    console.error(`[CRON ${cronType}] FAILED:`, error);
+  }
+  const duration = Date.now() - start;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms)
+       VALUES (?,?,?,?,?)`
+    ).bind(cronType, success, posts, error, duration).run();
+  } catch (logErr: any) {
+    console.error(`[CRON ${cronType}] Failed to log run:`, logErr?.message);
+  }
+}
+
 export default {
   fetch: app.fetch,
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     const cron = event.cron;
     // Every 5 minutes — publish missed posts
     if (cron === '*/5 * * * *') {
-      await cronPublishMissedPosts(env);
+      await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
       return;
     }
     // Daily at 3am UTC — refresh Facebook tokens
     if (cron === '0 3 * * *') {
-      await cronRefreshTokens(env);
+      await trackCron(env, 'token_refresh', () => cronRefreshTokens(env));
+      return;
+    }
+    // Daily at 4am UTC — refresh client_facts from connected Facebook Pages
+    if (cron === '0 4 * * *') {
+      await trackCron(env, 'facts_refresh', () => cronRefreshFacts(env));
       return;
     }
     // Fallback: run all (for 6-hourly credit check and any unmatched triggers)
-    await cronPublishMissedPosts(env);
-    await cronCheckFalCredits(env);
+    await trackCron(env, 'publish_fallback', () => cronPublishMissedPosts(env));
+    await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
   },
 };

@@ -859,6 +859,50 @@ const Dashboard: React.FC = () => {
   const [autopilotPlatform, setAutopilotPlatform] = useState<'both' | 'facebook' | 'instagram'>('both');
   const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | null>(null);
 
+  // ── FB-scraped knowledge state — shows facts count + manual refresh ──
+  const [factCount, setFactCount] = useState<number | null>(null);
+  const [factsLastUpdate, setFactsLastUpdate] = useState<string | null>(null);
+  const [factsRefreshing, setFactsRefreshing] = useState(false);
+
+  const loadFactsStatus = async () => {
+    try {
+      const { aiAuthHeaders } = await import('./services/gemini');
+      const headers = await aiAuthHeaders();
+      const qs = activeClientId ? `?clientId=${encodeURIComponent(activeClientId)}` : '';
+      const res = await fetch(`${(import.meta.env as any).VITE_AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev'}/api/db/facts${qs}`, { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      const facts = data.facts || [];
+      setFactCount(facts.length);
+      setFactsLastUpdate(facts[0]?.verified_at || null);
+    } catch { /* ignore */ }
+  };
+
+  const refreshFactsFromFacebook = async () => {
+    setFactsRefreshing(true);
+    try {
+      const { aiAuthHeaders, clearFactsCache } = await import('./services/gemini');
+      const headers = await aiAuthHeaders();
+      const path = activeClientId ? `/api/db/refresh-facts/${encodeURIComponent(activeClientId)}` : '/api/db/refresh-facts';
+      const res = await fetch(`${(import.meta.env as any).VITE_AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev'}${path}`, { method: 'POST', headers });
+      const data = await res.json();
+      if (res.ok) {
+        toast(`Refreshed ${data.inserted} facts from Facebook${data.errors?.length ? ` (${data.errors.length} warnings)` : ''}`, 'success');
+        clearFactsCache();
+        await loadFactsStatus();
+      } else {
+        toast(`Refresh failed: ${data.error || 'unknown'}`, 'error');
+      }
+    } catch (e: any) {
+      toast(`Refresh failed: ${e.message}`, 'error');
+    } finally {
+      setFactsRefreshing(false);
+    }
+  };
+
+  // Load facts status when workspace changes
+  useEffect(() => { loadFactsStatus(); }, [activeClientId]);
+
   // Load/clear smart drafts when switching client workspaces
   useEffect(() => {
     const draft = readDraft(activeClientId);
@@ -1095,7 +1139,7 @@ const Dashboard: React.FC = () => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
     setIsGenerating(true);
     try {
-      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat);
+      const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat, activeClientId);
       setGeneratedContent(result.content);
       setGeneratedHashtags(result.hashtags || []);
       if (result.imagePrompt) setLastImagePrompt(result.imagePrompt);
@@ -1211,22 +1255,9 @@ const Dashboard: React.FC = () => {
     };
     const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
     setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
-    if (scheduleDate && socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
-      try {
-        const _schedBase = generatedContent.replace(/(\s+#\w+)+\s*$/, '').trim();
-        const fullText = generatedHashtags.length ? `${_schedBase}\n\n${generatedHashtags.join(' ')}` : _schedBase;
-        const imageUrl = generatedImage?.startsWith('http') ? generatedImage : undefined;
-        await FacebookService.postToPageScheduled(
-          socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
-          fullText, new Date(scheduleDate), imageUrl
-        );
-        toast('Post scheduled on Facebook — it will auto-publish at the set time!');
-      } catch (e: any) {
-        toast(`Post saved but Facebook scheduling failed: ${e?.message?.substring(0, 70) ?? 'check your connection'}. The cron will catch it.`, 'warning');
-      }
-    } else {
-      toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
-    }
+    // Scheduled posts are published by the cron (5-min tick). We do NOT hand them to Facebook's
+    // scheduled_publish_time — that would create an uncancellable duplicate on Facebook's side.
+    toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
     setGeneratedContent('');
     setGeneratedHashtags([]);
     setGeneratedImage(null);
@@ -1350,7 +1381,8 @@ const Dashboard: React.FC = () => {
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
         undefined,
-        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay }))
+        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay })),
+        activeClientId,
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
@@ -1498,7 +1530,6 @@ const Dashboard: React.FC = () => {
     setAcceptProgress(0);
     setAcceptSaved(0);
     let completedCount = 0;
-    let scheduleFailCount = 0;
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
@@ -1539,21 +1570,8 @@ const Dashboard: React.FC = () => {
           completedCount++;
           setAcceptSaved(completedCount);
           setAcceptProgress(Math.round((completedCount / total) * 100));
-          // Schedule via Facebook Graph API so it auto-publishes at the scheduled time
-          if (socialTokens.facebookPageId && socialTokens.facebookPageAccessToken) {
-            try {
-              const _spBase = sp.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-              const text = sp.hashtags?.length ? `${_spBase}\n\n${sp.hashtags.join(' ')}` : _spBase;
-              const imageUrl = smartPostImages[i]?.startsWith('http') ? smartPostImages[i] : undefined;
-              await FacebookService.postToPageScheduled(
-                socialTokens.facebookPageId, socialTokens.facebookPageAccessToken,
-                text, new Date(sp.scheduledFor), imageUrl
-              );
-            } catch (schedErr: any) {
-              scheduleFailCount++;
-              console.warn(`Facebook scheduling failed for post ${i}:`, schedErr?.message);
-            }
-          }
+          // Cron publishes at scheduled time — no Facebook scheduled_publish_time (would create
+          // uncancellable duplicate on Facebook's side that ignores on_hold / DB deletions).
           return { id: batchPostId, ...postData } as SocialPost;
         })
       );
@@ -1561,10 +1579,8 @@ const Dashboard: React.FC = () => {
       clearDraft(activeClientId);
       if (!fbConnected) {
         toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
-      } else if (scheduleFailCount > 0) {
-        toast(`${results.length} posts saved. ${scheduleFailCount} failed to schedule on Facebook — publish those manually from the calendar.`, 'warning');
       } else {
-        toast(`${results.length} posts scheduled on Facebook — they'll auto-publish at the set times!`, 'success');
+        toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
       }
       setSmartPosts([]);
       setSmartStrategy('');
@@ -3309,18 +3325,38 @@ const Dashboard: React.FC = () => {
                       }
                     </select>
                   </div>
-                  <button
-                    onClick={handleSmartSchedule}
-                    disabled={isSmartGenerating || !hasApiKey}
-                    className={`font-black px-8 py-3 rounded-2xl transition flex items-center gap-2 text-base shadow-xl disabled:opacity-60 ${
-                      saturationMode
-                        ? 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white shadow-red-900/30'
-                        : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black shadow-amber-900/30'
-                    }`}
-                  >
-                    {isSmartGenerating ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
-                    {isSmartGenerating ? 'Researching & Writing…' : saturationMode ? 'Launch Saturation Campaign' : 'Generate My Content Calendar'}
-                  </button>
+                  <div className="flex flex-col items-end gap-2">
+                    {/* AI knowledge from Facebook — status + refresh */}
+                    <div className="flex items-center gap-2 text-[11px]">
+                      {factCount === null ? (
+                        <span className="text-white/30">Checking AI knowledge…</span>
+                      ) : factCount === 0 ? (
+                        <span className="text-amber-400">⚠️ No real data yet — AI may invent</span>
+                      ) : (
+                        <span className="text-emerald-400">✓ {factCount} facts from Facebook ready</span>
+                      )}
+                      <button
+                        onClick={refreshFactsFromFacebook}
+                        disabled={factsRefreshing}
+                        className="text-[11px] text-blue-300 hover:text-blue-200 underline underline-offset-2 disabled:opacity-50"
+                        title="Pull the latest posts, comments, about info, photos and events from this workspace's connected Facebook Page so the AI writes from real data instead of inventing details."
+                      >
+                        {factsRefreshing ? 'Refreshing…' : factCount === 0 ? 'Pull from Facebook now' : 'Refresh'}
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleSmartSchedule}
+                      disabled={isSmartGenerating || !hasApiKey}
+                      className={`font-black px-8 py-3 rounded-2xl transition flex items-center gap-2 text-base shadow-xl disabled:opacity-60 ${
+                        saturationMode
+                          ? 'bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 text-white shadow-red-900/30'
+                          : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black shadow-amber-900/30'
+                      }`}
+                    >
+                      {isSmartGenerating ? <Loader2 className="animate-spin" size={18} /> : <Zap size={18} />}
+                      {isSmartGenerating ? 'Researching & Writing…' : saturationMode ? 'Launch Saturation Campaign' : 'Generate My Content Calendar'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3416,7 +3452,7 @@ const Dashboard: React.FC = () => {
                     <p className="text-sm font-bold text-white">{smartPosts.length} posts ready</p>
                     {autoGenSet.size > 0 ? (
                       <p className="text-xs text-amber-400 flex items-center gap-1">
-                        <Loader2 size={10} className="animate-spin" /> Generating images… {imgGenDone}/{smartPosts.length}
+                        <Loader2 size={10} className="animate-spin" /> Generating images… {imgGenDone}/{smartPosts.length} — Accept disabled until done
                       </p>
                     ) : (
                       <p className="text-xs text-white/30">Review below, then add all to your calendar</p>
@@ -3425,11 +3461,14 @@ const Dashboard: React.FC = () => {
                   <div className="flex flex-col items-end gap-1.5">
                     <button
                       onClick={handleAcceptSmartPosts}
-                      disabled={isAccepting}
-                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
+                      disabled={isAccepting || autoGenSet.size > 0}
+                      title={autoGenSet.size > 0 ? `Wait for image generation to finish (${imgGenDone}/${smartPosts.length})` : ''}
+                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
                     >
                       {isAccepting ? (
                         <><Loader2 size={16} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
+                      ) : autoGenSet.size > 0 ? (
+                        <><Loader2 size={16} className="animate-spin" /> Waiting for images ({imgGenDone}/{smartPosts.length})</>
                       ) : (
                         <><CheckCircle size={16} /> Accept All & Add to Calendar</>
                       )}
@@ -3517,7 +3556,17 @@ const Dashboard: React.FC = () => {
                           </span>
                           {sp.pillar && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">{sp.pillar}</span>}
                           {isVideo && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">🎬 Reel</span>}
+                          {(sp as any)._needsReview && (
+                            <span title={(sp as any)._reviewReason || 'AI may have invented details — please review'} className="text-[10px] bg-red-900/50 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-bold">
+                              ⚠️ Needs review
+                            </span>
+                          )}
                         </div>
+                        {(sp as any)._needsReview && (
+                          <div className="text-[11px] text-red-300 bg-red-950/30 border border-red-500/20 rounded-lg px-3 py-2">
+                            <strong>Possible fabrication:</strong> {(sp as any)._reviewReason}. Edit or regenerate before accepting.
+                          </div>
+                        )}
                         <p className="text-sm text-white/80 leading-relaxed">{sp.content}</p>
                         <div className="flex flex-wrap gap-1">
                           {sp.hashtags.map((t, j) => (
@@ -4956,14 +5005,14 @@ const SplashScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] flex flex-col items-center justify-center relative overflow-hidden">
-      {/* Ambient glow */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(245,158,11,0.12),transparent_65%)] pointer-events-none" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_80%,rgba(234,88,12,0.06),transparent_50%)] pointer-events-none" />
+      {/* Ambient glow — uses accent CSS var so each portal tints its own splash */}
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 50% 30%, rgb(var(--accent-rgb) / 0.12), transparent 65%)' }} />
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 80% 80%, rgb(var(--accent-rgb) / 0.06), transparent 50%)' }} />
 
       {/* Pulsing ring behind logo */}
       <div className="relative mb-10">
-        <div className="absolute inset-[-4px] rounded-3xl bg-amber-400/10 animate-ping" style={{ animationDuration: '2s' }} />
-        <div className="absolute inset-[-12px] rounded-[32px] border border-amber-400/10 animate-pulse" />
+        <div className="absolute inset-[-4px] rounded-3xl animate-ping" style={{ animationDuration: '2s', backgroundColor: 'rgb(var(--accent-rgb) / 0.10)' }} />
+        <div className="absolute inset-[-12px] rounded-[32px] animate-pulse" style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'rgb(var(--accent-rgb) / 0.10)' }} />
         <AppLogo size={160} />
       </div>
 
@@ -4980,8 +5029,9 @@ const SplashScreen: React.FC = () => {
           <div
             key={i}
             className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-              i === lineIdx % 5 ? 'bg-amber-400 scale-125' : 'bg-white/10'
+              i === lineIdx % 5 ? 'scale-125' : 'bg-white/10'
             }`}
+            style={i === lineIdx % 5 ? { backgroundColor: 'var(--accent)' } : undefined}
           />
         ))}
       </div>

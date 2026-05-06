@@ -54,11 +54,12 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
     return clients.find(c => c.id === clientId)?.name || clientId;
   };
 
-  const counts = {
+  const counts: Record<StatusFilter, number> = {
     all: allPosts.length,
     Scheduled: allPosts.filter(p => p.status === 'Scheduled').length,
     Posted: allPosts.filter(p => p.status === 'Posted').length,
     Missed: allPosts.filter(p => p.status === 'Missed').length,
+    Draft: allPosts.filter(p => p.status === 'Draft').length,
   };
 
   return (
