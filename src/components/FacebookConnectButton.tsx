@@ -29,7 +29,10 @@ export const FacebookConnectButton: React.FC<Props> = ({
     setError('');
     try {
       await FacebookService.init(CLIENT.facebookAppId);
-      const authResponse = await FacebookService.login();
+      // FLB mode if a Configuration ID is set (modern asset-picker UX).
+      // Falls back to classic scope-based flow when configId is absent.
+      const configId = (CLIENT as any).facebookLoginConfigId || undefined;
+      const authResponse = await FacebookService.login(configId);
       const shortLivedToken: string = authResponse?.accessToken;
 
       let fetchedPages: FacebookPage[] = [];
@@ -188,14 +191,14 @@ export const FacebookConnectButton: React.FC<Props> = ({
             <AlertCircle size={15} /> One-time Facebook App setup required
           </p>
           <p className="text-xs text-white/50 leading-relaxed">
-            To enable one-click Facebook connection for your clients, you need to create a free Facebook Developer App and paste your App ID into <code className="bg-white/10 px-1.5 rounded text-amber-300">client.config.ts</code>.
+            To enable one-click Facebook connection for your clients, you need a Facebook Developer App configured for <strong className="text-amber-300">Facebook Login for Business</strong>, then paste your App ID into <code className="bg-white/10 px-1.5 rounded text-amber-300">client.config.ts</code>.
           </p>
           <ol className="text-xs text-white/40 space-y-2 list-decimal list-inside leading-relaxed">
             <li>Go to <a href="https://developers.facebook.com/apps/create/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline inline-flex items-center gap-0.5">developers.facebook.com <ExternalLink size={10} /></a> → Create App → <strong className="text-white/60">Business</strong></li>
-            <li>Add the <strong className="text-white/60">Facebook Login</strong> product</li>
-            <li>Facebook Login → Settings → add <code className="bg-white/10 px-1 rounded">https://socialai-studio.pages.dev</code> to Valid OAuth Redirect URIs</li>
-            <li>Request permissions: <code className="bg-white/10 px-1 rounded text-blue-300">pages_show_list</code> <code className="bg-white/10 px-1 rounded text-blue-300">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded text-blue-300">pages_read_engagement</code></li>
-            <li>Copy your <strong className="text-white/60">App ID</strong> and paste it into <code className="bg-white/10 px-1 rounded">client.config.ts</code> → <code className="bg-white/10 px-1 rounded text-amber-300">facebookAppId</code></li>
+            <li>Add the <strong className="text-white/60">Facebook Login for Business</strong> product (preferred) or <strong className="text-white/60">Facebook Login</strong></li>
+            <li>Facebook Login for Business → <strong className="text-white/60">Configurations</strong> → Create new. Token type = <em>User access token</em>. Permissions: <code className="bg-white/10 px-1 rounded text-blue-300">pages_show_list</code> <code className="bg-white/10 px-1 rounded text-blue-300">pages_manage_posts</code> <code className="bg-white/10 px-1 rounded text-blue-300">pages_read_engagement</code> <code className="bg-white/10 px-1 rounded text-blue-300">instagram_basic</code> <code className="bg-white/10 px-1 rounded text-blue-300">instagram_content_publish</code>. Asset types: Pages + Instagram Accounts.</li>
+            <li>Add your domain to Valid OAuth Redirect URIs (e.g. <code className="bg-white/10 px-1 rounded">https://socialaistudio.au</code>)</li>
+            <li>Copy your <strong className="text-white/60">App ID</strong> into <code className="bg-white/10 px-1 rounded text-amber-300">facebookAppId</code> and your <strong className="text-white/60">Configuration ID</strong> into <code className="bg-white/10 px-1 rounded text-amber-300">facebookLoginConfigId</code> (or set <code className="bg-white/10 px-1 rounded">VITE_FACEBOOK_LOGIN_CONFIG_ID</code> in CF Pages env vars).</li>
           </ol>
         </div>
         <p className="text-xs text-white/25 text-center">In the meantime, use the manual token method below ↓</p>
@@ -225,7 +228,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
       </button>
 
       <p className="text-[11px] text-white/25 text-center leading-relaxed">
-        A Facebook popup will appear. Log in, choose your Page, and tick the 3 permissions.
+        A Facebook popup will appear. Log in and pick your Page — that's it.
         <br />No passwords are stored — only your Page access token.
       </p>
     </div>

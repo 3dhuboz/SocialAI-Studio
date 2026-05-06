@@ -32,13 +32,32 @@ export const FacebookService = {
     });
   },
 
-  login: (): Promise<any> => {
+  /**
+   * Trigger the Facebook login dialog.
+   *
+   * Two modes:
+   *  - FLB mode (recommended): pass a `configId` from a Facebook Login for Business
+   *    Configuration set up in the Meta App Dashboard. Customer sees the modern
+   *    single-screen asset picker (pick a Page + IG account, confirm permissions,
+   *    one click). All scopes are baked into the Configuration — DO NOT also pass
+   *    a scope string.
+   *  - Classic mode (fallback): no `configId`. Customer sees the legacy scope
+   *    checklist popup with each permission as a separate checkbox. Kept for
+   *    back-compat while the FLB Configuration is being set up.
+   *
+   * To enable FLB mode, set `VITE_FACEBOOK_LOGIN_CONFIG_ID` in CF Pages env vars
+   * (or override `facebookLoginConfigId` in `src/client.config.ts`).
+   */
+  login: (configId?: string): Promise<any> => {
     return new Promise((resolve, reject) => {
       if (!window.FB) return reject(new Error('Facebook SDK not initialized'));
+      const opts = configId
+        ? { config_id: configId, response_type: 'token', return_scopes: true }
+        : { scope: 'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video,instagram_basic,instagram_content_publish,pages_read_user_content' };
       window.FB.login((response: any) => {
         if (response.authResponse) resolve(response.authResponse);
         else reject(new Error('User cancelled login or did not fully authorize.'));
-      }, { scope: 'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video,instagram_basic,instagram_content_publish,pages_read_user_content' });
+      }, opts);
     });
   },
 
