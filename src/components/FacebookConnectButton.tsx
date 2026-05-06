@@ -55,7 +55,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
       setUsingPermanentTokens(permanent);
 
       if (fetchedPages.length === 0) {
-        setError('No Facebook Pages found on your account. Make sure you are an admin of a Facebook Page (not just a personal profile).');
+        setError('NO_PAGES_FOUND');
         setStep('error');
         return;
       }
@@ -212,7 +212,40 @@ export const FacebookConnectButton: React.FC<Props> = ({
       {step === 'error' && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4">
           <p className="text-xs font-bold text-red-400 mb-1 flex items-center gap-1.5"><AlertCircle size={12} /> Connection failed</p>
-          <p className="text-xs text-red-300/70 leading-relaxed">{error}</p>
+          {error === 'NO_PAGES_FOUND' ? (
+            <div className="text-xs text-red-300/80 leading-relaxed space-y-2">
+              <p>No Facebook Pages were found on your account. To use this app you need to be an <strong>admin of a Facebook Page</strong> — a personal profile isn't enough.</p>
+              <a
+                href="https://www.facebook.com/pages/create"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200 underline"
+              >
+                Create a Facebook Page (free, 2 minutes) <ExternalLink size={11} />
+              </a>
+              <p className="text-white/30">After your Page is created, come back and click Connect again.</p>
+            </div>
+          ) : (
+            <p className="text-xs text-red-300/70 leading-relaxed">{error}</p>
+          )}
+        </div>
+      )}
+
+      {/* Pre-flight hint — only shown before they've clicked Connect */}
+      {step === 'idle' && (
+        <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-3 flex gap-2.5">
+          <AlertCircle size={14} className="flex-shrink-0 text-blue-400/70 mt-0.5" />
+          <div className="text-[11px] text-white/60 leading-relaxed">
+            <p>You'll need to be an <strong className="text-white/80">admin of a Facebook Page</strong> (a personal profile alone won't work).</p>
+            <a
+              href="https://www.facebook.com/pages/create"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-blue-400/80 hover:text-blue-300 mt-1"
+            >
+              Don't have one? Create a Page <ExternalLink size={10} />
+            </a>
+          </div>
         </div>
       )}
 
