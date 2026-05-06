@@ -202,17 +202,18 @@ The CLI's output prints these too — keeping them here as a reference:
    `src/client.configs/<slug>.ts`
 2. Set the printed env vars on the new project
 3. Add the custom domain in CF Pages → Custom domains
-4. Create the Clerk auto-login user (use the printed email + password)
+4. ~~Create the Clerk auto-login user~~ — **automated** via Clerk
+   Backend API, falls back to manual if creation fails (e.g. email
+   already exists). The CLI prints which path was taken.
 5. Create `src/client.configs/<slug>.ts` (copy `picklenick.ts` as
    template), commit, push — CF Pages auto-builds
 
 ### Next slices to layer on (need credentials per the table above)
 
-* **CF Pages API**: replace step 1 + 2 + 3 with API calls. Needs
+* **CF Pages API**: replace steps 1 + 2 + 3 with API calls. Needs
   `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`.
-* **Clerk admin API**: replace step 4. Needs the existing
-  `CLERK_SECRET_KEY` to have `users:create` (it already does).
 * **GitHub Contents API**: replace step 5. Needs `GITHUB_PAT`.
 
-Each of these is independent — wire them in one at a time, the CLI
-stops printing the corresponding manual step as each gets automated.
+Once both land, every step is automated. Customer signs up, Steve
+runs the CLI, branded portal is live ~3 min later (the CF Pages build
+takes most of the time).

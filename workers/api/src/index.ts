@@ -1161,6 +1161,19 @@ app.post('/api/admin/portals/provision', async (c) => {
      VALUES (?,?,?,?,?,?)`
   ).bind(slug, body.autoLoginEmail, portalSecret, portalToken, body.ownerUserId, clientId).run();
 
+  // Try to create the Clerk auto-login user. We already have CLERK_SECRET_KEY
+  // configured (it's used everywhere for JWT verification) and the Backend
+  // API's POST /v1/users supports user creation with a password — no new
+  // credentials needed. If creation fails (e.g. email already exists, network
+  // error, Clerk plan restriction), we fall back to manual creation and the
+  // CLI will print a clear instruction.
+  const clerk = await tryCreateClerkUser(
+    c.env.CLERK_SECRET_KEY,
+    body.autoLoginEmail,
+    body.autoLoginPassword,
+    { portal_slug: slug, client_id: clientId },
+  );
+
   // Build the env-var block the human needs to paste into CF Pages
   const workerUrl = (c.env as any).PUBLIC_WORKER_URL || 'https://socialai-api.steve-700.workers.dev';
   const envVars: Record<string, string> = {
@@ -1174,25 +1187,87 @@ app.post('/api/admin/portals/provision', async (c) => {
     FACEBOOK_APP_SECRET: '<copy from main CF Pages project>',
   };
 
-  const manualSteps = [
-    `1. Create CF Pages project named '${slug}-social' pointing at the SocialAI-Studio repo`,
-    `2. Build command: cp src/client.configs/${slug}.ts src/client.config.ts && npm run build`,
-    `3. Set the env vars above on the new project`,
-    `4. Add custom domain '${body.customDomain || `social.${slug}.com.au`}' in CF Pages → Custom domains`,
-    `5. In Clerk dashboard, create a user with email '${body.autoLoginEmail}' and the autoLoginPassword you supplied`,
-    `6. Create src/client.configs/${slug}.ts (copy picklenick.ts as template; set clientId='${slug}', clientMode:true, accentColor, defaultBusinessName, etc.)`,
-    `7. Commit + push the new config — CF Pages auto-builds`,
+  // Build the manual-steps list. The Clerk step is conditional on whether
+  // auto-creation worked — if it did, we omit it; if it didn't, we include
+  // it with the Clerk error so the human knows what went wrong.
+  const manualSteps: string[] = [
+    `Create CF Pages project named '${slug}-social' pointing at the SocialAI-Studio repo`,
+    `Set CF Pages build command: cp src/client.configs/${slug}.ts src/client.config.ts && npm run build`,
+    `Set the env vars above on the new CF Pages project`,
+    `Add custom domain '${body.customDomain || `social.${slug}.com.au`}' in CF Pages → Custom domains`,
   ];
+  if (!clerk.created) {
+    manualSteps.push(
+      `In Clerk dashboard, create a user with email '${body.autoLoginEmail}' and the autoLoginPassword above (auto-create failed: ${clerk.error || 'unknown'})`
+    );
+  }
+  manualSteps.push(
+    `Create src/client.configs/${slug}.ts (copy picklenick.ts as template; set clientId='${slug}', clientMode:true, accentColor, defaultBusinessName, etc.)`,
+    `Commit + push the new config — CF Pages auto-builds`,
+  );
+  // Re-number for readability
+  const numbered = manualSteps.map((s, i) => `${i + 1}. ${s}`);
 
   return c.json({
     ok: true,
     clientId,
     portalToken,
     portalSecret,
+    clerkUserCreated: clerk.created,
+    clerkUserId: clerk.userId,
+    clerkError: clerk.error,
     envVars,
-    manualSteps,
+    manualSteps: numbered,
   });
 });
+
+/**
+ * Create a Clerk user via the Backend API. Returns { created, userId?, error? }.
+ * Never throws — caller decides how to handle failures.
+ *
+ * Clerk's instance settings determine whether passwords or email-only signups
+ * are allowed; if the instance disallows passwords, this fails gracefully and
+ * the caller falls back to printing a manual-create instruction.
+ */
+async function tryCreateClerkUser(
+  secretKey: string,
+  email: string,
+  password: string,
+  publicMetadata: Record<string, unknown>,
+): Promise<{ created: boolean; userId?: string; error?: string }> {
+  try {
+    const res = await fetch('https://api.clerk.com/v1/users', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email_address: [email],
+        password,
+        skip_password_checks: true,    // we generate a 24-byte base64url password, well above any sane minimum
+        skip_password_requirement: false,
+        public_metadata: publicMetadata,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json() as { id?: string };
+      return { created: true, userId: data.id };
+    }
+    // Clerk returns 422 with a structured `errors` array on validation failures
+    let errMsg = `HTTP ${res.status}`;
+    try {
+      const data = await res.json() as { errors?: Array<{ message?: string; code?: string; long_message?: string }> };
+      if (data.errors && data.errors[0]) {
+        const e = data.errors[0];
+        errMsg = e.long_message || e.message || e.code || errMsg;
+      }
+    } catch { /* keep HTTP fallback */ }
+    return { created: false, error: errMsg };
+  } catch (e: any) {
+    return { created: false, error: e?.message || 'fetch failed' };
+  }
+}
 
 app.post('/api/admin/bootstrap-all-facts', async (c) => {
   const provided = c.req.header('X-Bootstrap-Secret');

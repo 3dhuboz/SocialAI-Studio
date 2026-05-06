@@ -98,6 +98,14 @@ console.log(`  clientId      = ${data.clientId}`);
 console.log(`  portalToken   = ${data.portalToken}`);
 console.log(`  portalSecret  = ${data.portalSecret}`);
 
+if (data.clerkUserCreated) {
+  console.log(`\n[provision] Clerk user created automatically:`);
+  console.log(`  clerkUserId   = ${data.clerkUserId}`);
+} else if (data.clerkError) {
+  console.log(`\n[provision] Clerk user auto-create FAILED — needs manual creation:`);
+  console.log(`  reason        = ${data.clerkError}`);
+}
+
 console.log('\n[provision] Env vars to paste into the new CF Pages project:');
 console.log('─'.repeat(72));
 for (const [k, v] of Object.entries(data.envVars)) {
