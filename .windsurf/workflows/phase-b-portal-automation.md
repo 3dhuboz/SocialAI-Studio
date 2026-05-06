@@ -194,26 +194,50 @@ tab + run wrangler queries" to one CLI command. The CF Pages, Clerk,
 and GitHub steps are still manual — see "Manual steps remaining" below
 for what each of them needs.
 
-### Manual steps remaining after the CLI runs
+### Status of each step
 
-The CLI's output prints these too — keeping them here as a reference:
+The CLI's output prints these — keeping them here as a reference:
 
-1. Create CF Pages project in the dashboard, build cmd points at
-   `src/client.configs/<slug>.ts`
-2. Set the printed env vars on the new project
-3. Add the custom domain in CF Pages → Custom domains
-4. ~~Create the Clerk auto-login user~~ — **automated** via Clerk
-   Backend API, falls back to manual if creation fails (e.g. email
-   already exists). The CLI prints which path was taken.
-5. Create `src/client.configs/<slug>.ts` (copy `picklenick.ts` as
-   template), commit, push — CF Pages auto-builds
+| # | Step | Automation status |
+|---|------|-------------------|
+| 1 | D1 `clients` + `portal` rows | **Auto** (worker) |
+| 2 | Clerk auto-login user | **Auto** via Clerk Backend API; falls back to manual on failure |
+| 3 | `src/client.configs/<slug>.ts` template | **Auto** (CLI writes locally) |
+| 4 | CF Pages project + build cmd + env vars | **Auto when `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` are set as worker secrets**; falls back to manual otherwise |
+| 5 | CF Pages custom domain attach | **Auto, same gate as 4**; SSL provisioning runs async ~5 min |
+| 6 | DNS CNAME (if domain not on Cloudflare DNS) | Still manual — depends on registrar |
+| 7 | `git commit` + `git push` of the generated config | Still manual — trivial |
 
-### Next slices to layer on (need credentials per the table above)
+### Activating CF Pages auto-create
 
-* **CF Pages API**: replace steps 1 + 2 + 3 with API calls. Needs
-  `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`.
-* **GitHub Contents API**: replace step 5. Needs `GITHUB_PAT`.
+```
+npx wrangler secret put CLOUDFLARE_API_TOKEN
+npx wrangler secret put CLOUDFLARE_ACCOUNT_ID
+```
 
-Once both land, every step is automated. Customer signs up, Steve
-runs the CLI, branded portal is live ~3 min later (the CF Pages build
-takes most of the time).
+Token permissions needed:
+- Account → Cloudflare Pages → Edit
+- (Optionally) Zone → DNS → Edit if you want the worker to manage DNS too
+  (not currently wired — DNS is left manual for safety)
+
+Prerequisite: the Cloudflare account must already have authorized
+GitHub access to the SocialAI-Studio repo. This is a one-time
+dashboard OAuth grant — once it's there, every subsequent portal
+provisioning works without re-authorizing.
+
+If you use a different repo, also set:
+- `GITHUB_REPO_OWNER` (default: `3dhuboz`)
+- `GITHUB_REPO_NAME`  (default: `SocialAI-Studio`)
+
+### What's left after CF Pages is wired
+
+Just `git commit && git push` of the new config file (which the CLI
+already wrote to disk). That's a 2-second action. Customer signs up,
+Steve runs CLI + pushes, branded portal is live ~3 min later (the
+CF Pages first-deployment build takes most of the time).
+
+A future iteration could also automate the git commit via GitHub
+Contents API (PUT /repos/{owner}/{repo}/contents/{path}). That would
+need `GITHUB_PAT` with Contents: Read & Write on the repo. Low
+priority — git commit is already trivial when running the CLI from
+a checkout.

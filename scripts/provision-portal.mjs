@@ -128,7 +128,20 @@ if (data.clerkUserCreated) {
   console.log(`  reason        = ${data.clerkError}`);
 }
 
-console.log('\n[provision] Env vars to paste into the new CF Pages project:');
+if (data.cfPagesProjectCreated) {
+  console.log(`\n[provision] CF Pages project created automatically:`);
+  console.log(`  project       = ${data.cfPagesProjectName}`);
+  if (data.cfPagesDomainAttached) {
+    console.log(`  custom domain = attached (SSL provisioning runs async ~5 min)`);
+  } else if (data.cfPagesError) {
+    console.log(`  domain attach = FAILED — ${data.cfPagesError}`);
+  }
+} else if (data.cfPagesError) {
+  console.log(`\n[provision] CF Pages auto-create skipped or failed:`);
+  console.log(`  reason        = ${data.cfPagesError}`);
+}
+
+console.log('\n[provision] Env vars (already on CF Pages project if auto-create succeeded):');
 console.log('─'.repeat(72));
 for (const [k, v] of Object.entries(data.envVars)) {
   console.log(`${k}=${v}`);

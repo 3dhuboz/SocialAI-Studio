@@ -29,6 +29,15 @@ type Env = {
   PAYPAL_WEBHOOK_ID?: string;
   RESEND_API_KEY?: string;
   FACTS_BOOTSTRAP_SECRET?: string;
+  // Phase B portal automation — when these are set, the provision endpoint
+  // also creates the CF Pages project and attaches the custom domain.
+  // Without them, those steps stay as manual instructions in the response.
+  CLOUDFLARE_API_TOKEN?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  // Optional shared values used by the CF Pages source config — defaults
+  // are baked in below if not set.
+  GITHUB_REPO_OWNER?: string;
+  GITHUB_REPO_NAME?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -1174,7 +1183,9 @@ app.post('/api/admin/portals/provision', async (c) => {
     { portal_slug: slug, client_id: clientId },
   );
 
-  // Build the env-var block the human needs to paste into CF Pages
+  // Build the env-var block. Real values are baked into the CF Pages project
+  // automatically when CLOUDFLARE_API_TOKEN is set; otherwise these are the
+  // values to paste manually.
   const workerUrl = (c.env as any).PUBLIC_WORKER_URL || 'https://socialai-api.steve-700.workers.dev';
   const envVars: Record<string, string> = {
     VITE_CLERK_PUBLISHABLE_KEY: '<copy from main CF Pages project>',
@@ -1187,22 +1198,39 @@ app.post('/api/admin/portals/provision', async (c) => {
     FACEBOOK_APP_SECRET: '<copy from main CF Pages project>',
   };
 
-  // Build the manual-steps list. The Clerk step is conditional on whether
-  // auto-creation worked — if it did, we omit it; if it didn't, we include
-  // it with the Clerk error so the human knows what went wrong.
-  const manualSteps: string[] = [
-    `Create CF Pages project named '${slug}-social' pointing at the SocialAI-Studio repo`,
-    `Set CF Pages build command: cp src/client.configs/${slug}.ts src/client.config.ts && npm run build`,
-    `Set the env vars above on the new CF Pages project`,
-    `Add custom domain '${body.customDomain || `social.${slug}.com.au`}' in CF Pages → Custom domains`,
-  ];
+  // Try to create the Cloudflare Pages project + attach the custom domain.
+  // Gated on both CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID being set.
+  // Skipped silently when missing — the manualSteps array surfaces the work
+  // the human still needs to do.
+  const customDomain = body.customDomain || `social.${slug}.com.au`;
+  const cfPages = await tryCreateCFPagesProject(c.env, {
+    projectName: `${slug}-social`,
+    slug,
+    customDomain,
+    envVars,
+  });
+
+  // Build the manual-steps list. Each item conditionally appears only when
+  // its automation failed or wasn't attempted.
+  const manualSteps: string[] = [];
+
+  if (!cfPages.projectCreated) {
+    manualSteps.push(
+      `Create CF Pages project named '${slug}-social' pointing at the SocialAI-Studio repo`,
+      `Set CF Pages build command: cp src/client.configs/${slug}.ts src/client.config.ts && npm run build`,
+      `Set the env vars above on the new CF Pages project`,
+    );
+  }
+  if (!cfPages.domainAttached) {
+    manualSteps.push(`Add custom domain '${customDomain}' in CF Pages → Custom domains`);
+  }
   if (!clerk.created) {
     manualSteps.push(
       `In Clerk dashboard, create a user with email '${body.autoLoginEmail}' and the autoLoginPassword above (auto-create failed: ${clerk.error || 'unknown'})`
     );
   }
   manualSteps.push(
-    `Create src/client.configs/${slug}.ts (copy picklenick.ts as template; set clientId='${slug}', clientMode:true, accentColor, defaultBusinessName, etc.)`,
+    `Create src/client.configs/${slug}.ts (copy picklenick.ts as template; set clientId='${slug}', clientMode:true, accentColor, defaultBusinessName, etc.) — the CLI does this for you when run from a checkout`,
     `Commit + push the new config — CF Pages auto-builds`,
   );
   // Re-number for readability
@@ -1216,6 +1244,10 @@ app.post('/api/admin/portals/provision', async (c) => {
     clerkUserCreated: clerk.created,
     clerkUserId: clerk.userId,
     clerkError: clerk.error,
+    cfPagesProjectCreated: cfPages.projectCreated,
+    cfPagesProjectName: cfPages.projectName,
+    cfPagesDomainAttached: cfPages.domainAttached,
+    cfPagesError: cfPages.error,
     envVars,
     manualSteps: numbered,
   });
@@ -1267,6 +1299,149 @@ async function tryCreateClerkUser(
   } catch (e: any) {
     return { created: false, error: e?.message || 'fetch failed' };
   }
+}
+
+/**
+ * Create a Cloudflare Pages project pointing at the SocialAI-Studio repo,
+ * with build command + env vars baked in, then attach the custom domain.
+ *
+ * Gated on CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID being present —
+ * if either is missing the function returns { projectCreated: false,
+ * error: 'CLOUDFLARE_API_TOKEN not configured' } and the caller falls
+ * back to manual instructions.
+ *
+ * IMPORTANT prerequisite: the Cloudflare account must already have
+ * authorized GitHub access to the repo (one-time OAuth grant in the
+ * dashboard). The CF Pages REST API can't bootstrap that authorization
+ * itself — once it's granted, this function works for every subsequent
+ * portal.
+ *
+ * Two API calls happen:
+ *   1. POST .../pages/projects        — create the project
+ *   2. POST .../pages/projects/{name}/domains — attach the custom domain
+ *
+ * If step 1 fails the function returns early; step 2 only runs if step 1
+ * succeeded. Both successes/failures surface as separate booleans on the
+ * return value so the caller can build a precise manualSteps list.
+ */
+async function tryCreateCFPagesProject(
+  env: Env,
+  args: { projectName: string; slug: string; customDomain: string; envVars: Record<string, string> },
+): Promise<{
+  projectCreated: boolean;
+  domainAttached: boolean;
+  projectName?: string;
+  error?: string;
+}> {
+  const token = env.CLOUDFLARE_API_TOKEN;
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID;
+  if (!token || !accountId) {
+    return {
+      projectCreated: false,
+      domainAttached: false,
+      error: !token ? 'CLOUDFLARE_API_TOKEN not configured' : 'CLOUDFLARE_ACCOUNT_ID not configured',
+    };
+  }
+
+  const repoOwner = env.GITHUB_REPO_OWNER || '3dhuboz';
+  const repoName  = env.GITHUB_REPO_NAME  || 'SocialAI-Studio';
+  const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`;
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  // CF Pages env_vars take a { value, type } shape per key. "plain_text" is
+  // the default; "secret_text" encrypts at rest. We use "plain_text" for
+  // VITE_* (they're baked into the public bundle anyway) and "secret_text"
+  // for the auto-login password + portal secret + FB secrets which should
+  // not appear in the dashboard plaintext.
+  const SECRETS = new Set(['VITE_AUTO_LOGIN_PASSWORD', 'VITE_PORTAL_SECRET', 'FACEBOOK_APP_SECRET']);
+  const envForCF: Record<string, { value: string; type: string }> = {};
+  for (const [k, v] of Object.entries(args.envVars)) {
+    envForCF[k] = { value: v, type: SECRETS.has(k) ? 'secret_text' : 'plain_text' };
+  }
+
+  // Step 1 — create the project
+  let createOk = false;
+  try {
+    const res = await fetch(baseUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: args.projectName,
+        production_branch: 'main',
+        source: {
+          type: 'github',
+          config: {
+            owner: repoOwner,
+            repo_name: repoName,
+            production_branch: 'main',
+            pr_comments_enabled: false,
+            deployments_enabled: true,
+            production_deployment_enabled: true,
+            preview_deployment_setting: 'none',
+          },
+        },
+        build_config: {
+          build_command: `cp src/client.configs/${args.slug}.ts src/client.config.ts && npm run build`,
+          destination_dir: 'dist',
+          root_dir: '/',
+        },
+        deployment_configs: {
+          production: { env_vars: envForCF },
+        },
+      }),
+    });
+    if (res.ok) {
+      createOk = true;
+    } else {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const data = await res.json() as { errors?: Array<{ message?: string }> };
+        if (data.errors && data.errors[0]?.message) errMsg = data.errors[0].message;
+      } catch { /* keep HTTP fallback */ }
+      return {
+        projectCreated: false,
+        domainAttached: false,
+        error: `CF Pages project create failed: ${errMsg}`,
+      };
+    }
+  } catch (e: any) {
+    return {
+      projectCreated: false,
+      domainAttached: false,
+      error: `CF Pages project create error: ${e?.message || 'fetch failed'}`,
+    };
+  }
+
+  // Step 2 — attach the custom domain. SSL provisioning is async; this call
+  // returns immediately with the domain in pending status. CF will issue
+  // the cert in the background (~5 min).
+  let domainOk = false;
+  let domainErr: string | undefined;
+  try {
+    const domainUrl = `${baseUrl}/${encodeURIComponent(args.projectName)}/domains`;
+    const res = await fetch(domainUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: args.customDomain }),
+    });
+    if (res.ok) {
+      domainOk = true;
+    } else {
+      try {
+        const data = await res.json() as { errors?: Array<{ message?: string }> };
+        domainErr = data.errors?.[0]?.message || `HTTP ${res.status}`;
+      } catch { domainErr = `HTTP ${res.status}`; }
+    }
+  } catch (e: any) {
+    domainErr = e?.message || 'fetch failed';
+  }
+
+  return {
+    projectCreated: createOk,
+    domainAttached: domainOk,
+    projectName: createOk ? args.projectName : undefined,
+    error: domainErr ? `Custom domain attach failed: ${domainErr}` : undefined,
+  };
 }
 
 app.post('/api/admin/bootstrap-all-facts', async (c) => {
