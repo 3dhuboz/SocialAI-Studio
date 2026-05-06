@@ -24,15 +24,30 @@ export const CLIENT = {
   poweredByUrl: 'https://pennywiseit.com.au',
 
   /**
-   * FACEBOOK APP SETUP:
+   * FACEBOOK APP SETUP (Facebook Login for Business — recommended):
    * 1. Go to developers.facebook.com → Create App → "Business" type
-   * 2. Add "Facebook Login" product to the app
-   * 3. Under Facebook Login → Settings, add your domain to Valid OAuth Redirect URIs
-   * 4. App Review: request permissions: pages_show_list, pages_manage_posts, pages_read_engagement
-   * 5. Go Live (toggle in top bar) once approved
-   * 6. Copy your App ID from the app dashboard and paste below
+   * 2. Add the "Facebook Login for Business" product (NOT classic Facebook Login)
+   * 3. Facebook Login for Business → Configurations → Create new:
+   *      - Token type: "User access token" (or "Business Integration System User
+   *        access token" for non-expiring tokens — Phase 2)
+   *      - Permissions: pages_show_list, pages_manage_posts, pages_read_engagement,
+   *        publish_video, instagram_basic, instagram_content_publish, pages_read_user_content
+   *      - Asset types: Pages, Instagram Accounts
+   *      - Save → copy the Configuration ID
+   * 4. Settings → add your domain to Valid OAuth Redirect URIs
+   * 5. App Review: get Advanced Access for each permission above
+   * 6. Toggle "Live" once approved
+   * 7. Copy your App ID into facebookAppId and Configuration ID into
+   *    facebookLoginConfigId (or set VITE_FACEBOOK_LOGIN_CONFIG_ID in CF Pages env)
+   *
+   * UPGRADE FROM CLASSIC: if facebookLoginConfigId is empty, the Connect button
+   * falls back to legacy scope-based FB.login() — still works, but customers see
+   * the old per-permission checkbox dialog instead of the modern asset picker.
    */
   facebookAppId: '847198108337884',
+
+  /** Facebook Login for Business Configuration ID. See FACEBOOK APP SETUP above. */
+  facebookLoginConfigId: (import.meta as any).env?.VITE_FACEBOOK_LOGIN_CONFIG_ID || '',
 
   /** Admin emails — these accounts auto-get Pro plan + admin mode on login */
   adminEmails: ['steve@3dhub.au', 'steve@pennywiseit.com.au'],
