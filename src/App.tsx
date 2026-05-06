@@ -14,7 +14,6 @@ import { PricingTable } from './components/PricingTable';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { ClientIntakeForm } from './components/ClientIntakeForm';
 import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
@@ -292,6 +291,13 @@ const Dashboard: React.FC = () => {
     if (user) {
       await db.upsertUser({ plan: planId, setupStatus: 'ordered' }).catch(() => {});
     }
+    // Self-serve onboarding: kick the wizard right after a paid plan activates so
+    // the customer is guided into business-info → Facebook OAuth → first-posts
+    // without ever needing Steve to touch their account. Clearing the
+    // sai_onboarding_done flag ensures returning customers who paid for an upgrade
+    // can also be re-prompted if their profile is still default.
+    localStorage.removeItem('sai_onboarding_done');
+    setShowOnboarding(true);
   };
 
   // Profile & Posts — init from localStorage cache for instant render
@@ -329,8 +335,6 @@ const Dashboard: React.FC = () => {
 
   const [showAccount, setShowAccount] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
-  const [showIntakeForm, setShowIntakeForm] = useState(false);
-  const [intakeFormDone, setIntakeFormDone] = useState(false);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string; imageUrl?: string; imagePrompt?: string } | null>(null);
   const [videoModalGenerating, setVideoModalGenerating] = useState(false);
   const [videoModalProgress, setVideoModalProgress] = useState(0);
@@ -447,7 +451,6 @@ const Dashboard: React.FC = () => {
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
-          if (d.intakeFormDone) setIntakeFormDone(true);
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
           if (d.insightReport) {
             setInsightReport(d.insightReport as InsightReport);
@@ -465,6 +468,12 @@ const Dashboard: React.FC = () => {
             setSetupStatus('live');
             await db.upsertUser({ plan: pending.plan, setupStatus: 'live', email: user.email, paypalSubscriptionId: pending.paypal_subscription_id || null });
             await db.consumeActivation(pending.id as string);
+            // Self-serve onboarding: a brand-new paid customer who's just been
+            // upgraded from "no plan" to a real plan needs to be walked through
+            // setup. Clearing sai_onboarding_done covers the case where they
+            // dismissed the wizard pre-payment.
+            localStorage.removeItem('sai_onboarding_done');
+            setShowOnboarding(true);
           }
         }
         // Check for pending PayPal cancellation
@@ -1851,19 +1860,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-full bg-[#0a0a0f] flex flex-col">
-      {/* Onboarding Wizard */}
-      {showIntakeForm && user && (
-        <ClientIntakeForm
-          userEmail={user.email || ''}
-          onClose={() => setShowIntakeForm(false)}
-          onSubmitted={() => {
-            setIntakeFormDone(true);
-            setShowIntakeForm(false);
-            db.upsertUser({ intakeFormDone: true }).catch(() => {});
-          }}
-        />
-      )}
-
       {/* Video Script Lightbox */}
       {videoScriptModal && (
         <div
@@ -4297,7 +4293,7 @@ const Dashboard: React.FC = () => {
                           </ul>
                           {!isCurrent && (
                             isNew ? (
-                              <button onClick={() => setShowIntakeForm(true)}
+                              <button onClick={() => setShowPricing(true)}
                                 className={`w-full text-center text-xs font-bold py-2 rounded-xl transition bg-gradient-to-r ${plan.color} text-white hover:opacity-90`}>
                                 Get Started
                               </button>
@@ -4316,23 +4312,17 @@ const Dashboard: React.FC = () => {
                     })}
                   </div>
 
-                  {!activePlan && !intakeFormDone && (
+                  {!activePlan && (
                     <div className="bg-blue-500/8 border border-blue-500/20 rounded-2xl px-4 py-4 flex items-start gap-3">
-                      <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5"><span className="text-sm">📋</span></div>
+                      <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5"><span className="text-sm">⚡</span></div>
                       <div className="flex-1">
                         <p className="text-xs font-bold text-blue-300 mb-0.5">New to SocialAI Studio?</p>
-                        <p className="text-xs text-white/45 leading-relaxed">Choose a plan above, then complete our quick setup form so we can connect your Facebook Page. A one-time <span className="text-amber-300 font-semibold">${CLIENT.setupFee} setup fee</span> applies to new accounts.</p>
+                        <p className="text-xs text-white/45 leading-relaxed">Pick a plan, pay securely with PayPal, and you'll be guided through setup instantly — Facebook connection, business profile, first AI posts. No forms. No waiting. <span className="text-amber-300 font-semibold">${CLIENT.setupFee} one-time setup fee</span> included.</p>
                       </div>
-                      <button onClick={() => setShowIntakeForm(true)}
+                      <button onClick={() => setShowPricing(true)}
                         className="shrink-0 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/25 text-blue-300 text-xs font-bold px-3 py-2 rounded-xl transition">
-                        Fill Setup Form
+                        Choose a Plan
                       </button>
-                    </div>
-                  )}
-                  {intakeFormDone && !activePlan && (
-                    <div className="bg-green-500/8 border border-green-500/20 rounded-2xl px-4 py-3 flex items-center gap-3">
-                      <CheckCircle size={14} className="text-green-400 shrink-0" />
-                      <p className="text-xs text-green-300">Setup form submitted — our team will contact you within 1 business day with your payment link.</p>
                     </div>
                   )}
                   <p className="text-xs text-white/20 text-center">

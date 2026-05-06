@@ -316,13 +316,13 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <p className="text-sm font-semibold text-white">{generatedCount} posts generated!</p>
                   <p className="text-xs text-white/35">They're ready in your calendar. You can edit or publish them anytime.</p>
                 </div>
-              ) : (
+              ) : onGenerateFirstPosts ? (
                 <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-center space-y-4">
                   <div className="text-4xl">✨</div>
                   <p className="text-sm text-white/50">The AI will research your business type and create 3 tailored posts with images, captions, and hashtags.</p>
                   <button
                     onClick={onGenerateFirstPosts}
-                    disabled={isGenerating || !onGenerateFirstPosts}
+                    disabled={isGenerating}
                     className="w-full bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
                   >
                     {isGenerating ? (
@@ -331,6 +331,12 @@ export const OnboardingWizard: React.FC<Props> = ({
                       <><Wand2 size={16} /> Generate 3 Posts</>
                     )}
                   </button>
+                </div>
+              ) : (
+                <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-center space-y-3">
+                  <div className="text-4xl">✨</div>
+                  <p className="text-sm font-semibold text-white">You're all set!</p>
+                  <p className="text-xs text-white/50 leading-relaxed">Head to <span className="text-amber-300 font-semibold">Smart Schedule</span> to auto-plan a week of AI posts, or go to <span className="text-amber-300 font-semibold">Create</span> to write a single post. The AI knows your business now.</p>
                 </div>
               )}
 
@@ -349,9 +355,9 @@ export const OnboardingWizard: React.FC<Props> = ({
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => { onAdvanceSetup?.('live'); next(true); }}
-                  className={`flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition ${!generatedCount && !isGenerating ? 'opacity-60' : ''}`}
+                  className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
                 >
-                  {generatedCount > 0 ? 'Finish Setup' : 'Skip for now'} <ArrowRight size={16} />
+                  {generatedCount > 0 || !onGenerateFirstPosts ? 'Finish Setup' : 'Skip for now'} <ArrowRight size={16} />
                 </button>
               </div>
             </div>

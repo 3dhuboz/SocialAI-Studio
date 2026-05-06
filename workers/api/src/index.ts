@@ -29,6 +29,15 @@ type Env = {
   PAYPAL_WEBHOOK_ID?: string;
   RESEND_API_KEY?: string;
   FACTS_BOOTSTRAP_SECRET?: string;
+  // Phase B portal automation — when these are set, the provision endpoint
+  // also creates the CF Pages project and attaches the custom domain.
+  // Without them, those steps stay as manual instructions in the response.
+  CLOUDFLARE_API_TOKEN?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  // Optional shared values used by the CF Pages source config — defaults
+  // are baked in below if not set.
+  GITHUB_REPO_OWNER?: string;
+  GITHUB_REPO_NAME?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -1072,6 +1081,367 @@ async function backfillImagesForUser(env: Env, uid: string) {
     await new Promise(r => setTimeout(r, 700));
   }
   return { found: posts.length, succeeded, failed, errors: errors.slice(0, 5) };
+}
+
+// ── Admin: Provision a whitelabel portal (atomic) ─────────────────────────────
+// Combines the existing 2-step provisioning (client row + portal row) into one
+// call, generates the per-portal shared secret, and returns the full env-var
+// set the agent must paste into the CF Pages project. This is Phase B-Lite —
+// the database side of portal automation. Steps that require external APIs
+// (creating the CF Pages project, adding the custom domain, creating the
+// Clerk auto-login user) are still manual until those credentials are wired
+// in. See .windsurf/workflows/phase-b-portal-automation.md.
+//
+// Auth: gated by FACTS_BOOTSTRAP_SECRET (the same secret used by the existing
+// admin endpoints — keeps the bootstrap-secret surface area at one secret).
+//
+// Request body:
+//   {
+//     slug: "newclient",                    // unique, lowercase, kebab-case
+//     ownerUserId: "user_xxx",              // Clerk user id of the AGENCY admin
+//                                           // who owns this portal (typically Steve)
+//     businessName: "New Client",
+//     businessType: "florist",              // optional
+//     plan: "agency",                       // optional, defaults to 'agency'
+//     autoLoginEmail: "client@example.com", // the Clerk auto-login email
+//                                           // (Clerk user MUST be created
+//                                           //  manually until Phase B step 3)
+//     autoLoginPassword: "...",             // the Clerk auto-login password
+//     customDomain: "social.client.com.au"  // for the docs string only
+//   }
+//
+// Response:
+//   {
+//     ok: true,
+//     clientId: "<uuid>",
+//     portalToken: "<random>",
+//     portalSecret: "<random>",   // also stored as portal.password — set this
+//                                  // as VITE_PORTAL_SECRET on the CF Pages project
+//     envVars: { ... },           // copy-paste block for CF Pages env vars
+//     manualSteps: [ ... ]        // remaining steps that need a human
+//   }
+app.post('/api/admin/portals/provision', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const body = await c.req.json<{
+    slug?: string;
+    ownerUserId?: string;
+    businessName?: string;
+    businessType?: string;
+    plan?: string;
+    autoLoginEmail?: string;
+    autoLoginPassword?: string;
+    customDomain?: string;
+  }>();
+
+  // Validate inputs
+  const slug = (body.slug || '').toLowerCase().trim();
+  if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) {
+    return c.json({ error: 'slug must be lowercase, 2-41 chars, [a-z0-9-]' }, 400);
+  }
+  if (!body.ownerUserId || !body.businessName || !body.autoLoginEmail || !body.autoLoginPassword) {
+    return c.json({ error: 'ownerUserId, businessName, autoLoginEmail, autoLoginPassword are required' }, 400);
+  }
+  if (body.autoLoginPassword.length < 16) {
+    return c.json({ error: 'autoLoginPassword must be at least 16 chars' }, 400);
+  }
+
+  // Refuse if slug is already taken
+  const existing = await c.env.DB.prepare('SELECT slug FROM portal WHERE slug = ?').bind(slug).first();
+  if (existing) return c.json({ error: `slug '${slug}' is already taken` }, 409);
+
+  // Generate the per-portal shared secret + portal token. The "password" column
+  // on the portal table doubles as the shared secret used by VITE_PORTAL_SECRET.
+  // We use crypto.randomUUID twice to widen the entropy beyond a single UUID.
+  const portalSecret = crypto.randomUUID() + '-' + crypto.randomUUID();
+  const portalToken = crypto.randomUUID() + '-' + crypto.randomUUID();
+
+  // Atomic create: client first, then portal pointing at it.
+  const clientId = uuid();
+  const plan = body.plan || 'agency';
+  await c.env.DB.prepare(
+    'INSERT INTO clients (id, user_id, name, business_type, created_at, plan) VALUES (?,?,?,?,?,?)'
+  ).bind(clientId, body.ownerUserId, body.businessName, body.businessType ?? null, new Date().toISOString(), plan).run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id)
+     VALUES (?,?,?,?,?,?)`
+  ).bind(slug, body.autoLoginEmail, portalSecret, portalToken, body.ownerUserId, clientId).run();
+
+  // Try to create the Clerk auto-login user. We already have CLERK_SECRET_KEY
+  // configured (it's used everywhere for JWT verification) and the Backend
+  // API's POST /v1/users supports user creation with a password — no new
+  // credentials needed. If creation fails (e.g. email already exists, network
+  // error, Clerk plan restriction), we fall back to manual creation and the
+  // CLI will print a clear instruction.
+  const clerk = await tryCreateClerkUser(
+    c.env.CLERK_SECRET_KEY,
+    body.autoLoginEmail,
+    body.autoLoginPassword,
+    { portal_slug: slug, client_id: clientId },
+  );
+
+  // Build the env-var block. Real values are baked into the CF Pages project
+  // automatically when CLOUDFLARE_API_TOKEN is set; otherwise these are the
+  // values to paste manually.
+  const workerUrl = (c.env as any).PUBLIC_WORKER_URL || 'https://socialai-api.steve-700.workers.dev';
+  const envVars: Record<string, string> = {
+    VITE_CLERK_PUBLISHABLE_KEY: '<copy from main CF Pages project>',
+    VITE_AI_WORKER_URL: workerUrl,
+    VITE_AUTO_LOGIN_EMAIL: body.autoLoginEmail,
+    VITE_AUTO_LOGIN_PASSWORD: body.autoLoginPassword,
+    VITE_PORTAL_SECRET: portalSecret,
+    VITE_CLIENT_ID: slug,
+    FACEBOOK_APP_ID: '<copy from main CF Pages project>',
+    FACEBOOK_APP_SECRET: '<copy from main CF Pages project>',
+  };
+
+  // Try to create the Cloudflare Pages project + attach the custom domain.
+  // Gated on both CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID being set.
+  // Skipped silently when missing — the manualSteps array surfaces the work
+  // the human still needs to do.
+  const customDomain = body.customDomain || `social.${slug}.com.au`;
+  const cfPages = await tryCreateCFPagesProject(c.env, {
+    projectName: `${slug}-social`,
+    slug,
+    customDomain,
+    envVars,
+  });
+
+  // Build the manual-steps list. Each item conditionally appears only when
+  // its automation failed or wasn't attempted.
+  const manualSteps: string[] = [];
+
+  if (!cfPages.projectCreated) {
+    manualSteps.push(
+      `Create CF Pages project named '${slug}-social' pointing at the SocialAI-Studio repo`,
+      `Set CF Pages build command: cp src/client.configs/${slug}.ts src/client.config.ts && npm run build`,
+      `Set the env vars above on the new CF Pages project`,
+    );
+  }
+  if (!cfPages.domainAttached) {
+    manualSteps.push(`Add custom domain '${customDomain}' in CF Pages → Custom domains`);
+  }
+  if (!clerk.created) {
+    manualSteps.push(
+      `In Clerk dashboard, create a user with email '${body.autoLoginEmail}' and the autoLoginPassword above (auto-create failed: ${clerk.error || 'unknown'})`
+    );
+  }
+  manualSteps.push(
+    `Create src/client.configs/${slug}.ts (copy picklenick.ts as template; set clientId='${slug}', clientMode:true, accentColor, defaultBusinessName, etc.) — the CLI does this for you when run from a checkout`,
+    `Commit + push the new config — CF Pages auto-builds`,
+  );
+  // Re-number for readability
+  const numbered = manualSteps.map((s, i) => `${i + 1}. ${s}`);
+
+  return c.json({
+    ok: true,
+    clientId,
+    portalToken,
+    portalSecret,
+    clerkUserCreated: clerk.created,
+    clerkUserId: clerk.userId,
+    clerkError: clerk.error,
+    cfPagesProjectCreated: cfPages.projectCreated,
+    cfPagesProjectName: cfPages.projectName,
+    cfPagesDomainAttached: cfPages.domainAttached,
+    cfPagesError: cfPages.error,
+    envVars,
+    manualSteps: numbered,
+  });
+});
+
+/**
+ * Create a Clerk user via the Backend API. Returns { created, userId?, error? }.
+ * Never throws — caller decides how to handle failures.
+ *
+ * Clerk's instance settings determine whether passwords or email-only signups
+ * are allowed; if the instance disallows passwords, this fails gracefully and
+ * the caller falls back to printing a manual-create instruction.
+ */
+async function tryCreateClerkUser(
+  secretKey: string,
+  email: string,
+  password: string,
+  publicMetadata: Record<string, unknown>,
+): Promise<{ created: boolean; userId?: string; error?: string }> {
+  try {
+    const res = await fetch('https://api.clerk.com/v1/users', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email_address: [email],
+        password,
+        skip_password_checks: true,    // we generate a 24-byte base64url password, well above any sane minimum
+        skip_password_requirement: false,
+        public_metadata: publicMetadata,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json() as { id?: string };
+      return { created: true, userId: data.id };
+    }
+    // Clerk returns 422 with a structured `errors` array on validation failures
+    let errMsg = `HTTP ${res.status}`;
+    try {
+      const data = await res.json() as { errors?: Array<{ message?: string; code?: string; long_message?: string }> };
+      if (data.errors && data.errors[0]) {
+        const e = data.errors[0];
+        errMsg = e.long_message || e.message || e.code || errMsg;
+      }
+    } catch { /* keep HTTP fallback */ }
+    return { created: false, error: errMsg };
+  } catch (e: any) {
+    return { created: false, error: e?.message || 'fetch failed' };
+  }
+}
+
+/**
+ * Create a Cloudflare Pages project pointing at the SocialAI-Studio repo,
+ * with build command + env vars baked in, then attach the custom domain.
+ *
+ * Gated on CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID being present —
+ * if either is missing the function returns { projectCreated: false,
+ * error: 'CLOUDFLARE_API_TOKEN not configured' } and the caller falls
+ * back to manual instructions.
+ *
+ * IMPORTANT prerequisite: the Cloudflare account must already have
+ * authorized GitHub access to the repo (one-time OAuth grant in the
+ * dashboard). The CF Pages REST API can't bootstrap that authorization
+ * itself — once it's granted, this function works for every subsequent
+ * portal.
+ *
+ * Two API calls happen:
+ *   1. POST .../pages/projects        — create the project
+ *   2. POST .../pages/projects/{name}/domains — attach the custom domain
+ *
+ * If step 1 fails the function returns early; step 2 only runs if step 1
+ * succeeded. Both successes/failures surface as separate booleans on the
+ * return value so the caller can build a precise manualSteps list.
+ */
+async function tryCreateCFPagesProject(
+  env: Env,
+  args: { projectName: string; slug: string; customDomain: string; envVars: Record<string, string> },
+): Promise<{
+  projectCreated: boolean;
+  domainAttached: boolean;
+  projectName?: string;
+  error?: string;
+}> {
+  const token = env.CLOUDFLARE_API_TOKEN;
+  const accountId = env.CLOUDFLARE_ACCOUNT_ID;
+  if (!token || !accountId) {
+    return {
+      projectCreated: false,
+      domainAttached: false,
+      error: !token ? 'CLOUDFLARE_API_TOKEN not configured' : 'CLOUDFLARE_ACCOUNT_ID not configured',
+    };
+  }
+
+  const repoOwner = env.GITHUB_REPO_OWNER || '3dhuboz';
+  const repoName  = env.GITHUB_REPO_NAME  || 'SocialAI-Studio';
+  const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects`;
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  // CF Pages env_vars take a { value, type } shape per key. "plain_text" is
+  // the default; "secret_text" encrypts at rest. We use "plain_text" for
+  // VITE_* (they're baked into the public bundle anyway) and "secret_text"
+  // for the auto-login password + portal secret + FB secrets which should
+  // not appear in the dashboard plaintext.
+  const SECRETS = new Set(['VITE_AUTO_LOGIN_PASSWORD', 'VITE_PORTAL_SECRET', 'FACEBOOK_APP_SECRET']);
+  const envForCF: Record<string, { value: string; type: string }> = {};
+  for (const [k, v] of Object.entries(args.envVars)) {
+    envForCF[k] = { value: v, type: SECRETS.has(k) ? 'secret_text' : 'plain_text' };
+  }
+
+  // Step 1 — create the project
+  let createOk = false;
+  try {
+    const res = await fetch(baseUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: args.projectName,
+        production_branch: 'main',
+        source: {
+          type: 'github',
+          config: {
+            owner: repoOwner,
+            repo_name: repoName,
+            production_branch: 'main',
+            pr_comments_enabled: false,
+            deployments_enabled: true,
+            production_deployment_enabled: true,
+            preview_deployment_setting: 'none',
+          },
+        },
+        build_config: {
+          build_command: `cp src/client.configs/${args.slug}.ts src/client.config.ts && npm run build`,
+          destination_dir: 'dist',
+          root_dir: '/',
+        },
+        deployment_configs: {
+          production: { env_vars: envForCF },
+        },
+      }),
+    });
+    if (res.ok) {
+      createOk = true;
+    } else {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const data = await res.json() as { errors?: Array<{ message?: string }> };
+        if (data.errors && data.errors[0]?.message) errMsg = data.errors[0].message;
+      } catch { /* keep HTTP fallback */ }
+      return {
+        projectCreated: false,
+        domainAttached: false,
+        error: `CF Pages project create failed: ${errMsg}`,
+      };
+    }
+  } catch (e: any) {
+    return {
+      projectCreated: false,
+      domainAttached: false,
+      error: `CF Pages project create error: ${e?.message || 'fetch failed'}`,
+    };
+  }
+
+  // Step 2 — attach the custom domain. SSL provisioning is async; this call
+  // returns immediately with the domain in pending status. CF will issue
+  // the cert in the background (~5 min).
+  let domainOk = false;
+  let domainErr: string | undefined;
+  try {
+    const domainUrl = `${baseUrl}/${encodeURIComponent(args.projectName)}/domains`;
+    const res = await fetch(domainUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: args.customDomain }),
+    });
+    if (res.ok) {
+      domainOk = true;
+    } else {
+      try {
+        const data = await res.json() as { errors?: Array<{ message?: string }> };
+        domainErr = data.errors?.[0]?.message || `HTTP ${res.status}`;
+      } catch { domainErr = `HTTP ${res.status}`; }
+    }
+  } catch (e: any) {
+    domainErr = e?.message || 'fetch failed';
+  }
+
+  return {
+    projectCreated: createOk,
+    domainAttached: domainOk,
+    projectName: createOk ? args.projectName : undefined,
+    error: domainErr ? `Custom domain attach failed: ${domainErr}` : undefined,
+  };
 }
 
 app.post('/api/admin/bootstrap-all-facts', async (c) => {

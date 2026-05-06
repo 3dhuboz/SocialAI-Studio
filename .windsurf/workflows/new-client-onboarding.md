@@ -1,39 +1,96 @@
 ---
-description: Full checklist for onboarding a new social media management client
+description: Onboarding paths for SocialAI Studio — self-serve SaaS vs agency whitelabel portals
 ---
 
-## New Client Onboarding Checklist
+## Two onboarding paths — pick the right one
 
-Complete these steps in order when signing up a new client.
+SocialAI Studio has two distinct customer types and two onboarding flows.
 
-### Phase 1: Setup (you do this — ~15 min)
+| Customer type | Onboarding | Steve's manual work |
+|---------------|------------|---------------------|
+| **Direct SaaS subscriber** (signs up at socialaistudio.au) | **Fully automated** — Clerk signup → PayPal → OnboardingWizard | None |
+| **Agency-managed whitelabel client** (Steve onboards them under his Agency plan) | Semi-manual — separate CF Pages portal per client | ~15 min per portal |
+
+---
+
+## Path 1 — Direct SaaS Subscriber (fully automated)
+
+**No Steve action required.** A new customer signs up, pays, and starts
+generating posts without any manual provisioning.
+
+The flow:
+
+1. Customer visits `https://socialaistudio.au` → `LandingPage`
+2. Clicks Get Started → Clerk open signup (anyone can sign up)
+3. Picks plan in `PricingTable` → PayPal subscription checkout
+4. `/api/paypal-verify` (worker) verifies subscription with PayPal,
+   inserts a `pending_activations` row in D1
+5. PayPal webhook `/api/paypal-webhook` (Pages Function) does the same
+   server-side as defence-in-depth, plus sends a Resend welcome email
+6. Activation auto-consumes on next user load
+   (`db.getActivation(user.email)` in `App.tsx`), flips `setupStatus`
+   to `live`, sets the plan, and auto-shows OnboardingWizard
+7. OnboardingWizard walks them through: business info → Facebook
+   OAuth (real `pages_show_list / pages_manage_posts` flow) → done
+8. Customer is using the product
+
+### Required config (already in place)
+
+**Main CF Pages env vars:**
+- `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`
+- `PAYPAL_PLAN_STARTER / _GROWTH / _PRO / _AGENCY` (and `_*_YEARLY`)
+- `RESEND_API_KEY` (welcome / cancellation emails — optional)
+
+**Worker secrets:**
+- `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`
+
+If a customer hits a snag the entry points are everywhere — `Get Started`
+and `Choose a Plan` CTAs all route to PricingTable, and they can re-trigger
+checkout or open the wizard from Settings.
+
+---
+
+## Path 2 — Agency Whitelabel Client (semi-manual)
+
+This is for Steve's agency-managed clients who get their own branded
+portal at e.g. `social.clientdomain.com.au`. These clients don't pay
+SocialAI Studio directly — Steve invoices them under his Agency plan.
+
+> **Roadmap:** see `phase-b-portal-automation.md` for the plan to make
+> this fully self-serve too. Requires CF API token + GitHub PAT.
+
+### Phase 1 — Setup (~15 min)
 
 #### 1. Create client config file
 ```
 cp src/client.configs/picklenick.ts src/client.configs/CLIENTNAME.ts
 ```
-Edit the new file — key fields:
-- `appName`: e.g. `'Pickle Nick Social'`
-- `defaultBusinessName`: client's business name
-- `defaultBusinessType`: e.g. `'food truck'`
-- `defaultLocation`: e.g. `'Brisbane, Australia'`
-- `accentColor`: brand colour hex
-- `autoLoginEmail`: e.g. `'client@socialaistudio.au'`
-- `autoLoginPassword`: strong auto-generated password
+Edit:
+- `clientId`, `appName`, `defaultBusinessName`, `defaultBusinessType`,
+  `defaultLocation`, `defaultTone`, `defaultDescription`
+- `accentColor` (use a brand hex — both light and dark text variants
+  auto-derive from this via HSL math in `main.tsx`)
 - `clientMode: true`
 
 #### 2. Create Cloudflare Pages project
-Follow `/deploy-client-portal` workflow — Step 2 onwards.
+Follow `/deploy-client-portal` from Step 2.
 Build command: `cp src/client.configs/CLIENTNAME.ts src/client.config.ts && npm run build`
 
-#### 3. Add custom domain in Cloudflare Pages
-Add `social.CLIENTDOMAIN.com.au` as custom domain.
+#### 3. Add custom domain
+`social.CLIENTDOMAIN.com.au` in CF Pages → Custom domains.
 
-#### 4. Create Firebase auto-login user
-- Firebase Console → Authentication → Add user
-- Use the `autoLoginEmail` + `autoLoginPassword` from the config
+#### 4. Create Clerk auto-login user
+Clerk dashboard → Users → Create user with `autoLoginEmail` +
+`autoLoginPassword` from the config.
 
-#### 5. Commit and push the new config
+#### 5. Set portal env vars
+- `VITE_CLERK_PUBLISHABLE_KEY`
+- `VITE_AI_WORKER_URL` = `https://socialai-api.steve-700.workers.dev`
+- `VITE_AUTO_LOGIN_EMAIL`, `VITE_AUTO_LOGIN_PASSWORD`
+- `VITE_PORTAL_SECRET` (must match the per-client secret in D1)
+- `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`
+
+#### 6. Commit and push the new config
 ```
 git add src/client.configs/CLIENTNAME.ts
 git commit -m "feat: add CLIENTNAME client config"
@@ -41,40 +98,18 @@ git push origin main
 ```
 CF Pages auto-builds the new portal.
 
----
+### Phase 2 — Backend (~5 min)
 
-### Phase 2: Agency backend setup (~5 min)
+#### 7. Log into socialaistudio.au as agency admin
 
-#### 6. Log into socialaistudio.au as agency admin
+#### 8. Create the client workspace
+Clients tab → Add Client → fill business details.
 
-#### 7. Create client workspace
-- Clients tab → Add Client
-- Set business name, type, location, tone, description
+#### 9. Connect the client's Facebook Page
+Switch to the client workspace → Settings → Connect Facebook → pick
+the client's page.
 
-#### 8. Connect Facebook for client workspace
-- Switch to client workspace
-- Settings → Connect Facebook → select the client's Facebook page
-- Verify "Facebook Connected" badge appears
+### Phase 3 — Hand-off
 
----
-
-### Phase 3: Hand off to client (~5 min)
-
-#### 9. Give client their portal URL
-`https://social.CLIENTDOMAIN.com.au`
-
-#### 10. Give client their login (if they need direct access)
-- Email: `autoLoginEmail`
-- Password: `autoLoginPassword`
-- Note: portal auto-logs in, so they just open the URL
-
-#### 11. Set client's API key in their portal
-- Client logs in → Settings → paste their Claude or Gemini API key
-
----
-
-### Services used (no extra cost per client)
-- **Cloudflare Pages**: free tier, 100k function calls/day shared
-- **Firebase Auth**: free Spark plan supports unlimited users
-- **Firestore**: free tier (1GB storage, 50k reads/day)
-- **Late.dev**: one account covers all profiles (check plan limit)
+The portal auto-logs in via the dedicated Clerk user, so the client
+just opens the URL.

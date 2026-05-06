@@ -569,6 +569,9 @@ STRICT ANTI-GENERIC RULES (forbidden tokens — DO NOT WRITE under any condition
 - FORBIDDEN CTAs: "Engage with your audience!", "Check out our website for more tips!", "Want to boost your [anything]?", "Visit our website to learn more!", "Let [product] handle the rest!", "Click the link in bio!"
 - If you draft any forbidden phrase, STOP, delete it, and replace with a concrete specific detail.
 - Every sentence must earn its place — if it could apply to any business, rewrite it.
+- MUST reference specific details from the BRAND CONTEXT above — mention actual products, services, location, or audience by name.
+- If content topics are provided above, the post MUST relate to one of those topics or themes.
+- Do NOT invent events, campaigns, countdown language, or facts that aren't in the brand context — stay true to what the business actually does.
 - Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
