@@ -1444,6 +1444,125 @@ async function tryCreateCFPagesProject(
   };
 }
 
+// ── Admin: PayPal subscription diagnostic ─────────────────────────────────────
+// Queries PayPal for every plan ID baked into client.config.ts, returns each
+// plan's status + billing cycle + currency. Use this when the hermes checkout
+// shows "We're sorry. Things don't appear to be working" — the most common
+// cause is one or more plans being in CREATED/INACTIVE state instead of ACTIVE.
+//
+// Usage:
+//   curl -X POST https://socialai-api.steve-700.workers.dev/api/admin/paypal-diagnose \
+//     -H "X-Bootstrap-Secret: $FACTS_BOOTSTRAP_SECRET"
+//
+// Auth: same FACTS_BOOTSTRAP_SECRET as the other admin endpoints — no new
+// surface area.
+app.post('/api/admin/paypal-diagnose', async (c) => {
+  const provided = c.req.header('X-Bootstrap-Secret');
+  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  const clientId = c.env.PAYPAL_CLIENT_ID;
+  const clientSecret = c.env.PAYPAL_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return c.json({ error: 'PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET worker secret missing' }, 500);
+  }
+
+  // PayPal plan IDs — keep in sync with src/client.config.ts
+  const PLAN_IDS = {
+    monthly: {
+      starter: 'P-1AB09838JG575723YNG3TKPY',
+      growth:  'P-5JX42118D0152071LNG3TLDY',
+      pro:     'P-0MN86219YF921874FNG3TLRY',
+      agency:  'P-5VB80462AU714124YNG3TL7Q',
+    },
+    yearly: {
+      starter: 'P-62C327553Y779300FNHDUU7Y',
+      growth:  'P-60J02873W1559770VNHDUVAA',
+      pro:     'P-6G9907746Y8649457NHDUVAA',
+      agency:  'P-1BH48559DE324360CNHDUVAA',
+    },
+  };
+
+  // Get OAuth token
+  const creds = btoa(`${clientId}:${clientSecret}`);
+  const tokenRes = await fetch('https://api-m.paypal.com/v1/oauth2/token', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+  });
+  const tokenData = await tokenRes.json() as any;
+  if (!tokenData.access_token) {
+    return c.json({ error: 'PayPal auth failed', detail: tokenData }, 500);
+  }
+  const token = tokenData.access_token;
+  const appId = tokenData.app_id || null;
+
+  // Query each plan
+  type PlanStatus = {
+    label: string;
+    planId: string;
+    httpStatus: number;
+    status?: string;
+    interval?: string;
+    price?: string;
+    currency?: string;
+    setupFee?: string;
+    productId?: string;
+    error?: string;
+  };
+  const results: PlanStatus[] = [];
+  const issues: string[] = [];
+
+  const checkPlan = async (label: string, planId: string) => {
+    const res = await fetch(`https://api-m.paypal.com/v1/billing/plans/${planId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const r: PlanStatus = { label, planId, httpStatus: res.status };
+    if (!res.ok) {
+      try {
+        const err = await res.json() as any;
+        r.error = err?.details?.[0]?.description || err?.message || `HTTP ${res.status}`;
+      } catch {
+        r.error = `HTTP ${res.status}`;
+      }
+      issues.push(`${label} (${planId}) — ${r.error}`);
+      results.push(r);
+      return;
+    }
+    const plan = await res.json() as any;
+    const billingCycle = plan.billing_cycles?.[0];
+    const price = billingCycle?.pricing_scheme?.fixed_price;
+    const setupFee = plan.payment_preferences?.setup_fee;
+    r.status = plan.status;
+    r.interval = billingCycle?.frequency
+      ? `${billingCycle.frequency.interval_count} ${billingCycle.frequency.interval_unit}`
+      : undefined;
+    r.price = price ? price.value : undefined;
+    r.currency = price ? price.currency_code : undefined;
+    r.setupFee = setupFee ? `${setupFee.value} ${setupFee.currency_code}` : 'none';
+    r.productId = plan.product_id;
+    if (plan.status !== 'ACTIVE') {
+      issues.push(`${label} (${planId}) is ${plan.status} — must be ACTIVE. Run: POST /v1/billing/plans/${planId}/activate`);
+    }
+    if (r.currency && r.currency !== 'AUD') {
+      issues.push(`${label} (${planId}) is in ${r.currency} not AUD — currency mismatch causes hermes to fail`);
+    }
+    results.push(r);
+  };
+
+  for (const [label, id] of Object.entries(PLAN_IDS.monthly)) await checkPlan(label, id);
+  for (const [label, id] of Object.entries(PLAN_IDS.yearly)) await checkPlan(`${label}-yearly`, id);
+
+  return c.json({
+    paypalAppId: appId,
+    plans: results,
+    issues,
+    verdict: issues.length === 0
+      ? 'All plans look healthy. The hermes "We\'re sorry" error is likely browser-anti-fraud (CDP debugging attached) or PayPal app domain restriction missing socialaistudio.au. Check developer.paypal.com → your live app → return URLs / domains.'
+      : 'Plan-level issues found — see "issues" array. Fix those first before assuming it\'s a browser/domain problem.',
+  });
+});
+
 app.post('/api/admin/bootstrap-all-facts', async (c) => {
   const provided = c.req.header('X-Bootstrap-Secret');
   if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {

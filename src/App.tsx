@@ -4334,14 +4334,17 @@ const Dashboard: React.FC = () => {
 
             {/* ── SECTION: AI & Keys (super-admin / owner only) ── */}
             {isSuperAdmin && (
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">AI &amp; Keys</span>
-                <div className="h-px flex-1 bg-white/6" />
-              </div>
+              <>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">AI &amp; Keys</span>
+                  <div className="h-px flex-1 bg-white/6" />
+                </div>
+                {/* AI Engine Panel — owner-only; the three model cards
+                    (Gemini / FLUX / Kling) leak infra detail to non-owner
+                    admins, so the whole panel hides for them. */}
+                <AiEnginePanel isSuperAdmin={isSuperAdmin} />
+              </>
             )}
-
-            {/* AI Engine Panel */}
-            <AiEnginePanel isSuperAdmin={isSuperAdmin} />
 
             {/* ── SECTION: Business Profile ── */}
             <div className="flex items-center gap-3">
