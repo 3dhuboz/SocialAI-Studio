@@ -1078,6 +1078,18 @@ const Dashboard: React.FC = () => {
   const canUseSaturation = effectivePlan === 'pro' || effectivePlan === 'agency';
   const maxPostsPerWeek = isAdminMode ? Infinity : (planCfg?.postsPerWeek ?? 7);
 
+  // ── Free trial gating ─────────────────────────────────────────────────────
+  // Brand-new (no-plan) signups get CLIENT.freeTrialPosts AI generations
+  // before the paywall fires. Trial users can use everything Starter offers
+  // (text posts, scheduling, calendar) — they just hit a paywall when they
+  // try to generate their (N+1)th post. We use posts.length as the counter:
+  // simple, survives logout/login (D1-backed), and "delete to get more" is
+  // a feature not a bug at this volume.
+  const FREE_TRIAL_POSTS = (CLIENT as { freeTrialPosts?: number }).freeTrialPosts ?? 3;
+  const isOnFreeTrial = !activePlan && !CLIENT.clientMode && !isAdminMode && FREE_TRIAL_POSTS > 0;
+  const trialPostsRemaining = isOnFreeTrial ? Math.max(0, FREE_TRIAL_POSTS - posts.length) : Infinity;
+  const isTrialExhausted = isOnFreeTrial && trialPostsRemaining <= 0;
+
   // Live Facebook Stats
   interface LiveFbStats { fanCount: number; followersCount: number; reach28d: number; engagedUsers28d: number; engagementRate: number; }
   const [liveStats, setLiveStats] = useState<LiveFbStats | null>(null);
@@ -1146,6 +1158,14 @@ const Dashboard: React.FC = () => {
   // ── Content Generation ──
   const handleGenerate = async (): Promise<{ content: string; hashtags: string[]; imagePrompt?: string } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
+    // Free trial gate — block generation if a no-plan user has used up their
+    // free posts. We open the pricing modal here so the conversion CTA fires
+    // exactly when they're trying to extract more value.
+    if (isTrialExhausted) {
+      toast(`You've used your ${FREE_TRIAL_POSTS} free posts — pick a plan to keep generating.`, 'info');
+      setShowPricing(true);
+      return null;
+    }
     setIsGenerating(true);
     try {
       const result = await generateSocialPost(topic, platform, profile.name, profile.type, profile.tone, profile, contentFormat, activeClientId);
@@ -1833,8 +1853,16 @@ const Dashboard: React.FC = () => {
     return <AuthScreen onShowLanding={() => setShowLanding(false)} />;
   }
 
-  // Show landing page (logged-in user without a plan, or explicitly navigated) — skip in clientMode
-  if (!CLIENT.clientMode && (showLanding || (!activePlan && dbLoaded))) {
+  // Show landing page when:
+  //   - The user explicitly navigated there (showLanding), OR
+  //   - They have no plan AND the trial is exhausted (or disabled).
+  // Trial users (no plan, posts.length < freeTrialPosts) flow straight into
+  // the app — landing is for marketing, not gating signed-in customers.
+  const shouldShowLanding =
+    showLanding
+    || (!activePlan && dbLoaded && !isOnFreeTrial)
+    || (!activePlan && dbLoaded && isTrialExhausted);
+  if (!CLIENT.clientMode && shouldShowLanding) {
     return <LandingPage
       onActivate={async plan => {
         setActivePlan(plan);
@@ -2334,6 +2362,45 @@ const Dashboard: React.FC = () => {
           onStatusChange={isAdminMode ? setSetupStatus : undefined}
           isAdmin={isAdminMode}
         />
+        )}
+
+        {/* Free trial banner — shown only to no-plan users with trial credits.
+            Acts as a persistent conversion nudge: shows what's left, links
+            to pricing. Disappears the moment they pay. */}
+        {isOnFreeTrial && (
+          <div className={`mb-5 rounded-2xl border px-5 py-4 flex items-center justify-between gap-4 ${
+            trialPostsRemaining <= 1
+              ? 'bg-amber-500/10 border-amber-500/30'
+              : 'bg-emerald-500/10 border-emerald-500/25'
+          }`}>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                trialPostsRemaining <= 1 ? 'bg-amber-500/20' : 'bg-emerald-500/20'
+              }`}>
+                <Sparkles size={16} className={trialPostsRemaining <= 1 ? 'text-amber-300' : 'text-emerald-300'} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white">
+                  {trialPostsRemaining === FREE_TRIAL_POSTS
+                    ? `Welcome — you've got ${FREE_TRIAL_POSTS} free AI posts to try us out`
+                    : trialPostsRemaining > 1
+                      ? `${trialPostsRemaining} free posts remaining on your trial`
+                      : trialPostsRemaining === 1
+                        ? `Last free post — pick a plan to keep posting after this`
+                        : `Free trial used up`}
+                </p>
+                <p className="text-xs text-white/50">
+                  No credit card needed yet · From $29/month after trial · Cancel anytime
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowPricing(true)}
+              className="flex-shrink-0 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-4 py-2 rounded-xl hover:opacity-90 transition text-sm"
+            >
+              See plans
+            </button>
+          </div>
         )}
 
         {/* ═══ QUICK POST MODE ═══ */}
