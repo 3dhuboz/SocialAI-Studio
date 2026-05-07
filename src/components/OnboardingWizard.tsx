@@ -3,6 +3,7 @@ import { CLIENT } from '../client.config';
 import { BusinessProfile, SocialTokens, DEFAULT_SOCIAL_TOKENS } from '../types';
 import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
+import { FacebookService } from '../services/facebookService';
 import {
   CheckCircle, ArrowRight, Sparkles, Loader2,
   Building2, MapPin, Facebook, Instagram, PartyPopper, X,
@@ -47,6 +48,13 @@ export const OnboardingWizard: React.FC<Props> = ({
   const socialTokens = socialTokensProp ?? DEFAULT_SOCIAL_TOKENS;
   const [step, setStep] = useState<Step>('welcome');
   const [isSaving, setIsSaving] = useState(false);
+  // Track auto-scrape of the user's existing FB posts. Captures brand voice
+  // from real content instead of trusting the user's onboarding form to
+  // accurately describe their tone. The scraped messages get appended to
+  // profile.description so the Gemini prompt picks them up.
+  const [isLearningVoice, setIsLearningVoice] = useState(false);
+  const [learnedPostsCount, setLearnedPostsCount] = useState(0);
+  const [voiceLearnError, setVoiceLearnError] = useState<string | null>(null);
 
   const stepIdx = STEPS.indexOf(step);
   const progress = Math.round((stepIdx / (STEPS.length - 1)) * 100);
@@ -61,9 +69,15 @@ export const OnboardingWizard: React.FC<Props> = ({
     if (nextStep) setStep(nextStep);
   };
 
+  // Trial users can't advance without enough business context for the AI
+  // to generate ON-TOPIC posts. Without a real description, a tech company
+  // ends up with cinnamon-roll captions because the AI has nothing to go on.
+  // Minimum 50 chars on description forces real signal, not just "we sell things".
   const canAdvanceBusiness =
     profile.name.trim() && profile.name !== CLIENT.defaultBusinessName &&
-    profile.location.trim() && profile.location !== CLIENT.defaultLocation;
+    profile.type.trim() && profile.type !== CLIENT.defaultBusinessType &&
+    profile.location.trim() && profile.location !== CLIENT.defaultLocation &&
+    (profile.description?.trim().length ?? 0) >= 50;
 
   // ── Overlay backdrop ──────────────────────────────────
   return (
@@ -177,12 +191,12 @@ export const OnboardingWizard: React.FC<Props> = ({
                 </div>
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
-                    Business Type
+                    Business Type <span className="text-red-400">*</span>
                   </label>
                   <input
                     value={profile.type === CLIENT.defaultBusinessType ? '' : profile.type}
                     onChange={e => onUpdateProfile({ type: e.target.value })}
-                    placeholder="e.g. Artisan bakery & café"
+                    placeholder="e.g. Artisan bakery & café · IT consultancy · Hair salon · Plumber"
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50"
                   />
                 </div>
@@ -197,6 +211,32 @@ export const OnboardingWizard: React.FC<Props> = ({
                     placeholder="e.g. Bondi Beach, Sydney NSW"
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50"
                   />
+                </div>
+                {/* What do you actually do — the field that stops the AI from
+                    posting eggs to a tech company. The Gemini prompt feeds
+                    profile.description into every generation; without
+                    specificity here, posts are generic at best, wrong at
+                    worst. Min 50 chars enforces real signal. */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
+                    What does your business actually do? <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    value={profile.description ?? ''}
+                    onChange={e => onUpdateProfile({ description: e.target.value })}
+                    placeholder="e.g. Brisbane IT consultancy. We help small accounting firms move from on-prem servers to the cloud — fast onboarding, no contracts, 24/7 local support. We don't do enterprise; small business is our whole thing."
+                    rows={4}
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
+                  />
+                  <p className={`text-[11px] mt-1.5 ${
+                    (profile.description?.trim().length ?? 0) >= 50
+                      ? 'text-emerald-400/80'
+                      : 'text-white/35'
+                  }`}>
+                    {(profile.description?.trim().length ?? 0) >= 50
+                      ? '✓ Plenty of detail — the AI will write posts that actually sound like your business.'
+                      : `${50 - (profile.description?.trim().length ?? 0)} more characters to go. The more detail (who you serve, what you sell, what makes you different), the more on-brand your posts will be.`}
+                  </p>
                 </div>
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
@@ -247,18 +287,80 @@ export const OnboardingWizard: React.FC<Props> = ({
               <FacebookConnectButton
                 connectedPageId={socialTokens.facebookPageId}
                 connectedPageName={profile.name}
-                onConnected={(pageId, pageAccessToken, pageName) => {
+                onConnected={async (pageId, pageAccessToken, pageName) => {
                   const updated = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
                   if (onSaveSocialTokens) onSaveSocialTokens(updated);
                   else onUpdateProfile({ facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true });
+
+                  // ── Auto-learn brand voice from existing FB posts ──
+                  // Reading their actual posts beats trusting whatever they
+                  // typed in the description field. A tech company that
+                  // posts about cloud migration shouldn't end up with food
+                  // captions just because the form was rushed. We grab the
+                  // most recent 5 posts with content, truncate, and append
+                  // to description so the Gemini prompt sees them.
+                  setIsLearningVoice(true);
+                  setVoiceLearnError(null);
+                  try {
+                    const recent = await FacebookService.getRecentPosts(pageId, pageAccessToken, 10);
+                    const messages = recent
+                      .map(p => p.message?.trim())
+                      .filter((m): m is string => !!m && m.length >= 20)
+                      .slice(0, 5)
+                      .map(m => `• ${m.slice(0, 240)}${m.length > 240 ? '…' : ''}`);
+                    if (messages.length > 0) {
+                      const userTyped = (profile.description ?? '').trim();
+                      const learnedMarker = '\n\n--- Recent posts from our Facebook page (auto-learned, edit if needed) ---\n';
+                      // Strip any prior auto-learned block before re-adding
+                      const cleanBase = userTyped.split(learnedMarker)[0].trim();
+                      const newDesc = cleanBase + (cleanBase ? '' : '') + learnedMarker + messages.join('\n');
+                      onUpdateProfile({ description: newDesc });
+                      setLearnedPostsCount(messages.length);
+                    }
+                  } catch (e: any) {
+                    setVoiceLearnError(e?.message?.slice(0, 100) || 'Could not fetch past posts — your typed description will be the source of truth.');
+                  } finally {
+                    setIsLearningVoice(false);
+                  }
                   void onSave();
                 }}
                 onDisconnect={() => {
                   const cleared = { ...DEFAULT_SOCIAL_TOKENS };
                   if (onSaveSocialTokens) onSaveSocialTokens(cleared);
                   else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
+                  setLearnedPostsCount(0);
+                  setVoiceLearnError(null);
                 }}
               />
+
+              {/* Brand-voice learn status — shown right after FB connection.
+                  Either spinner ("learning...") or success ("learned N posts")
+                  or the error fallback. The user sees the system actively
+                  learning, builds confidence the trial posts will be on-brand. */}
+              {(isLearningVoice || learnedPostsCount > 0 || voiceLearnError) && (
+                <div className={`rounded-2xl p-4 border text-xs leading-relaxed ${
+                  voiceLearnError
+                    ? 'bg-amber-500/8 border-amber-500/25 text-amber-200/80'
+                    : learnedPostsCount > 0
+                      ? 'bg-emerald-500/8 border-emerald-500/25 text-emerald-200/85'
+                      : 'bg-blue-500/8 border-blue-500/25 text-blue-200/85'
+                }`}>
+                  {isLearningVoice ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 size={12} className="animate-spin" />
+                      Reading your last few posts to learn how you talk to your audience…
+                    </span>
+                  ) : voiceLearnError ? (
+                    <>
+                      <strong className="text-amber-300">Couldn't auto-read your past posts</strong> — that's OK, we'll use what you typed in the previous step. ({voiceLearnError})
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-emerald-300">Learned from your last {learnedPostsCount} posts ✓</strong> — the AI now knows your tone and what you typically post about, so trial posts will sound like you, not a robot.
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Instagram setup instructions */}
               <div className="bg-pink-500/5 border border-pink-500/15 rounded-2xl p-4 space-y-2">

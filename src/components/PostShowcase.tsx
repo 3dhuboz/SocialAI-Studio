@@ -20,11 +20,19 @@ interface MockPost {
   brand: string;
   handle: string;
   caption: string;
+  /** Real product photo from Unsplash. Falls back to imageGradient + imageEmoji
+      if the <img> errors so the section never renders broken-image icons. */
+  image: string;
   imageGradient: string;
   imageEmoji: string;
   platform: 'instagram' | 'facebook';
   likes: string;
 }
+
+// Unsplash sizing: 800x800 square crop, q=72, format-auto. Mid-range size
+// since these render at ~420px max in the hero — 800px gives 2x retina
+// without overpaying on bandwidth.
+const unsplash = (id: string) => `https://images.unsplash.com/photo-${id}?w=800&h=800&fit=crop&q=72&auto=format`;
 
 // Six industries — each Aussie-flavoured, each in a different visual key so
 // the rotation feels varied. Captions are deliberately specific (Brisbane,
@@ -35,6 +43,7 @@ const POSTS: MockPost[] = [
     brand: "Bella's Cafe",
     handle: 'bellascafe',
     caption: "Sunday treat — cinnamon scrolls fresh from the oven. Drop in before they're gone, we're open till 2pm.",
+    image: unsplash('1551024601-bec78aea704b'),
     imageGradient: 'from-amber-200 via-orange-200 to-rose-300',
     imageEmoji: '🥐',
     platform: 'instagram',
@@ -44,6 +53,7 @@ const POSTS: MockPost[] = [
     brand: "Mike's Plumbing & Gas",
     handle: 'Mike\'s Plumbing & Gas',
     caption: 'Burst pipe? Hot water gone? 24/7 emergency callouts across Brisbane. Fixed-price quotes, no callout fee.',
+    image: unsplash('1607400201515-c2c41c07d307'),
     imageGradient: 'from-sky-300 via-blue-300 to-cyan-200',
     imageEmoji: '🔧',
     platform: 'facebook',
@@ -53,6 +63,7 @@ const POSTS: MockPost[] = [
     brand: 'Coast Hair Co.',
     handle: 'coasthairco',
     caption: 'New stylist Sarah is taking July bookings — gloss treatments, balayage, the lot. Tap to grab a slot.',
+    image: unsplash('1560066984-138dadb4c035'),
     imageGradient: 'from-pink-300 via-rose-300 to-purple-300',
     imageEmoji: '✂️',
     platform: 'instagram',
@@ -62,6 +73,7 @@ const POSTS: MockPost[] = [
     brand: 'FastFit Studio',
     handle: 'fastfitstudio',
     caption: 'Morning crew — 6am session in 30. Bring water, bring a mate. First class on us if you mention this post.',
+    image: unsplash('1517836357463-d25dfeac3438'),
     imageGradient: 'from-emerald-200 via-teal-300 to-cyan-300',
     imageEmoji: '🥊',
     platform: 'instagram',
@@ -71,6 +83,7 @@ const POSTS: MockPost[] = [
     brand: 'Green Thumb Garden Centre',
     handle: 'Green Thumb Garden Centre',
     caption: 'Autumn means tulip bulbs are in. Plant before May for a September bloom. Free planting guide with every bag.',
+    image: unsplash('1416879595882-3373a0480b5b'),
     imageGradient: 'from-lime-200 via-green-300 to-emerald-300',
     imageEmoji: '🌷',
     platform: 'facebook',
@@ -80,6 +93,7 @@ const POSTS: MockPost[] = [
     brand: 'Harbour Real Estate',
     handle: 'harbourrealestate',
     caption: 'Just listed in Manly — 3 bed, 2 bath, the view does the talking. Open Saturday 11am, we\'ll see you there.',
+    image: unsplash('1568605114967-8130f3a36994'),
     imageGradient: 'from-blue-200 via-indigo-200 to-purple-300',
     imageEmoji: '🏡',
     platform: 'instagram',
@@ -184,16 +198,27 @@ const PostCard: React.FC<{ post: MockPost }> = ({ post }) => {
         <div className="text-gray-400 text-xl leading-none">···</div>
       </div>
 
-      {/* Media — colourful gradient with a single emotive emoji. Placeholder
-          for real generated images (which would slot in here as <img>). */}
+      {/* Media — real photo with gradient + emoji as graceful fallback.
+          If the Unsplash URL ever 404s or the user is offline, the image
+          element hides itself and the gradient/emoji underneath shows
+          through. The card never renders a broken-image icon. */}
       <div
         className={`relative w-full aspect-square bg-gradient-to-br ${post.imageGradient} flex items-center justify-center overflow-hidden`}
       >
         <span className="text-[5.5rem] sm:text-7xl drop-shadow-[0_4px_12px_rgba(0,0,0,0.15)] animate-[float_6s_ease-in-out_infinite]">
           {post.imageEmoji}
         </span>
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,255,255,0.45),transparent_50%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_80%,rgba(0,0,0,0.06),transparent_50%)]" />
+        {post.image && (
+          <img
+            src={post.image}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        )}
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,255,255,0.18),transparent_60%)]" />
       </div>
 
       {/* Action row */}
