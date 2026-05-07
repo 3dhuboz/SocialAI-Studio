@@ -790,21 +790,40 @@ app.get('/api/health/onboarding', async (c) => {
   // PayPal webhook ID configured (worker secret only — value not returned)
   out.paypal_webhook_id_set = !!c.env.PAYPAL_WEBHOOK_ID;
 
-  // Resend domain — query the domains list and find socialaistudio.au.
-  // We only return the verification status, not any IDs or DNS records.
+  // Resend — try to list domains and find socialaistudio.au. Many of our
+  // Resend keys are scoped to "Sending access" only, which means /v1/domains
+  // returns 401 with name="restricted_api_key". That's a GOOD outcome —
+  // sending emails still works; we just can't introspect domain verification
+  // from here. Treat that case as "key is fine, can't verify domain via API".
   if (c.env.RESEND_API_KEY) {
     try {
       const res = await fetch('https://api.resend.com/domains', {
         headers: { Authorization: `Bearer ${c.env.RESEND_API_KEY}` },
       });
-      const data = await res.json() as { data?: Array<{ name: string; status: string }> };
-      const dom = (data.data || []).find(d => d.name === 'socialaistudio.au');
-      out.resend = {
-        api_key_set: true,
-        domain_found: !!dom,
-        domain_status: dom?.status || null,
-        domain_verified: dom?.status === 'verified',
-      };
+      if (res.status === 401) {
+        const body = await res.json().catch(() => ({})) as { name?: string };
+        if (body.name === 'restricted_api_key') {
+          out.resend = {
+            api_key_set: true,
+            sending_only: true,
+            note: 'Key is sending-only — domain status not introspectable. Verify socialaistudio.au manually in Resend dashboard.',
+          };
+        } else {
+          out.resend = { api_key_set: true, auth_error: true };
+        }
+      } else if (res.ok) {
+        const data = await res.json() as { data?: Array<{ name: string; status: string }> };
+        const dom = (data.data || []).find(d => d.name === 'socialaistudio.au');
+        out.resend = {
+          api_key_set: true,
+          sending_only: false,
+          domain_found: !!dom,
+          domain_status: dom?.status || null,
+          domain_verified: dom?.status === 'verified',
+        };
+      } else {
+        out.resend = { api_key_set: true, http_status: res.status };
+      }
     } catch (e: any) {
       out.resend = { api_key_set: true, error: (e?.message || 'unknown').slice(0, 120) };
     }
