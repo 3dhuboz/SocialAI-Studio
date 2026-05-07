@@ -241,7 +241,10 @@ export const CLIENT = {
       ],
       limitations: [],
       color: 'from-purple-500 to-pink-600',
-      badge: 'Best Value',
+      // Single visual anchor on landing — Growth keeps "Most Popular".
+      // Pro and Agency are unbadged so the eye picks one Most Popular plan
+      // instead of bouncing between competing badges (decoy effect — Ariely).
+      badge: null,
     },
     {
       id: 'agency' as const,

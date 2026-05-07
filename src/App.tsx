@@ -11,6 +11,7 @@ import { useDb } from './hooks/useDb';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
+import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
@@ -335,6 +336,14 @@ const Dashboard: React.FC = () => {
 
   const [showAccount, setShowAccount] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
+  // When the trial-exhausted paywall sends a user into the pricing modal it
+  // pre-selects Growth so they don't pay the cost of choosing again. The
+  // last-post trial banner does the same. Cleared on every modal close.
+  const [pricingDefaultPlan, setPricingDefaultPlan] = useState<string | null>(null);
+  // Full-screen contextual paywall fired when an unsubscribed trial user
+  // hits the post-cap. Replaces the generic toast + pricing modal because
+  // this is the highest-intent moment in the funnel.
+  const [showTrialPaywall, setShowTrialPaywall] = useState(false);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string; imageUrl?: string; imagePrompt?: string } | null>(null);
   const [videoModalGenerating, setVideoModalGenerating] = useState(false);
   const [videoModalProgress, setVideoModalProgress] = useState(0);
@@ -1159,11 +1168,12 @@ const Dashboard: React.FC = () => {
   const handleGenerate = async (): Promise<{ content: string; hashtags: string[]; imagePrompt?: string } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
     // Free trial gate — block generation if a no-plan user has used up their
-    // free posts. We open the pricing modal here so the conversion CTA fires
-    // exactly when they're trying to extract more value.
+    // free posts. We surface the contextual TrialPaywall here (shows their
+    // trial posts + pre-selects Growth) instead of a toast + generic modal.
+    // Loss aversion at peak intent — this is the most valuable conversion
+    // moment in the funnel.
     if (isTrialExhausted) {
-      toast(`You've used your ${FREE_TRIAL_POSTS} free posts — pick a plan to keep generating.`, 'info');
-      setShowPricing(true);
+      setShowTrialPaywall(true);
       return null;
     }
     setIsGenerating(true);
@@ -2179,7 +2189,27 @@ const Dashboard: React.FC = () => {
       )}
 
       {/* Pricing Modal */}
-      {showPricing && <PricingTable onClose={() => setShowPricing(false)} onPlanActivated={handlePlanActivated} userId={user?.uid} />}
+      {showPricing && (
+        <PricingTable
+          onClose={() => { setShowPricing(false); setPricingDefaultPlan(null); }}
+          onPlanActivated={handlePlanActivated}
+          userId={user?.uid}
+          defaultPlanId={pricingDefaultPlan ?? undefined}
+        />
+      )}
+      {/* Trial-exhausted paywall — full-screen, contextual, pre-selects Growth */}
+      {showTrialPaywall && (
+        <TrialPaywall
+          posts={posts}
+          freeTrialPosts={FREE_TRIAL_POSTS}
+          onClose={() => setShowTrialPaywall(false)}
+          onChoosePlan={() => {
+            setShowTrialPaywall(false);
+            setPricingDefaultPlan('growth');
+            setShowPricing(true);
+          }}
+        />
+      )}
       {/* Account Panel */}
       {showAccount && (
         <AccountPanel
@@ -2386,19 +2416,25 @@ const Dashboard: React.FC = () => {
                     : trialPostsRemaining > 1
                       ? `${trialPostsRemaining} free posts remaining on your trial`
                       : trialPostsRemaining === 1
-                        ? `Last free post — pick a plan to keep posting after this`
+                        ? `Last free post — your AI calendar will pause after this`
                         : `Free trial used up`}
                 </p>
                 <p className="text-xs text-white/50">
-                  No credit card needed yet · From $29/month after trial · Cancel anytime
+                  No credit card needed yet · From $29/month when you're ready · Cancel in 2 clicks
                 </p>
               </div>
             </div>
             <button
-              onClick={() => setShowPricing(true)}
+              onClick={() => {
+                // Pre-select Growth when the user is at peak intent (last post
+                // or trial just used up). Default selection collapses two
+                // decisions into one and lifts checkout completion.
+                if (trialPostsRemaining <= 1) setPricingDefaultPlan('growth');
+                setShowPricing(true);
+              }}
               className="flex-shrink-0 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-4 py-2 rounded-xl hover:opacity-90 transition text-sm"
             >
-              See plans
+              {trialPostsRemaining <= 1 ? 'Continue with Growth' : 'See plans'}
             </button>
           </div>
         )}

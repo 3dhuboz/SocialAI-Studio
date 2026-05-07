@@ -142,17 +142,14 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Single primary CTA in the header — duplicate amber buttons
+                trained the eye to ignore both. The hero owns the trial CTA;
+                the nav is for returning customers. */}
             <button
               onClick={onSignIn}
-              className="text-sm text-white/60 hover:text-white font-semibold px-4 py-2 rounded-full border border-white/10 hover:border-white/25 bg-white/5 hover:bg-white/10 transition"
+              className="text-sm text-white/70 hover:text-white font-semibold px-5 py-2 rounded-full border border-white/15 hover:border-white/30 bg-white/5 hover:bg-white/10 transition"
             >
               Sign In
-            </button>
-            <button
-              onClick={onSignIn}
-              className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
-            >
-              Try Free
             </button>
           </div>
         </div>
@@ -181,81 +178,115 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         {/* ─── HOME TAB ─── */}
         {tab === 'home' && (
           <div>
-            {/* HERO */}
-            <section className="relative pt-20 pb-16 px-6 text-center overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(245,158,11,0.15),transparent_70%)]" />
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_50%,rgba(168,85,247,0.06),transparent_60%)]" />
-              <div className="relative max-w-3xl mx-auto animate-fadeSlideUp">
-                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-7">
-                  <Zap size={12} /> AI-Powered Social Media — Done For You
-                </div>
-                <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black mb-5 leading-[1.1] sm:leading-[1.05] tracking-tight px-2 sm:px-0">
-                  {portalContent?.hero_title ? (
-                    <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
-                      {portalContent.hero_title}
-                    </span>
-                  ) : (
-                    <>
-                      Your social media,{' '}
-                      <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
-                        on autopilot.
-                      </span>
-                    </>
-                  )}
-                </h1>
-                <p className="text-base sm:text-lg text-white/50 mb-8 max-w-xl mx-auto leading-relaxed px-4 sm:px-0">
-                  {portalContent?.hero_subtitle || "AI writes, designs, and schedules your Facebook & Instagram posts every week — so you can focus on running your business."}
-                </p>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
-                  <button
-                    onClick={() => setShowPricing(true)}
-                    className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-base hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/25"
-                  >
-                    {portalContent?.hero_cta_text || `Start Free — ${CLIENT.freeTrialPosts ?? 3} AI posts on us`}
-                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                  </button>
-                  <p className="text-sm text-white/30">No credit card · No setup fee · From $29/month after trial</p>
-                </div>
-              </div>
-
-              {/* 3 BENEFIT PILLARS */}
-              <div className="relative max-w-3xl mx-auto mt-14 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {[
-                  {
-                    icon: Timer,
-                    color: 'text-amber-400',
-                    bg: 'bg-amber-500/10',
-                    border: 'border-amber-500/20',
-                    stat: '8+ hrs',
-                    title: 'Saved Every Week',
-                    desc: 'No more writing captions, finding images, or manually scheduling. The AI handles it all automatically.',
-                  },
-                  {
-                    icon: DollarSign,
-                    color: 'text-emerald-400',
-                    bg: 'bg-emerald-500/10',
-                    border: 'border-emerald-500/20',
-                    stat: '$500+',
-                    title: 'Saved vs. a Social Manager',
-                    desc: 'A freelance social media manager costs $500–$2,000/month. Our AI does the same job from $29.',
-                  },
-                  {
-                    icon: Rocket,
-                    color: 'text-purple-400',
-                    bg: 'bg-purple-500/10',
-                    border: 'border-purple-500/20',
-                    stat: '3× more',
-                    title: 'Consistent Posting',
-                    desc: 'Businesses that post consistently get 3× more reach. AI never forgets, never gets busy, never skips.',
-                  },
-                ].map((p, i) => (
-                  <div key={i} className={`${p.bg} border ${p.border} rounded-2xl p-6 text-left`}>
-                    <p.icon size={22} className={`${p.color} mb-3`} />
-                    <p className={`text-3xl font-black ${p.color} mb-1`}>{p.stat}</p>
-                    <p className="font-bold text-white text-sm mb-2">{p.title}</p>
-                    <p className="text-xs text-white/40 leading-relaxed">{p.desc}</p>
+            {/* HERO — text left, AnimatedDemo right (above the fold so visitors
+                see the product working before they read a word). 3 benefit pillars
+                live below the hero proper. Hero CTA goes to onSignIn (not pricing)
+                — trial-first SaaS that gates on pricing is self-sabotage. */}
+            <section className="relative pt-16 sm:pt-20 pb-12 px-6 overflow-hidden">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_0%,rgba(245,158,11,0.18),transparent_60%)]" />
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_50%,rgba(168,85,247,0.08),transparent_55%)]" />
+              <div className="relative max-w-6xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-[1.05fr_0.95fr] gap-8 lg:gap-12 items-center animate-fadeSlideUp">
+                  {/* LEFT — copy + CTA */}
+                  <div className="text-center md:text-left">
+                    <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-6">
+                      <Zap size={12} /> Built for Aussie small business · Made in Australia
+                    </div>
+                    <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-[3.4rem] font-black mb-5 leading-[1.08] tracking-tight">
+                      {portalContent?.hero_title ? (
+                        <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
+                          {portalContent.hero_title}
+                        </span>
+                      ) : (
+                        <>
+                          Your Facebook &amp; Instagram posts —{' '}
+                          <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
+                            written, designed, scheduled. Daily.
+                          </span>
+                        </>
+                      )}
+                    </h1>
+                    <p className="text-base sm:text-lg text-white/70 mb-7 max-w-xl mx-auto md:mx-0 leading-[1.55]">
+                      {portalContent?.hero_subtitle || "Built for Aussie cafes, tradies, salons and small retailers. We learn your voice from your existing posts, then write captions that sound like you on a good day — not like a robot."}
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-3 justify-center md:justify-start items-center">
+                      <button
+                        onClick={onSignIn}
+                        className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-7 py-4 rounded-2xl text-base hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/25"
+                      >
+                        {portalContent?.hero_cta_text || `Generate ${CLIENT.freeTrialPosts ?? 3} free posts — no card needed`}
+                        <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                      </button>
+                    </div>
+                    <p className="text-xs sm:text-sm text-white/45 mt-4">
+                      {CLIENT.freeTrialPosts ?? 3} free posts · No card · $29/mo when you're ready · Cancel in 2 clicks
+                    </p>
                   </div>
-                ))}
+
+                  {/* RIGHT — live demo card. AnimatedDemo cycles write → schedule
+                      → publish on a 4.5s loop. If a YouTube video is configured
+                      it shows the thumbnail with a play overlay instead. */}
+                  <div className="relative">
+                    <div className="relative aspect-video rounded-3xl overflow-hidden border border-white/10 shadow-[0_24px_80px_-20px_rgba(245,158,11,0.18)] bg-[#0d0d1a]">
+                      {CLIENT.youtubeVideoId ? (
+                        <div className="absolute inset-0 cursor-pointer group" onClick={() => setVideoLightbox(true)}>
+                          <img src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`} alt="Video thumbnail" className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/40 group-hover:bg-black/25 transition flex items-center justify-center">
+                            <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl shadow-black/50">
+                              <Play size={32} className="text-black ml-1" fill="black" />
+                            </div>
+                          </div>
+                          <div className="absolute bottom-4 right-4 text-[10px] text-white/40 bg-black/40 px-2 py-1 rounded-lg backdrop-blur-sm">Click to watch</div>
+                        </div>
+                      ) : (
+                        <AnimatedDemo />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3 BENEFIT PILLARS — one amber anchor + two neutral surfaces.
+                    Linear/Stripe rule: colour earns its place by signalling
+                    state or hierarchy, not as decoration. */}
+                <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    {
+                      icon: Timer,
+                      anchor: true,
+                      stat: '8+ hrs',
+                      title: 'Saved every week',
+                      desc: 'No more writing captions, hunting images, or scheduling at midnight. The AI handles it.',
+                    },
+                    {
+                      icon: DollarSign,
+                      anchor: false,
+                      stat: '$0.87',
+                      title: 'Per post on Growth',
+                      desc: 'A freelance manager charges $40–$80 per post in Australia. Our AI does the job from 87¢.',
+                    },
+                    {
+                      icon: Rocket,
+                      anchor: false,
+                      stat: '3× more',
+                      title: 'Consistent posting',
+                      desc: 'Businesses that post consistently get 3× the reach. AI never forgets, never gets busy.',
+                    },
+                  ].map((p, i) => (
+                    <div
+                      key={i}
+                      className={`rounded-2xl p-6 text-left border ${
+                        p.anchor
+                          ? 'bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border-amber-500/20'
+                          : 'bg-white/[0.03] border-white/[0.08]'
+                      }`}
+                    >
+                      <p.icon size={22} className={`${p.anchor ? 'text-amber-400' : 'text-white/55'} mb-3`} />
+                      <p className={`text-3xl font-black mb-1 ${p.anchor ? 'text-amber-400' : 'text-white'}`}>{p.stat}</p>
+                      <p className="font-bold text-white text-sm mb-2">{p.title}</p>
+                      <p className="text-xs text-white/45 leading-relaxed">{p.desc}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
 
@@ -286,30 +317,9 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 </div>
               )}
 
-              {/* ANIMATED DEMO */}
-            <section className="py-12 px-6">
-              <div className="max-w-3xl mx-auto">
-                <div className="text-center mb-8">
-                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-2">See it in action</h2>
-                  <p className="text-white/40 text-sm">Watch AI write, schedule, and publish your posts in real time</p>
-                </div>
-                <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d1a] aspect-video">
-                  {CLIENT.youtubeVideoId ? (
-                    <div className="absolute inset-0 cursor-pointer group" onClick={() => setVideoLightbox(true)}>
-                      <img src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`} alt="Video thumbnail" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/40 group-hover:bg-black/25 transition flex items-center justify-center">
-                        <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl shadow-black/50">
-                          <Play size={32} className="text-black ml-1" fill="black" />
-                        </div>
-                      </div>
-                      <div className="absolute bottom-4 right-4 text-[10px] text-white/40 bg-black/40 px-2 py-1 rounded-lg backdrop-blur-sm">Click to watch</div>
-                    </div>
-                  ) : (
-                    <AnimatedDemo />
-                  )}
-                </div>
-              </div>
-            </section>
+              {/* "See it in action" section removed — the AnimatedDemo now lives
+                  in the hero's right column above the fold. Visitors don't have
+                  to scroll past 600px to discover the product working. */}
 
             {/* HOW IT WORKS — compact */}
             <section className="py-12 px-6 border-t border-white/5">
@@ -338,19 +348,20 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               </div>
             </section>
 
-            {/* BOTTOM CTA */}
+            {/* BOTTOM CTA — routes to signup, not pricing. The product is
+                the wedge; pricing fires after the trial is felt. */}
             <section className="py-16 px-6 text-center relative overflow-hidden">
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(245,158,11,0.10),transparent_70%)]" />
               <div className="relative max-w-xl mx-auto">
-                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">Ready to put social media on autopilot?</h2>
-                <p className="text-white/40 mb-8 text-sm">Australian businesses already saving 8+ hours a week.</p>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">Stop spending Sundays writing captions.</h2>
+                <p className="text-white/55 mb-8 text-sm">Let it post while you sleep. {CLIENT.freeTrialPosts ?? 3} free posts to start — no card.</p>
                 <button
-                  onClick={() => setShowPricing(true)}
+                  onClick={onSignIn}
                   className="group inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-lg hover:opacity-90 transition shadow-2xl shadow-amber-500/25"
                 >
-                  Start Free Trial <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  Generate {CLIENT.freeTrialPosts ?? 3} Free Posts <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </button>
-                <p className="text-white/20 text-xs mt-5">No credit card · No setup fee · from $29/month · No lock-in</p>
+                <p className="text-white/30 text-xs mt-5">No card · $29/mo when you're ready · Cancel in 2 clicks</p>
                 <p className="text-white/20 text-xs mt-2">
                   Already a customer?{' '}
                   <button onClick={() => onActivate('growth')} className="text-amber-400 hover:text-amber-300 underline underline-offset-2 transition">
@@ -404,18 +415,29 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 </div>
                 <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">The numbers speak for themselves</h2>
               </div>
+              {/* Stats row — single amber anchor (the headline number),
+                  three neutral surfaces. Same Linear/Stripe rule the hero
+                  pillars follow: colour signals hierarchy, not decoration.
+                  Removed the hover:scale — suggests interactivity that isn't there. */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { icon: Clock,         value: '8+ hrs',  label: 'Saved every single week',     sub: 'That\'s a full work day back',     color: 'text-amber-400',   bg: 'bg-gradient-to-br from-amber-500/15 to-orange-500/5',   border: 'border-amber-500/25' },
-                  { icon: TrendingUp,    value: '47%',     label: 'Higher engagement rate',       sub: 'vs manual posting',                color: 'text-emerald-400', bg: 'bg-gradient-to-br from-emerald-500/15 to-teal-500/5',   border: 'border-emerald-500/25' },
-                  { icon: Repeat2,       value: '3x',      label: 'More consistent posting',     sub: 'Never go silent again',            color: 'text-blue-400',    bg: 'bg-gradient-to-br from-blue-500/15 to-indigo-500/5',   border: 'border-blue-500/25' },
-                  { icon: MessageCircle, value: '2.4x',    label: 'Wider audience reach',         sub: 'More eyes on your brand',          color: 'text-purple-400',  bg: 'bg-gradient-to-br from-purple-500/15 to-pink-500/5',   border: 'border-purple-500/25' },
+                  { icon: Clock,         value: '8+ hrs',  label: 'Saved every single week',  sub: "That's a full work day back",   anchor: true  },
+                  { icon: TrendingUp,    value: '47%',     label: 'Higher engagement rate',   sub: 'vs manual posting',             anchor: false },
+                  { icon: Repeat2,       value: '3x',      label: 'More consistent posting',  sub: 'Never go silent again',         anchor: false },
+                  { icon: MessageCircle, value: '2.4x',    label: 'Wider audience reach',     sub: 'More eyes on your brand',       anchor: false },
                 ].map((s, i) => (
-                  <div key={i} className={`${s.bg} border ${s.border} rounded-2xl p-6 text-center hover:scale-[1.03] transition-transform`}>
-                    <s.icon size={22} className={`${s.color} mx-auto mb-3`} />
-                    <p className={`text-4xl md:text-5xl font-black ${s.color}`}>{s.value}</p>
+                  <div
+                    key={i}
+                    className={`rounded-2xl p-6 text-center border ${
+                      s.anchor
+                        ? 'bg-gradient-to-br from-amber-500/[0.10] to-amber-500/[0.02] border-amber-500/25'
+                        : 'bg-white/[0.03] border-white/[0.08]'
+                    }`}
+                  >
+                    <s.icon size={22} className={`${s.anchor ? 'text-amber-400' : 'text-white/55'} mx-auto mb-3`} />
+                    <p className={`text-4xl md:text-5xl font-black ${s.anchor ? 'text-amber-400' : 'text-white'}`}>{s.value}</p>
                     <p className="text-sm font-semibold text-white/70 mt-2">{s.label}</p>
-                    <p className="text-xs text-white/30 mt-1">{s.sub}</p>
+                    <p className="text-xs text-white/35 mt-1">{s.sub}</p>
                   </div>
                 ))}
               </div>
@@ -531,17 +553,39 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     ))}
                   </div>
                 </div>
-                <div className="space-y-4">
-                  <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5">
-                    <div className="flex gap-1 mb-2">{[1,2,3,4,5].map(n => <Star key={n} size={14} className="text-amber-400 fill-amber-400" />)}</div>
-                    <p className="text-sm text-white/60 italic leading-relaxed mb-3">"I used to spend my Sundays writing posts. Now the AI does a full week in 30 seconds. Game changer for my bakery."</p>
-                    <p className="text-xs font-bold text-white/80">Sarah M. — Cafe Owner, Gold Coast</p>
+                {/* Trust card — replaces the fabricated "Sarah M." / "Jake T."
+                    testimonials. A small Australian SaaS without name recognition
+                    earns trust through concrete commitments, not borrowed
+                    testimonials. Real customer quotes go here once collected. */}
+                <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-7 space-y-5">
+                  <div className="flex items-center gap-3">
+                    <div className="text-3xl">🇦🇺</div>
+                    <div>
+                      <p className="font-black text-white text-sm">Built and supported in Australia</p>
+                      <p className="text-xs text-white/50">A small team. A real human reply.</p>
+                    </div>
                   </div>
-                  <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5">
-                    <div className="flex gap-1 mb-2">{[1,2,3,4,5].map(n => <Star key={n} size={14} className="text-amber-400 fill-amber-400" />)}</div>
-                    <p className="text-sm text-white/60 italic leading-relaxed mb-3">"My gym's Instagram went from dead to 3 posts a week with real engagement. Members are finding us through social now."</p>
-                    <p className="text-xs font-bold text-white/80">Jake T. — Fitness Studio, Brisbane</p>
-                  </div>
+                  <ul className="space-y-3 text-sm text-white/70">
+                    <li className="flex gap-2.5">
+                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                      <span><strong className="text-white/90">Same-day email replies</strong> — usually within a few hours, AEST.</span>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                      <span><strong className="text-white/90">Your content stays yours</strong> — we never train AI on your business data.</span>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                      <span><strong className="text-white/90">Cancel anytime</strong> — two clicks in PayPal. No contract, no email tag.</span>
+                    </li>
+                    <li className="flex gap-2.5">
+                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                      <span><strong className="text-white/90">No card to start</strong> — generate {CLIENT.freeTrialPosts ?? 3} free posts before you ever pay.</span>
+                    </li>
+                  </ul>
+                  <a href={`mailto:${CLIENT.supportEmail}`} className="inline-flex items-center gap-2 text-xs text-amber-400 hover:text-amber-300 transition pt-1">
+                    <span>✉</span> {CLIENT.supportEmail}
+                  </a>
                 </div>
               </div>
             </div>
@@ -605,14 +649,15 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               </div>
             </div>
 
-            {/* FINAL CTA */}
+            {/* FINAL CTA — claims dropped that we can't substantiate.
+                "Hundreds of businesses" without a real number reads suspicious. */}
             <div className="text-center space-y-5">
-              <h2 className="text-2xl md:text-3xl font-black">Ready to grow your business on social media?</h2>
-              <p className="text-white/40 text-sm max-w-lg mx-auto">Join hundreds of businesses that stopped overthinking social media and let AI handle it.</p>
-              <button onClick={() => { setTab('pricing'); }} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-4 rounded-2xl hover:opacity-90 transition text-base shadow-xl shadow-amber-500/20">
-                Start Free Trial <ArrowRight size={18} />
+              <h2 className="text-2xl md:text-3xl font-black">Stop overthinking social media. Let AI handle it.</h2>
+              <p className="text-white/45 text-sm max-w-lg mx-auto">Generate {CLIENT.freeTrialPosts ?? 3} full posts — caption, image, hashtags — in your voice. If they sound like a robot, walk away. We've wasted 4 minutes of your day, not $29 of your money.</p>
+              <button onClick={onSignIn} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-4 rounded-2xl hover:opacity-90 transition text-base shadow-xl shadow-amber-500/20">
+                Generate {CLIENT.freeTrialPosts ?? 3} Free Posts <ArrowRight size={18} />
               </button>
-              <p className="text-xs text-white/25">{CLIENT.freeTrialPosts ?? 3} free AI posts · No credit card · No lock-in · Cancel anytime</p>
+              <p className="text-xs text-white/25">No credit card · No setup fee · Cancel in 2 clicks</p>
             </div>
           </div>
         )}
@@ -627,8 +672,12 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               <h2 className="text-3xl md:text-4xl font-black mb-2">Simple, honest pricing</h2>
               <p className="text-white/40 text-sm">Pick one plan — that's it. No stacking, no hidden extras.</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-              {CLIENT.plans.map((plan) => {
+            {/* Public landing pricing — Agency hidden here. Different ICP
+                (social media agencies, not SMBs), and 4 plans next to a $29
+                anchor inflates perceived range. Agency lives in-app, in the
+                Benefits-tab "For Agencies" panel below, and in the modal. */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-4xl mx-auto">
+              {CLIENT.plans.filter(plan => plan.id !== 'agency').map((plan) => {
                 const checkColor = plan.id === 'starter' ? 'text-blue-400' : plan.id === 'growth' ? 'text-amber-400' : plan.id === 'pro' ? 'text-purple-400' : 'text-emerald-400';
                 const glowBg = plan.id === 'starter' ? 'rgba(59,130,246,0.1)' : plan.id === 'growth' ? 'rgba(245,158,11,0.1)' : plan.id === 'pro' ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)';
                 const borderColor = plan.id === 'starter' ? 'border-blue-500/30' : plan.id === 'growth' ? 'border-amber-500/30' : plan.id === 'pro' ? 'border-purple-500/30' : 'border-emerald-500/30';
