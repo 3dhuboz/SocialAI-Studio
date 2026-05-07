@@ -820,7 +820,13 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     .trim();
 
   // Structure: subject first, then style, then negative — per prompt engineering best practices
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, product photography, natural window light, shallow depth of field, overhead angle, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
+  // Suffix tuned for "looks like a real small-business iPhone photo", not a
+  // stock-photo ad. The previous suffix used "product photography, shallow
+  // depth of field, overhead angle, clean composition" which combined with
+  // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
+  // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
+  // the specific AI tells that show up most often on food/wellness shots.
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
@@ -880,7 +886,13 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
     .replace(/\s+/g, ' ')
     .trim();
 
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, product photography, natural window light, shallow depth of field, overhead angle, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
+  // Suffix tuned for "looks like a real small-business iPhone photo", not a
+  // stock-photo ad. The previous suffix used "product photography, shallow
+  // depth of field, overhead angle, clean composition" which combined with
+  // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
+  // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
+  // the specific AI tells that show up most often on food/wellness shots.
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
 
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
