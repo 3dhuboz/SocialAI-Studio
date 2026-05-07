@@ -769,6 +769,61 @@ app.post('/api/internal/cancellation', async (c) => {
   return c.json({ ok: true, id });
 });
 
+// ── Onboarding health check ───────────────────────────────────────────────────
+// Public endpoint — returns only boolean readiness flags + Resend domain
+// verification status. No secrets, no customer info. Safe to leave open
+// since the data here is the same observability you'd get by attempting
+// a live signup yourself.
+app.get('/api/health/onboarding', async (c) => {
+  const out: Record<string, any> = {};
+
+  // PayPal credentials — try to fetch an OAuth token. If credentials are
+  // wrong/missing this throws.
+  try {
+    await paypalAccessToken(c.env);
+    out.paypal_credentials_ok = true;
+  } catch (e: any) {
+    out.paypal_credentials_ok = false;
+    out.paypal_error = (e?.message || 'unknown').slice(0, 120);
+  }
+
+  // PayPal webhook ID configured (worker secret only — value not returned)
+  out.paypal_webhook_id_set = !!c.env.PAYPAL_WEBHOOK_ID;
+
+  // Resend domain — query the domains list and find socialaistudio.au.
+  // We only return the verification status, not any IDs or DNS records.
+  if (c.env.RESEND_API_KEY) {
+    try {
+      const res = await fetch('https://api.resend.com/domains', {
+        headers: { Authorization: `Bearer ${c.env.RESEND_API_KEY}` },
+      });
+      const data = await res.json() as { data?: Array<{ name: string; status: string }> };
+      const dom = (data.data || []).find(d => d.name === 'socialaistudio.au');
+      out.resend = {
+        api_key_set: true,
+        domain_found: !!dom,
+        domain_status: dom?.status || null,
+        domain_verified: dom?.status === 'verified',
+      };
+    } catch (e: any) {
+      out.resend = { api_key_set: true, error: (e?.message || 'unknown').slice(0, 120) };
+    }
+  } else {
+    out.resend = { api_key_set: false };
+  }
+
+  // D1 connectivity — minimal probe, no row content returned.
+  try {
+    const r = await c.env.DB.prepare('SELECT 1 as ok').first<{ ok: number }>();
+    out.db_ok = r?.ok === 1;
+  } catch (e: any) {
+    out.db_ok = false;
+    out.db_error = (e?.message || 'unknown').slice(0, 120);
+  }
+
+  return c.json(out);
+});
+
 // ── PayPal subscription endpoints ─────────────────────────────────────────────
 // Live here on the worker (not the CF Pages Function) so they can use the
 // PAYPAL_* and RESEND_API_KEY worker secrets directly. The Pages Functions
