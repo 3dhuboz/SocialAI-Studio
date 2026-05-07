@@ -347,7 +347,10 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             {/* CINEMATIC TOUR — atmospheric video moment. Renders YouTube
                 thumbnail when CLIENT.youtubeVideoId is set, otherwise an
                 animated CSS placeholder until real footage drops in. */}
-            <CinematicTour onPlay={() => setVideoLightbox(true)} />
+            <CinematicTour
+              onPlay={() => setVideoLightbox(true)}
+              onSignIn={onSignIn}
+            />
 
             {/* BOTTOM CTA — routes to signup, not pricing. The product is
                 the wedge; pricing fires after the trial is felt. */}
