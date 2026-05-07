@@ -1,3 +1,17 @@
 /*
   Content-Security-Policy: frame-ancestors *
   X-Content-Type-Options: nosniff
+
+# Service worker — never cache the SW file itself or browsers will keep
+# serving the old one for hours after a deploy. Cache headers on the
+# script body, scope override for the SW, and a short TTL all help.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+  Service-Worker-Allowed: /
+
+# Manifest — short cache so updates roll out fast, but cacheable for the
+# page-load duration. Explicit content-type because some hosts default
+# .webmanifest to text/plain which Chrome will reject.
+/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: public, max-age=300

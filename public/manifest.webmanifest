@@ -1,0 +1,49 @@
+{
+  "name": "SocialAI Studio",
+  "short_name": "SocialAI",
+  "description": "AI-powered social media for Australian small business — write, design, schedule and publish Facebook & Instagram posts.",
+  "start_url": "/",
+  "scope": "/",
+  "id": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#0a0a14",
+  "theme_color": "#f59e0b",
+  "lang": "en-AU",
+  "categories": ["productivity", "business", "social"],
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Create a post",
+      "short_name": "Create",
+      "description": "Generate a new AI-written post",
+      "url": "/?tab=smart"
+    },
+    {
+      "name": "View calendar",
+      "short_name": "Calendar",
+      "description": "See scheduled posts",
+      "url": "/?tab=calendar"
+    }
+  ]
+}

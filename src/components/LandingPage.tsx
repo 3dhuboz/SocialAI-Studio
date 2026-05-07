@@ -122,8 +122,13 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         />
       )}
 
-      {/* NAV */}
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl noise">
+      {/* NAV — fixed top. The wrapper includes safe-area-inset-top padding
+          so the logo + buttons clear the iPhone notch / Dynamic Island. The
+          dark surface visually fills the notch area underneath. */}
+      <nav
+        className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl noise"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      >
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <button onClick={() => setTab('home')}><AppLogo size={52} /></button>
 
@@ -175,8 +180,12 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         </div>
       </nav>
 
-      {/* ═══ TAB CONTENT ═══ */}
-      <main className="pt-20 md:pt-16">
+      {/* ═══ TAB CONTENT ═══
+          Top padding clears the fixed nav. Mobile nav is taller (main bar
+          + tab row) so we use 7rem there; desktop is just the main bar at
+          4rem. The calc() adds env(safe-area-inset-top) so the page clears
+          the iPhone notch the same way the nav itself does. */}
+      <main className="pt-[calc(env(safe-area-inset-top)+7rem)] md:pt-[calc(env(safe-area-inset-top)+4rem)]">
 
         {/* ─── HOME TAB ─── */}
         {tab === 'home' && (

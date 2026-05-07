@@ -2220,8 +2220,11 @@ const Dashboard: React.FC = () => {
           onSignOut={() => { setShowAccount(false); logOut(); }}
         />
       )}
-      {/* Header */}
-      <header id="app-header" className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl sticky top-0 z-40 noise">
+      {/* Header — sticky top-0. Padding-top honours iPhone notch so the
+          logo + nav clear the safe area; the dark backdrop fills the
+          notch. Below it, the Tab Nav uses calc(env+64) to stick BELOW
+          this header when scrolled. */}
+      <header id="app-header" className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl sticky top-0 z-40 noise" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
           <div className="flex items-center gap-3 min-w-0">
             {CLIENT.clientMode ? (
@@ -2331,8 +2334,8 @@ const Dashboard: React.FC = () => {
         )}
       </header>
 
-      {/* Tab Nav */}
-      <nav className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-lg sticky top-[64px] z-30">
+      {/* Tab Nav — sticks BELOW the header (header is 64px + safe-area inset). */}
+      <nav className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-lg sticky z-30" style={{ top: 'calc(env(safe-area-inset-top) + 64px)' }}>
         <div className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
