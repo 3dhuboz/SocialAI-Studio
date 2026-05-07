@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X, CreditCard, LogOut, Trash2, KeyRound, ChevronRight,
   CheckCircle, AlertTriangle, Loader2, ExternalLink, Crown, Zap,
-  ShieldCheck, User,
+  ShieldCheck, User, Receipt, RefreshCw,
 } from 'lucide-react';
 import { useUser } from '@clerk/react';
 import { useDb } from '../hooks/useDb';
+import type { BillingInfo } from '../services/db';
+import { PaymentList } from './AdminCustomers';
 import { CLIENT } from '../client.config';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -31,7 +33,7 @@ const planBorders: Record<string, string> = {
   agency:  'border-emerald-500/30',
 };
 
-type Section = 'main' | 'password' | 'delete';
+type Section = 'main' | 'billing' | 'password' | 'delete';
 
 export const AccountPanel: React.FC<Props> = ({
   activePlan, userEmail, onClose, onUpgrade, onSignOut,
@@ -176,6 +178,13 @@ export const AccountPanel: React.FC<Props> = ({
               {/* Account actions */}
               <div className="bg-white/3 border border-white/8 rounded-2xl divide-y divide-white/5 overflow-hidden">
                 <button
+                  onClick={() => setSection('billing')}
+                  className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition"
+                >
+                  <span className="flex items-center gap-2.5"><Receipt size={14} className="text-white/40" /> Billing &amp; Payments</span>
+                  <ChevronRight size={14} className="text-white/20" />
+                </button>
+                <button
                   onClick={() => { setSection('password'); setPwError(''); setPwSuccess(false); }}
                   className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition"
                 >
@@ -203,6 +212,11 @@ export const AccountPanel: React.FC<Props> = ({
                 <ShieldCheck size={11} /> Secured with Clerk + Stripe
               </p>
             </div>
+          )}
+
+          {/* ── BILLING & PAYMENTS ── */}
+          {section === 'billing' && (
+            <BillingSection onBack={() => setSection('main')} />
           )}
 
           {/* ── CHANGE PASSWORD ── */}
@@ -318,6 +332,118 @@ export const AccountPanel: React.FC<Props> = ({
 
         </div>
       </div>
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// BillingSection — customer's own plan + payment history. Lives inside the
+// AccountPanel side-modal under section === 'billing'. Loads /api/billing on
+// mount; shows skeleton while pending; renders empty state if the customer
+// is on the free trial (no PayPal subscription yet).
+// ──────────────────────────────────────────────────────────────────────────────
+
+const BillingSection: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+  const db = useDb();
+  const [data, setData] = useState<BillingInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
+    setRefreshing(true);
+    setError(null);
+    try {
+      const res = await db.getBilling();
+      setData(res);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load billing info');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  const planName = data?.plan ? data.plan.charAt(0).toUpperCase() + data.plan.slice(1) : null;
+
+  return (
+    <div className="p-5">
+      <div className="flex items-center justify-between mb-5">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white transition">
+          ← Back
+        </button>
+        <button
+          onClick={() => load(true)}
+          disabled={refreshing}
+          className="text-white/30 hover:text-white/70 transition disabled:opacity-40"
+          title="Refresh"
+          aria-label="Refresh billing"
+        >
+          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+        </button>
+      </div>
+      <h3 className="text-base font-black text-white mb-1">Billing &amp; Payments</h3>
+      <p className="text-xs text-white/35 mb-5">Your plan, subscription, and recent activity.</p>
+
+      {loading && (
+        <div className="flex items-center gap-2 py-4 text-white/40 text-sm">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      )}
+      {error && !loading && (
+        <div className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-2.5 text-xs text-red-300">
+          <AlertTriangle size={13} className="flex-shrink-0" /> <span className="truncate">{error}</span>
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <>
+          {/* Plan summary card */}
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 mb-4">
+            <div className="text-[10px] font-bold tracking-[0.16em] text-white/35 uppercase mb-2">Current plan</div>
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="text-xl font-black text-white">
+                {planName || 'Free trial'}
+              </span>
+              {data.plan_price_aud != null && (
+                <span className="text-sm text-white/55 tabular-nums">
+                  ${data.plan_price_aud}<span className="text-white/35">/mo</span>
+                </span>
+              )}
+            </div>
+            {data.member_since && (
+              <p className="text-[11px] text-white/35">
+                Member since {new Date(data.member_since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+              </p>
+            )}
+            {data.subscription_id ? (
+              <a
+                href={`https://www.paypal.com/billing/subscriptions/${data.subscription_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300 hover:text-amber-200 transition"
+              >
+                <CreditCard size={11} /> Manage subscription <ExternalLink size={9} />
+              </a>
+            ) : (
+              <p className="mt-3 text-[11px] text-white/40 italic">No active subscription — you're on the free trial.</p>
+            )}
+          </div>
+
+          {/* Payments history */}
+          <div className="text-[10px] font-bold tracking-[0.16em] text-white/35 uppercase mb-2 mt-4">Recent activity</div>
+          {data.payments.length === 0 ? (
+            <p className="rounded-xl bg-white/[0.02] border border-white/[0.06] px-3 py-3 text-xs text-white/40">
+              No payment activity yet — when your subscription renews or you make changes, events will appear here.
+            </p>
+          ) : (
+            <PaymentList payments={data.payments} />
+          )}
+        </>
+      )}
     </div>
   );
 };
