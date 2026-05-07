@@ -161,10 +161,23 @@ body {
 .animate-glow-pulse { animation: glowPulse 2s ease-in-out infinite; }
 
 /* Float — gentle bob for post-mockup hero imagery. Used by PostShowcase
-   emoji placeholders so the cards feel alive without being noisy. */
+   emoji placeholders so the cards feel alive without being noisy. The
+   CinematicTour mini-mockups also use this with staggered animation-delay
+   so the corner cards bob out of phase with each other. */
 @keyframes float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-6px); }
+}
+
+/* Scanline — vertical sweep used inside the CinematicTour placeholder.
+   A 1px gradient bar slides left-to-right on a 6s loop, suggesting
+   "footage being assembled" without actual footage. Animates `left`
+   so the bar traverses its parent's full width regardless of size. */
+@keyframes scanline {
+  0% { left: 0; opacity: 0; }
+  5% { opacity: 1; }
+  95% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
 }
 
 /* Marquee — horizontal infinite scroll for the live gallery section.

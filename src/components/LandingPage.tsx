@@ -377,18 +377,21 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 Most businesses post once, get busy, then go silent for weeks. Your competitors don't stop.
                 SocialAI Studio makes sure <strong className="text-white/70">you never go quiet again</strong> — with AI that writes, designs, schedules, and publishes for you.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-3xl mx-auto">
+              {/* 3-step strip — editorial pattern matching HowItActuallyWorks
+                  on the home tab. Amber-only accents, large numerals, no
+                  rainbow gradient circles. */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-8 max-w-4xl mx-auto text-left">
                 {[
-                  { emoji: '1', title: 'Tell us about your business', desc: 'Industry, location, tone — takes 60 seconds', color: 'from-blue-500 to-indigo-600' },
-                  { emoji: '2', title: 'AI creates your content plan', desc: 'Captions, images, hashtags, schedule — all done', color: 'from-amber-500 to-orange-500' },
-                  { emoji: '3', title: 'Posts publish automatically', desc: 'Facebook & Instagram, on autopilot', color: 'from-emerald-500 to-teal-500' },
+                  { num: '01', title: 'Tell us about your business', desc: 'Industry, location, tone — 60 seconds, one time.' },
+                  { num: '02', title: 'AI writes &amp; designs every post', desc: 'Captions in your voice, custom images, smart scheduling.' },
+                  { num: '03', title: 'Posts publish automatically', desc: 'Direct to Facebook &amp; Instagram. You stay in control.' },
                 ].map((step, i) => (
-                  <div key={i} className="relative bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-center">
-                    <div className={`w-10 h-10 mx-auto mb-4 rounded-full bg-gradient-to-br ${step.color} flex items-center justify-center`}>
-                      <span className="text-white font-black text-sm">{step.emoji}</span>
+                  <div key={i} className="relative">
+                    <div className="flex items-baseline gap-3 mb-3">
+                      <span className="text-5xl sm:text-6xl font-black text-amber-400/85 tracking-[-0.04em] leading-none">{step.num}</span>
                     </div>
-                    <h3 className="font-bold text-sm mb-1.5">{step.title}</h3>
-                    <p className="text-xs text-white/40">{step.desc}</p>
+                    <h3 className="font-black text-base sm:text-lg text-white mb-1.5 tracking-tight" dangerouslySetInnerHTML={{ __html: step.title }} />
+                    <p className="text-sm text-white/50 leading-[1.55]" dangerouslySetInnerHTML={{ __html: step.desc }} />
                   </div>
                 ))}
               </div>
@@ -564,40 +567,65 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     ))}
                   </div>
                 </div>
-                {/* Trust card — replaces the fabricated "Sarah M." / "Jake T."
-                    testimonials. A small Australian SaaS without name recognition
-                    earns trust through concrete commitments, not borrowed
-                    testimonials. Real customer quotes go here once collected. */}
-                <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-7 space-y-5">
-                  <div className="flex items-center gap-3">
-                    <div className="text-3xl">🇦🇺</div>
-                    <div>
-                      <p className="font-black text-white text-sm">Built and supported in Australia</p>
-                      <p className="text-xs text-white/50">A small team. A real human reply.</p>
+                {/* Trust card — adapts to whether a founder is configured.
+                    With CLIENT.founder.firstName + photoUrl set, becomes a
+                    personal "Hi, I'm [name]" promise card with the photo.
+                    Without, falls back to the AU flag + generic commitments.
+                    See client.config.ts founder block to enable. */}
+                {(() => {
+                  const founder = CLIENT.founder;
+                  const hasFounder = !!(founder?.firstName && founder?.photoUrl);
+                  return (
+                    <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-7 space-y-5">
+                      <div className="flex items-center gap-3.5">
+                        {hasFounder ? (
+                          <img
+                            src={founder.photoUrl}
+                            alt={founder.firstName}
+                            className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-500/30 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0 text-3xl">
+                            🇦🇺
+                          </div>
+                        )}
+                        <div>
+                          <p className="font-black text-white text-sm">
+                            {hasFounder
+                              ? <>Hi, I'm <span className="text-amber-300">{founder.firstName}</span> — and I built this.</>
+                              : 'Built and supported in Australia'}
+                          </p>
+                          <p className="text-xs text-white/50 mt-0.5">
+                            {hasFounder
+                              ? founder.promise
+                              : 'A small team. A real human reply.'}
+                          </p>
+                        </div>
+                      </div>
+                      <ul className="space-y-3 text-sm text-white/70">
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">Same-day email replies</strong> — usually within a few hours, AEST.</span>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">Your content stays yours</strong> — we never train AI on your business data.</span>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">Cancel anytime</strong> — two clicks in PayPal. No contract, no email tag.</span>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">No card to start</strong> — generate {CLIENT.freeTrialPosts ?? 3} free posts before you ever pay.</span>
+                        </li>
+                      </ul>
+                      <a href={`mailto:${CLIENT.supportEmail}`} className="inline-flex items-center gap-2 text-xs text-amber-400 hover:text-amber-300 transition pt-1">
+                        <span>✉</span> {CLIENT.supportEmail}
+                      </a>
                     </div>
-                  </div>
-                  <ul className="space-y-3 text-sm text-white/70">
-                    <li className="flex gap-2.5">
-                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
-                      <span><strong className="text-white/90">Same-day email replies</strong> — usually within a few hours, AEST.</span>
-                    </li>
-                    <li className="flex gap-2.5">
-                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
-                      <span><strong className="text-white/90">Your content stays yours</strong> — we never train AI on your business data.</span>
-                    </li>
-                    <li className="flex gap-2.5">
-                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
-                      <span><strong className="text-white/90">Cancel anytime</strong> — two clicks in PayPal. No contract, no email tag.</span>
-                    </li>
-                    <li className="flex gap-2.5">
-                      <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
-                      <span><strong className="text-white/90">No card to start</strong> — generate {CLIENT.freeTrialPosts ?? 3} free posts before you ever pay.</span>
-                    </li>
-                  </ul>
-                  <a href={`mailto:${CLIENT.supportEmail}`} className="inline-flex items-center gap-2 text-xs text-amber-400 hover:text-amber-300 transition pt-1">
-                    <span>✉</span> {CLIENT.supportEmail}
-                  </a>
-                </div>
+                  );
+                })()}
               </div>
             </div>
 
