@@ -2501,6 +2501,14 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
   if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: 0 }; }
   console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
+  // Cap on JIT image generations per cron run. fal.ai can be slow (~10-15s per
+  // image on cold start) and the worker has a wall-time budget, so we don't let
+  // a stampede of missing images blow the budget. Posts above the cap publish
+  // text-only this tick and get picked up by the next 5-minute tick (a future
+  // tick re-claims them via the missed-post sweep).
+  const MAX_JIT_IMAGES_PER_RUN = 5;
+  let jitGenerated = 0;
+
   for (const post of posts) {
     try {
       // Get social tokens for this workspace
@@ -2526,8 +2534,70 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
       const pageId = tokens.facebookPageId;
       const token = tokens.facebookPageAccessToken;
 
-      // Use the image URL stored at accept time — no fallback generation here
-      const imageUrl = (post as any).image_url;
+      // ── JIT image backfill ────────────────────────────────────────────────
+      // Smart Schedule fires Promise.all over a batch of posts — if the user is
+      // accepting 14+ posts at once, the fal-proxy 20/min/user rate limit drops
+      // some of them on the floor, the catch silently swallows the error, and
+      // the post lands with image_url=NULL. Without this block the publish
+      // cron would fall through to text-only-fallback every time. Generate the
+      // image just before publishing instead, paced + capped so a stampede can't
+      // exhaust the cron's wall-time budget.
+      let imageUrl: string | null = ((post as any).image_url || null) as string | null;
+      const rawPrompt = (post as any).image_prompt as string | null;
+      // Cron's claim step appends "|claim:UUID" to image_prompt to track who owns
+      // the post — strip that to recover the actual prompt.
+      const promptForGen = rawPrompt ? rawPrompt.split('|claim:')[0].trim() : '';
+      const needsImage = !imageUrl
+        && promptForGen
+        && promptForGen !== 'N/A'
+        && promptForGen.length > 5;
+      if (needsImage && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
+        try {
+          // Mirrors the suffix in src/services/gemini.ts so JIT-generated images
+          // look the same as accept-time images (candid iPhone vibe, no AI tells).
+          const cleaned = promptForGen
+            .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers)\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          const finalPrompt = `${cleaned}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
+
+          const ctrl = new AbortController();
+          const timeout = setTimeout(() => ctrl.abort(), 15000);
+          const falRes = await fetch('https://fal.run/fal-ai/flux/dev', {
+            method: 'POST',
+            headers: { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: finalPrompt, image_size: 'square_hd',
+              num_inference_steps: 25, num_images: 1,
+              enable_safety_checker: true, guidance_scale: 3.5,
+            }),
+            signal: ctrl.signal,
+          });
+          clearTimeout(timeout);
+          const falData: any = await falRes.json();
+          const generatedUrl = falData?.images?.[0]?.url;
+          if (falRes.ok && generatedUrl) {
+            imageUrl = generatedUrl;
+            // Persist so a re-publish or the dashboard sees it without re-spending fal credits.
+            await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
+              .bind(generatedUrl, (post as any).id).run();
+            jitGenerated++;
+            console.log(`[CRON] JIT-generated image for post ${(post as any).id} (${jitGenerated}/${MAX_JIT_IMAGES_PER_RUN})`);
+          } else {
+            console.warn(`[CRON] JIT image gen returned no URL for post ${(post as any).id}: ${falData?.detail || falData?.message || falRes.status}`);
+          }
+        } catch (e: any) {
+          // Don't fail the publish if image gen fails — still better to send text than nothing.
+          console.warn(`[CRON] JIT image gen failed for post ${(post as any).id}: ${e?.message}`);
+        }
+      } else if (needsImage && jitGenerated >= MAX_JIT_IMAGES_PER_RUN) {
+        // Post still publishes (better than missing the slot). The cap is a wall-time
+        // safety valve — in practice 5+ images stuck in one batch is rare; the bulk
+        // of misses come from Smart Schedule's 14-post Promise.all, which spaces out
+        // by scheduled_for so they don't all hit the same cron tick.
+        console.log(`[CRON] Post ${(post as any).id} needs image but JIT cap reached — publishing text-only this tick`);
+      }
+
       let publishMethod = 'text-only';
 
       let fbRes: Response | null = null;
