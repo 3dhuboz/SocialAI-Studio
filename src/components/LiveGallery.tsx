@@ -17,28 +17,33 @@ import { Heart, ThumbsUp, MessageCircle } from 'lucide-react';
 type GalleryPost = {
   brand: string;
   caption: string;
+  /** Real Unsplash photo. Falls back to gradient + emoji if it 404s. */
+  image: string;
   imageGradient: string;
   imageEmoji: string;
   platform: 'instagram' | 'facebook';
   industry: string;
 };
 
+// Smaller crop than PostShowcase since gallery cards are ~260px wide max
+const unsplash = (id: string) => `https://images.unsplash.com/photo-${id}?w=520&h=520&fit=crop&q=70&auto=format`;
+
 const POSTS_ROW_A: GalleryPost[] = [
-  { brand: 'Bondi Surf School', caption: 'Sunrise lesson cancelled — but here\'s a gentle 2pm session for the brave 🌊', imageGradient: 'from-cyan-200 via-sky-300 to-blue-300', imageEmoji: '🏄', platform: 'instagram', industry: 'Lessons' },
-  { brand: 'Slate & Sage', caption: 'New autumn menu drops Friday. Roast pumpkin gnocchi back by request.', imageGradient: 'from-orange-300 via-rose-300 to-pink-300', imageEmoji: '🍝', platform: 'instagram', industry: 'Restaurant' },
-  { brand: 'Mike\'s Plumbing & Gas', caption: 'Hot water gone? Same-day callouts across Brisbane. Fixed quotes, no callout fee.', imageGradient: 'from-blue-300 via-cyan-300 to-sky-200', imageEmoji: '🔧', platform: 'facebook', industry: 'Tradie' },
-  { brand: 'The Beard Room', caption: 'Saturday slots almost full. Fades, beards, the works. Tap to book.', imageGradient: 'from-stone-300 via-amber-200 to-orange-200', imageEmoji: '💈', platform: 'instagram', industry: 'Barber' },
-  { brand: 'Coast Hair Co.', caption: 'Sarah\'s July diary is open — gloss, balayage, the lot.', imageGradient: 'from-pink-300 via-rose-300 to-purple-300', imageEmoji: '✂️', platform: 'instagram', industry: 'Salon' },
-  { brand: 'Harbour Real Estate', caption: 'Just listed Manly — 3 bed, 2 bath, the view does the talking.', imageGradient: 'from-blue-200 via-indigo-200 to-purple-300', imageEmoji: '🏡', platform: 'facebook', industry: 'Real estate' },
+  { brand: 'Bondi Surf School', caption: 'Sunrise lesson cancelled — but here\'s a gentle 2pm session for the brave 🌊', image: unsplash('1502602898657-3e91760cbb34'), imageGradient: 'from-cyan-200 via-sky-300 to-blue-300', imageEmoji: '🏄', platform: 'instagram', industry: 'Lessons' },
+  { brand: 'Slate & Sage', caption: 'New autumn menu drops Friday. Roast pumpkin gnocchi back by request.', image: unsplash('1505740420928-5e560c06d30e'), imageGradient: 'from-orange-300 via-rose-300 to-pink-300', imageEmoji: '🍝', platform: 'instagram', industry: 'Restaurant' },
+  { brand: 'Mike\'s Plumbing & Gas', caption: 'Hot water gone? Same-day callouts across Brisbane. Fixed quotes, no callout fee.', image: unsplash('1607400201515-c2c41c07d307'), imageGradient: 'from-blue-300 via-cyan-300 to-sky-200', imageEmoji: '🔧', platform: 'facebook', industry: 'Tradie' },
+  { brand: 'The Beard Room', caption: 'Saturday slots almost full. Fades, beards, the works. Tap to book.', image: unsplash('1503951914875-452162b0f3f1'), imageGradient: 'from-stone-300 via-amber-200 to-orange-200', imageEmoji: '💈', platform: 'instagram', industry: 'Barber' },
+  { brand: 'Coast Hair Co.', caption: 'Sarah\'s July diary is open — gloss, balayage, the lot.', image: unsplash('1560066984-138dadb4c035'), imageGradient: 'from-pink-300 via-rose-300 to-purple-300', imageEmoji: '✂️', platform: 'instagram', industry: 'Salon' },
+  { brand: 'Harbour Real Estate', caption: 'Just listed Manly — 3 bed, 2 bath, the view does the talking.', image: unsplash('1568605114967-8130f3a36994'), imageGradient: 'from-blue-200 via-indigo-200 to-purple-300', imageEmoji: '🏡', platform: 'facebook', industry: 'Real estate' },
 ];
 
 const POSTS_ROW_B: GalleryPost[] = [
-  { brand: 'Green Thumb Garden', caption: 'Tulip bulbs are in. Plant before May for September bloom. Free guide with every bag.', imageGradient: 'from-lime-200 via-green-300 to-emerald-300', imageEmoji: '🌷', platform: 'facebook', industry: 'Retail' },
-  { brand: 'Bella\'s Cafe', caption: 'Sunday treat — cinnamon scrolls fresh from the oven. Open till 2.', imageGradient: 'from-amber-200 via-orange-200 to-rose-300', imageEmoji: '🥐', platform: 'instagram', industry: 'Cafe' },
-  { brand: 'FastFit Studio', caption: '6am crew — bring water, bring a mate. First class on us.', imageGradient: 'from-emerald-200 via-teal-300 to-cyan-300', imageEmoji: '🥊', platform: 'instagram', industry: 'Gym' },
-  { brand: 'Coastal Pet Co.', caption: 'New stock in: Aussie-made dog beds. Two sizes. Made to last a decade.', imageGradient: 'from-yellow-200 via-amber-200 to-orange-200', imageEmoji: '🐕', platform: 'instagram', industry: 'Retail' },
-  { brand: 'Ridgeline Roofing', caption: 'Storm season prep — book a free roof check this month, no obligation.', imageGradient: 'from-slate-300 via-stone-300 to-zinc-300', imageEmoji: '🏠', platform: 'facebook', industry: 'Tradie' },
-  { brand: 'Bloom Photography', caption: 'Family session slots opened for July long weekend. 8 spots, gone fast.', imageGradient: 'from-rose-200 via-pink-200 to-fuchsia-300', imageEmoji: '📷', platform: 'instagram', industry: 'Service' },
+  { brand: 'Green Thumb Garden', caption: 'Tulip bulbs are in. Plant before May for September bloom. Free guide with every bag.', image: unsplash('1416879595882-3373a0480b5b'), imageGradient: 'from-lime-200 via-green-300 to-emerald-300', imageEmoji: '🌷', platform: 'facebook', industry: 'Retail' },
+  { brand: 'Bella\'s Cafe', caption: 'Sunday treat — cinnamon scrolls fresh from the oven. Open till 2.', image: unsplash('1551024601-bec78aea704b'), imageGradient: 'from-amber-200 via-orange-200 to-rose-300', imageEmoji: '🥐', platform: 'instagram', industry: 'Cafe' },
+  { brand: 'FastFit Studio', caption: '6am crew — bring water, bring a mate. First class on us.', image: unsplash('1571019613454-1cb2f99b2d8b'), imageGradient: 'from-emerald-200 via-teal-300 to-cyan-300', imageEmoji: '🥊', platform: 'instagram', industry: 'Gym' },
+  { brand: 'Coastal Pet Co.', caption: 'New stock in: Aussie-made dog beds. Two sizes. Made to last a decade.', image: unsplash('1583337130417-3346a1be7dee'), imageGradient: 'from-yellow-200 via-amber-200 to-orange-200', imageEmoji: '🐕', platform: 'instagram', industry: 'Retail' },
+  { brand: 'Ridgeline Roofing', caption: 'Storm season prep — book a free roof check this month, no obligation.', image: unsplash('1558618666-fcd25c85cd64'), imageGradient: 'from-slate-300 via-stone-300 to-zinc-300', imageEmoji: '🏠', platform: 'facebook', industry: 'Tradie' },
+  { brand: 'Bloom Photography', caption: 'Family session slots opened for July long weekend. 8 spots, gone fast.', image: unsplash('1606914501449-5a96b6ce24ca'), imageGradient: 'from-rose-200 via-pink-200 to-fuchsia-300', imageEmoji: '📷', platform: 'instagram', industry: 'Service' },
 ];
 
 export const LiveGallery: React.FC = () => {
@@ -127,10 +132,22 @@ const GalleryCard: React.FC<{ post: GalleryPost }> = ({ post }) => {
           <p className="text-[9px] text-gray-400 truncate">{post.industry}</p>
         </div>
       </div>
-      {/* Image */}
+      {/* Image — real photo with gradient + emoji fallback. The img tag
+          hides itself onError so missing/blocked Unsplash content reveals
+          the gradient + emoji underneath rather than a broken-image icon. */}
       <div className={`relative w-full aspect-square bg-gradient-to-br ${post.imageGradient} flex items-center justify-center overflow-hidden`}>
         <span className="text-5xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.15)]">{post.imageEmoji}</span>
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,255,255,0.4),transparent_50%)]" />
+        {post.image && (
+          <img
+            src={post.image}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        )}
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,255,255,0.18),transparent_60%)]" />
       </div>
       {/* Action row */}
       <div className="px-3 pt-2 pb-1 flex items-center gap-2.5 text-gray-700">
