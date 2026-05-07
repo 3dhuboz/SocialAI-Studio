@@ -76,6 +76,27 @@ export const CLIENT = {
   supportEmail: 'support@pennywiseit.com.au',
 
   /**
+   * FOUNDER IDENTITY — used on the landing page trust card.
+   *
+   * Cold AU SMBs trust "local + named human" more than any other signal a
+   * small SaaS without name recognition can offer. When all three fields
+   * are set, the trust card renders the photo + first-person promise + name
+   * attribution. Leaving any field blank gracefully falls back to the
+   * generic "Built and supported in Australia" treatment.
+   *
+   * Setup:
+   *   1. Drop a square (≥ 200×200) JPG at public/founder.jpg
+   *   2. Set photoUrl to '/founder.jpg' below
+   *   3. Set firstName to your first name
+   *   4. (optional) Tweak the promise line
+   */
+  founder: {
+    firstName: '',                   // e.g. 'Steve'
+    photoUrl: '',                    // e.g. '/founder.jpg' (relative to public/)
+    promise: 'Email me directly. I reply same-day, AEST.',
+  },
+
+  /**
    * EMAILJS SETUP (for automatic email alerts when a new client submits the intake form):
    * 1. Sign up free at https://emailjs.com
    * 2. Dashboard → Email Services → Add Service (Gmail/Outlook) → copy Service ID
@@ -241,7 +262,10 @@ export const CLIENT = {
       ],
       limitations: [],
       color: 'from-purple-500 to-pink-600',
-      badge: 'Best Value',
+      // Single visual anchor on landing — Growth keeps "Most Popular".
+      // Pro and Agency are unbadged so the eye picks one Most Popular plan
+      // instead of bouncing between competing badges (decoy effect — Ariely).
+      badge: null,
     },
     {
       id: 'agency' as const,

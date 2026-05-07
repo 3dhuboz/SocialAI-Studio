@@ -79,6 +79,21 @@ document.documentElement.style.setProperty('--accent-light-rgb', `${accentLight.
 const clerkPubKey = (import.meta.env as Record<string, string>).VITE_CLERK_PUBLISHABLE_KEY
   || 'pk_live_Y2xlcmsuc29jaWFsYWlzdHVkaW8uYXUk';
 
+// PWA service worker — register only in production builds. Dev-mode
+// service workers cause hot-reload thrash and stale cache headaches.
+// On localhost the SW is a no-op; on the deployed site it caches the
+// shell + hashed assets for offline-tolerant mobile use.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js', { scope: '/' })
+      .catch((err) => {
+        // Non-fatal — the app still works without offline support.
+        console.warn('[sw] registration failed:', err);
+      });
+  });
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     {CLIENT.clientMode ? (

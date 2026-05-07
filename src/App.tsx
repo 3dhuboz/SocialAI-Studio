@@ -11,6 +11,7 @@ import { useDb } from './hooks/useDb';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
+import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
@@ -284,6 +285,41 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
+  // ── Back-button handling ─────────────────────────────────────────────
+  // Bug being fixed: clicking "Sign In" on the landing page just flipped
+  // React state (showLanding=false). The browser had no idea, so hitting
+  // BACK from the auth screen would leave the site entirely (e.g. back to
+  // Google). Now we push a history entry on the landing→auth transition
+  // and listen for popstate to restore landing when the user hits back.
+  // Signed-in app users are NOT affected — popstate is a no-op when user
+  // is set, so back-button inside the app falls through to native browser
+  // history (e.g. plain page navigation).
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  useEffect(() => {
+    if (CLIENT.clientMode) return; // portal mode bypasses landing entirely
+    if (!showLanding && !user && window.location.hash !== '#sign-in') {
+      window.history.pushState({ screen: 'auth' }, '', '#sign-in');
+    } else if (showLanding && window.location.hash === '#sign-in') {
+      // Cleared landing → strip the hash so the next back doesn't loop.
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [showLanding, user]);
+
+  useEffect(() => {
+    if (CLIENT.clientMode) return;
+    const handlePopstate = () => {
+      // Only restore landing when the user isn't signed in. Signed-in
+      // app users hitting back navigate normally (out of the SPA).
+      if (!userRef.current && window.location.hash !== '#sign-in') {
+        setShowLanding(true);
+      }
+    };
+    window.addEventListener('popstate', handlePopstate);
+    return () => window.removeEventListener('popstate', handlePopstate);
+  }, []);
+
   const handlePlanActivated = async (planId: string) => {
     setActivePlan(planId as PlanTier);
     setSetupStatus('ordered');
@@ -335,6 +371,14 @@ const Dashboard: React.FC = () => {
 
   const [showAccount, setShowAccount] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
+  // When the trial-exhausted paywall sends a user into the pricing modal it
+  // pre-selects Growth so they don't pay the cost of choosing again. The
+  // last-post trial banner does the same. Cleared on every modal close.
+  const [pricingDefaultPlan, setPricingDefaultPlan] = useState<string | null>(null);
+  // Full-screen contextual paywall fired when an unsubscribed trial user
+  // hits the post-cap. Replaces the generic toast + pricing modal because
+  // this is the highest-intent moment in the funnel.
+  const [showTrialPaywall, setShowTrialPaywall] = useState(false);
   const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string; imageUrl?: string; imagePrompt?: string } | null>(null);
   const [videoModalGenerating, setVideoModalGenerating] = useState(false);
   const [videoModalProgress, setVideoModalProgress] = useState(0);
@@ -1159,11 +1203,12 @@ const Dashboard: React.FC = () => {
   const handleGenerate = async (): Promise<{ content: string; hashtags: string[]; imagePrompt?: string } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
     // Free trial gate — block generation if a no-plan user has used up their
-    // free posts. We open the pricing modal here so the conversion CTA fires
-    // exactly when they're trying to extract more value.
+    // free posts. We surface the contextual TrialPaywall here (shows their
+    // trial posts + pre-selects Growth) instead of a toast + generic modal.
+    // Loss aversion at peak intent — this is the most valuable conversion
+    // moment in the funnel.
     if (isTrialExhausted) {
-      toast(`You've used your ${FREE_TRIAL_POSTS} free posts — pick a plan to keep generating.`, 'info');
-      setShowPricing(true);
+      setShowTrialPaywall(true);
       return null;
     }
     setIsGenerating(true);
@@ -2179,7 +2224,27 @@ const Dashboard: React.FC = () => {
       )}
 
       {/* Pricing Modal */}
-      {showPricing && <PricingTable onClose={() => setShowPricing(false)} onPlanActivated={handlePlanActivated} userId={user?.uid} />}
+      {showPricing && (
+        <PricingTable
+          onClose={() => { setShowPricing(false); setPricingDefaultPlan(null); }}
+          onPlanActivated={handlePlanActivated}
+          userId={user?.uid}
+          defaultPlanId={pricingDefaultPlan ?? undefined}
+        />
+      )}
+      {/* Trial-exhausted paywall — full-screen, contextual, pre-selects Growth */}
+      {showTrialPaywall && (
+        <TrialPaywall
+          posts={posts}
+          freeTrialPosts={FREE_TRIAL_POSTS}
+          onClose={() => setShowTrialPaywall(false)}
+          onChoosePlan={() => {
+            setShowTrialPaywall(false);
+            setPricingDefaultPlan('growth');
+            setShowPricing(true);
+          }}
+        />
+      )}
       {/* Account Panel */}
       {showAccount && (
         <AccountPanel
@@ -2190,8 +2255,11 @@ const Dashboard: React.FC = () => {
           onSignOut={() => { setShowAccount(false); logOut(); }}
         />
       )}
-      {/* Header */}
-      <header id="app-header" className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl sticky top-0 z-40 noise">
+      {/* Header — sticky top-0. Padding-top honours iPhone notch so the
+          logo + nav clear the safe area; the dark backdrop fills the
+          notch. Below it, the Tab Nav uses calc(env+64) to stick BELOW
+          this header when scrolled. */}
+      <header id="app-header" className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl sticky top-0 z-40 noise" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
           <div className="flex items-center gap-3 min-w-0">
             {CLIENT.clientMode ? (
@@ -2301,8 +2369,8 @@ const Dashboard: React.FC = () => {
         )}
       </header>
 
-      {/* Tab Nav */}
-      <nav className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-lg sticky top-[64px] z-30">
+      {/* Tab Nav — sticks BELOW the header (header is 64px + safe-area inset). */}
+      <nav className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-lg sticky z-30" style={{ top: 'calc(env(safe-area-inset-top) + 64px)' }}>
         <div className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
           {tabs.map(tab => (
             <button
@@ -2325,7 +2393,7 @@ const Dashboard: React.FC = () => {
       {activeClientId && activePlan === 'agency' && authMode !== 'portal' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
-          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b border-emerald-500/20 backdrop-blur-sm sticky top-[109px] z-20 glass">
+          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b border-emerald-500/20 backdrop-blur-sm sticky z-20 glass" style={{ top: 'calc(env(safe-area-inset-top) + 109px)' }}>
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/25 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
@@ -2386,19 +2454,25 @@ const Dashboard: React.FC = () => {
                     : trialPostsRemaining > 1
                       ? `${trialPostsRemaining} free posts remaining on your trial`
                       : trialPostsRemaining === 1
-                        ? `Last free post — pick a plan to keep posting after this`
+                        ? `Last free post — your AI calendar will pause after this`
                         : `Free trial used up`}
                 </p>
                 <p className="text-xs text-white/50">
-                  No credit card needed yet · From $29/month after trial · Cancel anytime
+                  No credit card needed yet · From $29/month when you're ready · Cancel in 2 clicks
                 </p>
               </div>
             </div>
             <button
-              onClick={() => setShowPricing(true)}
+              onClick={() => {
+                // Pre-select Growth when the user is at peak intent (last post
+                // or trial just used up). Default selection collapses two
+                // decisions into one and lifts checkout completion.
+                if (trialPostsRemaining <= 1) setPricingDefaultPlan('growth');
+                setShowPricing(true);
+              }}
               className="flex-shrink-0 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-4 py-2 rounded-xl hover:opacity-90 transition text-sm"
             >
-              See plans
+              {trialPostsRemaining <= 1 ? 'Continue with Growth' : 'See plans'}
             </button>
           </div>
         )}
@@ -3536,7 +3610,7 @@ const Dashboard: React.FC = () => {
                 )}
 
                 {/* Accept All bar */}
-                <div className="sticky top-[72px] z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl">
+                <div className="sticky z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl" style={{ top: 'calc(env(safe-area-inset-top) + 72px)' }}>
                   <div>
                     <p className="text-sm font-bold text-white">{smartPosts.length} posts ready</p>
                     {autoGenSet.size > 0 ? (

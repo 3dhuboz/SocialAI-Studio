@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the page extend under iPhone notch / home
+         indicator; CSS env(safe-area-inset-*) handles padding. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
     <!-- ═══ Primary Meta ═══ -->
     <title>SocialAI Studio — AI-Powered Social Media, Done For You</title>
@@ -10,8 +12,22 @@
     <meta name="keywords" content="AI social media, social media automation, Facebook posts AI, Instagram AI, small business social media, AI content generator, automated posting, social media management Australia" />
     <meta name="author" content="Penny Wise I.T" />
     <meta name="robots" content="index, follow" />
-    <meta name="theme-color" content="#f59e0b" />
+    <!-- theme-color matches the manifest amber so the browser address bar
+         and PWA splash screen tint together. -->
+    <meta name="theme-color" content="#0a0a14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f59e0b" media="(prefers-color-scheme: light)" />
     <link rel="canonical" href="https://pennywiseit.com.au" />
+
+    <!-- ═══ PWA ═══ -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- iOS web-app behaviour — fullscreen standalone mode, dark status bar. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SocialAI" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- Stops iOS Safari from auto-detecting "phone numbers" inside
+         captions / dates and turning them into tap-to-call links. -->
+    <meta name="format-detection" content="telephone=no" />
 
     <!-- ═══ Open Graph / Facebook ═══ -->
     <meta property="og:type" content="website" />

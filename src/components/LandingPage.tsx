@@ -8,7 +8,11 @@ import {
   TrendingUp, MessageCircle, Repeat2, DollarSign, Timer, Rocket
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
-import { AnimatedDemo } from './AnimatedDemo';
+import { PostShowcase } from './PostShowcase';
+import { LiveGallery } from './LiveGallery';
+import { HowItActuallyWorks } from './HowItActuallyWorks';
+import { CinematicTour } from './CinematicTour';
+import { InstallPrompt } from './InstallPrompt';
 
 type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq' | 'contact';
 
@@ -112,6 +116,10 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
 
   return (
     <div className="min-h-screen bg-[var(--color-surface-0)] text-white overflow-x-hidden">
+      {/* PWA install prompt — appears bottom-right after ~6s on eligible
+          devices (Android Chrome / iOS Safari / desktop Chrome). Dismissals
+          persist 30 days; standalone-mode users never see it. */}
+      <InstallPrompt />
       {showPricing && (
         <PricingTable
           onClose={() => setShowPricing(false)}
@@ -119,8 +127,13 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         />
       )}
 
-      {/* NAV */}
-      <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl noise">
+      {/* NAV — fixed top. The wrapper includes safe-area-inset-top padding
+          so the logo + buttons clear the iPhone notch / Dynamic Island. The
+          dark surface visually fills the notch area underneath. */}
+      <nav
+        className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl noise"
+        style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      >
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <button onClick={() => setTab('home')}><AppLogo size={52} /></button>
 
@@ -142,17 +155,14 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Single primary CTA in the header — duplicate amber buttons
+                trained the eye to ignore both. The hero owns the trial CTA;
+                the nav is for returning customers. */}
             <button
               onClick={onSignIn}
-              className="text-sm text-white/60 hover:text-white font-semibold px-4 py-2 rounded-full border border-white/10 hover:border-white/25 bg-white/5 hover:bg-white/10 transition"
+              className="text-sm text-white/70 hover:text-white font-semibold px-5 py-2 rounded-full border border-white/15 hover:border-white/30 bg-white/5 hover:bg-white/10 transition"
             >
               Sign In
-            </button>
-            <button
-              onClick={onSignIn}
-              className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
-            >
-              Try Free
             </button>
           </div>
         </div>
@@ -175,87 +185,125 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         </div>
       </nav>
 
-      {/* ═══ TAB CONTENT ═══ */}
-      <main className="pt-20 md:pt-16">
+      {/* ═══ TAB CONTENT ═══
+          Top padding clears the fixed nav. Mobile nav is taller (main bar
+          + tab row) so we use 7rem there; desktop is just the main bar at
+          4rem. The calc() adds env(safe-area-inset-top) so the page clears
+          the iPhone notch the same way the nav itself does. */}
+      <main className="pt-[calc(env(safe-area-inset-top)+7rem)] md:pt-[calc(env(safe-area-inset-top)+4rem)]">
 
         {/* ─── HOME TAB ─── */}
         {tab === 'home' && (
           <div>
-            {/* HERO */}
-            <section className="relative pt-20 pb-16 px-6 text-center overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(245,158,11,0.15),transparent_70%)]" />
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_50%,rgba(168,85,247,0.06),transparent_60%)]" />
-              <div className="relative max-w-3xl mx-auto animate-fadeSlideUp">
-                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-7">
-                  <Zap size={12} /> AI-Powered Social Media — Done For You
-                </div>
-                <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black mb-5 leading-[1.1] sm:leading-[1.05] tracking-tight px-2 sm:px-0">
-                  {portalContent?.hero_title ? (
-                    <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
-                      {portalContent.hero_title}
-                    </span>
-                  ) : (
-                    <>
-                      Your social media,{' '}
-                      <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
-                        on autopilot.
-                      </span>
-                    </>
-                  )}
-                </h1>
-                <p className="text-base sm:text-lg text-white/50 mb-8 max-w-xl mx-auto leading-relaxed px-4 sm:px-0">
-                  {portalContent?.hero_subtitle || "AI writes, designs, and schedules your Facebook & Instagram posts every week — so you can focus on running your business."}
-                </p>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
-                  <button
-                    onClick={() => setShowPricing(true)}
-                    className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-base hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/25"
-                  >
-                    {portalContent?.hero_cta_text || `Start Free — ${CLIENT.freeTrialPosts ?? 3} AI posts on us`}
-                    <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                  </button>
-                  <p className="text-sm text-white/30">No credit card · No setup fee · From $29/month after trial</p>
-                </div>
-              </div>
-
-              {/* 3 BENEFIT PILLARS */}
-              <div className="relative max-w-3xl mx-auto mt-14 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {[
-                  {
-                    icon: Timer,
-                    color: 'text-amber-400',
-                    bg: 'bg-amber-500/10',
-                    border: 'border-amber-500/20',
-                    stat: '8+ hrs',
-                    title: 'Saved Every Week',
-                    desc: 'No more writing captions, finding images, or manually scheduling. The AI handles it all automatically.',
-                  },
-                  {
-                    icon: DollarSign,
-                    color: 'text-emerald-400',
-                    bg: 'bg-emerald-500/10',
-                    border: 'border-emerald-500/20',
-                    stat: '$500+',
-                    title: 'Saved vs. a Social Manager',
-                    desc: 'A freelance social media manager costs $500–$2,000/month. Our AI does the same job from $29.',
-                  },
-                  {
-                    icon: Rocket,
-                    color: 'text-purple-400',
-                    bg: 'bg-purple-500/10',
-                    border: 'border-purple-500/20',
-                    stat: '3× more',
-                    title: 'Consistent Posting',
-                    desc: 'Businesses that post consistently get 3× more reach. AI never forgets, never gets busy, never skips.',
-                  },
-                ].map((p, i) => (
-                  <div key={i} className={`${p.bg} border ${p.border} rounded-2xl p-6 text-left`}>
-                    <p.icon size={22} className={`${p.color} mb-3`} />
-                    <p className={`text-3xl font-black ${p.color} mb-1`}>{p.stat}</p>
-                    <p className="font-bold text-white text-sm mb-2">{p.title}</p>
-                    <p className="text-xs text-white/40 leading-relaxed">{p.desc}</p>
+            {/* HERO — editorial split. Left: copy. Right: PostShowcase (rotating
+                post mockups across 6 Aussie SMB industries — the actual product
+                output, not an abstract "AI tool" demo). Less amber gradient,
+                more grain texture, more whitespace. */}
+            <section className="relative pt-16 sm:pt-20 pb-20 px-6 overflow-hidden grain-bg">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_-10%,rgba(245,158,11,0.13),transparent_55%)]" />
+              <div className="relative max-w-6xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-[1.1fr_0.9fr] gap-10 lg:gap-16 items-center animate-fadeSlideUp">
+                  {/* LEFT — copy + CTA. Editorial alignment: left on md+, centered
+                      on mobile. Headline drops gradient on the lead phrase to feel
+                      less "tech demo", reserves the gradient for the closer. */}
+                  <div className="text-center md:text-left">
+                    <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.18em] text-amber-300/80 uppercase mb-7">
+                      <span className="w-6 h-px bg-amber-300/40" />
+                      Crafted in Australia · For small business
+                    </div>
+                    <h1 className="text-[2.25rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-black mb-6 leading-[1.02] tracking-[-0.02em]">
+                      {portalContent?.hero_title ? (
+                        <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
+                          {portalContent.hero_title}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="block text-white">Your Facebook &amp;</span>
+                          <span className="block text-white">Instagram posts —</span>
+                          <span className="block bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 bg-clip-text text-transparent italic font-serif font-light pt-1">
+                            written every day.
+                          </span>
+                        </>
+                      )}
+                    </h1>
+                    <p className="text-base sm:text-lg md:text-[1.075rem] text-white/70 mb-8 max-w-xl mx-auto md:mx-0 leading-[1.6]">
+                      {portalContent?.hero_subtitle || "Built for Aussie cafes, tradies, salons and small retailers. We read your existing posts to learn your voice, so every caption sounds like you on a good day — not a robot."}
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start items-center">
+                      <button
+                        onClick={onSignIn}
+                        className="group bg-white text-black font-black px-7 py-4 rounded-full text-sm sm:text-base hover:bg-amber-50 transition-all flex items-center gap-2 shadow-[0_10px_40px_-12px_rgba(255,255,255,0.3)]"
+                      >
+                        {portalContent?.hero_cta_text || `Generate ${CLIENT.freeTrialPosts ?? 3} free posts`}
+                        <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                      </button>
+                      {CLIENT.youtubeVideoId && (
+                        <button
+                          onClick={() => setVideoLightbox(true)}
+                          className="group inline-flex items-center gap-2.5 text-sm text-white/65 hover:text-white transition px-3 py-2"
+                        >
+                          <span className="w-9 h-9 rounded-full bg-white/8 group-hover:bg-white/15 border border-white/15 flex items-center justify-center transition">
+                            <Play size={12} className="text-white ml-0.5" fill="white" />
+                          </span>
+                          Watch the 90-second tour
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs sm:text-sm text-white/40 mt-5">
+                      {CLIENT.freeTrialPosts ?? 3} free posts · No card · $29/mo when you're ready · Cancel in 2 clicks
+                    </p>
                   </div>
-                ))}
+
+                  {/* RIGHT — PostShowcase: 6 rotating Aussie SMB post mockups.
+                      Cards stack with perspective, swap every 4.5s. The product
+                      output IS the demo. */}
+                  <div className="relative pt-2 md:pt-0">
+                    <PostShowcase />
+                  </div>
+                </div>
+
+                {/* 3 BENEFIT PILLARS — one amber anchor + two neutral surfaces.
+                    Linear/Stripe rule: colour earns its place by signalling
+                    state or hierarchy, not as decoration. */}
+                <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    {
+                      icon: Timer,
+                      anchor: true,
+                      stat: '8+ hrs',
+                      title: 'Saved every week',
+                      desc: 'No more writing captions, hunting images, or scheduling at midnight. The AI handles it.',
+                    },
+                    {
+                      icon: DollarSign,
+                      anchor: false,
+                      stat: '$0.87',
+                      title: 'Per post on Growth',
+                      desc: 'A freelance manager charges $40–$80 per post in Australia. Our AI does the job from 87¢.',
+                    },
+                    {
+                      icon: Rocket,
+                      anchor: false,
+                      stat: '3× more',
+                      title: 'Consistent posting',
+                      desc: 'Businesses that post consistently get 3× the reach. AI never forgets, never gets busy.',
+                    },
+                  ].map((p, i) => (
+                    <div
+                      key={i}
+                      className={`rounded-2xl p-6 text-left border ${
+                        p.anchor
+                          ? 'bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border-amber-500/20'
+                          : 'bg-white/[0.03] border-white/[0.08]'
+                      }`}
+                    >
+                      <p.icon size={22} className={`${p.anchor ? 'text-amber-400' : 'text-white/55'} mb-3`} />
+                      <p className={`text-3xl font-black mb-1 ${p.anchor ? 'text-amber-400' : 'text-white'}`}>{p.stat}</p>
+                      <p className="font-bold text-white text-sm mb-2">{p.title}</p>
+                      <p className="text-xs text-white/45 leading-relaxed">{p.desc}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
 
@@ -286,71 +334,35 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 </div>
               )}
 
-              {/* ANIMATED DEMO */}
-            <section className="py-12 px-6">
-              <div className="max-w-3xl mx-auto">
-                <div className="text-center mb-8">
-                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-2">See it in action</h2>
-                  <p className="text-white/40 text-sm">Watch AI write, schedule, and publish your posts in real time</p>
-                </div>
-                <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-[#0d0d1a] aspect-video">
-                  {CLIENT.youtubeVideoId ? (
-                    <div className="absolute inset-0 cursor-pointer group" onClick={() => setVideoLightbox(true)}>
-                      <img src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`} alt="Video thumbnail" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/40 group-hover:bg-black/25 transition flex items-center justify-center">
-                        <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl shadow-black/50">
-                          <Play size={32} className="text-black ml-1" fill="black" />
-                        </div>
-                      </div>
-                      <div className="absolute bottom-4 right-4 text-[10px] text-white/40 bg-black/40 px-2 py-1 rounded-lg backdrop-blur-sm">Click to watch</div>
-                    </div>
-                  ) : (
-                    <AnimatedDemo />
-                  )}
-                </div>
-              </div>
-            </section>
+              {/* LIVE GALLERY — full-bleed two-row marquee of post mockups
+                  across six Aussie SMB industries. Concrete proof of variety;
+                  the hero's PostShowcase is intimate, this is panoramic. */}
+              <LiveGallery />
 
-            {/* HOW IT WORKS — compact */}
-            <section className="py-12 px-6 border-t border-white/5">
-              <div className="max-w-4xl mx-auto">
-                <div className="text-center mb-10">
-                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-2">Up and running in 5 minutes</h2>
-                  <p className="text-white/40 text-sm">Self-service setup — no waiting, no tech skills needed</p>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {howItWorks.map((step, i) => (
-                    <div key={i} className="relative text-center glass-card card-hover rounded-2xl p-4">
-                      {i < howItWorks.length - 1 && (
-                        <div className="hidden md:block absolute top-7 left-[62%] w-full h-px bg-gradient-to-r from-amber-500/25 to-transparent z-0" />
-                      )}
-                      <div className="relative z-10">
-                        <div className="w-14 h-14 mx-auto mb-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center">
-                          <step.icon size={20} className="text-amber-400" />
-                        </div>
-                        <div className="text-[10px] font-bold text-amber-500 mb-1">Step {step.step}</div>
-                        <h3 className="font-bold text-white text-sm mb-1">{step.title}</h3>
-                        <p className="text-[11px] text-white/35 leading-relaxed">{step.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
+            {/* HOW IT ACTUALLY WORKS — light cream tonal break.
+                Replaces the previous setup-checklist (which explained
+                onboarding effort, not the AI black box). */}
+            <HowItActuallyWorks />
 
-            {/* BOTTOM CTA */}
+            {/* CINEMATIC TOUR — atmospheric video moment. Renders YouTube
+                thumbnail when CLIENT.youtubeVideoId is set, otherwise an
+                animated CSS placeholder until real footage drops in. */}
+            <CinematicTour onPlay={() => setVideoLightbox(true)} />
+
+            {/* BOTTOM CTA — routes to signup, not pricing. The product is
+                the wedge; pricing fires after the trial is felt. */}
             <section className="py-16 px-6 text-center relative overflow-hidden">
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(245,158,11,0.10),transparent_70%)]" />
               <div className="relative max-w-xl mx-auto">
-                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">Ready to put social media on autopilot?</h2>
-                <p className="text-white/40 mb-8 text-sm">Australian businesses already saving 8+ hours a week.</p>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">Stop spending Sundays writing captions.</h2>
+                <p className="text-white/55 mb-8 text-sm">Let it post while you sleep. {CLIENT.freeTrialPosts ?? 3} free posts to start — no card.</p>
                 <button
-                  onClick={() => setShowPricing(true)}
+                  onClick={onSignIn}
                   className="group inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-lg hover:opacity-90 transition shadow-2xl shadow-amber-500/25"
                 >
-                  Start Free Trial <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  Generate {CLIENT.freeTrialPosts ?? 3} Free Posts <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </button>
-                <p className="text-white/20 text-xs mt-5">No credit card · No setup fee · from $29/month · No lock-in</p>
+                <p className="text-white/30 text-xs mt-5">No card · $29/mo when you're ready · Cancel in 2 clicks</p>
                 <p className="text-white/20 text-xs mt-2">
                   Already a customer?{' '}
                   <button onClick={() => onActivate('growth')} className="text-amber-400 hover:text-amber-300 underline underline-offset-2 transition">
@@ -379,18 +391,21 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 Most businesses post once, get busy, then go silent for weeks. Your competitors don't stop.
                 SocialAI Studio makes sure <strong className="text-white/70">you never go quiet again</strong> — with AI that writes, designs, schedules, and publishes for you.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-3xl mx-auto">
+              {/* 3-step strip — editorial pattern matching HowItActuallyWorks
+                  on the home tab. Amber-only accents, large numerals, no
+                  rainbow gradient circles. */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-8 max-w-4xl mx-auto text-left">
                 {[
-                  { emoji: '1', title: 'Tell us about your business', desc: 'Industry, location, tone — takes 60 seconds', color: 'from-blue-500 to-indigo-600' },
-                  { emoji: '2', title: 'AI creates your content plan', desc: 'Captions, images, hashtags, schedule — all done', color: 'from-amber-500 to-orange-500' },
-                  { emoji: '3', title: 'Posts publish automatically', desc: 'Facebook & Instagram, on autopilot', color: 'from-emerald-500 to-teal-500' },
+                  { num: '01', title: 'Tell us about your business', desc: 'Industry, location, tone — 60 seconds, one time.' },
+                  { num: '02', title: 'AI writes &amp; designs every post', desc: 'Captions in your voice, custom images, smart scheduling.' },
+                  { num: '03', title: 'Posts publish automatically', desc: 'Direct to Facebook &amp; Instagram. You stay in control.' },
                 ].map((step, i) => (
-                  <div key={i} className="relative bg-white/[0.03] border border-white/10 rounded-2xl p-6 text-center">
-                    <div className={`w-10 h-10 mx-auto mb-4 rounded-full bg-gradient-to-br ${step.color} flex items-center justify-center`}>
-                      <span className="text-white font-black text-sm">{step.emoji}</span>
+                  <div key={i} className="relative">
+                    <div className="flex items-baseline gap-3 mb-3">
+                      <span className="text-5xl sm:text-6xl font-black text-amber-400/85 tracking-[-0.04em] leading-none">{step.num}</span>
                     </div>
-                    <h3 className="font-bold text-sm mb-1.5">{step.title}</h3>
-                    <p className="text-xs text-white/40">{step.desc}</p>
+                    <h3 className="font-black text-base sm:text-lg text-white mb-1.5 tracking-tight" dangerouslySetInnerHTML={{ __html: step.title }} />
+                    <p className="text-sm text-white/50 leading-[1.55]" dangerouslySetInnerHTML={{ __html: step.desc }} />
                   </div>
                 ))}
               </div>
@@ -404,18 +419,29 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 </div>
                 <h2 className="text-2xl sm:text-3xl md:text-4xl font-black mb-3">The numbers speak for themselves</h2>
               </div>
+              {/* Stats row — single amber anchor (the headline number),
+                  three neutral surfaces. Same Linear/Stripe rule the hero
+                  pillars follow: colour signals hierarchy, not decoration.
+                  Removed the hover:scale — suggests interactivity that isn't there. */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { icon: Clock,         value: '8+ hrs',  label: 'Saved every single week',     sub: 'That\'s a full work day back',     color: 'text-amber-400',   bg: 'bg-gradient-to-br from-amber-500/15 to-orange-500/5',   border: 'border-amber-500/25' },
-                  { icon: TrendingUp,    value: '47%',     label: 'Higher engagement rate',       sub: 'vs manual posting',                color: 'text-emerald-400', bg: 'bg-gradient-to-br from-emerald-500/15 to-teal-500/5',   border: 'border-emerald-500/25' },
-                  { icon: Repeat2,       value: '3x',      label: 'More consistent posting',     sub: 'Never go silent again',            color: 'text-blue-400',    bg: 'bg-gradient-to-br from-blue-500/15 to-indigo-500/5',   border: 'border-blue-500/25' },
-                  { icon: MessageCircle, value: '2.4x',    label: 'Wider audience reach',         sub: 'More eyes on your brand',          color: 'text-purple-400',  bg: 'bg-gradient-to-br from-purple-500/15 to-pink-500/5',   border: 'border-purple-500/25' },
+                  { icon: Clock,         value: '8+ hrs',  label: 'Saved every single week',  sub: "That's a full work day back",   anchor: true  },
+                  { icon: TrendingUp,    value: '47%',     label: 'Higher engagement rate',   sub: 'vs manual posting',             anchor: false },
+                  { icon: Repeat2,       value: '3x',      label: 'More consistent posting',  sub: 'Never go silent again',         anchor: false },
+                  { icon: MessageCircle, value: '2.4x',    label: 'Wider audience reach',     sub: 'More eyes on your brand',       anchor: false },
                 ].map((s, i) => (
-                  <div key={i} className={`${s.bg} border ${s.border} rounded-2xl p-6 text-center hover:scale-[1.03] transition-transform`}>
-                    <s.icon size={22} className={`${s.color} mx-auto mb-3`} />
-                    <p className={`text-4xl md:text-5xl font-black ${s.color}`}>{s.value}</p>
+                  <div
+                    key={i}
+                    className={`rounded-2xl p-6 text-center border ${
+                      s.anchor
+                        ? 'bg-gradient-to-br from-amber-500/[0.10] to-amber-500/[0.02] border-amber-500/25'
+                        : 'bg-white/[0.03] border-white/[0.08]'
+                    }`}
+                  >
+                    <s.icon size={22} className={`${s.anchor ? 'text-amber-400' : 'text-white/55'} mx-auto mb-3`} />
+                    <p className={`text-4xl md:text-5xl font-black ${s.anchor ? 'text-amber-400' : 'text-white'}`}>{s.value}</p>
                     <p className="text-sm font-semibold text-white/70 mt-2">{s.label}</p>
-                    <p className="text-xs text-white/30 mt-1">{s.sub}</p>
+                    <p className="text-xs text-white/35 mt-1">{s.sub}</p>
                   </div>
                 ))}
               </div>
@@ -474,30 +500,54 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               </div>
             </div>
 
-            {/* FEATURES — WHAT YOU GET */}
+            {/* FEATURES — editorial spec-sheet. Two featured "anchor" cards
+                with amber accents, four supporting items as text-list with
+                editorial numbering. Replaces the rainbow gradient grid that
+                fought every other surface for attention. */}
             <div>
-              <div className="text-center mb-10">
-                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                  <Zap size={12} /> Packed with Power
+              <div className="mb-12 max-w-2xl">
+                <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                  <span className="w-6 h-px bg-amber-300/40" />
+                  Packed with power
                 </div>
-                <h2 className="text-3xl md:text-4xl font-black mb-2">Everything your socials need to thrive</h2>
-                <p className="text-white/40 text-sm">Built for busy small businesses who want results, not busywork</p>
+                <h2 className="text-3xl md:text-5xl font-black tracking-[-0.02em] leading-[1.05]">
+                  Everything your socials need —
+                  <span className="block italic font-serif font-light text-white/50">no busywork attached.</span>
+                </h2>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
+
+              {/* Two featured cards — the most visual features. Amber-only
+                  accents, no per-card gradient story. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
                 {[
-                  { icon: Brain, title: 'AI Caption Writing', desc: 'Google Gemini writes scroll-stopping captions in your brand voice. Hashtags included.', color: 'from-purple-500 to-indigo-600' },
-                  { icon: ImageIcon, title: 'AI Image Generation', desc: 'Every single post gets a custom, eye-catching AI image. No stock photos needed.', color: 'from-pink-500 to-rose-600' },
-                  { icon: Calendar, title: 'Smart Scheduling', desc: 'AI analyses your industry and picks the exact times your audience is most active.', color: 'from-blue-500 to-cyan-500' },
-                  { icon: Facebook, title: 'Auto-Publish to Facebook & Insta', desc: 'Posts go live automatically. No logging in, no copying, no pasting. Ever.', color: 'from-blue-600 to-blue-800' },
-                  { icon: BarChart3, title: 'Live Analytics Dashboard', desc: 'Track followers, reach, and engagement in real time. Know exactly what\'s working.', color: 'from-emerald-500 to-teal-600' },
-                  { icon: Zap, title: 'Saturation Mode', desc: 'Flood your socials with 21 posts in one hit. Perfect for launches, promos, or catching up.', color: 'from-amber-500 to-orange-600' },
+                  { icon: Brain, title: 'AI Caption Writing', desc: "Captions in your voice — not a generic template. We read your existing posts and match the tone before we write a word." },
+                  { icon: ImageIcon, title: 'AI Image Generation', desc: "A custom image with every post. Not stock photos. Not Canva templates. Made on the fly to match the caption." },
                 ].map((f, i) => (
-                  <div key={i} className="bg-white/[0.03] border border-white/8 rounded-2xl p-6 hover:bg-white/[0.06] hover:border-white/15 transition-all group">
-                    <div className={`w-11 h-11 bg-gradient-to-br ${f.color} rounded-xl flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
-                      <f.icon size={20} className="text-white" />
+                  <div key={i} className="bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08] rounded-3xl p-7 sm:p-9 hover:border-amber-500/25 transition">
+                    <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-center justify-center mb-5">
+                      <f.icon size={20} className="text-amber-400" />
                     </div>
-                    <h3 className="font-black mb-2 text-[15px]">{f.title}</h3>
-                    <p className="text-xs text-white/45 leading-relaxed">{f.desc}</p>
+                    <h3 className="text-xl sm:text-2xl font-black mb-3 text-white tracking-tight">{f.title}</h3>
+                    <p className="text-[15px] text-white/55 leading-[1.6]">{f.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Four supporting items — magazine columns with editorial
+                  numbering (03–06), divider lines, no icons. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-7 pt-2">
+                {[
+                  { title: 'Smart Scheduling', desc: "AI picks the times your audience is actually online. No more 9am-because-that's-when-you-remembered." },
+                  { title: 'Auto-publish to FB & IG', desc: "Posts go live automatically. No logging in, no copy-paste, no time-zone maths." },
+                  { title: 'Live Analytics', desc: "Followers, reach, engagement — track what's working, drop what isn't." },
+                  { title: 'Saturation Mode', desc: "Going on holiday? Doing a launch? Hit one button — 21 posts queued and scheduled across 3 weeks." },
+                ].map((f, i) => (
+                  <div key={i} className="border-t border-white/8 pt-5">
+                    <h3 className="text-[10px] font-bold tracking-[0.22em] text-amber-300/70 uppercase mb-2.5">
+                      0{i + 3}
+                    </h3>
+                    <h4 className="text-lg font-black text-white mb-1.5 tracking-tight">{f.title}</h4>
+                    <p className="text-sm text-white/55 leading-[1.6]">{f.desc}</p>
                   </div>
                 ))}
               </div>
@@ -531,33 +581,83 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     ))}
                   </div>
                 </div>
-                <div className="space-y-4">
-                  <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5">
-                    <div className="flex gap-1 mb-2">{[1,2,3,4,5].map(n => <Star key={n} size={14} className="text-amber-400 fill-amber-400" />)}</div>
-                    <p className="text-sm text-white/60 italic leading-relaxed mb-3">"I used to spend my Sundays writing posts. Now the AI does a full week in 30 seconds. Game changer for my bakery."</p>
-                    <p className="text-xs font-bold text-white/80">Sarah M. — Cafe Owner, Gold Coast</p>
-                  </div>
-                  <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5">
-                    <div className="flex gap-1 mb-2">{[1,2,3,4,5].map(n => <Star key={n} size={14} className="text-amber-400 fill-amber-400" />)}</div>
-                    <p className="text-sm text-white/60 italic leading-relaxed mb-3">"My gym's Instagram went from dead to 3 posts a week with real engagement. Members are finding us through social now."</p>
-                    <p className="text-xs font-bold text-white/80">Jake T. — Fitness Studio, Brisbane</p>
-                  </div>
-                </div>
+                {/* Trust card — adapts to whether a founder is configured.
+                    With CLIENT.founder.firstName + photoUrl set, becomes a
+                    personal "Hi, I'm [name]" promise card with the photo.
+                    Without, falls back to the AU flag + generic commitments.
+                    See client.config.ts founder block to enable. */}
+                {(() => {
+                  const founder = CLIENT.founder;
+                  const hasFounder = !!(founder?.firstName && founder?.photoUrl);
+                  return (
+                    <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-7 space-y-5">
+                      <div className="flex items-center gap-3.5">
+                        {hasFounder ? (
+                          <img
+                            src={founder.photoUrl}
+                            alt={founder.firstName}
+                            className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-500/30 flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 border border-amber-500/30 flex items-center justify-center flex-shrink-0 text-3xl">
+                            🇦🇺
+                          </div>
+                        )}
+                        <div>
+                          <p className="font-black text-white text-sm">
+                            {hasFounder
+                              ? <>Hi, I'm <span className="text-amber-300">{founder.firstName}</span> — and I built this.</>
+                              : 'Built and supported in Australia'}
+                          </p>
+                          <p className="text-xs text-white/50 mt-0.5">
+                            {hasFounder
+                              ? founder.promise
+                              : 'A small team. A real human reply.'}
+                          </p>
+                        </div>
+                      </div>
+                      <ul className="space-y-3 text-sm text-white/70">
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">Same-day email replies</strong> — usually within a few hours, AEST.</span>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">Your content stays yours</strong> — we never train AI on your business data.</span>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">Cancel anytime</strong> — two clicks in PayPal. No contract, no email tag.</span>
+                        </li>
+                        <li className="flex gap-2.5">
+                          <CheckCircle size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                          <span><strong className="text-white/90">No card to start</strong> — generate {CLIENT.freeTrialPosts ?? 3} free posts before you ever pay.</span>
+                        </li>
+                      </ul>
+                      <a href={`mailto:${CLIENT.supportEmail}`} className="inline-flex items-center gap-2 text-xs text-amber-400 hover:text-amber-300 transition pt-1">
+                        <span>✉</span> {CLIENT.supportEmail}
+                      </a>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
-            {/* AGENCY SECTION */}
-            <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-3xl p-8 md:p-10">
+            {/* AGENCY SECTION — unified to neutral surface + amber accent.
+                Was emerald gradient (rainbow holdover). Now matches the rest
+                of the editorial palette — single-anchor system. */}
+            <div className="bg-white/[0.025] border border-white/[0.08] rounded-3xl p-8 md:p-10">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
                 <div>
-                  <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-5">
-                    <Users size={12} /> For Social Media Managers & Agencies
+                  <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                    <Users size={11} className="text-amber-300/80" />
+                    For social media managers &amp; agencies
                   </div>
-                  <h2 className="text-2xl md:text-3xl font-black mb-3 leading-tight">
-                    Manage all your clients{' '}
-                    <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">from one dashboard</span>
+                  <h2 className="text-2xl md:text-4xl font-black mb-4 tracking-[-0.02em] leading-[1.05]">
+                    Manage all your clients
+                    <span className="block italic font-serif font-light text-white/55">from one dashboard.</span>
                   </h2>
-                  <p className="text-white/50 mb-5 text-sm leading-relaxed">
+                  <p className="text-white/55 mb-6 text-[15px] leading-[1.6]">
                     The Agency plan gives you up to 5 client workspaces — each with their own profile, posts, Facebook page, and AI settings. Switch between clients instantly.
                   </p>
                   <div className="space-y-2.5 mb-6">
@@ -568,129 +668,163 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       'One monthly bill — not per client',
                     ].map((f, i) => (
                       <div key={i} className="flex items-center gap-3 text-sm">
-                        <CheckCircle size={14} className="text-emerald-400 shrink-0" />
+                        <CheckCircle size={14} className="text-amber-400 shrink-0" />
                         <span className="text-white/70">{f}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="flex items-end gap-2 mb-5">
-                    <span className="text-3xl font-black text-white">$149</span>
-                    <span className="text-white/40 mb-0.5 text-sm">/month</span>
+                  <div className="flex items-baseline gap-1.5 mb-5">
+                    <span className="text-4xl font-black text-white tracking-tight">$149</span>
+                    <span className="text-white/40 text-sm font-bold">/mo</span>
                   </div>
                   <button
                     onClick={() => setShowPricing(true)}
-                    className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold px-5 py-2.5 rounded-xl hover:opacity-90 transition text-sm"
+                    className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-6 py-3 rounded-full hover:opacity-90 transition text-sm shadow-2xl shadow-amber-500/20"
                   >
-                    Get Agency Plan <ArrowRight size={15} />
+                    Get Agency Plan <ArrowRight size={14} />
                   </button>
                 </div>
+                {/* Right column — client-list mockup. The active row gets
+                    the amber accent (matches the page palette); inactive
+                    rows are neutral. */}
                 <div className="space-y-3">
                   {[
                     { name: "Bella's Bakery", type: 'Cafe & Bakery', posts: 14, active: true },
                     { name: 'FastFit Gym', type: 'Fitness Studio', posts: 21, active: false },
                     { name: 'Green Thumb Nursery', type: 'Garden Centre', posts: 7, active: false },
                   ].map((client, i) => (
-                    <div key={i} className={`flex items-center gap-3 p-3.5 rounded-2xl border ${client.active ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/3 border-white/8'}`}>
-                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                    <div
+                      key={i}
+                      className={`flex items-center gap-3 p-3.5 rounded-2xl border ${
+                        client.active
+                          ? 'bg-amber-500/[0.08] border-amber-500/30'
+                          : 'bg-white/[0.02] border-white/[0.08]'
+                      }`}
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center flex-shrink-0">
                         <span className="text-white font-black text-sm">{client.name.charAt(0)}</span>
                       </div>
                       <div className="flex-1">
                         <p className="font-semibold text-sm text-white">{client.name}</p>
                         <p className="text-xs text-white/40">{client.type}</p>
                       </div>
-                      <p className="text-xs font-bold text-emerald-400">{client.posts} posts/wk</p>
+                      <p className={`text-xs font-bold ${client.active ? 'text-amber-400' : 'text-white/45'}`}>
+                        {client.posts} posts/wk
+                      </p>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            {/* FINAL CTA */}
+            {/* FINAL CTA — claims dropped that we can't substantiate.
+                "Hundreds of businesses" without a real number reads suspicious. */}
             <div className="text-center space-y-5">
-              <h2 className="text-2xl md:text-3xl font-black">Ready to grow your business on social media?</h2>
-              <p className="text-white/40 text-sm max-w-lg mx-auto">Join hundreds of businesses that stopped overthinking social media and let AI handle it.</p>
-              <button onClick={() => { setTab('pricing'); }} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-4 rounded-2xl hover:opacity-90 transition text-base shadow-xl shadow-amber-500/20">
-                Start Free Trial <ArrowRight size={18} />
+              <h2 className="text-2xl md:text-3xl font-black">Stop overthinking social media. Let AI handle it.</h2>
+              <p className="text-white/45 text-sm max-w-lg mx-auto">Generate {CLIENT.freeTrialPosts ?? 3} full posts — caption, image, hashtags — in your voice. If they sound like a robot, walk away. We've wasted 4 minutes of your day, not $29 of your money.</p>
+              <button onClick={onSignIn} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-4 rounded-2xl hover:opacity-90 transition text-base shadow-xl shadow-amber-500/20">
+                Generate {CLIENT.freeTrialPosts ?? 3} Free Posts <ArrowRight size={18} />
               </button>
-              <p className="text-xs text-white/25">{CLIENT.freeTrialPosts ?? 3} free AI posts · No credit card · No lock-in · Cancel anytime</p>
+              <p className="text-xs text-white/25">No credit card · No setup fee · Cancel in 2 clicks</p>
             </div>
           </div>
         )}
 
-        {/* ─── PRICING TAB ─── */}
+        {/* ─── PRICING TAB ─── editorial unified palette */}
         {tab === 'pricing' && (
-          <div className="max-w-5xl mx-auto px-6 py-16">
-            <div className="text-center mb-12">
-              <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                {CLIENT.freeTrialPosts ?? 3} free posts to start · No setup fee · Cancel anytime
+          <div className="max-w-5xl mx-auto px-6 py-20">
+            <div className="mb-14 max-w-2xl">
+              <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                <span className="w-6 h-px bg-amber-300/40" />
+                {CLIENT.freeTrialPosts ?? 3} free posts to start · cancel any time
               </div>
-              <h2 className="text-3xl md:text-4xl font-black mb-2">Simple, honest pricing</h2>
-              <p className="text-white/40 text-sm">Pick one plan — that's it. No stacking, no hidden extras.</p>
+              <h2 className="text-3xl md:text-5xl font-black tracking-[-0.02em] leading-[1.05]">
+                Simple, honest pricing.
+                <span className="block italic font-serif font-light text-white/55">Pick one. That's it.</span>
+              </h2>
+              <p className="mt-5 text-base text-white/55 leading-[1.65] max-w-xl">
+                Each plan is standalone — you're not charged for lower tiers. Try {CLIENT.freeTrialPosts ?? 3} AI posts free first, then pick what suits you.
+              </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-              {CLIENT.plans.map((plan) => {
-                const checkColor = plan.id === 'starter' ? 'text-blue-400' : plan.id === 'growth' ? 'text-amber-400' : plan.id === 'pro' ? 'text-purple-400' : 'text-emerald-400';
-                const glowBg = plan.id === 'starter' ? 'rgba(59,130,246,0.1)' : plan.id === 'growth' ? 'rgba(245,158,11,0.1)' : plan.id === 'pro' ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)';
-                const borderColor = plan.id === 'starter' ? 'border-blue-500/30' : plan.id === 'growth' ? 'border-amber-500/30' : plan.id === 'pro' ? 'border-purple-500/30' : 'border-emerald-500/30';
+            {/* Pricing grid — Growth is the single visual anchor (amber).
+                Starter and Pro are matte neutral surfaces. Killing the
+                rainbow per-plan colour story removes the "AI SaaS template"
+                feel and makes the eye actually pick a plan. */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-4xl">
+              {CLIENT.plans.filter(plan => plan.id !== 'agency').map((plan) => {
+                const isAnchor = plan.id === 'growth';
                 const includesLabel = planIncludes[plan.id];
                 return (
                   <div
                     key={plan.id}
-                    className={`relative rounded-3xl border flex flex-col overflow-hidden hover:scale-[1.02] transition-transform ${borderColor}`}
-                    style={{ background: `linear-gradient(160deg, ${glowBg} 0%, #0d0d14 55%)` }}
+                    className={`relative rounded-3xl border flex flex-col overflow-hidden transition ${
+                      isAnchor
+                        ? 'bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border-amber-500/30 shadow-[0_30px_80px_-30px_rgba(245,158,11,0.25)]'
+                        : 'bg-white/[0.02] border-white/[0.08] hover:border-white/15'
+                    }`}
                   >
-                    <div className={`h-1 w-full bg-gradient-to-r ${plan.color}`} />
                     {plan.badge && (
-                      <div className={`absolute top-4 right-4 bg-gradient-to-r ${plan.color} text-white text-[10px] font-black px-3 py-1 rounded-full shadow-lg`}>
-                        {plan.badge}
+                      <div className="absolute top-5 right-5 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black px-3 py-1 rounded-full shadow-lg tracking-wide">
+                        {plan.badge.toUpperCase()}
                       </div>
                     )}
-                    <div className="p-6 flex flex-col flex-1">
-                      <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${plan.color} flex items-center justify-center mb-4 shadow-lg`}>
-                        <Zap size={18} className="text-white" />
+                    <div className="p-7 sm:p-8 flex flex-col flex-1">
+                      {/* Plan name — editorial small caps, no icon */}
+                      <p className={`text-[10px] font-bold tracking-[0.22em] uppercase mb-3 ${isAnchor ? 'text-amber-300/80' : 'text-white/40'}`}>
+                        {plan.name}
+                      </p>
+                      <div className="flex items-baseline gap-1.5 mb-1">
+                        <span className="text-4xl sm:text-5xl font-black text-white tracking-tight">${plan.price}</span>
+                        <span className="text-white/40 text-sm font-bold">/mo</span>
                       </div>
-                      <h3 className="text-xl font-black mb-1 text-white">{plan.name}</h3>
-                      {/* Price — standalone, not cumulative */}
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-black text-white">${plan.price}</span>
-                        <span className="text-white/40 text-sm">/mo</span>
-                      </div>
-                      {CLIENT.setupFee > 0 ? (
-                        <p className="text-[11px] text-amber-400/70 mt-0.5 mb-5">+ ${CLIENT.setupFee} one-time setup</p>
-                      ) : (
-                        <p className="text-[11px] text-emerald-400/70 mt-0.5 mb-5">No setup fee · Try {CLIENT.freeTrialPosts ?? 3} free first</p>
+                      {plan.yearlyPrice && (
+                        <p className="text-[11px] text-white/40 mb-5">
+                          or <span className="text-white/65 font-semibold">${Math.round(plan.yearlyPrice / 12)}/mo</span> billed yearly · save ${plan.price * 12 - plan.yearlyPrice}
+                        </p>
                       )}
+                      {!plan.yearlyPrice && (
+                        <p className="text-[11px] text-white/35 mb-5">
+                          {CLIENT.setupFee > 0
+                            ? <>+ ${CLIENT.setupFee} one-time setup</>
+                            : <>No setup fee · {CLIENT.freeTrialPosts ?? 3} posts free first</>}
+                        </p>
+                      )}
+
                       {includesLabel && (
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-wider mb-2">{includesLabel}</p>
+                        <p className="text-[10px] font-bold tracking-[0.18em] text-white/30 uppercase mb-3 pt-2">{includesLabel}</p>
                       )}
-                      <ul className="space-y-2 mb-6 flex-1">
+                      <ul className="space-y-2.5 mb-7 flex-1">
                         {plan.features.map((f, i) => (
-                          <li key={i} className="flex items-start gap-2 text-sm">
-                            <CheckCircle size={13} className={`${checkColor} shrink-0 mt-0.5`} />
-                            <span className="text-white/65">{f}</span>
+                          <li key={i} className="flex items-start gap-2.5 text-[13.5px]">
+                            <CheckCircle size={13} className={`${isAnchor ? 'text-amber-400' : 'text-white/45'} shrink-0 mt-1`} />
+                            <span className="text-white/70 leading-snug">{f}</span>
                           </li>
                         ))}
                         {plan.limitations.map((f, i) => (
-                          <li key={i} className="flex items-start gap-2 text-sm opacity-40">
+                          <li key={i} className="flex items-start gap-2.5 text-[13.5px] opacity-40">
                             <span className="text-white/20 shrink-0 mt-0.5 w-[13px] text-center">—</span>
-                            <span className="text-white/30 line-through">{f}</span>
+                            <span className="text-white/30 line-through leading-snug">{f}</span>
                           </li>
                         ))}
                       </ul>
                       <button
                         onClick={() => setShowPricing(true)}
-                        className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-2xl hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg text-sm`}
+                        className={`w-full font-black py-3.5 rounded-full transition flex items-center justify-center gap-2 text-sm ${
+                          isAnchor
+                            ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-2xl shadow-amber-500/25 hover:opacity-90'
+                            : 'bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-white'
+                        }`}
                       >
-                        Get {plan.name} <ArrowRight size={15} />
+                        Get {plan.name} <ArrowRight size={14} />
                       </button>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="mt-8 bg-white/3 border border-white/8 rounded-2xl px-6 py-5 max-w-2xl mx-auto text-center space-y-1">
-              <p className="text-sm font-bold text-white/60">You only pay for one plan</p>
-              <p className="text-xs text-white/30 leading-relaxed">Each plan is standalone — you're not charged for lower tiers. Try {CLIENT.freeTrialPosts ?? 3} AI posts free first, then pick the plan that suits you. No setup fee, no contract, cancel anytime.</p>
+            <div className="mt-12 pt-8 border-t border-white/8 max-w-4xl flex flex-wrap items-center justify-between gap-4 text-[11px] text-white/40">
+              <p className="font-bold tracking-[0.18em] uppercase">Standalone plans · You only pay for one</p>
+              <p>No setup fee · No contract · Cancel any time</p>
             </div>
           </div>
         )}

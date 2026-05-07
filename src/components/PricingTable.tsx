@@ -25,6 +25,12 @@ interface Props {
    * the button just closes the modal.
    */
   onAccountSetup?: () => void;
+  /**
+   * Pre-select a plan when the modal opens. Used by the trial-exhausted
+   * paywall to drop the user straight onto Growth without a second click.
+   * Pre-selection collapses 2 decisions (which plan + ready to pay) into 1.
+   */
+  defaultPlanId?: string;
 }
 
 const planGlows: Record<string, string> = {
@@ -48,9 +54,11 @@ const planCheckColor: Record<string, string> = {
   agency:  'text-emerald-400',
 };
 
-export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId, onAccountSetup }) => {
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId, onAccountSetup, defaultPlanId }) => {
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(defaultPlanId ?? null);
+  // Default to YEARLY — defaults dominate behavior in B2B SaaS pricing UX,
+  // and the 2-months-free anchor lifts annual prepay take-rate (and LTV).
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('yearly');
   const [activating, setActivating] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activated, setActivated] = useState(false);
@@ -190,7 +198,7 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
             <span className={`text-sm font-semibold transition ${isYearly ? 'text-white' : 'text-white/35'}`}>Yearly</span>
             {isYearly && (
               <span className="bg-green-500/15 border border-green-500/30 text-green-400 text-xs font-bold px-2.5 py-1 rounded-full">
-                Save ~17%
+                2 months FREE
               </span>
             )}
           </div>
@@ -240,9 +248,10 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                     )}
                   </div>
                   {isYearly && plan.yearlyPrice && (
-                    <div className="flex items-center gap-2 mb-0.5">
+                    <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                       <span className="text-xs text-white/25 line-through">${plan.price * 12}/yr</span>
                       <span className="text-xs text-green-400 font-semibold">${plan.yearlyPrice}/yr</span>
+                      <span className="text-[10px] text-green-400/80 font-bold">save ${plan.price * 12 - plan.yearlyPrice}</span>
                     </div>
                   )}
                   {hasSetupFee && promo?.active ? (
