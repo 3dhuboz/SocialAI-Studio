@@ -10,6 +10,8 @@ import {
 import { AppLogo } from './AppLogo';
 import { PostShowcase } from './PostShowcase';
 import { LiveGallery } from './LiveGallery';
+import { HowItActuallyWorks } from './HowItActuallyWorks';
+import { CinematicTour } from './CinematicTour';
 
 type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq' | 'contact';
 
@@ -323,32 +325,15 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                   the hero's PostShowcase is intimate, this is panoramic. */}
               <LiveGallery />
 
-            {/* HOW IT WORKS — compact */}
-            <section className="py-12 px-6 border-t border-white/5">
-              <div className="max-w-4xl mx-auto">
-                <div className="text-center mb-10">
-                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black mb-2">Up and running in 5 minutes</h2>
-                  <p className="text-white/40 text-sm">Self-service setup — no waiting, no tech skills needed</p>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {howItWorks.map((step, i) => (
-                    <div key={i} className="relative text-center glass-card card-hover rounded-2xl p-4">
-                      {i < howItWorks.length - 1 && (
-                        <div className="hidden md:block absolute top-7 left-[62%] w-full h-px bg-gradient-to-r from-amber-500/25 to-transparent z-0" />
-                      )}
-                      <div className="relative z-10">
-                        <div className="w-14 h-14 mx-auto mb-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center justify-center">
-                          <step.icon size={20} className="text-amber-400" />
-                        </div>
-                        <div className="text-[10px] font-bold text-amber-500 mb-1">Step {step.step}</div>
-                        <h3 className="font-bold text-white text-sm mb-1">{step.title}</h3>
-                        <p className="text-[11px] text-white/35 leading-relaxed">{step.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
+            {/* HOW IT ACTUALLY WORKS — light cream tonal break.
+                Replaces the previous setup-checklist (which explained
+                onboarding effort, not the AI black box). */}
+            <HowItActuallyWorks />
+
+            {/* CINEMATIC TOUR — atmospheric video moment. Renders YouTube
+                thumbnail when CLIENT.youtubeVideoId is set, otherwise an
+                animated CSS placeholder until real footage drops in. */}
+            <CinematicTour onPlay={() => setVideoLightbox(true)} />
 
             {/* BOTTOM CTA — routes to signup, not pricing. The product is
                 the wedge; pricing fires after the trial is felt. */}
@@ -498,30 +483,54 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               </div>
             </div>
 
-            {/* FEATURES — WHAT YOU GET */}
+            {/* FEATURES — editorial spec-sheet. Two featured "anchor" cards
+                with amber accents, four supporting items as text-list with
+                editorial numbering. Replaces the rainbow gradient grid that
+                fought every other surface for attention. */}
             <div>
-              <div className="text-center mb-10">
-                <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                  <Zap size={12} /> Packed with Power
+              <div className="mb-12 max-w-2xl">
+                <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                  <span className="w-6 h-px bg-amber-300/40" />
+                  Packed with power
                 </div>
-                <h2 className="text-3xl md:text-4xl font-black mb-2">Everything your socials need to thrive</h2>
-                <p className="text-white/40 text-sm">Built for busy small businesses who want results, not busywork</p>
+                <h2 className="text-3xl md:text-5xl font-black tracking-[-0.02em] leading-[1.05]">
+                  Everything your socials need —
+                  <span className="block italic font-serif font-light text-white/50">no busywork attached.</span>
+                </h2>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
+
+              {/* Two featured cards — the most visual features. Amber-only
+                  accents, no per-card gradient story. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
                 {[
-                  { icon: Brain, title: 'AI Caption Writing', desc: 'Google Gemini writes scroll-stopping captions in your brand voice. Hashtags included.', color: 'from-purple-500 to-indigo-600' },
-                  { icon: ImageIcon, title: 'AI Image Generation', desc: 'Every single post gets a custom, eye-catching AI image. No stock photos needed.', color: 'from-pink-500 to-rose-600' },
-                  { icon: Calendar, title: 'Smart Scheduling', desc: 'AI analyses your industry and picks the exact times your audience is most active.', color: 'from-blue-500 to-cyan-500' },
-                  { icon: Facebook, title: 'Auto-Publish to Facebook & Insta', desc: 'Posts go live automatically. No logging in, no copying, no pasting. Ever.', color: 'from-blue-600 to-blue-800' },
-                  { icon: BarChart3, title: 'Live Analytics Dashboard', desc: 'Track followers, reach, and engagement in real time. Know exactly what\'s working.', color: 'from-emerald-500 to-teal-600' },
-                  { icon: Zap, title: 'Saturation Mode', desc: 'Flood your socials with 21 posts in one hit. Perfect for launches, promos, or catching up.', color: 'from-amber-500 to-orange-600' },
+                  { icon: Brain, title: 'AI Caption Writing', desc: "Captions in your voice — not a generic template. We read your existing posts and match the tone before we write a word." },
+                  { icon: ImageIcon, title: 'AI Image Generation', desc: "A custom image with every post. Not stock photos. Not Canva templates. Made on the fly to match the caption." },
                 ].map((f, i) => (
-                  <div key={i} className="bg-white/[0.03] border border-white/8 rounded-2xl p-6 hover:bg-white/[0.06] hover:border-white/15 transition-all group">
-                    <div className={`w-11 h-11 bg-gradient-to-br ${f.color} rounded-xl flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
-                      <f.icon size={20} className="text-white" />
+                  <div key={i} className="bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08] rounded-3xl p-7 sm:p-9 hover:border-amber-500/25 transition">
+                    <div className="w-12 h-12 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-center justify-center mb-5">
+                      <f.icon size={20} className="text-amber-400" />
                     </div>
-                    <h3 className="font-black mb-2 text-[15px]">{f.title}</h3>
-                    <p className="text-xs text-white/45 leading-relaxed">{f.desc}</p>
+                    <h3 className="text-xl sm:text-2xl font-black mb-3 text-white tracking-tight">{f.title}</h3>
+                    <p className="text-[15px] text-white/55 leading-[1.6]">{f.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Four supporting items — magazine columns with editorial
+                  numbering (03–06), divider lines, no icons. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-7 pt-2">
+                {[
+                  { title: 'Smart Scheduling', desc: "AI picks the times your audience is actually online. No more 9am-because-that's-when-you-remembered." },
+                  { title: 'Auto-publish to FB & IG', desc: "Posts go live automatically. No logging in, no copy-paste, no time-zone maths." },
+                  { title: 'Live Analytics', desc: "Followers, reach, engagement — track what's working, drop what isn't." },
+                  { title: 'Saturation Mode', desc: "Going on holiday? Doing a launch? Hit one button — 21 posts queued and scheduled across 3 weeks." },
+                ].map((f, i) => (
+                  <div key={i} className="border-t border-white/8 pt-5">
+                    <h3 className="text-[10px] font-bold tracking-[0.22em] text-amber-300/70 uppercase mb-2.5">
+                      0{i + 3}
+                    </h3>
+                    <h4 className="text-lg font-black text-white mb-1.5 tracking-tight">{f.title}</h4>
+                    <p className="text-sm text-white/55 leading-[1.6]">{f.desc}</p>
                   </div>
                 ))}
               </div>
@@ -664,84 +673,101 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
           </div>
         )}
 
-        {/* ─── PRICING TAB ─── */}
+        {/* ─── PRICING TAB ─── editorial unified palette */}
         {tab === 'pricing' && (
-          <div className="max-w-5xl mx-auto px-6 py-16">
-            <div className="text-center mb-12">
-              <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                {CLIENT.freeTrialPosts ?? 3} free posts to start · No setup fee · Cancel anytime
+          <div className="max-w-5xl mx-auto px-6 py-20">
+            <div className="mb-14 max-w-2xl">
+              <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                <span className="w-6 h-px bg-amber-300/40" />
+                {CLIENT.freeTrialPosts ?? 3} free posts to start · cancel any time
               </div>
-              <h2 className="text-3xl md:text-4xl font-black mb-2">Simple, honest pricing</h2>
-              <p className="text-white/40 text-sm">Pick one plan — that's it. No stacking, no hidden extras.</p>
+              <h2 className="text-3xl md:text-5xl font-black tracking-[-0.02em] leading-[1.05]">
+                Simple, honest pricing.
+                <span className="block italic font-serif font-light text-white/55">Pick one. That's it.</span>
+              </h2>
+              <p className="mt-5 text-base text-white/55 leading-[1.65] max-w-xl">
+                Each plan is standalone — you're not charged for lower tiers. Try {CLIENT.freeTrialPosts ?? 3} AI posts free first, then pick what suits you.
+              </p>
             </div>
-            {/* Public landing pricing — Agency hidden here. Different ICP
-                (social media agencies, not SMBs), and 4 plans next to a $29
-                anchor inflates perceived range. Agency lives in-app, in the
-                Benefits-tab "For Agencies" panel below, and in the modal. */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-4xl mx-auto">
+            {/* Pricing grid — Growth is the single visual anchor (amber).
+                Starter and Pro are matte neutral surfaces. Killing the
+                rainbow per-plan colour story removes the "AI SaaS template"
+                feel and makes the eye actually pick a plan. */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-4xl">
               {CLIENT.plans.filter(plan => plan.id !== 'agency').map((plan) => {
-                const checkColor = plan.id === 'starter' ? 'text-blue-400' : plan.id === 'growth' ? 'text-amber-400' : plan.id === 'pro' ? 'text-purple-400' : 'text-emerald-400';
-                const glowBg = plan.id === 'starter' ? 'rgba(59,130,246,0.1)' : plan.id === 'growth' ? 'rgba(245,158,11,0.1)' : plan.id === 'pro' ? 'rgba(168,85,247,0.1)' : 'rgba(16,185,129,0.1)';
-                const borderColor = plan.id === 'starter' ? 'border-blue-500/30' : plan.id === 'growth' ? 'border-amber-500/30' : plan.id === 'pro' ? 'border-purple-500/30' : 'border-emerald-500/30';
+                const isAnchor = plan.id === 'growth';
                 const includesLabel = planIncludes[plan.id];
                 return (
                   <div
                     key={plan.id}
-                    className={`relative rounded-3xl border flex flex-col overflow-hidden hover:scale-[1.02] transition-transform ${borderColor}`}
-                    style={{ background: `linear-gradient(160deg, ${glowBg} 0%, #0d0d14 55%)` }}
+                    className={`relative rounded-3xl border flex flex-col overflow-hidden transition ${
+                      isAnchor
+                        ? 'bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border-amber-500/30 shadow-[0_30px_80px_-30px_rgba(245,158,11,0.25)]'
+                        : 'bg-white/[0.02] border-white/[0.08] hover:border-white/15'
+                    }`}
                   >
-                    <div className={`h-1 w-full bg-gradient-to-r ${plan.color}`} />
                     {plan.badge && (
-                      <div className={`absolute top-4 right-4 bg-gradient-to-r ${plan.color} text-white text-[10px] font-black px-3 py-1 rounded-full shadow-lg`}>
-                        {plan.badge}
+                      <div className="absolute top-5 right-5 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black px-3 py-1 rounded-full shadow-lg tracking-wide">
+                        {plan.badge.toUpperCase()}
                       </div>
                     )}
-                    <div className="p-6 flex flex-col flex-1">
-                      <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${plan.color} flex items-center justify-center mb-4 shadow-lg`}>
-                        <Zap size={18} className="text-white" />
+                    <div className="p-7 sm:p-8 flex flex-col flex-1">
+                      {/* Plan name — editorial small caps, no icon */}
+                      <p className={`text-[10px] font-bold tracking-[0.22em] uppercase mb-3 ${isAnchor ? 'text-amber-300/80' : 'text-white/40'}`}>
+                        {plan.name}
+                      </p>
+                      <div className="flex items-baseline gap-1.5 mb-1">
+                        <span className="text-4xl sm:text-5xl font-black text-white tracking-tight">${plan.price}</span>
+                        <span className="text-white/40 text-sm font-bold">/mo</span>
                       </div>
-                      <h3 className="text-xl font-black mb-1 text-white">{plan.name}</h3>
-                      {/* Price — standalone, not cumulative */}
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-black text-white">${plan.price}</span>
-                        <span className="text-white/40 text-sm">/mo</span>
-                      </div>
-                      {CLIENT.setupFee > 0 ? (
-                        <p className="text-[11px] text-amber-400/70 mt-0.5 mb-5">+ ${CLIENT.setupFee} one-time setup</p>
-                      ) : (
-                        <p className="text-[11px] text-emerald-400/70 mt-0.5 mb-5">No setup fee · Try {CLIENT.freeTrialPosts ?? 3} free first</p>
+                      {plan.yearlyPrice && (
+                        <p className="text-[11px] text-white/40 mb-5">
+                          or <span className="text-white/65 font-semibold">${Math.round(plan.yearlyPrice / 12)}/mo</span> billed yearly · save ${plan.price * 12 - plan.yearlyPrice}
+                        </p>
                       )}
+                      {!plan.yearlyPrice && (
+                        <p className="text-[11px] text-white/35 mb-5">
+                          {CLIENT.setupFee > 0
+                            ? <>+ ${CLIENT.setupFee} one-time setup</>
+                            : <>No setup fee · {CLIENT.freeTrialPosts ?? 3} posts free first</>}
+                        </p>
+                      )}
+
                       {includesLabel && (
-                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-wider mb-2">{includesLabel}</p>
+                        <p className="text-[10px] font-bold tracking-[0.18em] text-white/30 uppercase mb-3 pt-2">{includesLabel}</p>
                       )}
-                      <ul className="space-y-2 mb-6 flex-1">
+                      <ul className="space-y-2.5 mb-7 flex-1">
                         {plan.features.map((f, i) => (
-                          <li key={i} className="flex items-start gap-2 text-sm">
-                            <CheckCircle size={13} className={`${checkColor} shrink-0 mt-0.5`} />
-                            <span className="text-white/65">{f}</span>
+                          <li key={i} className="flex items-start gap-2.5 text-[13.5px]">
+                            <CheckCircle size={13} className={`${isAnchor ? 'text-amber-400' : 'text-white/45'} shrink-0 mt-1`} />
+                            <span className="text-white/70 leading-snug">{f}</span>
                           </li>
                         ))}
                         {plan.limitations.map((f, i) => (
-                          <li key={i} className="flex items-start gap-2 text-sm opacity-40">
+                          <li key={i} className="flex items-start gap-2.5 text-[13.5px] opacity-40">
                             <span className="text-white/20 shrink-0 mt-0.5 w-[13px] text-center">—</span>
-                            <span className="text-white/30 line-through">{f}</span>
+                            <span className="text-white/30 line-through leading-snug">{f}</span>
                           </li>
                         ))}
                       </ul>
                       <button
                         onClick={() => setShowPricing(true)}
-                        className={`w-full bg-gradient-to-r ${plan.color} text-white font-black py-3.5 rounded-2xl hover:opacity-90 transition flex items-center justify-center gap-2 shadow-lg text-sm`}
+                        className={`w-full font-black py-3.5 rounded-full transition flex items-center justify-center gap-2 text-sm ${
+                          isAnchor
+                            ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-2xl shadow-amber-500/25 hover:opacity-90'
+                            : 'bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 text-white'
+                        }`}
                       >
-                        Get {plan.name} <ArrowRight size={15} />
+                        Get {plan.name} <ArrowRight size={14} />
                       </button>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div className="mt-8 bg-white/3 border border-white/8 rounded-2xl px-6 py-5 max-w-2xl mx-auto text-center space-y-1">
-              <p className="text-sm font-bold text-white/60">You only pay for one plan</p>
-              <p className="text-xs text-white/30 leading-relaxed">Each plan is standalone — you're not charged for lower tiers. Try {CLIENT.freeTrialPosts ?? 3} AI posts free first, then pick the plan that suits you. No setup fee, no contract, cancel anytime.</p>
+            <div className="mt-12 pt-8 border-t border-white/8 max-w-4xl flex flex-wrap items-center justify-between gap-4 text-[11px] text-white/40">
+              <p className="font-bold tracking-[0.18em] uppercase">Standalone plans · You only pay for one</p>
+              <p>No setup fee · No contract · Cancel any time</p>
             </div>
           </div>
         )}
