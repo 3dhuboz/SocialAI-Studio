@@ -2433,9 +2433,37 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* Free trial banner — shown only to no-plan users with trial credits.
-            Acts as a persistent conversion nudge: shows what's left, links
-            to pricing. Disappears the moment they pay. */}
-        {isOnFreeTrial && (
+            TWO modes:
+              • If FB ISN'T connected → red warning that takes precedence:
+                trial posts can't go live until FB is connected. CTA goes
+                straight to Settings tab. The trial is meaningless without
+                this — never skip past it silently.
+              • If FB IS connected → normal "X posts remaining" nudge with
+                pricing CTA. Pre-selects Growth on the last post. */}
+        {isOnFreeTrial && !fbConnected && (
+          <div className="mb-5 rounded-2xl border border-red-500/35 bg-red-500/10 px-5 py-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-red-500/20">
+                <AlertCircle size={16} className="text-red-300" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white">
+                  Connect Facebook to make your trial posts go live
+                </p>
+                <p className="text-xs text-white/55">
+                  Without Facebook connected, AI-generated posts stay as drafts. Connect once and your {FREE_TRIAL_POSTS} trial posts publish straight to your real page.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="flex-shrink-0 bg-red-500 hover:bg-red-400 text-white font-bold px-4 py-2 rounded-xl transition text-sm whitespace-nowrap"
+            >
+              Connect now
+            </button>
+          </div>
+        )}
+        {isOnFreeTrial && fbConnected && (
           <div className={`mb-5 rounded-2xl border px-5 py-4 flex items-center justify-between gap-4 ${
             trialPostsRemaining <= 1
               ? 'bg-amber-500/10 border-amber-500/30'
@@ -2458,15 +2486,12 @@ const Dashboard: React.FC = () => {
                         : `Free trial used up`}
                 </p>
                 <p className="text-xs text-white/50">
-                  No credit card needed yet · From $29/month when you're ready · Cancel in 2 clicks
+                  Posts publish straight to your Facebook page · From $29/month when you're ready · Cancel in 2 clicks
                 </p>
               </div>
             </div>
             <button
               onClick={() => {
-                // Pre-select Growth when the user is at peak intent (last post
-                // or trial just used up). Default selection collapses two
-                // decisions into one and lifts checkout completion.
                 if (trialPostsRemaining <= 1) setPricingDefaultPlan('growth');
                 setShowPricing(true);
               }}
@@ -2965,33 +2990,68 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* Footer actions */}
+                {/* Footer actions
+                    Trial users with FB connected get Publish-first ordering:
+                    the WHOLE POINT of the trial is for them to see real posts
+                    on their real page. "Save Draft" as the primary action
+                    leaves them with a folder of drafts that never go live —
+                    the trial sells nothing. So during trial we promote
+                    Publish to primary and keep Save as a secondary fallback. */}
                 <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/6 bg-black/15">
                   <DateTimePicker value={scheduleDate} onChange={setScheduleDate} />
-                  <button
-                    onClick={handleSavePost}
-                    className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition text-sm shadow-lg shadow-green-500/15"
-                  >
-                    <Save size={14} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
-                  </button>
-                  {generatedContent && (
-                    <button
-                      onClick={() => setShowPreview(true)}
-                      className="bg-white/6 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition text-sm"
-                    >
-                      <Eye size={14} /> Full Preview
-                    </button>
-                  )}
-                  {fbConnected && (
-                    <button
-                      onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
-                      disabled={isPublishing || isGeneratingReel}
-                      title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : `Publish to ${platform}`}
-                      className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
-                    >
-                      {isPublishing ? <Loader2 size={14} className="animate-spin" /> : isGeneratingReel ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      {isGeneratingReel ? 'Generating video…' : `Publish to ${platform}`}
-                    </button>
+                  {isOnFreeTrial && fbConnected && !scheduleDate ? (
+                    <>
+                      <button
+                        onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
+                        disabled={isPublishing || isGeneratingReel || !generatedContent}
+                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
+                      >
+                        {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        {isGeneratingReel ? 'Generating video…' : `Publish to ${platform} now`}
+                      </button>
+                      <button
+                        onClick={handleSavePost}
+                        className="bg-white/6 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition text-sm"
+                      >
+                        <Save size={14} /> Save as draft instead
+                      </button>
+                      {generatedContent && (
+                        <button
+                          onClick={() => setShowPreview(true)}
+                          className="bg-white/6 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition text-sm"
+                        >
+                          <Eye size={14} /> Preview
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleSavePost}
+                        className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition text-sm shadow-lg shadow-green-500/15"
+                      >
+                        <Save size={14} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
+                      </button>
+                      {generatedContent && (
+                        <button
+                          onClick={() => setShowPreview(true)}
+                          className="bg-white/6 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-semibold px-4 py-2 rounded-xl flex items-center gap-2 transition text-sm"
+                        >
+                          <Eye size={14} /> Full Preview
+                        </button>
+                      )}
+                      {fbConnected && (
+                        <button
+                          onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
+                          disabled={isPublishing || isGeneratingReel}
+                          title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : `Publish to ${platform}`}
+                          className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
+                        >
+                          {isPublishing ? <Loader2 size={14} className="animate-spin" /> : isGeneratingReel ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                          {isGeneratingReel ? 'Generating video…' : `Publish to ${platform}`}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

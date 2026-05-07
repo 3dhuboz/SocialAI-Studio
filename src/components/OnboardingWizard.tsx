@@ -279,20 +279,27 @@ export const OnboardingWizard: React.FC<Props> = ({
                   Note: Instagram must be a Business or Creator account, not a personal one.
                 </p>
               </div>
+              {/* Onboarding NEEDS Facebook connected before the trial can
+                  deliver. The whole product is "we publish to your FB page"
+                  — without that connection, generated posts become drafts
+                  that never go live and the trial sells nothing. The Skip
+                  button is gone. The Continue button is disabled until a
+                  page is connected; copy explains why. */}
+              {!socialTokens.facebookPageId && (
+                <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-4 text-xs text-amber-200/85 leading-relaxed">
+                  <strong className="text-amber-300">Why this is required:</strong>{' '}
+                  Your free trial posts publish straight to this Facebook page so you can see real engagement on your real audience. Without it connected, the AI has nowhere to post and you'd just have a folder of drafts.
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button
-                  onClick={() => next(true)}
-                  className="text-white/30 hover:text-white/60 text-sm transition px-4"
-                >
-                  Skip for now
-                </button>
-                <button
-                  onClick={() => next(!socialTokens.facebookPageId)}
-                  disabled={isSaving}
-                  className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
+                  onClick={() => next(false)}
+                  disabled={isSaving || !socialTokens.facebookPageId}
+                  className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
+                  title={socialTokens.facebookPageId ? 'Continue' : 'Connect a Facebook Page first'}
                 >
                   {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
-                  {socialTokens.facebookPageId ? 'Continue' : 'Skip'} <ArrowRight size={16} />
+                  {socialTokens.facebookPageId ? <>Continue <ArrowRight size={16} /></> : 'Connect Facebook to continue'}
                 </button>
               </div>
             </div>
