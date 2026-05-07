@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
 import { verifyToken } from '@clerk/backend';
 
@@ -104,6 +104,37 @@ async function getAuthUserId(req: Request, secretKey: string, jwtKey?: string, d
 
 // ── UUID helper ──────────────────────────────────────────────────────────────
 const uuid = () => crypto.randomUUID();
+
+// ── Admin gate ───────────────────────────────────────────────────────────────
+// Resolves the caller's Clerk uid, looks up users.is_admin, returns either
+// { uid, email } or a 401/403 Response. Endpoints use:
+//
+//   const adminCheck = await requireAdmin(c);
+//   if (adminCheck instanceof Response) return adminCheck;
+//
+// is_admin is set on the user row when their email matches CLIENT.adminEmails
+// at sign-in time (see App.tsx line ~437), so this gate is consistent with the
+// frontend's "admin mode" detection.
+async function requireAdmin(c: Context<{ Bindings: Env }>): Promise<{ uid: string; email: string | null } | Response> {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  const row = await c.env.DB.prepare(
+    'SELECT email, is_admin FROM users WHERE id = ?'
+  ).bind(uid).first<{ email: string | null; is_admin: number }>();
+  if (!row || !row.is_admin) return c.json({ error: 'Forbidden' }, 403);
+  return { uid, email: row.email };
+}
+
+// ── Plan price source-of-truth (KEEP IN SYNC WITH src/client.config.ts) ──────
+// MRR computation needs to know the monthly price per plan. Mirror the
+// frontend's CLIENT.plans[].price values here. If you change a plan price
+// in the frontend, also change it here.
+const PLAN_PRICE_AUD: Record<string, number> = {
+  starter: 29,
+  growth: 49,
+  pro: 79,
+  agency: 149,
+};
 
 // ── Business-rule: posts for on-hold clients must NEVER be claimed by the cron.
 // This filter has been reverted twice in the past when the SQL was inline; keep
@@ -1052,7 +1083,336 @@ app.post('/api/paypal-webhook', async (c) => {
     }
   }
 
+  // Audit-trail mirror — every event we care about gets a row in `payments`.
+  // Append-only, dedup'd by paypal_event_id. The admin Customers dashboard
+  // and the customer Billing screen read from this table; the `pending_*`
+  // tables stay short-lived (consumed-then-ignored).
+  try {
+    await recordPaymentEvent(c, event);
+  } catch (e) {
+    console.error('recordPaymentEvent failed (webhook continues):', String(e));
+  }
+
   return c.text('OK', 200);
+});
+
+/**
+ * Mirror a PayPal webhook event into our `payments` table for audit + admin
+ * visibility. Idempotent via the unique index on paypal_event_id — a retried
+ * delivery will INSERT OR IGNORE without producing a duplicate row.
+ *
+ * Event types handled:
+ *   BILLING.SUBSCRIPTION.ACTIVATED  → status 'completed', no amount
+ *   BILLING.SUBSCRIPTION.CANCELLED  → status 'cancelled', no amount
+ *   PAYMENT.SALE.COMPLETED          → status 'completed', positive amount_cents
+ *   PAYMENT.SALE.REFUNDED           → status 'refunded',  negative amount_cents
+ *   BILLING.SUBSCRIPTION.PAYMENT.FAILED → status 'failed', no amount
+ *
+ * Other event types are intentionally ignored (we'd just be storing noise).
+ */
+async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: any): Promise<void> {
+  const eventId = event?.id;
+  const eventType = event?.event_type as string | undefined;
+  const resource = event?.resource || {};
+  if (!eventId || !eventType) return;
+
+  let subscriptionId: string | null = null;
+  let captureId: string | null = null;
+  let amountCents: number | null = null;
+  let currency = 'AUD';
+  let status: 'completed' | 'cancelled' | 'refunded' | 'failed' | null = null;
+  let email: string | null = resource.subscriber?.email_address || null;
+  let plan: string | null = null;
+
+  switch (eventType) {
+    case 'BILLING.SUBSCRIPTION.ACTIVATED': {
+      subscriptionId = resource.id || null;
+      const paypalPlanId = resource.plan_id;
+      if (paypalPlanId) plan = PAYPAL_PLAN_TIER[paypalPlanId] ?? null;
+      status = 'completed';
+      break;
+    }
+    case 'BILLING.SUBSCRIPTION.CANCELLED': {
+      subscriptionId = resource.id || null;
+      status = 'cancelled';
+      break;
+    }
+    case 'PAYMENT.SALE.COMPLETED': {
+      captureId = resource.id || null;
+      // billing_agreement_id is the subscription_id for recurring sales.
+      subscriptionId = resource.billing_agreement_id || null;
+      const total = parseFloat(resource.amount?.total ?? '0');
+      if (Number.isFinite(total) && total > 0) {
+        amountCents = Math.round(total * 100);
+      }
+      currency = resource.amount?.currency || 'AUD';
+      status = 'completed';
+      break;
+    }
+    case 'PAYMENT.SALE.REFUNDED': {
+      captureId = resource.id || null;
+      subscriptionId = resource.billing_agreement_id || null;
+      const total = parseFloat(resource.amount?.total ?? '0');
+      if (Number.isFinite(total) && total > 0) {
+        // Negative so SUMming amount_cents gives net revenue.
+        amountCents = -Math.abs(Math.round(total * 100));
+      }
+      currency = resource.amount?.currency || 'AUD';
+      status = 'refunded';
+      break;
+    }
+    case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED': {
+      subscriptionId = resource.id || null;
+      status = 'failed';
+      break;
+    }
+    default:
+      return;
+  }
+
+  // Resolve user_id + email + plan via the subscription_id (or email fallback).
+  // PAYMENT.SALE.* events don't carry subscriber email; we hop through the
+  // users table via paypal_subscription_id to enrich the row.
+  let userId: string | null = null;
+  if (subscriptionId) {
+    const u = await c.env.DB.prepare(
+      'SELECT id, email, plan FROM users WHERE paypal_subscription_id = ?'
+    ).bind(subscriptionId).first<{ id: string; email: string | null; plan: string | null }>();
+    if (u) {
+      userId = u.id;
+      if (!email) email = u.email;
+      if (!plan && u.plan) plan = u.plan;
+    }
+  }
+  if (!userId && email) {
+    const u = await c.env.DB.prepare(
+      'SELECT id, plan FROM users WHERE email = ?'
+    ).bind(email).first<{ id: string; plan: string | null }>();
+    if (u) {
+      userId = u.id;
+      if (!plan && u.plan) plan = u.plan;
+    }
+  }
+
+  // Cap raw_event so a single huge webhook can't blow row size limits.
+  const rawJson = (() => {
+    try { return JSON.stringify(event).slice(0, 8000); } catch { return null; }
+  })();
+
+  await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO payments
+       (id, paypal_event_id, paypal_subscription_id, paypal_capture_id,
+        email, user_id, plan, event_type, amount_cents, currency, status,
+        raw_event, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    uuid(), eventId, subscriptionId, captureId,
+    email, userId, plan, eventType, amountCents, currency, status,
+    rawJson, new Date().toISOString(),
+  ).run();
+}
+
+// ── Admin: Customers dashboard ───────────────────────────────────────────────
+// Powers the agency owner's "Customers" tab. All endpoints gated by
+// requireAdmin (Clerk JWT → users.is_admin=1).
+
+/**
+ * GET /api/admin/stats
+ * Top-line numbers for the Customers dashboard hero strip.
+ *   signups_total      — every row in users
+ *   signups_7d / 30d   — created_at within window
+ *   active_subs        — distinct paid users with a paypal_subscription_id
+ *   mrr_cents          — sum of monthly plan price across active subs
+ *   revenue_30d_cents  — sum of completed payments in last 30d (refunds subtract)
+ *   churn_30d          — cancellation events in last 30d
+ *   trial_users        — users with no plan set
+ */
+app.get('/api/admin/stats', async (c) => {
+  const adminCheck = await requireAdmin(c);
+  if (adminCheck instanceof Response) return adminCheck;
+
+  const now = Date.now();
+  const ago7  = new Date(now - 7  * 86_400_000).toISOString();
+  const ago30 = new Date(now - 30 * 86_400_000).toISOString();
+
+  const [
+    signupsTotal, signups7d, signups30d,
+    paidByPlan, trialCount, churn30d, revenue30d,
+  ] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM users').first<{ c: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE created_at >= ?').bind(ago7).first<{ c: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM users WHERE created_at >= ?').bind(ago30).first<{ c: number }>(),
+    c.env.DB.prepare(
+      `SELECT plan, COUNT(*) as c FROM users
+        WHERE plan IS NOT NULL AND plan != ''
+          AND paypal_subscription_id IS NOT NULL
+        GROUP BY plan`
+    ).all(),
+    c.env.DB.prepare(`SELECT COUNT(*) as c FROM users WHERE plan IS NULL OR plan = ''`).first<{ c: number }>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as c FROM payments WHERE event_type = ? AND created_at >= ?`
+    ).bind('BILLING.SUBSCRIPTION.CANCELLED', ago30).first<{ c: number }>(),
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(amount_cents),0) as s FROM payments WHERE created_at >= ?
+         AND status IN ('completed','refunded')`
+    ).bind(ago30).first<{ s: number }>(),
+  ]);
+
+  let mrrCents = 0;
+  let activeSubs = 0;
+  for (const row of (paidByPlan.results || []) as { plan: string; c: number }[]) {
+    const price = PLAN_PRICE_AUD[row.plan] || 0;
+    mrrCents += price * 100 * row.c;
+    activeSubs += row.c;
+  }
+
+  return c.json({
+    signups_total: signupsTotal?.c || 0,
+    signups_7d:    signups7d?.c    || 0,
+    signups_30d:   signups30d?.c   || 0,
+    active_subs:   activeSubs,
+    mrr_cents:     mrrCents,
+    revenue_30d_cents: revenue30d?.s || 0,
+    churn_30d:     churn30d?.c      || 0,
+    trial_users:   trialCount?.c    || 0,
+  });
+});
+
+/**
+ * GET /api/admin/customers?filter=all|trial|paid|cancelled&limit=50&offset=0
+ * Paginated list of users for the Customers table. Each row includes
+ * derived metrics so the table can render without N+1 round-trips.
+ */
+app.get('/api/admin/customers', async (c) => {
+  const adminCheck = await requireAdmin(c);
+  if (adminCheck instanceof Response) return adminCheck;
+
+  const filter = (c.req.query('filter') || 'all').toLowerCase();
+  const limit = Math.min(200, Math.max(1, parseInt(c.req.query('limit') || '50', 10)));
+  const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
+
+  // Build the WHERE clause based on filter — all branches use static SQL,
+  // no string interpolation of user input.
+  let where = '1=1';
+  if (filter === 'trial') {
+    where = `(u.plan IS NULL OR u.plan = '')`;
+  } else if (filter === 'paid') {
+    where = `u.plan IS NOT NULL AND u.plan != '' AND u.paypal_subscription_id IS NOT NULL`;
+  } else if (filter === 'cancelled') {
+    where = `u.id IN (SELECT user_id FROM payments
+                       WHERE event_type = 'BILLING.SUBSCRIPTION.CANCELLED'
+                         AND user_id IS NOT NULL)`;
+  }
+
+  const rows = await c.env.DB.prepare(
+    `SELECT
+        u.id,
+        u.email,
+        u.plan,
+        u.setup_status,
+        u.is_admin,
+        u.paypal_subscription_id,
+        u.created_at,
+        u.onboarding_done,
+        (SELECT MAX(created_at) FROM posts WHERE user_id = u.id)            AS last_post_at,
+        (SELECT COUNT(*)        FROM posts WHERE user_id = u.id)            AS post_count,
+        (SELECT COALESCE(SUM(amount_cents),0)
+           FROM payments
+          WHERE (user_id = u.id OR (email IS NOT NULL AND email = u.email))
+            AND status = 'completed')                                       AS total_paid_cents,
+        (SELECT COALESCE(SUM(amount_cents),0)
+           FROM payments
+          WHERE (user_id = u.id OR (email IS NOT NULL AND email = u.email))
+            AND status = 'refunded')                                        AS total_refunded_cents
+       FROM users u
+       WHERE ${where}
+       ORDER BY u.created_at DESC
+       LIMIT ? OFFSET ?`
+  ).bind(limit, offset).all();
+
+  const totalRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as c FROM users u WHERE ${where}`
+  ).first<{ c: number }>();
+
+  return c.json({
+    customers: rows.results || [],
+    total: totalRow?.c || 0,
+    limit, offset, filter,
+  });
+});
+
+/**
+ * GET /api/admin/payments?email=...&limit=20
+ * Recent payment events. Without `email`, returns the latest events
+ * across all customers (used for an admin "all activity" feed).
+ * With `email`, returns just that customer's events.
+ */
+app.get('/api/admin/payments', async (c) => {
+  const adminCheck = await requireAdmin(c);
+  if (adminCheck instanceof Response) return adminCheck;
+
+  const email = c.req.query('email');
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20', 10)));
+
+  let result;
+  if (email) {
+    result = await c.env.DB.prepare(
+      `SELECT id, email, event_type, amount_cents, currency, status, plan,
+              paypal_subscription_id, paypal_capture_id, created_at
+         FROM payments
+        WHERE email = ? OR user_id IN (SELECT id FROM users WHERE email = ?)
+        ORDER BY created_at DESC
+        LIMIT ?`
+    ).bind(email, email, limit).all();
+  } else {
+    result = await c.env.DB.prepare(
+      `SELECT id, email, event_type, amount_cents, currency, status, plan,
+              paypal_subscription_id, paypal_capture_id, created_at
+         FROM payments
+        ORDER BY created_at DESC
+        LIMIT ?`
+    ).bind(limit).all();
+  }
+
+  return c.json({ payments: result.results || [] });
+});
+
+// ── Customer: Billing screen ─────────────────────────────────────────────────
+
+/**
+ * GET /api/billing
+ * Returns the SIGNED-IN user's current plan + their own payment history.
+ * Scoped strictly to the caller — never returns another user's data even
+ * if the caller knows the email.
+ */
+app.get('/api/billing', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, plan, paypal_subscription_id, created_at FROM users WHERE id = ?'
+  ).bind(uid).first<{
+    id: string; email: string | null; plan: string | null;
+    paypal_subscription_id: string | null; created_at: string | null;
+  }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const payments = await c.env.DB.prepare(
+    `SELECT event_type, amount_cents, currency, status, plan, created_at
+       FROM payments
+      WHERE user_id = ? OR (email IS NOT NULL AND email = ?)
+      ORDER BY created_at DESC
+      LIMIT 24`
+  ).bind(uid, user.email ?? '').all();
+
+  return c.json({
+    email: user.email,
+    plan: user.plan,
+    plan_price_aud: user.plan ? (PLAN_PRICE_AUD[user.plan] ?? null) : null,
+    subscription_id: user.paypal_subscription_id,
+    member_since: user.created_at,
+    payments: payments.results || [],
+  });
 });
 
 // ── OpenRouter Stats ──────────────────────────────────────────────────────────

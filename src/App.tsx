@@ -31,8 +31,9 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle, Target, ChevronRight
+  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt
 } from 'lucide-react';
+import { AdminCustomers } from './components/AdminCustomers';
 
 /** Expandable campaign card — extracted so useState works correctly inside .map() */
 const CampaignCard: React.FC<{
@@ -277,7 +278,7 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients' | 'customers'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -1865,6 +1866,9 @@ const Dashboard: React.FC = () => {
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
+    // Customers tab — admin-only. Shows self-serve signups + payment activity
+    // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
+    ...(!CLIENT.clientMode && isAdminMode ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -4342,6 +4346,11 @@ const Dashboard: React.FC = () => {
               </div>
             )}
           </div>
+        )}
+
+        {/* ═══ CUSTOMERS TAB ═══ — admin-only, see tabs array gate above */}
+        {activeTab === 'customers' && isAdminMode && (
+          <AdminCustomers />
         )}
 
         {/* ═══ SETTINGS TAB ═══ */}

@@ -271,7 +271,92 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
       await f(`/api/db/social-tokens${qs}`, put(tokens));
     },
+
+    // ── Admin: Customers dashboard ────────────────────────────────────────────
+    // All endpoints below require users.is_admin=1 in D1. Calls fail with 403
+    // for non-admin signed-in users.
+
+    async getAdminStats(): Promise<AdminStats> {
+      const res = await f('/api/admin/stats');
+      return res.json() as Promise<AdminStats>;
+    },
+
+    async getAdminCustomers(
+      filter: 'all' | 'trial' | 'paid' | 'cancelled' = 'all',
+      limit = 50,
+      offset = 0,
+    ): Promise<{ customers: AdminCustomer[]; total: number; limit: number; offset: number; filter: string }> {
+      const qs = `?filter=${filter}&limit=${limit}&offset=${offset}`;
+      const res = await f(`/api/admin/customers${qs}`);
+      return res.json() as Promise<{ customers: AdminCustomer[]; total: number; limit: number; offset: number; filter: string }>;
+    },
+
+    async getAdminPayments(email?: string, limit = 20): Promise<{ payments: PaymentEvent[] }> {
+      const parts: string[] = [];
+      if (email) parts.push(`email=${encodeURIComponent(email)}`);
+      parts.push(`limit=${limit}`);
+      const res = await f(`/api/admin/payments?${parts.join('&')}`);
+      return res.json() as Promise<{ payments: PaymentEvent[] }>;
+    },
+
+    // ── Customer: Billing screen ──────────────────────────────────────────────
+    // Returns the SIGNED-IN user's plan + their own payment history.
+
+    async getBilling(): Promise<BillingInfo> {
+      const res = await f('/api/billing');
+      return res.json() as Promise<BillingInfo>;
+    },
   };
+}
+
+// ── Admin / billing types ─────────────────────────────────────────────────────
+
+export interface AdminStats {
+  signups_total: number;
+  signups_7d: number;
+  signups_30d: number;
+  active_subs: number;
+  mrr_cents: number;
+  revenue_30d_cents: number;
+  churn_30d: number;
+  trial_users: number;
+}
+
+export interface AdminCustomer {
+  id: string;
+  email: string | null;
+  plan: string | null;
+  setup_status: string | null;
+  is_admin: number;
+  paypal_subscription_id: string | null;
+  created_at: string | null;
+  onboarding_done: number;
+  last_post_at: string | null;
+  post_count: number;
+  total_paid_cents: number;
+  total_refunded_cents: number;
+}
+
+export interface PaymentEvent {
+  id?: string;
+  email?: string | null;
+  event_type: string;
+  amount_cents: number | null;
+  currency: string | null;
+  status: 'completed' | 'cancelled' | 'refunded' | 'failed' | string;
+  plan: string | null;
+  paypal_subscription_id?: string | null;
+  paypal_capture_id?: string | null;
+  created_at: string;
+}
+
+export interface BillingInfo {
+  email: string | null;
+  plan: string | null;
+  plan_price_aud: number | null;
+  subscription_id: string | null;
+  member_since: string | null;
+  payments: PaymentEvent[];
 }
 
 export type DbClient_ = ReturnType<typeof createDb>;
