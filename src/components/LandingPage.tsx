@@ -20,16 +20,20 @@ interface Props {
 
 const faqs = [
   {
-    q: 'What happens after I purchase?',
-    a: `You're taken straight to a quick setup wizard. Enter your business details, connect your Facebook page, and the AI starts generating your first posts — all in under 5 minutes.`,
+    q: 'Do I have to pay to try it?',
+    a: `No. Sign up free and generate your first ${CLIENT.freeTrialPosts ?? 3} AI posts — captions, hashtags, the lot — without entering payment details. Pick a plan when you want to keep going.`,
+  },
+  {
+    q: 'What happens after I sign up?',
+    a: `You go straight into a quick setup wizard — business details, tone, Facebook page connection — and the AI starts generating your first posts. Under 5 minutes from signup to your first post.`,
   },
   {
     q: 'Do I need a Facebook Business page?',
-    a: 'Yes — you need an active Facebook Business page. You connect it yourself during setup with a single click. No technical knowledge needed.',
+    a: 'Yes — you need an active Facebook Business page that you admin. You connect it yourself during setup with a single click. No technical knowledge needed.',
   },
   {
-    q: 'What is the $99 setup fee for?',
-    a: 'The one-time setup covers your personalised AI configuration: training the AI on your brand voice, industry, and tone so every post sounds like you wrote it.',
+    q: 'Is there a setup fee or contract?',
+    a: 'No setup fee, no contract, no lock-in. Just a monthly subscription you can cancel anytime from PayPal.',
   },
   {
     q: 'Can I change plans later?',
@@ -145,10 +149,10 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               Sign In
             </button>
             <button
-              onClick={() => setShowPricing(true)}
+              onClick={onSignIn}
               className="text-sm bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-5 py-2 rounded-full hover:opacity-90 transition"
             >
-              Get Started
+              Try Free
             </button>
           </div>
         </div>
@@ -207,10 +211,10 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     onClick={() => setShowPricing(true)}
                     className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-base hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/25"
                   >
-                    {portalContent?.hero_cta_text || 'Start Today — $99 Setup'}
+                    {portalContent?.hero_cta_text || `Start Free — ${CLIENT.freeTrialPosts ?? 3} AI posts on us`}
                     <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                   </button>
-                  <p className="text-sm text-white/30">From $29/month · Cancel anytime</p>
+                  <p className="text-sm text-white/30">No credit card · No setup fee · From $29/month after trial</p>
                 </div>
               </div>
 
@@ -344,9 +348,9 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                   onClick={() => setShowPricing(true)}
                   className="group inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-8 py-4 rounded-2xl text-lg hover:opacity-90 transition shadow-2xl shadow-amber-500/25"
                 >
-                  Get Started Today <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                  Start Free Trial <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </button>
-                <p className="text-white/20 text-xs mt-5">$99 setup · from $29/month · No lock-in contract</p>
+                <p className="text-white/20 text-xs mt-5">No credit card · No setup fee · from $29/month · No lock-in</p>
                 <p className="text-white/20 text-xs mt-2">
                   Already a customer?{' '}
                   <button onClick={() => onActivate('growth')} className="text-amber-400 hover:text-amber-300 underline underline-offset-2 transition">
@@ -571,7 +575,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                   </div>
                   <div className="flex items-end gap-2 mb-5">
                     <span className="text-3xl font-black text-white">$149</span>
-                    <span className="text-white/40 mb-0.5 text-sm">/month + $99 setup</span>
+                    <span className="text-white/40 mb-0.5 text-sm">/month</span>
                   </div>
                   <button
                     onClick={() => setShowPricing(true)}
@@ -606,9 +610,9 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               <h2 className="text-2xl md:text-3xl font-black">Ready to grow your business on social media?</h2>
               <p className="text-white/40 text-sm max-w-lg mx-auto">Join hundreds of businesses that stopped overthinking social media and let AI handle it.</p>
               <button onClick={() => { setTab('pricing'); }} className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-10 py-4 rounded-2xl hover:opacity-90 transition text-base shadow-xl shadow-amber-500/20">
-                Get Started Now <ArrowRight size={18} />
+                Start Free Trial <ArrowRight size={18} />
               </button>
-              <p className="text-xs text-white/25">No lock-in. Cancel anytime. Set up in 60 seconds.</p>
+              <p className="text-xs text-white/25">{CLIENT.freeTrialPosts ?? 3} free AI posts · No credit card · No lock-in · Cancel anytime</p>
             </div>
           </div>
         )}
@@ -617,8 +621,8 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         {tab === 'pricing' && (
           <div className="max-w-5xl mx-auto px-6 py-16">
             <div className="text-center mb-12">
-              <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
-                One-time ${CLIENT.setupFee} setup fee · then pay monthly · cancel anytime
+              <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold px-4 py-2 rounded-full mb-5">
+                {CLIENT.freeTrialPosts ?? 3} free posts to start · No setup fee · Cancel anytime
               </div>
               <h2 className="text-3xl md:text-4xl font-black mb-2">Simple, honest pricing</h2>
               <p className="text-white/40 text-sm">Pick one plan — that's it. No stacking, no hidden extras.</p>
@@ -651,7 +655,11 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                         <span className="text-3xl font-black text-white">${plan.price}</span>
                         <span className="text-white/40 text-sm">/mo</span>
                       </div>
-                      <p className="text-[11px] text-amber-400/70 mt-0.5 mb-5">+ ${CLIENT.setupFee} one-time setup</p>
+                      {CLIENT.setupFee > 0 ? (
+                        <p className="text-[11px] text-amber-400/70 mt-0.5 mb-5">+ ${CLIENT.setupFee} one-time setup</p>
+                      ) : (
+                        <p className="text-[11px] text-emerald-400/70 mt-0.5 mb-5">No setup fee · Try {CLIENT.freeTrialPosts ?? 3} free first</p>
+                      )}
                       {includesLabel && (
                         <p className="text-[10px] font-bold text-white/30 uppercase tracking-wider mb-2">{includesLabel}</p>
                       )}
@@ -682,7 +690,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             </div>
             <div className="mt-8 bg-white/3 border border-white/8 rounded-2xl px-6 py-5 max-w-2xl mx-auto text-center space-y-1">
               <p className="text-sm font-bold text-white/60">You only pay for one plan</p>
-              <p className="text-xs text-white/30 leading-relaxed">Each plan is standalone — you're not charged for lower tiers. The {CLIENT.setupFee === 99 ? '$99' : `$${CLIENT.setupFee}`} setup fee is a one-time charge that covers Facebook page connection and account configuration.</p>
+              <p className="text-xs text-white/30 leading-relaxed">Each plan is standalone — you're not charged for lower tiers. Try {CLIENT.freeTrialPosts ?? 3} AI posts free first, then pick the plan that suits you. No setup fee, no contract, cancel anytime.</p>
             </div>
           </div>
         )}

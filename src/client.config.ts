@@ -92,23 +92,28 @@ export const CLIENT = {
   emailJsTemplateId: '',
   emailJsPublicKey: '',
 
-  setupFee: 99,
-
   /**
-   * SETUP FEE PROMO:
-   * To run a promotion (reduce or waive the setup fee), set active: true and
-   * set amount to the discounted price (0 = completely free).
-   * Change label to whatever you want displayed on the pricing page.
-   * Set active: false to return to normal pricing.
-   * NOTE: This controls the UI only. If PayPal charges the fee automatically
-   * on subscription, refund it manually from your PayPal dashboard — or create
-   * a second set of paypalPlanIds without a setup fee and swap them in below.
+   * Setup fee — kept as a config knob in case you ever want to charge one,
+   * but autonomous self-serve onboarding means there's no human cost to
+   * amortize. Set to 0 by default; setting >0 makes the pricing UI show
+   * "+ $N one-time setup" again. The setup-fee promo is unused now and
+   * the UI hides the entire setup-fee row when setupFee is 0.
    */
+  setupFee: 0,
   setupFeePromo: {
     active: false,
     amount: 0,
-    label: 'Limited time — setup fee waived!',
+    label: '',
   },
+
+  /**
+   * Free trial — number of AI post generations a brand-new (no-plan)
+   * signup gets before the paywall fires. Usage-bound, not time-bound:
+   * easier to communicate, harder to game, and the conversion CTA fires
+   * exactly when they're trying to extract more value. Set to 0 to
+   * disable the trial entirely.
+   */
+  freeTrialPosts: 3,
 
   /**
    * PAYPAL SETUP:

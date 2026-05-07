@@ -3,6 +3,11 @@ import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { CLIENT } from '../client.config';
 import { CheckCircle, Zap, ArrowRight, X, Loader2, Shield, Lock, Tag } from 'lucide-react';
 
+// Setup fee was removed when self-serve onboarding shipped — no human
+// cost to amortize. Keeping the conditional so a future Steve can flip
+// it back on by setting CLIENT.setupFee to a positive number without
+// also having to touch UI markup.
+const hasSetupFee = CLIENT.setupFee > 0;
 const promo = CLIENT.setupFeePromo;
 const setupFeeDisplay = promo?.active
   ? (promo.amount === 0 ? 'FREE' : `$${promo.amount}`)
@@ -146,15 +151,17 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-black text-white">Choose your plan</h2>
-            {promo?.active ? (
+            {hasSetupFee && promo?.active ? (
               <div className="flex items-center gap-2 mt-1">
                 <span className="flex items-center gap-1.5 bg-green-500/15 border border-green-500/30 text-green-400 text-xs font-bold px-2.5 py-1 rounded-full">
                   <Tag size={10} /> {promo.label}
                 </span>
                 <span className="text-white/30 text-sm line-through">${CLIENT.setupFee} setup</span>
               </div>
-            ) : (
+            ) : hasSetupFee ? (
               <p className="text-white/35 text-sm mt-1">One-time ${CLIENT.setupFee} setup · Cancel anytime · No lock-in</p>
+            ) : (
+              <p className="text-white/35 text-sm mt-1">No setup fee · Cancel anytime · No lock-in</p>
             )}
           </div>
           {onClose && (
@@ -238,13 +245,15 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                       <span className="text-xs text-green-400 font-semibold">${plan.yearlyPrice}/yr</span>
                     </div>
                   )}
-                  {promo?.active ? (
+                  {hasSetupFee && promo?.active ? (
                     <p className="text-xs mb-6 flex items-center gap-1.5">
                       <span className="text-white/25 line-through">${CLIENT.setupFee} setup</span>
                       <span className="text-green-400 font-bold">{setupFeeDisplay} setup</span>
                     </p>
-                  ) : (
+                  ) : hasSetupFee ? (
                     <p className="text-xs text-white/25 mb-6">+ ${CLIENT.setupFee} one-time setup</p>
+                  ) : (
+                    <p className="text-xs text-white/25 mb-6">No setup fee · Cancel anytime</p>
                   )}
 
                   <ul className="space-y-2.5 mb-8 flex-1">
@@ -290,9 +299,11 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
                     : `$${selectedPlan.price}/mo`}
                 </h3>
                 <p className="text-xs text-white/35 mt-0.5">
-                  {promo?.active
+                  {hasSetupFee && promo?.active
                     ? <><span className="line-through">${CLIENT.setupFee} setup fee</span> <span className="text-green-400 font-semibold">{setupFeeDisplay}</span> · Cancel anytime</>
-                    : <>Includes ${CLIENT.setupFee} one-time setup fee · Cancel anytime</>}
+                    : hasSetupFee
+                    ? <>Includes ${CLIENT.setupFee} one-time setup fee · Cancel anytime</>
+                    : <>No setup fee · Cancel anytime · No lock-in</>}
                 </p>
               </div>
               <button
