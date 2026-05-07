@@ -12,6 +12,14 @@ interface Props {
   onClose?: () => void;
   onPlanActivated?: (planId: string) => void;
   userId?: string | null;
+  /**
+   * Called when an unsigned-in customer clicks "Set Up My Account" on the
+   * success card. Lets the parent (LandingPage) route them straight to the
+   * sign-up flow so their PayPal email gets linked to a Clerk user via the
+   * pending_activations table. When omitted (signed-in path from App.tsx),
+   * the button just closes the modal.
+   */
+  onAccountSetup?: () => void;
 }
 
 const planGlows: Record<string, string> = {
@@ -35,7 +43,7 @@ const planCheckColor: Record<string, string> = {
   agency:  'text-emerald-400',
 };
 
-export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId }) => {
+export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId, onAccountSetup }) => {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [activating, setActivating] = useState(false);
@@ -90,19 +98,34 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
   };
 
   if (activated) {
+    // Signed-in customer: subscription is active, just close the modal and
+    // they're back on the dashboard with their plan attached.
+    // Unsigned-in customer (paid from LandingPage before creating an account):
+    // the activation is sitting in pending_activations keyed by their PayPal
+    // email — onAccountSetup routes them to AuthScreen so they can sign up
+    // with the same email and have it auto-linked.
+    const isStranger = !userId;
+    const handleCta = () => {
+      onClose?.();
+      if (isStranger && onAccountSetup) onAccountSetup();
+    };
     return (
       <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-lg flex items-center justify-center p-6">
         <div className="bg-[#111118] border border-green-500/25 rounded-3xl p-10 w-full max-w-md text-center">
           <div className="w-16 h-16 mx-auto mb-5 bg-green-500/15 border border-green-500/30 rounded-2xl flex items-center justify-center">
             <CheckCircle size={30} className="text-green-400" />
           </div>
-          <h2 className="text-2xl font-black text-white mb-2">You're all set! 🎉</h2>
-          <p className="text-white/40 text-sm mb-6">Your subscription is active. Let's get your account set up — it only takes a few minutes.</p>
+          <h2 className="text-2xl font-black text-white mb-2">Payment received! 🎉</h2>
+          <p className="text-white/40 text-sm mb-6">
+            {isStranger
+              ? <>Now create your account using the <strong className="text-white/70">same email</strong> you paid with — your subscription will link automatically.</>
+              : <>Your subscription is active. Let's get your account set up — it only takes a few minutes.</>}
+          </p>
           <button
-            onClick={onClose}
+            onClick={handleCta}
             className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3 px-8 rounded-2xl hover:opacity-90 transition"
           >
-            Set Up My Account →
+            {isStranger ? 'Create Account →' : 'Set Up My Account →'}
           </button>
           <p className="text-white/20 text-xs mt-4">Need help? <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/60 underline">Contact support</a></p>
         </div>
