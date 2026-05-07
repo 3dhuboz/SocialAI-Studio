@@ -285,6 +285,41 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
 
+  // ── Back-button handling ─────────────────────────────────────────────
+  // Bug being fixed: clicking "Sign In" on the landing page just flipped
+  // React state (showLanding=false). The browser had no idea, so hitting
+  // BACK from the auth screen would leave the site entirely (e.g. back to
+  // Google). Now we push a history entry on the landing→auth transition
+  // and listen for popstate to restore landing when the user hits back.
+  // Signed-in app users are NOT affected — popstate is a no-op when user
+  // is set, so back-button inside the app falls through to native browser
+  // history (e.g. plain page navigation).
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  useEffect(() => {
+    if (CLIENT.clientMode) return; // portal mode bypasses landing entirely
+    if (!showLanding && !user && window.location.hash !== '#sign-in') {
+      window.history.pushState({ screen: 'auth' }, '', '#sign-in');
+    } else if (showLanding && window.location.hash === '#sign-in') {
+      // Cleared landing → strip the hash so the next back doesn't loop.
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [showLanding, user]);
+
+  useEffect(() => {
+    if (CLIENT.clientMode) return;
+    const handlePopstate = () => {
+      // Only restore landing when the user isn't signed in. Signed-in
+      // app users hitting back navigate normally (out of the SPA).
+      if (!userRef.current && window.location.hash !== '#sign-in') {
+        setShowLanding(true);
+      }
+    };
+    window.addEventListener('popstate', handlePopstate);
+    return () => window.removeEventListener('popstate', handlePopstate);
+  }, []);
+
   const handlePlanActivated = async (planId: string) => {
     setActivePlan(planId as PlanTier);
     setSetupStatus('ordered');
@@ -2358,7 +2393,7 @@ const Dashboard: React.FC = () => {
       {activeClientId && activePlan === 'agency' && authMode !== 'portal' && (() => {
         const activeClient = clients.find(c => c.id === activeClientId);
         return activeClient ? (
-          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b border-emerald-500/20 backdrop-blur-sm sticky top-[109px] z-20 glass">
+          <div className="bg-gradient-to-r from-emerald-950/80 via-emerald-900/60 to-emerald-950/80 border-b border-emerald-500/20 backdrop-blur-sm sticky z-20 glass" style={{ top: 'calc(env(safe-area-inset-top) + 109px)' }}>
             <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/25 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
@@ -3575,7 +3610,7 @@ const Dashboard: React.FC = () => {
                 )}
 
                 {/* Accept All bar */}
-                <div className="sticky top-[72px] z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl">
+                <div className="sticky z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl" style={{ top: 'calc(env(safe-area-inset-top) + 72px)' }}>
                   <div>
                     <p className="text-sm font-bold text-white">{smartPosts.length} posts ready</p>
                     {autoGenSet.size > 0 ? (

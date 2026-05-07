@@ -12,6 +12,7 @@ import { PostShowcase } from './PostShowcase';
 import { LiveGallery } from './LiveGallery';
 import { HowItActuallyWorks } from './HowItActuallyWorks';
 import { CinematicTour } from './CinematicTour';
+import { InstallPrompt } from './InstallPrompt';
 
 type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq' | 'contact';
 
@@ -115,6 +116,10 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
 
   return (
     <div className="min-h-screen bg-[var(--color-surface-0)] text-white overflow-x-hidden">
+      {/* PWA install prompt — appears bottom-right after ~6s on eligible
+          devices (Android Chrome / iOS Safari / desktop Chrome). Dismissals
+          persist 30 days; standalone-mode users never see it. */}
+      <InstallPrompt />
       {showPricing && (
         <PricingTable
           onClose={() => setShowPricing(false)}
@@ -638,18 +643,21 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               </div>
             </div>
 
-            {/* AGENCY SECTION */}
-            <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-3xl p-8 md:p-10">
+            {/* AGENCY SECTION — unified to neutral surface + amber accent.
+                Was emerald gradient (rainbow holdover). Now matches the rest
+                of the editorial palette — single-anchor system. */}
+            <div className="bg-white/[0.025] border border-white/[0.08] rounded-3xl p-8 md:p-10">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
                 <div>
-                  <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-5">
-                    <Users size={12} /> For Social Media Managers & Agencies
+                  <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                    <Users size={11} className="text-amber-300/80" />
+                    For social media managers &amp; agencies
                   </div>
-                  <h2 className="text-2xl md:text-3xl font-black mb-3 leading-tight">
-                    Manage all your clients{' '}
-                    <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">from one dashboard</span>
+                  <h2 className="text-2xl md:text-4xl font-black mb-4 tracking-[-0.02em] leading-[1.05]">
+                    Manage all your clients
+                    <span className="block italic font-serif font-light text-white/55">from one dashboard.</span>
                   </h2>
-                  <p className="text-white/50 mb-5 text-sm leading-relaxed">
+                  <p className="text-white/55 mb-6 text-[15px] leading-[1.6]">
                     The Agency plan gives you up to 5 client workspaces — each with their own profile, posts, Facebook page, and AI settings. Switch between clients instantly.
                   </p>
                   <div className="space-y-2.5 mb-6">
@@ -660,37 +668,49 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       'One monthly bill — not per client',
                     ].map((f, i) => (
                       <div key={i} className="flex items-center gap-3 text-sm">
-                        <CheckCircle size={14} className="text-emerald-400 shrink-0" />
+                        <CheckCircle size={14} className="text-amber-400 shrink-0" />
                         <span className="text-white/70">{f}</span>
                       </div>
                     ))}
                   </div>
-                  <div className="flex items-end gap-2 mb-5">
-                    <span className="text-3xl font-black text-white">$149</span>
-                    <span className="text-white/40 mb-0.5 text-sm">/month</span>
+                  <div className="flex items-baseline gap-1.5 mb-5">
+                    <span className="text-4xl font-black text-white tracking-tight">$149</span>
+                    <span className="text-white/40 text-sm font-bold">/mo</span>
                   </div>
                   <button
                     onClick={() => setShowPricing(true)}
-                    className="inline-flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold px-5 py-2.5 rounded-xl hover:opacity-90 transition text-sm"
+                    className="inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-6 py-3 rounded-full hover:opacity-90 transition text-sm shadow-2xl shadow-amber-500/20"
                   >
-                    Get Agency Plan <ArrowRight size={15} />
+                    Get Agency Plan <ArrowRight size={14} />
                   </button>
                 </div>
+                {/* Right column — client-list mockup. The active row gets
+                    the amber accent (matches the page palette); inactive
+                    rows are neutral. */}
                 <div className="space-y-3">
                   {[
                     { name: "Bella's Bakery", type: 'Cafe & Bakery', posts: 14, active: true },
                     { name: 'FastFit Gym', type: 'Fitness Studio', posts: 21, active: false },
                     { name: 'Green Thumb Nursery', type: 'Garden Centre', posts: 7, active: false },
                   ].map((client, i) => (
-                    <div key={i} className={`flex items-center gap-3 p-3.5 rounded-2xl border ${client.active ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/3 border-white/8'}`}>
-                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                    <div
+                      key={i}
+                      className={`flex items-center gap-3 p-3.5 rounded-2xl border ${
+                        client.active
+                          ? 'bg-amber-500/[0.08] border-amber-500/30'
+                          : 'bg-white/[0.02] border-white/[0.08]'
+                      }`}
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center flex-shrink-0">
                         <span className="text-white font-black text-sm">{client.name.charAt(0)}</span>
                       </div>
                       <div className="flex-1">
                         <p className="font-semibold text-sm text-white">{client.name}</p>
                         <p className="text-xs text-white/40">{client.type}</p>
                       </div>
-                      <p className="text-xs font-bold text-emerald-400">{client.posts} posts/wk</p>
+                      <p className={`text-xs font-bold ${client.active ? 'text-amber-400' : 'text-white/45'}`}>
+                        {client.posts} posts/wk
+                      </p>
                     </div>
                   ))}
                 </div>

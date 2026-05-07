@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!--
+    Maskable PWA icon — the S-mark sized into Android's adaptive-icon
+    safe zone (the inner 60x60 area; content outside ~20% from each
+    edge can be cropped by circular / squircle masks). Sparkles and
+    border ornament from the regular logo.svg are dropped here so the
+    mark survives any mask shape.
+  -->
+  <defs>
+    <linearGradient id="amberM" x1="20" y1="20" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fcd34d"/>
+      <stop offset="50%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="bgGradM" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1c1c2e"/>
+      <stop offset="100%" stop-color="#0a0a14"/>
+    </linearGradient>
+    <radialGradient id="centerGlowM" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blurM" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+  </defs>
+
+  <!-- Full-bleed background — fills the maskable safe-area edge entirely
+       so circular/squircle masks always reveal the brand surface. -->
+  <rect x="0" y="0" width="100" height="100" fill="url(#bgGradM)"/>
+
+  <!-- Center radial glow, scaled down so it stays inside the safe zone -->
+  <circle cx="50" cy="50" r="30" fill="url(#centerGlowM)"/>
+
+  <!-- Blurred glow S behind the main S — scaled to the inner 60x60 -->
+  <path d="M 60 44 C 60 33, 40 33, 40 44 C 40 51, 60 51, 60 56 C 60 67, 40 67, 40 56"
+        stroke="#f59e0b" stroke-width="9" stroke-linecap="round" fill="none"
+        filter="url(#blurM)" opacity="0.45"/>
+
+  <!-- Main S stroke — sized to fit comfortably inside the 60x60 safe zone -->
+  <path d="M 60 44 C 60 33, 40 33, 40 44 C 40 51, 60 51, 60 56 C 60 67, 40 67, 40 56"
+        stroke="url(#amberM)" stroke-width="6" stroke-linecap="round" fill="none"/>
+
+  <!-- Network nodes at S corners, scaled to the safe zone -->
+  <circle cx="60" cy="44" r="2.4" fill="#fcd34d"/>
+  <circle cx="40" cy="44" r="2.2" fill="#f59e0b"/>
+  <circle cx="60" cy="56" r="2.2" fill="#f59e0b"/>
+  <circle cx="40" cy="56" r="2.4" fill="#fcd34d"/>
+</svg>
