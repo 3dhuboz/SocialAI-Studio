@@ -2517,8 +2517,11 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
         : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind((post as any).user_id).first<{ social_tokens: string | null }>();
       const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
       if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
+        const reason = 'No Facebook page connected — go to Settings → Connect Facebook to fix.';
         console.warn(`[CRON] No FB tokens for post ${(post as any).id} — marking missed`);
-        await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
+        await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ? WHERE id = ?')
+          .bind('Missed', reason, (post as any).id).run();
+        await notifyOwnerOnPublishFailure(env, post as any, reason);
         continue;
       }
 
@@ -2673,11 +2676,182 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
         .bind('Posted', publishMethod, (post as any).id).run();
       console.log(`[CRON] Published post ${(post as any).id} via ${publishMethod} -> ${fbData.id || fbData.post_id || 'ok'}`);
     } catch (e: any) {
+      const reason = friendlyPublishReason(e?.message || String(e));
       console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message, e.stack);
-      await env.DB.prepare('UPDATE posts SET status = ? WHERE id = ?').bind('Missed', (post as any).id).run();
+      await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ? WHERE id = ?')
+        .bind('Missed', reason, (post as any).id).run();
+      await notifyOwnerOnPublishFailure(env, post as any, reason);
     }
   }
   return { posts_processed: posts.length };
+}
+
+// Translate raw FB Graph errors into a human sentence the user can act on.
+// Keep originals for debugging — but the version we put in posts.reasoning
+// (and the alert email) needs to read like advice, not a stack trace.
+function friendlyPublishReason(raw: string): string {
+  const r = (raw || '').toLowerCase();
+  if (r.includes('expired') || r.includes('invalid_token') || r.includes('oauth') || r.includes('error validating access token')) {
+    return 'Facebook token expired — reconnect Facebook in Settings (takes 30 sec).';
+  }
+  if (r.includes('not found') || r.includes('does not exist') || r.includes('unknown path')) {
+    return 'Facebook page not found — it may have been deleted, renamed, or disconnected.';
+  }
+  if (r.includes('permission') || r.includes('forbidden') || r.includes('manage_pages') || r.includes('pages_manage_posts')) {
+    return 'Facebook permission denied — reconnect Facebook and grant publishing permissions.';
+  }
+  if (r.includes('rate') && r.includes('limit')) {
+    return 'Facebook rate limit hit — will retry on the next 5-min cron tick.';
+  }
+  if (r.includes('image') && (r.includes('download') || r.includes('upload'))) {
+    return 'Image upload to Facebook failed — open Calendar and click Retry.';
+  }
+  return raw.slice(0, 200);
+}
+
+// Email the workspace owner when one of their posts fails to publish.
+// Throttled to ONE email per workspace per hour — a 14-post Smart Schedule batch
+// hitting an expired token shouldn't fire 14 emails. Uses cron_runs as a tiny
+// KV store: a row of synthetic type `alert:fb_failure:<wsKey>` means "we sent
+// for this workspace at this run_at." Query the latest within 1h to throttle.
+async function notifyOwnerOnPublishFailure(
+  env: Env,
+  post: { id: string; user_id?: string | null; client_id?: string | null },
+  reason: string,
+): Promise<void> {
+  if (!env.RESEND_API_KEY) return;
+  try {
+    const wsKey = post.client_id ? `client:${post.client_id}` : `user:${post.user_id ?? 'unknown'}`;
+    const cronType = `alert:fb_failure:${wsKey}`.slice(0, 80);
+
+    // Throttle — skip if we sent for this workspace in the last hour
+    const recent = await env.DB.prepare(
+      `SELECT 1 FROM cron_runs WHERE cron_type = ? AND run_at > datetime('now','-1 hour') LIMIT 1`,
+    ).bind(cronType).first();
+    if (recent) return;
+
+    // Look up owner email + workspace name
+    let email: string | null = null;
+    let workspaceName = 'your workspace';
+    if (post.client_id) {
+      const row = await env.DB.prepare(
+        `SELECT u.email as email, c.name as name FROM clients c JOIN users u ON u.id = c.user_id WHERE c.id = ?`,
+      ).bind(post.client_id).first<{ email: string | null; name: string | null }>();
+      email = row?.email ?? null;
+      if (row?.name) workspaceName = row.name;
+    } else if (post.user_id) {
+      const row = await env.DB.prepare(`SELECT email FROM users WHERE id = ?`)
+        .bind(post.user_id).first<{ email: string | null }>();
+      email = row?.email ?? null;
+    }
+    if (!email) return;
+
+    const isTokenIssue = /token|expired|reconnect|permission|forbidden|connect facebook|page not found|manage_pages/i.test(reason);
+    const fixCta = isTokenIssue
+      ? `<a href="https://socialaistudio.au/admin" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Reconnect Facebook</a>`
+      : `<a href="https://socialaistudio.au" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Open Calendar</a>`;
+
+    await sendResendEmail(env, {
+      to: email,
+      subject: `Heads up — a scheduled post couldn't publish to Facebook`,
+      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#111;">
+        <h2 style="margin:0 0 8px;color:#dc2626;">A scheduled post didn't go out</h2>
+        <p style="margin:0 0 16px;color:#374151;">A post for <strong>${escapeHtml(workspaceName)}</strong> was scheduled but couldn't be published to Facebook.</p>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+          <strong>Reason:</strong><br/><span style="color:#374151;">${escapeHtml(reason)}</span>
+        </div>
+        ${isTokenIssue
+          ? `<p style="margin:0 0 16px;color:#374151;">This usually means your Facebook page connection has expired. It takes 30 seconds to reconnect — click below.</p>`
+          : `<p style="margin:0 0 16px;color:#374151;">Open your calendar to retry the post or check what went wrong.</p>`}
+        <p>${fixCta}</p>
+        <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;">We only send one of these per workspace per hour, so you won't get spammed if multiple posts queue up.</p>
+      </div>`,
+    });
+
+    // Mark sent — doubles as a 1-hour throttle window
+    await env.DB.prepare(
+      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms) VALUES (?,1,0,?,0)`,
+    ).bind(cronType, reason.slice(0, 200)).run();
+    console.log(`[CRON] Sent publish-failure alert to ${email} for post ${post.id}`);
+  } catch (e: any) {
+    // Never let alert plumbing kill the publish path — log and move on
+    console.error(`[CRON] notifyOwnerOnPublishFailure error: ${e?.message || e}`);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
+
+// Pre-warm images for posts scheduled in the next 30 minutes. Runs at the start
+// of every */5 publish cron tick BEFORE the publish loop. The goal: by the time
+// publish cron picks up a post (scheduled_for <= now), its image_url is already
+// populated, so the publish loop's MAX_JIT_IMAGES_PER_RUN cap never bites.
+//
+// Capped at 8 per tick — fal.ai is ~10-15s/image so 8 fits comfortably in the
+// CF Workers wall-time budget alongside the publish loop's own work. A post not
+// reached this tick gets picked up in the next 5-min tick (still 25 min before
+// publish time).
+async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }> {
+  if (!env.FAL_API_KEY) return { posts_processed: 0 };
+  const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
+  const in30AEST = new Date(Date.now() + 10 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString().replace('Z', '');
+  const rows = await env.DB.prepare(
+    `SELECT id, image_prompt FROM posts
+     WHERE status = 'Scheduled'
+       AND scheduled_for > ? AND scheduled_for <= ?
+       AND (image_url IS NULL OR image_url = '')
+       AND image_prompt IS NOT NULL AND image_prompt != '' AND image_prompt != 'N/A'
+       AND length(image_prompt) > 5
+       AND ${ACTIVE_CLIENT_FILTER}
+     ORDER BY scheduled_for ASC LIMIT 8`,
+  ).bind(nowAEST, in30AEST).all();
+  const posts = rows.results ?? [];
+  if (posts.length === 0) return { posts_processed: 0 };
+  console.log(`[CRON prewarm] ${posts.length} posts queued for image pre-warm`);
+
+  let generated = 0;
+  for (const post of posts) {
+    const rawPrompt = (post as any).image_prompt as string | null;
+    const prompt = rawPrompt ? rawPrompt.split('|claim:')[0].trim() : '';
+    if (!prompt || prompt.length < 5) continue;
+    try {
+      // Same suffix as src/services/gemini.ts + the publish-cron JIT path so all
+      // three image-gen entry points produce visually consistent output.
+      const cleaned = prompt
+        .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const finalPrompt = `${cleaned}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
+
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 15000);
+      const falRes = await fetch('https://fal.run/fal-ai/flux/dev', {
+        method: 'POST',
+        headers: { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: finalPrompt, image_size: 'square_hd',
+          num_inference_steps: 25, num_images: 1,
+          enable_safety_checker: true, guidance_scale: 3.5,
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timeout);
+      const data: any = await falRes.json();
+      const url = data?.images?.[0]?.url;
+      if (falRes.ok && url) {
+        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
+          .bind(url, (post as any).id).run();
+        generated++;
+        console.log(`[CRON prewarm] generated for post ${(post as any).id}`);
+      } else {
+        console.warn(`[CRON prewarm] no URL for post ${(post as any).id}: ${data?.detail || data?.message || falRes.status}`);
+      }
+    } catch (e: any) {
+      console.warn(`[CRON prewarm] failed for post ${(post as any).id}: ${e?.message}`);
+    }
+  }
+  return { posts_processed: generated };
 }
 
 // Daily — refresh client_facts for every workspace with a connected FB Page.
@@ -2833,8 +3007,10 @@ export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     const cron = event.cron;
-    // Every 5 minutes — publish missed posts
+    // Every 5 minutes — pre-warm images first (so publish cron always finds
+    // image_url populated for posts due in the next 30 min), then publish.
     if (cron === '*/5 * * * *') {
+      await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
       await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
       return;
     }
@@ -2849,6 +3025,7 @@ export default {
       return;
     }
     // Fallback: run all (for 6-hourly credit check and any unmatched triggers)
+    await trackCron(env, 'prewarm_fallback', () => cronPrewarmImages(env));
     await trackCron(env, 'publish_fallback', () => cronPublishMissedPosts(env));
     await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
   },
