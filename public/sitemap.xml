@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  sitemap.xml for socialaistudio.au
+
+  Single-page app — every "tab" (home / benefits / pricing / faq / contact)
+  shares the / URL and switches via React state. Google indexes the rendered
+  content of /, so one entry covers the marketing surface.
+
+  When new public routes ship (e.g. /blog/* or /case-studies/*), add them
+  here. Update <lastmod> any time the landing copy changes substantially —
+  Google uses it as a freshness hint.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://socialaistudio.au/</loc>
+    <lastmod>2026-05-07</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

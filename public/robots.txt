@@ -1,0 +1,27 @@
+# robots.txt for socialaistudio.au
+# Allow everything by default — this is a public marketing site, no
+# private routes worth blocking. The signed-in app pages live behind
+# a Clerk auth wall so crawlers can't reach them anyway.
+
+User-agent: *
+Allow: /
+
+# Block known bad bots that scrape for AI training without permission.
+# (Granular AI-bot policy — flip the line per-bot if your stance changes.)
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+# Sitemap
+Sitemap: https://socialaistudio.au/sitemap.xml
