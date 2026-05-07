@@ -769,6 +769,218 @@ app.post('/api/internal/cancellation', async (c) => {
   return c.json({ ok: true, id });
 });
 
+// ── PayPal subscription endpoints ─────────────────────────────────────────────
+// Live here on the worker (not the CF Pages Function) so they can use the
+// PAYPAL_* and RESEND_API_KEY worker secrets directly. The Pages Functions
+// at functions/api/paypal-{webhook,verify}.js are thin proxies to these
+// routes — keeps PayPal's webhook URL stable while consolidating secrets.
+//
+// Plan-ID → tier mapping. Keep in sync with src/client.config.ts paypalPlanIds
+// and paypalYearlyPlanIds. Both monthly and yearly IDs map to the same tier
+// since `clients.plan` doesn't distinguish billing cycle.
+const PAYPAL_PLAN_TIER: Record<string, string> = {
+  // Monthly
+  'P-1AB09838JG575723YNG3TKPY': 'starter',
+  'P-5JX42118D0152071LNG3TLDY': 'growth',
+  'P-0MN86219YF921874FNG3TLRY': 'pro',
+  'P-5VB80462AU714124YNG3TL7Q': 'agency',
+  // Yearly
+  'P-62C327553Y779300FNHDUU7Y': 'starter',
+  'P-60J02873W1559770VNHDUVAA': 'growth',
+  'P-6G9907746Y8649457NHDUVAA': 'pro',
+  'P-1BH48559DE324360CNHDUVAA': 'agency',
+};
+
+const PAYPAL_API_BASE = 'https://api-m.paypal.com';
+const ADMIN_NOTIFY_EMAIL = 'steve@pennywiseit.com.au';
+
+async function paypalAccessToken(env: Env): Promise<string> {
+  const id = env.PAYPAL_CLIENT_ID;
+  const secret = env.PAYPAL_CLIENT_SECRET;
+  if (!id || !secret) throw new Error('PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET worker secret missing');
+  const creds = btoa(`${id}:${secret}`);
+  const res = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+  });
+  const data = await res.json() as { access_token?: string };
+  if (!data.access_token) throw new Error('Failed to obtain PayPal access token');
+  return data.access_token;
+}
+
+async function paypalVerifyWebhookSignature(req: Request, rawBody: string, token: string, env: Env): Promise<boolean> {
+  if (!env.PAYPAL_WEBHOOK_ID) throw new Error('PAYPAL_WEBHOOK_ID worker secret missing');
+  const body = {
+    auth_algo: req.headers.get('paypal-auth-algo'),
+    cert_url: req.headers.get('paypal-cert-url'),
+    transmission_id: req.headers.get('paypal-transmission-id'),
+    transmission_sig: req.headers.get('paypal-transmission-sig'),
+    transmission_time: req.headers.get('paypal-transmission-time'),
+    webhook_id: env.PAYPAL_WEBHOOK_ID,
+    webhook_event: JSON.parse(rawBody),
+  };
+  const res = await fetch(`${PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json() as { verification_status?: string };
+  return data.verification_status === 'SUCCESS';
+}
+
+async function sendResendEmail(env: Env, opts: { to: string; subject: string; html: string }): Promise<void> {
+  if (!env.RESEND_API_KEY) return;
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Social AI Studio <noreply@socialaistudio.au>',
+        to: opts.to, subject: opts.subject, html: opts.html,
+      }),
+    });
+  } catch (e: any) {
+    console.error('Resend send error:', e?.message || e);
+  }
+}
+
+function welcomeEmailHtml(plan: string): string {
+  const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
+  const steps = ['Log in and complete your business profile','Connect your Facebook & Instagram pages','Generate your first AI post and schedule it'];
+  const stepsHtml = steps.map((s, i) =>
+    `<div style="display:flex;align-items:center;gap:12px;"><div style="width:24px;height:24px;background:#f59e0b22;border:1px solid #f59e0b44;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#f59e0b;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</div><span style="color:#d1d5db;font-size:13px;">${s}</span></div>`
+  ).join('');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:#f59e0b;font-weight:800;font-size:15px;">Social AI Studio</span></div></div><div style="background:linear-gradient(135deg,#f59e0b22,#ef444411);border:1px solid #f59e0b33;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><div style="font-size:48px;margin-bottom:16px;">🎉</div><h1 style="color:#ffffff;font-size:26px;font-weight:900;margin:0 0 12px;">You're all set!</h1><p style="color:#9ca3af;font-size:15px;line-height:1.6;margin:0 0 24px;">Your <strong style="color:#f59e0b;">${planName} Plan</strong> is now active. Welcome to Social AI Studio — let's grow your social media together.</p><a href="https://socialaistudio.au" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#000;font-weight:900;font-size:14px;padding:14px 32px;border-radius:50px;text-decoration:none;">Open Dashboard →</a></div><div style="background:#111118;border:1px solid #1f2937;border-radius:16px;padding:24px 28px;margin-bottom:16px;"><h2 style="color:#ffffff;font-size:14px;font-weight:700;margin:0 0 16px;">What happens next?</h2><div style="display:flex;flex-direction:column;gap:12px;">${stepsHtml}</div></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:support@pennywiseit.com.au" style="color:#f59e0b;text-decoration:none;">support@pennywiseit.com.au</a> · <a href="https://socialaistudio.au" style="color:#f59e0b;text-decoration:none;">socialaistudio.au</a></p></div></body></html>`;
+}
+
+function cancellationEmailHtml(): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:#f59e0b;font-weight:800;font-size:15px;">Social AI Studio</span></div></div><div style="background:#111118;border:1px solid #374151;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><h1 style="color:#ffffff;font-size:22px;font-weight:900;margin:0 0 12px;">Subscription Cancelled</h1><p style="color:#9ca3af;font-size:14px;line-height:1.6;margin:0 0 24px;">Your Social AI Studio subscription has been cancelled. You'll retain access until the end of your current billing period.</p><p style="color:#6b7280;font-size:13px;margin:0;">Changed your mind? <a href="https://socialaistudio.au" style="color:#f59e0b;text-decoration:none;">Reactivate your plan</a> anytime.</p></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:support@pennywiseit.com.au" style="color:#f59e0b;text-decoration:none;">support@pennywiseit.com.au</a></p></div></body></html>`;
+}
+
+// ── PayPal: Verify subscription ─────────────────────────────────────────────
+// Called from the frontend (PricingTable.tsx) immediately after PayPal's
+// onApprove fires. Confirms with PayPal that the subscription is active,
+// stores a pending activation in D1 (consumed by App.tsx on the user's
+// next render), and sends the welcome email so it goes out even when the
+// PayPal webhook doesn't fire (or fires late).
+app.post('/api/paypal-verify', async (c) => {
+  const body = await c.req.json<{ subscriptionId?: string; uid?: string | null; planId?: string }>().catch(() => null);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
+  const { subscriptionId, planId } = body;
+  if (!subscriptionId || !planId) return c.json({ error: 'Missing subscriptionId or planId' }, 400);
+
+  try {
+    const token = await paypalAccessToken(c.env);
+    const res = await fetch(`${PAYPAL_API_BASE}/v1/billing/subscriptions/${subscriptionId}`, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    const sub = await res.json() as { status?: string; subscriber?: { email_address?: string; payer_id?: string } };
+    if (sub.status !== 'ACTIVE') {
+      return c.json({ error: `Subscription not yet active (status: ${sub.status}). Please wait and try again.` }, 400);
+    }
+
+    const email = sub.subscriber?.email_address || '';
+    const payerId = sub.subscriber?.payer_id || '';
+    const id = uuid();
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
+       VALUES (?,?,?,?,?,?,0)`
+    ).bind(id, planId, email, subscriptionId, payerId, new Date().toISOString()).run();
+
+    // Send welcome email here (don't wait for the webhook — it's the safety net,
+    // not the primary signal). Skipped silently if RESEND_API_KEY isn't set.
+    if (email) {
+      await sendResendEmail(c.env, {
+        to: email,
+        subject: `Welcome to Social AI Studio — your ${planId} plan is active!`,
+        html: welcomeEmailHtml(planId),
+      });
+      await sendResendEmail(c.env, {
+        to: ADMIN_NOTIFY_EMAIL,
+        subject: `New subscriber: ${email} — ${planId} plan`,
+        html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${planId}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>`,
+      });
+    }
+
+    return c.json({ success: true, plan: planId });
+  } catch (err: any) {
+    console.error('PayPal verify error:', err?.message || err);
+    return c.json({ error: 'Verification failed. Please contact support.' }, 500);
+  }
+});
+
+// ── PayPal: Webhook (subscription lifecycle from PayPal) ────────────────────
+// PayPal posts subscription events (ACTIVATED, CANCELLED) here. Public
+// endpoint — protected by signature verification against PAYPAL_WEBHOOK_ID.
+// Acts as the safety-net for /api/paypal-verify in case the user closes the
+// browser tab mid-flow.
+app.post('/api/paypal-webhook', async (c) => {
+  const rawBody = await c.req.raw.text();
+  let event: any;
+  try { event = JSON.parse(rawBody); } catch { return c.text('Invalid JSON', 400); }
+
+  try {
+    const token = await paypalAccessToken(c.env);
+    const valid = await paypalVerifyWebhookSignature(c.req.raw, rawBody, token, c.env);
+    if (!valid) {
+      console.error('PayPal webhook signature verification failed');
+      return c.text('Webhook signature invalid', 400);
+    }
+  } catch (err: any) {
+    console.error('Webhook verification error:', err?.message || err);
+    return c.text('Webhook verification failed', 400);
+  }
+
+  const resource = event.resource || {};
+  const eventType = event.event_type;
+
+  if (eventType === 'BILLING.SUBSCRIPTION.ACTIVATED') {
+    const subscriptionId = resource.id;
+    const paypalPlanId = resource.plan_id;
+    const email = resource.subscriber?.email_address || '';
+    const payerId = resource.subscriber?.payer_id || '';
+    const plan = PAYPAL_PLAN_TIER[paypalPlanId];
+    if (!plan) {
+      console.warn('No plan matched for PayPal plan ID:', paypalPlanId);
+      return c.text('No plan matched — skipped.', 200);
+    }
+
+    const id = uuid();
+    // INSERT OR IGNORE — verify endpoint may have already created the row.
+    // Keying on subscription_id would be cleaner but the existing schema uses
+    // a uuid primary key; the consumed flag handles double-consumption.
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
+       VALUES (?,?,?,?,?,?,0)`
+    ).bind(id, plan, email, subscriptionId, payerId, new Date().toISOString()).run();
+    console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan}`);
+
+    if (email) {
+      await sendResendEmail(c.env, { to: email, subject: `Welcome to Social AI Studio — your ${plan} plan is active!`, html: welcomeEmailHtml(plan) });
+      await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+    }
+  }
+
+  if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
+    const subscriptionId = resource.id;
+    const email = resource.subscriber?.email_address || '';
+    const id = uuid();
+    await c.env.DB.prepare(
+      `INSERT INTO pending_cancellations (id, email, paypal_subscription_id, cancelled_at, consumed)
+       VALUES (?,?,?,?,0)`
+    ).bind(id, email ?? null, subscriptionId ?? null, new Date().toISOString()).run();
+    console.log(`PayPal cancellation stored for ${email || subscriptionId}`);
+
+    if (email) {
+      await sendResendEmail(c.env, { to: email, subject: 'Your Social AI Studio subscription has been cancelled', html: cancellationEmailHtml() });
+      await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+    }
+  }
+
+  return c.text('OK', 200);
+});
+
 // ── OpenRouter Stats ──────────────────────────────────────────────────────────
 app.get('/api/ai/stats', async (c) => {
   const apiKey = c.env.OPENROUTER_API_KEY;
