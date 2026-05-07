@@ -1,22 +1,47 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-AU">
   <head>
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover lets the page extend under iPhone notch / home
          indicator; CSS env(safe-area-inset-*) handles padding. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
+    <!--
+      ═══════════════════════════════════════════════════════════════════════
+      META FOR THE PRIMARY DOMAIN: socialaistudio.au
+      ═══════════════════════════════════════════════════════════════════════
+      Whitelabel CF Pages deploys (picklenick.com.au, streetmeats.com.au, etc.)
+      ship the same index.html. Their canonical/og:url/og:image SHOULD differ
+      per-deploy, but those branded sites are private client portals (clientMode
+      lives behind autoLoginEmail) so SEO ranking isn't a concern there. If a
+      whitelabel site ever needs public SEO, override these tags via Vite's
+      transformIndexHtml hook keyed off VITE_CLIENT_ID.
+      ═══════════════════════════════════════════════════════════════════════
+    -->
+
     <!-- ═══ Primary Meta ═══ -->
-    <title>SocialAI Studio — AI-Powered Social Media, Done For You</title>
-    <meta name="description" content="SocialAI Studio automatically generates, schedules and publishes Facebook and Instagram posts for your business using AI. Save hours every week — done for you by Penny Wise I.T." />
-    <meta name="keywords" content="AI social media, social media automation, Facebook posts AI, Instagram AI, small business social media, AI content generator, automated posting, social media management Australia" />
+    <title>SocialAI Studio — AI Social Media for Australian Small Business</title>
+    <!-- Description ~155 chars to avoid Google's SERP truncation. The hook is
+         "AI does it for you" + concrete platforms + Aussie SMB framing. -->
+    <meta name="description" content="AI-written, AI-designed Facebook & Instagram posts for Aussie small businesses. Free trial — no card. Generated, scheduled, and published while you work." />
+    <meta name="keywords" content="AI social media Australia, social media automation, Facebook AI posts, Instagram AI, small business marketing, AI content generator, automated posting, Aussie SMB tools" />
     <meta name="author" content="Penny Wise I.T" />
-    <meta name="robots" content="index, follow" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="application-name" content="SocialAI Studio" />
     <!-- theme-color matches the manifest amber so the browser address bar
          and PWA splash screen tint together. -->
     <meta name="theme-color" content="#0a0a14" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#f59e0b" media="(prefers-color-scheme: light)" />
-    <link rel="canonical" href="https://pennywiseit.com.au" />
+    <link rel="canonical" href="https://socialaistudio.au/" />
+
+    <!-- ═══ Performance hints ═══ -->
+    <!-- preconnect = TCP+TLS handshake before request; dns-prefetch = DNS only.
+         Clerk JS + the Worker API both block first paint, so preconnect both.
+         Unsplash for the post mockup imagery on the landing — DNS is cheaper. -->
+    <link rel="preconnect" href="https://socialai-api.steve-700.workers.dev" crossorigin />
+    <link rel="preconnect" href="https://api.clerk.com" crossorigin />
+    <link rel="dns-prefetch" href="https://images.unsplash.com" />
+    <link rel="dns-prefetch" href="https://www.paypal.com" />
 
     <!-- ═══ PWA ═══ -->
     <link rel="manifest" href="/manifest.webmanifest" />
@@ -29,23 +54,31 @@
          captions / dates and turning them into tap-to-call links. -->
     <meta name="format-detection" content="telephone=no" />
 
-    <!-- ═══ Open Graph / Facebook ═══ -->
+    <!-- ═══ Open Graph / Facebook / LinkedIn ═══ -->
+    <!-- og:image MUST be an absolute URL — relative paths cause FB / LinkedIn
+         to show a broken preview. Dimensions claim must match the actual file
+         or platforms downgrade the preview. logo-brand.png is the gold-on-white
+         logotype at 954×396 — it'll be cropped by FB to 1.91:1 but shows the
+         brand cleanly. TODO: ship a dedicated 1200×630 marketing OG image with
+         tagline + CTA so the social preview is doing real conversion work. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="SocialAI Studio" />
-    <meta property="og:title" content="SocialAI Studio — AI-Powered Social Media, Done For You" />
-    <meta property="og:description" content="Automatically generate, schedule and publish Facebook &amp; Instagram posts using AI. Built for Australian small businesses and agencies by Penny Wise I.T." />
-    <meta property="og:image" content="/logo-brand.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
+    <meta property="og:title" content="SocialAI Studio — AI Social Media for Australian Small Business" />
+    <meta property="og:description" content="AI-written, AI-designed Facebook & Instagram posts for Aussie small businesses. Free trial — no card. Generated, scheduled, and published while you work." />
+    <meta property="og:image" content="https://socialaistudio.au/logo-brand.png" />
+    <meta property="og:image:secure_url" content="https://socialaistudio.au/logo-brand.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="954" />
+    <meta property="og:image:height" content="396" />
     <meta property="og:image:alt" content="SocialAI Studio — AI Social Media Automation" />
-    <meta property="og:url" content="https://pennywiseit.com.au" />
+    <meta property="og:url" content="https://socialaistudio.au/" />
     <meta property="og:locale" content="en_AU" />
 
     <!-- ═══ Twitter Card ═══ -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="SocialAI Studio — AI-Powered Social Media, Done For You" />
-    <meta name="twitter:description" content="Automatically generate, schedule and publish Facebook &amp; Instagram posts using AI. Built for Australian small businesses." />
-    <meta name="twitter:image" content="/logo-brand.png" />
+    <meta name="twitter:title" content="SocialAI Studio — AI Social Media for Aussie Small Business" />
+    <meta name="twitter:description" content="AI-written, AI-designed Facebook & Instagram posts for Aussie small business. Free trial — no card." />
+    <meta name="twitter:image" content="https://socialaistudio.au/logo-brand.png" />
     <meta name="twitter:image:alt" content="SocialAI Studio" />
 
     <!-- ═══ Favicons ═══ -->
@@ -55,14 +88,21 @@
     <link rel="shortcut icon" href="/logo.svg" />
 
     <!-- ═══ Structured Data ═══ -->
+    <!-- Three JSON-LD blocks — Google reads them all separately. SoftwareApp
+         describes the product itself; Organization describes the parent
+         business (helps brand search results); FAQPage unlocks rich-snippet
+         FAQ accordions in the SERP, lifted directly from the landing FAQ. -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "SocialAI Studio",
-      "description": "AI-powered social media automation for small businesses and agencies. Automatically generate, schedule and publish Facebook and Instagram posts.",
+      "url": "https://socialaistudio.au/",
+      "image": "https://socialaistudio.au/logo-brand.png",
+      "description": "AI-powered social media automation for Australian small businesses and agencies. Automatically generate, schedule and publish Facebook and Instagram posts.",
       "applicationCategory": "BusinessApplication",
-      "operatingSystem": "Web",
+      "operatingSystem": "Web, iOS, Android",
+      "inLanguage": "en-AU",
       "offers": {
         "@type": "AggregateOffer",
         "lowPrice": "29",
@@ -73,9 +113,94 @@
       "creator": {
         "@type": "Organization",
         "name": "Penny Wise I.T",
-        "url": "https://pennywiseit.com.au",
-        "email": "support@pennywiseit.com.au"
+        "url": "https://pennywiseit.com.au"
       }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "SocialAI Studio",
+      "legalName": "Penny Wise I.T",
+      "url": "https://socialaistudio.au/",
+      "logo": "https://socialaistudio.au/logo-brand.png",
+      "description": "AI social media automation for Australian small businesses.",
+      "areaServed": {
+        "@type": "Country",
+        "name": "Australia"
+      },
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "contactType": "customer support",
+        "email": "support@pennywiseit.com.au",
+        "areaServed": "AU",
+        "availableLanguage": ["en"]
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Do I have to pay to try SocialAI Studio?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Sign up free and generate your first 3 AI posts — captions, hashtags, the lot — without entering payment details. Pick a plan when you want to keep going."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What happens after I sign up?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You go straight into a quick setup wizard — business details, tone, Facebook page connection — and the AI starts generating your first posts. Under 5 minutes from signup to your first post."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need a Facebook Business page?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes — you need an active Facebook Business page that you admin. You connect it yourself during setup with a single click. No technical knowledge needed."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is there a setup fee or contract?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No setup fee, no contract, no lock-in. Just a monthly subscription you can cancel anytime from PayPal."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can I change plans later?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes — contact us any time to upgrade or downgrade. Upgrades are instant, downgrades take effect at the next billing cycle."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does posts per week mean?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The AI generates and schedules that many posts into your Facebook and Instagram calendar each week. You can review, edit, or delete any post before it goes live."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I still control what gets posted?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Absolutely. The AI suggests and schedules — you always have the final say. You can edit any post in the calendar, delete ones you don't like, or generate entirely new ones."
+          }
+        }
+      ]
     }
     </script>
 
