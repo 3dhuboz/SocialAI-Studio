@@ -1143,9 +1143,23 @@ const Dashboard: React.FC = () => {
   const [isPublishing, setIsPublishing] = useState(false);
 
   const handlePullStats = async (silent = false) => {
+    // Guard: only fire the "connect FB" warning when the page truly isn't
+    // connected. The Refresh Stats button is gated by fbConnected at the
+    // render site, but this handler is also called silently elsewhere, so
+    // re-check here to avoid a spurious warning toast on a connected account.
+    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
+      if (!silent) toast('Connect your Facebook page in Settings to pull live stats.', 'warning');
+      return;
+    }
     setIsPullingStats(true);
     try {
-      if (!silent) toast('Connect your Facebook page in Settings to pull live stats.', 'warning');
+      const stats = await FacebookService.getPageStats(
+        socialTokens.facebookPageId,
+        socialTokens.facebookPageAccessToken,
+      );
+      setLiveStats(stats);
+      setLastPulled(new Date());
+      if (!silent) toast('Live stats updated.', 'success');
     } catch (e: any) {
       const msg = e?.message || '';
       if (!silent) {
