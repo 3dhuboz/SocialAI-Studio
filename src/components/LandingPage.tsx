@@ -8,7 +8,8 @@ import {
   TrendingUp, MessageCircle, Repeat2, DollarSign, Timer, Rocket
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
-import { AnimatedDemo } from './AnimatedDemo';
+import { PostShowcase } from './PostShowcase';
+import { LiveGallery } from './LiveGallery';
 
 type LandingTab = 'home' | 'benefits' | 'pricing' | 'faq' | 'contact';
 
@@ -178,70 +179,70 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         {/* ─── HOME TAB ─── */}
         {tab === 'home' && (
           <div>
-            {/* HERO — text left, AnimatedDemo right (above the fold so visitors
-                see the product working before they read a word). 3 benefit pillars
-                live below the hero proper. Hero CTA goes to onSignIn (not pricing)
-                — trial-first SaaS that gates on pricing is self-sabotage. */}
-            <section className="relative pt-16 sm:pt-20 pb-12 px-6 overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_0%,rgba(245,158,11,0.18),transparent_60%)]" />
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_80%_50%,rgba(168,85,247,0.08),transparent_55%)]" />
+            {/* HERO — editorial split. Left: copy. Right: PostShowcase (rotating
+                post mockups across 6 Aussie SMB industries — the actual product
+                output, not an abstract "AI tool" demo). Less amber gradient,
+                more grain texture, more whitespace. */}
+            <section className="relative pt-16 sm:pt-20 pb-20 px-6 overflow-hidden grain-bg">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_-10%,rgba(245,158,11,0.13),transparent_55%)]" />
               <div className="relative max-w-6xl mx-auto">
-                <div className="grid grid-cols-1 md:grid-cols-[1.05fr_0.95fr] gap-8 lg:gap-12 items-center animate-fadeSlideUp">
-                  {/* LEFT — copy + CTA */}
+                <div className="grid grid-cols-1 md:grid-cols-[1.1fr_0.9fr] gap-10 lg:gap-16 items-center animate-fadeSlideUp">
+                  {/* LEFT — copy + CTA. Editorial alignment: left on md+, centered
+                      on mobile. Headline drops gradient on the lead phrase to feel
+                      less "tech demo", reserves the gradient for the closer. */}
                   <div className="text-center md:text-left">
-                    <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full mb-6">
-                      <Zap size={12} /> Built for Aussie small business · Made in Australia
+                    <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.18em] text-amber-300/80 uppercase mb-7">
+                      <span className="w-6 h-px bg-amber-300/40" />
+                      Crafted in Australia · For small business
                     </div>
-                    <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-[3.4rem] font-black mb-5 leading-[1.08] tracking-tight">
+                    <h1 className="text-[2.25rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-black mb-6 leading-[1.02] tracking-[-0.02em]">
                       {portalContent?.hero_title ? (
                         <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
                           {portalContent.hero_title}
                         </span>
                       ) : (
                         <>
-                          Your Facebook &amp; Instagram posts —{' '}
-                          <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-pink-400 bg-clip-text text-transparent">
-                            written, designed, scheduled. Daily.
+                          <span className="block text-white">Your Facebook &amp;</span>
+                          <span className="block text-white">Instagram posts —</span>
+                          <span className="block bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 bg-clip-text text-transparent italic font-serif font-light pt-1">
+                            written every day.
                           </span>
                         </>
                       )}
                     </h1>
-                    <p className="text-base sm:text-lg text-white/70 mb-7 max-w-xl mx-auto md:mx-0 leading-[1.55]">
-                      {portalContent?.hero_subtitle || "Built for Aussie cafes, tradies, salons and small retailers. We learn your voice from your existing posts, then write captions that sound like you on a good day — not like a robot."}
+                    <p className="text-base sm:text-lg md:text-[1.075rem] text-white/70 mb-8 max-w-xl mx-auto md:mx-0 leading-[1.6]">
+                      {portalContent?.hero_subtitle || "Built for Aussie cafes, tradies, salons and small retailers. We read your existing posts to learn your voice, so every caption sounds like you on a good day — not a robot."}
                     </p>
-                    <div className="flex flex-col sm:flex-row gap-3 justify-center md:justify-start items-center">
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start items-center">
                       <button
                         onClick={onSignIn}
-                        className="group bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-7 py-4 rounded-2xl text-base hover:opacity-90 transition flex items-center gap-2 shadow-2xl shadow-amber-500/25"
+                        className="group bg-white text-black font-black px-7 py-4 rounded-full text-sm sm:text-base hover:bg-amber-50 transition-all flex items-center gap-2 shadow-[0_10px_40px_-12px_rgba(255,255,255,0.3)]"
                       >
-                        {portalContent?.hero_cta_text || `Generate ${CLIENT.freeTrialPosts ?? 3} free posts — no card needed`}
-                        <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        {portalContent?.hero_cta_text || `Generate ${CLIENT.freeTrialPosts ?? 3} free posts`}
+                        <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
                       </button>
+                      {CLIENT.youtubeVideoId && (
+                        <button
+                          onClick={() => setVideoLightbox(true)}
+                          className="group inline-flex items-center gap-2.5 text-sm text-white/65 hover:text-white transition px-3 py-2"
+                        >
+                          <span className="w-9 h-9 rounded-full bg-white/8 group-hover:bg-white/15 border border-white/15 flex items-center justify-center transition">
+                            <Play size={12} className="text-white ml-0.5" fill="white" />
+                          </span>
+                          Watch the 90-second tour
+                        </button>
+                      )}
                     </div>
-                    <p className="text-xs sm:text-sm text-white/45 mt-4">
+                    <p className="text-xs sm:text-sm text-white/40 mt-5">
                       {CLIENT.freeTrialPosts ?? 3} free posts · No card · $29/mo when you're ready · Cancel in 2 clicks
                     </p>
                   </div>
 
-                  {/* RIGHT — live demo card. AnimatedDemo cycles write → schedule
-                      → publish on a 4.5s loop. If a YouTube video is configured
-                      it shows the thumbnail with a play overlay instead. */}
-                  <div className="relative">
-                    <div className="relative aspect-video rounded-3xl overflow-hidden border border-white/10 shadow-[0_24px_80px_-20px_rgba(245,158,11,0.18)] bg-[#0d0d1a]">
-                      {CLIENT.youtubeVideoId ? (
-                        <div className="absolute inset-0 cursor-pointer group" onClick={() => setVideoLightbox(true)}>
-                          <img src={`https://img.youtube.com/vi/${CLIENT.youtubeVideoId}/maxresdefault.jpg`} alt="Video thumbnail" className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 bg-black/40 group-hover:bg-black/25 transition flex items-center justify-center">
-                            <div className="w-20 h-20 rounded-full bg-white/95 group-hover:scale-110 transition-transform flex items-center justify-center shadow-2xl shadow-black/50">
-                              <Play size={32} className="text-black ml-1" fill="black" />
-                            </div>
-                          </div>
-                          <div className="absolute bottom-4 right-4 text-[10px] text-white/40 bg-black/40 px-2 py-1 rounded-lg backdrop-blur-sm">Click to watch</div>
-                        </div>
-                      ) : (
-                        <AnimatedDemo />
-                      )}
-                    </div>
+                  {/* RIGHT — PostShowcase: 6 rotating Aussie SMB post mockups.
+                      Cards stack with perspective, swap every 4.5s. The product
+                      output IS the demo. */}
+                  <div className="relative pt-2 md:pt-0">
+                    <PostShowcase />
                   </div>
                 </div>
 
@@ -317,9 +318,10 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 </div>
               )}
 
-              {/* "See it in action" section removed — the AnimatedDemo now lives
-                  in the hero's right column above the fold. Visitors don't have
-                  to scroll past 600px to discover the product working. */}
+              {/* LIVE GALLERY — full-bleed two-row marquee of post mockups
+                  across six Aussie SMB industries. Concrete proof of variety;
+                  the hero's PostShowcase is intimate, this is panoramic. */}
+              <LiveGallery />
 
             {/* HOW IT WORKS — compact */}
             <section className="py-12 px-6 border-t border-white/5">
