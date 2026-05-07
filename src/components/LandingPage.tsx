@@ -108,7 +108,12 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
 
   return (
     <div className="min-h-screen bg-[var(--color-surface-0)] text-white overflow-x-hidden">
-      {showPricing && <PricingTable onClose={() => setShowPricing(false)} />}
+      {showPricing && (
+        <PricingTable
+          onClose={() => setShowPricing(false)}
+          onAccountSetup={onSignIn}
+        />
+      )}
 
       {/* NAV */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl noise">
