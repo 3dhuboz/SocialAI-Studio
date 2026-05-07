@@ -21,7 +21,16 @@ interface Props {
   onUpload: (postId: string) => void;
   onGoCreate: () => void;
   onGoSmart: () => void;
+  onGoSettings?: () => void;
   toast?: (msg: string, type?: 'success' | 'error' | 'warning' | 'info') => void;
+}
+
+// Token issues need a reconnect, not a retry — the FB page connection is broken
+// and clicking Retry will just fail again. Detect from the persisted reason and
+// swap the affordance.
+function isTokenReason(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /token|expired|reconnect|permission|forbidden|page not found|connect facebook|manage_pages|no facebook page connected/i.test(reason);
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -33,7 +42,7 @@ function isSameDay(a: Date, b: Date) {
 
 export const CalendarGrid: React.FC<Props> = ({
   posts, calendarImages, calendarGenSet, fbConnected, hasApiKey,
-  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart, toast: toastFn,
+  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart, onGoSettings, toast: toastFn,
 }) => {
   const today = new Date();
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -270,19 +279,38 @@ export const CalendarGrid: React.FC<Props> = ({
                       {post.platform === 'Instagram'
                         ? <Instagram size={11} className="text-pink-400" />
                         : <Facebook size={11} className="text-blue-400" />}
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                        post.status === 'Posted' ? 'bg-green-500/15 text-green-300' :
-                        post.status === 'Missed' ? 'bg-red-500/20 text-red-300' :
-                        post.status === 'Scheduled' ? 'bg-blue-500/15 text-blue-300' :
-                        'bg-white/8 text-white/30'
-                      }`}>{post.status === 'Missed' ? '⚠ Missed' : post.status}</span>
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                          post.status === 'Posted' ? 'bg-green-500/15 text-green-300' :
+                          post.status === 'Missed' ? 'bg-red-500/20 text-red-300' :
+                          post.status === 'Scheduled' ? 'bg-blue-500/15 text-blue-300' :
+                          'bg-white/8 text-white/30'
+                        }`}
+                        title={post.status === 'Missed' && post.reasoning ? post.reasoning : undefined}
+                      >{post.status === 'Missed' ? '⚠ Missed' : post.status}</span>
                       <span className="text-[11px] text-white/25">
                         {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                     <p className="text-xs text-white/60 line-clamp-2 leading-relaxed">{post.content}</p>
+                    {/* Surface the cron's failure reason inline so the user knows
+                        WHY a post is Missed without opening the modal. The cron
+                        writes a human sentence into post.reasoning on failure. */}
+                    {post.status === 'Missed' && post.reasoning && (
+                      <p className="text-[10px] text-red-300/80 mt-1 leading-snug">
+                        <span className="font-semibold text-red-300">Why: </span>{post.reasoning}
+                      </p>
+                    )}
                   </div>
-                  {post.status === 'Missed' && onRetry && (
+                  {post.status === 'Missed' && isTokenReason(post.reasoning) && onGoSettings ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onGoSettings(); }}
+                      className="shrink-0 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/25 text-amber-300 text-[10px] font-bold px-2 py-1 rounded-lg transition flex items-center gap-1"
+                      title="Reconnect Facebook in Settings — token has expired or page is missing."
+                    >
+                      <Facebook size={10} /> Reconnect
+                    </button>
+                  ) : post.status === 'Missed' && onRetry && (
                     <button
                       onClick={async (e) => { e.stopPropagation(); setPublishingId(post.id); try { await onRetry(post); } finally { setPublishingId(null); } }}
                       disabled={publishingId === post.id}

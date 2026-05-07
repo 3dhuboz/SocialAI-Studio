@@ -1640,6 +1640,18 @@ const Dashboard: React.FC = () => {
 
   const handleAcceptSmartPosts = async () => {
     if (!user) return;
+    // Pre-flight: scheduling without a connected Facebook page is a guaranteed
+    // miss for every post in the batch. The cron will mark them all "Missed" and
+    // (now) send a failure email — but we'd rather catch it BEFORE the user
+    // commits than after. Block accept and route to Settings.
+    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
+      toast(
+        'Connect Facebook first — scheduled posts can\'t publish without a connected page. Opening Settings…',
+        'warning',
+      );
+      setActiveTab('settings');
+      return;
+    }
     const total = smartPosts.length;
     setIsAccepting(true);
     setAcceptProgress(0);
@@ -3245,6 +3257,7 @@ const Dashboard: React.FC = () => {
               onUpload={handleCalendarUpload}
               onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
               onGoSmart={() => setActiveTab('smart')}
+              onGoSettings={() => setActiveTab('settings')}
             />
           </div>
         )}
