@@ -245,6 +245,16 @@ button, a, [role="button"] {
   100% { left: 100%; opacity: 0; }
 }
 
+/* Tour progress — fills the per-scene progress bar inside CinematicTour's
+   interactive tour player. Linear scaleX from 0 → 1 over the scene's
+   duration; the React side passes the duration in via `animation:
+   tour-progress {ms}ms linear both` and uses a `key` prop to force a
+   restart on each scene change. */
+@keyframes tour-progress {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
 /* Marquee — horizontal infinite scroll for the live gallery section.
    Pause on hover so viewers can read posts that catch their eye. */
 @keyframes marquee {
