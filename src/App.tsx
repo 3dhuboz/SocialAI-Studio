@@ -1645,24 +1645,34 @@ const Dashboard: React.FC = () => {
     setAcceptProgress(0);
     setAcceptSaved(0);
     let completedCount = 0;
+    // Track image-gen outcomes per post so we can surface a single, honest summary
+    // toast at the end. Previously these failures were swallowed silently and the
+    // post landed with image_url=NULL — the cron would then publish text-only and
+    // the user had no signal anything went wrong. The fal-proxy 20/min/user rate
+    // limit usually catches the tail of a 14-post Promise.all batch, so this
+    // counter is the user-facing tell that a retry is needed.
+    let imageGenFailures = 0;
     try {
       const results = await Promise.all(
         smartPosts.map(async (sp, i) => {
           // Persist image as a public URL using the same smart prompt logic
           // (business-type aware, anti-generic, no people/faces)
           let postImage = smartPostImages[i] || undefined;
+          const wantsImage = sp.imagePrompt && sp.imagePrompt !== 'N/A';
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
               const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type);
               if (url) postImage = url;
-            } catch { /* keep base64 as fallback */ }
-          } else if (!postImage && sp.imagePrompt && sp.imagePrompt !== 'N/A') {
+              else if (wantsImage) imageGenFailures++;
+            } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
+          } else if (!postImage && wantsImage) {
             // No image — generate with full smart logic (returns public URL)
             try {
               const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type);
               if (url) postImage = url;
-            } catch { /* post goes without image */ }
+              else imageGenFailures++;
+            } catch { imageGenFailures++; /* post goes without image */ }
           }
 
           const postData = {
@@ -1696,6 +1706,17 @@ const Dashboard: React.FC = () => {
         toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
       } else {
         toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
+      }
+      // Surface image-gen failures so silent text-only publishes stop happening.
+      // The cron now has a JIT image-backfill that catches most of these before
+      // publish time, but we still flag here so the user can manually regenerate
+      // in Calendar if they want the image to look exactly right.
+      if (imageGenFailures > 0) {
+        const word = imageGenFailures === 1 ? 'image' : 'images';
+        toast(
+          `${imageGenFailures} ${word} couldn't be generated (likely fal.ai rate limit on a big batch). The publish cron will retry automatically — or open Calendar and click any post to regenerate manually.`,
+          'warning',
+        );
       }
       setSmartPosts([]);
       setSmartStrategy('');
