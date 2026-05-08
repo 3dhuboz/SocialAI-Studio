@@ -188,6 +188,25 @@ export const CLIENT = {
    */
   paypalManageUrl: 'https://www.paypal.com/myaccount/autopay',
 
+  /**
+   * REEL CREDIT PACKS — one-off purchases via PayPal Smart Buttons.
+   * Available on every plan; especially used by Starter/Growth (no monthly
+   * grant) and Pro/Agency users who exhaust their monthly allotment. Credits
+   * never expire. Margin is healthy at every tier (~$0.30 fal cost per reel).
+   *
+   * To change pricing: update the value/credits below — the worker verifies
+   * the captured order's amount against this list before crediting, so
+   * mismatches are rejected automatically.
+   *
+   * Currency is AUD by default to match the existing PayPal subscription
+   * config; PayPal converts at checkout for international customers.
+   */
+  reelCreditPacks: [
+    { id: 'small',  credits: 3,  price: 9.99,  currency: 'AUD', label: 'Starter pack' },
+    { id: 'medium', credits: 10, price: 24.99, currency: 'AUD', label: 'Value pack' },
+    { id: 'large',  credits: 25, price: 49.99, currency: 'AUD', label: 'Pro pack' },
+  ],
+
   /** Max client workspaces per agency account */
   agencyClientLimit: 10,
 
