@@ -299,6 +299,30 @@ export const CalendarGrid: React.FC<Props> = ({
                         }`}
                         title={post.status === 'Missed' && looksLikeFailureReason(post.reasoning) ? post.reasoning : undefined}
                       >{post.status === 'Missed' ? '⚠ Missed' : post.status}</span>
+                      {/* Reel status pill — only on video posts. Shows where the
+                          prewarm cron has the reel: pending → generating → ready,
+                          or failed (in which case publish falls back to image). */}
+                      {post.postType === 'video' && post.status !== 'Posted' && post.status !== 'Missed' && (
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${
+                            post.videoStatus === 'ready'      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' :
+                            post.videoStatus === 'generating' ? 'bg-amber-500/15 text-amber-300 border-amber-500/25' :
+                            post.videoStatus === 'failed'     ? 'bg-red-500/15 text-red-300 border-red-500/25' :
+                                                                'bg-purple-500/15 text-purple-300 border-purple-500/25'
+                          }`}
+                          title={post.videoError || (
+                            post.videoStatus === 'ready' ? 'Reel ready to publish' :
+                            post.videoStatus === 'generating' ? 'Reel generating now…' :
+                            post.videoStatus === 'failed' ? 'Reel generation failed — will publish as image instead' :
+                            'Reel queued — generates 45 min before scheduled time'
+                          )}
+                        >
+                          {post.videoStatus === 'ready'      ? '🎬 Reel ready' :
+                           post.videoStatus === 'generating' ? '🎬 Generating' :
+                           post.videoStatus === 'failed'     ? '🎬 Failed' :
+                                                               '🎬 Queued'}
+                        </span>
+                      )}
                       <span className="text-[11px] text-white/25">
                         {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>

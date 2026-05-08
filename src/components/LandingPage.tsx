@@ -344,6 +344,125 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 onboarding effort, not the AI black box). */}
             <HowItActuallyWorks />
 
+            {/* AI REELS — flagship feature spotlight. Same editorial pattern
+                as the rest of the page: amber-anchor + neutral surfaces, no
+                rainbow gradient story. Lead with the algorithm angle (10x
+                reach) because that's the hook for SMBs, not the tech stack. */}
+            <section className="relative py-20 sm:py-24 px-6 overflow-hidden grain-bg">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_20%,rgba(245,158,11,0.10),transparent_60%)]" />
+              <div className="relative max-w-6xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-[0.95fr_1.05fr] gap-12 lg:gap-16 items-center">
+
+                  {/* LEFT — copy block. Same headline rhythm as the hero:
+                      block + block + italic-serif closer. */}
+                  <div>
+                    <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                      <span className="w-6 h-px bg-amber-300/40" />
+                      New · AI Reels
+                    </div>
+                    <h2 className="text-3xl sm:text-4xl md:text-5xl font-black mb-5 leading-[1.05] tracking-[-0.02em]">
+                      <span className="block text-white">Reels get </span>
+                      <span className="block bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 bg-clip-text text-transparent">10× the organic reach</span>
+                      <span className="block italic font-serif font-light text-white/55 pt-1">of a static post.</span>
+                    </h2>
+                    <p className="text-[15px] sm:text-base text-white/65 mb-7 max-w-lg leading-[1.6]">
+                      AI writes the brief, animates the image, and scores it with the right music — you just hit publish. From idea to a finished reel in under a minute, no editing software, no royalty headaches, no stock-footage feel.
+                    </p>
+
+                    <div className="space-y-3 mb-8">
+                      {[
+                        { icon: Brain, bold: 'AI-written brief.', text: 'Concept, mood, captions — drafted to match your business and tone.' },
+                        { icon: Play, bold: 'Image-to-video animation.', text: 'Kling v1.6 turns any photo into a cinematic 5–10 second reel.' },
+                        { icon: Zap, bold: 'Mood-matched music, auto-mixed.', text: 'Royalty-free Mixkit tracks scored to the vibe and stitched in-browser.' },
+                        { icon: Instagram, bold: 'One-click publish to Instagram Reels.', text: 'Facebook Reels coming soon. Preview, download, or post — your call.' },
+                      ].map((f, i) => (
+                        <div key={i} className="flex items-start gap-3">
+                          <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <f.icon size={13} className="text-amber-400" />
+                          </div>
+                          <p className="text-sm text-white/65 leading-[1.55]">
+                            <strong className="text-white/90 font-bold">{f.bold}</strong> {f.text}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={onSignIn}
+                      className="group inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-6 py-3.5 rounded-full hover:opacity-90 transition text-sm shadow-2xl shadow-amber-500/25"
+                    >
+                      Make my first reel <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                    </button>
+                  </div>
+
+                  {/* RIGHT — animated reel preview frame. Pure CSS/Tailwind:
+                      9:16 phone frame with shimmering gradient bars (the
+                      "video"), a faux waveform under it, and a subtle Play
+                      glyph. No real video file — matches the brief's no-imports
+                      constraint while still feeling cinematic. */}
+                  <div className="relative flex justify-center md:justify-end">
+                    {/* glow halo */}
+                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(245,158,11,0.18),transparent_65%)] blur-2xl" />
+
+                    <div className="relative w-[260px] sm:w-[300px] aspect-[9/16] rounded-[2.25rem] p-[2px] bg-gradient-to-br from-amber-400/60 via-orange-400/30 to-rose-400/40 shadow-[0_30px_80px_-20px_rgba(245,158,11,0.35)]">
+                      <div className="relative w-full h-full rounded-[2.1rem] overflow-hidden bg-gradient-to-br from-[#1a1410] via-[#0f0b08] to-[#0a0707]">
+                        {/* animated film bands — three offset gradients drifting
+                            on different durations creates the "video is playing"
+                            illusion without a real asset */}
+                        <div className="absolute inset-0 bg-gradient-to-b from-amber-500/25 via-rose-500/15 to-transparent animate-pulse" style={{ animationDuration: '3.2s' }} />
+                        <div className="absolute inset-x-0 top-1/3 h-1/3 bg-gradient-to-r from-orange-400/20 via-transparent to-amber-400/20 animate-pulse" style={{ animationDuration: '2.6s' }} />
+
+                        {/* center play glyph */}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="w-16 h-16 rounded-full bg-white/12 backdrop-blur-md border border-white/25 flex items-center justify-center">
+                            <Play size={22} className="text-white ml-1" fill="white" />
+                          </div>
+                        </div>
+
+                        {/* top-left "REEL" tag */}
+                        <div className="absolute top-4 left-4 inline-flex items-center gap-1.5 bg-black/40 backdrop-blur-sm border border-white/15 rounded-full px-2.5 py-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                          <span className="text-[10px] font-bold tracking-[0.18em] text-white/85 uppercase">Reel</span>
+                        </div>
+
+                        {/* bottom caption strip */}
+                        <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/70 via-black/30 to-transparent">
+                          <p className="text-[11px] font-semibold text-white/85 mb-1.5 leading-snug">
+                            Fresh sourdough, in by 7am. Tag a mate who needs one. ☕
+                          </p>
+                          {/* faux waveform — eight bars on staggered animations */}
+                          <div className="flex items-end gap-[3px] h-5">
+                            {[40, 75, 55, 90, 60, 85, 45, 70].map((h, i) => (
+                              <div
+                                key={i}
+                                className="flex-1 rounded-sm bg-gradient-to-t from-amber-400 to-rose-400 animate-pulse"
+                                style={{ height: `${h}%`, animationDuration: `${1.2 + (i % 3) * 0.4}s`, animationDelay: `${i * 0.08}s` }}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footnote strip — three short proof points, neutral surfaces */}
+                <div className="mt-14 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    { stat: '5–10s', label: 'Cinematic image-to-video', sub: 'Powered by Kling v1.6' },
+                    { stat: '< 1 min', label: 'Brief to publish', sub: 'AI writes, animates, scores' },
+                    { stat: '10×', label: 'More reach than static', sub: 'The IG algorithm prefers reels' },
+                  ].map((p, i) => (
+                    <div key={i} className="rounded-2xl p-5 text-left border bg-white/[0.03] border-white/[0.08]">
+                      <p className="text-2xl font-black text-white mb-1 tracking-tight">{p.stat}</p>
+                      <p className="font-bold text-white/85 text-sm mb-1">{p.label}</p>
+                      <p className="text-xs text-white/40 leading-relaxed">{p.sub}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
             {/* CINEMATIC TOUR — atmospheric video moment. Renders YouTube
                 thumbnail when CLIENT.youtubeVideoId is set, otherwise an
                 animated CSS placeholder until real footage drops in. */}
