@@ -29,6 +29,15 @@ binding = "REELS_R2"
 bucket_name = "socialai-reels"
 preview_bucket_name = "socialai-reels"
 
+# R2 object lifecycle: cached reel videos auto-delete 90 days after upload.
+# Posts referencing them have long since published; the durable URL was only
+# needed to bridge fal.ai's 24h URL expiry to the scheduled publish time.
+# Set this in the dashboard (R2 → socialai-reels → Settings → Object Lifecycle)
+# OR run: npx wrangler r2 bucket lifecycle add socialai-reels \
+#   --prefix=reels/ --expire-days=90 --id=expire-old-reels
+# Lifecycle rules belong in the bucket config, not wrangler.toml — this comment
+# is a deploy-checklist breadcrumb so we don't pile up orphan mp4s.
+
 # Cron triggers:
 # */5 * * * *  — prewarm videos + publish missed posts (every 5 min)
 # 0 3 * * *   — refresh Facebook tokens (daily 3am UTC)

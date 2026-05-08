@@ -521,7 +521,14 @@ const Dashboard: React.FC = () => {
           if (pending && !pending.consumed) {
             setActivePlan(pending.plan as PlanTier);
             setSetupStatus('live');
-            await db.upsertUser({ plan: pending.plan, setupStatus: 'live', email: user.email, paypalSubscriptionId: pending.paypal_subscription_id || null });
+            // Propagate billing_cycle (set by the PayPal webhook from plan_id)
+            // to the users row so the renewal grant logic knows whether to
+            // multiply by 12 (yearly) or 1 (monthly) on PAYMENT.SALE.COMPLETED.
+            await db.upsertUser({
+              plan: pending.plan, setupStatus: 'live', email: user.email,
+              paypalSubscriptionId: pending.paypal_subscription_id || null,
+              billingCycle: pending.billing_cycle || null,
+            });
             await db.consumeActivation(pending.id as string);
             // Self-serve onboarding: a brand-new paid customer who's just been
             // upgraded from "no plan" to a real plan needs to be walked through

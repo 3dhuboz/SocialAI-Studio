@@ -399,8 +399,8 @@ app.put('/api/db/user', async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO users (id, email, plan, setup_status, is_admin, onboarding_done, intake_form_done,
         agency_billing_url, late_profile_id, late_connected_platforms, late_account_ids,
-        fal_api_key, paypal_subscription_id, profile, stats, insight_report)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        fal_api_key, paypal_subscription_id, profile, stats, insight_report, billing_cycle)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       uid,
       body.email ?? null, body.plan ?? null, body.setupStatus ?? null,
@@ -410,7 +410,8 @@ app.put('/api/db/user', async (c) => {
       JSON.stringify(body.lateAccountIds ?? {}),
       body.falApiKey ?? null, body.paypalSubscriptionId ?? null,
       JSON.stringify(body.profile ?? {}), JSON.stringify(body.stats ?? {}),
-      body.insightReport ? JSON.stringify(body.insightReport) : null
+      body.insightReport ? JSON.stringify(body.insightReport) : null,
+      body.billingCycle ?? null
     ).run();
   } else {
     const sets: string[] = [];
@@ -425,6 +426,10 @@ app.put('/api/db/user', async (c) => {
       // v5 — reel credits balance. Plan grants (PayPal webhook on renewal)
       // and one-off credit-pack purchases both increment this column.
       reelCredits: 'reel_credits',
+      // v6 — 'monthly' | 'yearly'. Set when consuming a pending_activations
+      // row; drives the renewal grant multiplier (×1 or ×12) so yearly subs
+      // get the same total credits/year as monthly subs.
+      billingCycle: 'billing_cycle',
     };
     const jsonFields = new Set(['lateConnectedPlatforms', 'lateAccountIds', 'profile', 'stats', 'insightReport']);
     const boolFields = new Set(['isAdmin', 'onboardingDone', 'intakeFormDone']);
@@ -970,8 +975,55 @@ const PAYPAL_PLAN_TIER: Record<string, string> = {
   'P-1BH48559DE324360CNHDUVAA': 'agency',
 };
 
+// Plan IDs that bill yearly. PAYMENT.SALE.COMPLETED for these fires once a
+// year, so reel-credit grants must be multiplied by 12 to give the user the
+// same effective monthly cadence as a monthly subscriber.
+const PAYPAL_YEARLY_PLAN_IDS = new Set([
+  'P-62C327553Y779300FNHDUU7Y',
+  'P-60J02873W1559770VNHDUVAA',
+  'P-6G9907746Y8649457NHDUVAA',
+  'P-1BH48559DE324360CNHDUVAA',
+]);
+
+// Reel credits granted per billing cycle, per plan tier. Mirrored in the
+// frontend `client.configs/*.ts` plan feature lines — keep them in sync.
+// Yearly subscribers get this × 12 on each annual renewal (PAYMENT.SALE.COMPLETED
+// fires once for them per year).
+const REEL_CREDITS_PER_MONTH: Record<string, number> = {
+  starter: 0,
+  growth: 0,
+  pro: 4,
+  agency: 20,
+};
+
 const PAYPAL_API_BASE = 'https://api-m.paypal.com';
 const ADMIN_NOTIFY_EMAIL = 'steve@pennywiseit.com.au';
+
+// Grant reel credits for a recurring PayPal payment (PAYMENT.SALE.COMPLETED).
+// Looks up the user's billing_cycle to decide the multiplier (yearly subs
+// get 12× the monthly amount on each annual renewal so total cadence matches
+// monthly subs). Caller MUST gate on a fresh INSERT to the payments table —
+// this function does no idempotency check of its own; relying on the table's
+// unique paypal_event_id index in the caller is simpler and race-free.
+async function grantReelCreditsForRenewal(env: Env, userId: string, plan: string): Promise<void> {
+  const perCycle = REEL_CREDITS_PER_MONTH[plan] ?? 0;
+  if (perCycle === 0) return; // starter/growth — no plan-included reels
+
+  const u = await env.DB.prepare(
+    `SELECT billing_cycle, reel_credits FROM users WHERE id = ?`
+  ).bind(userId).first<{ billing_cycle: string | null; reel_credits: number | null }>();
+  if (!u) return;
+
+  // NULL billing_cycle → assume monthly (the safer default for legacy users).
+  const multiplier = u.billing_cycle === 'yearly' ? 12 : 1;
+  const grant = perCycle * multiplier;
+  const newBalance = (u.reel_credits ?? 0) + grant;
+
+  await env.DB.prepare(
+    `UPDATE users SET reel_credits = ? WHERE id = ?`
+  ).bind(newBalance, userId).run();
+  console.log(`[reels] granted ${grant} credit(s) to user ${userId} (${plan}/${u.billing_cycle ?? 'monthly'}) → ${newBalance} total`);
+}
 
 async function paypalAccessToken(env: Env): Promise<string> {
   const id = env.PAYPAL_CLIENT_ID;
@@ -1124,22 +1176,35 @@ app.post('/api/paypal-webhook', async (c) => {
       console.warn('No plan matched for PayPal plan ID:', paypalPlanId);
       return c.text('No plan matched — skipped.', 200);
     }
+    const billingCycle = PAYPAL_YEARLY_PLAN_IDS.has(paypalPlanId) ? 'yearly' : 'monthly';
 
     const id = uuid();
     // INSERT OR IGNORE — verify endpoint may have already created the row.
     // Keying on subscription_id would be cleaner but the existing schema uses
     // a uuid primary key; the consumed flag handles double-consumption.
     await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
-       VALUES (?,?,?,?,?,?,0)`
-    ).bind(id, plan, email, subscriptionId, payerId, new Date().toISOString()).run();
-    console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan}`);
+      `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed, billing_cycle)
+       VALUES (?,?,?,?,?,?,0,?)`
+    ).bind(id, plan, email, subscriptionId, payerId, new Date().toISOString(), billingCycle).run();
+    // If a verify-endpoint row already exists, patch in billing_cycle so the
+    // frontend's consumeActivation flow propagates it to the users row.
+    await c.env.DB.prepare(
+      `UPDATE pending_activations SET billing_cycle = COALESCE(billing_cycle, ?)
+       WHERE paypal_subscription_id = ? AND consumed = 0`
+    ).bind(billingCycle, subscriptionId).run();
+    console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan} (${billingCycle})`);
 
     if (email) {
       await sendResendEmail(c.env, { to: email, subject: `Welcome to Social AI Studio — your ${plan} plan is active!`, html: welcomeEmailHtml(plan) });
-      await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+      await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan} (${billingCycle})<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
     }
   }
+
+  // PAYMENT.SALE.COMPLETED grants reel credits — but the grant is gated on
+  // the audit-trail INSERT below (recordPaymentEvent) actually inserting a
+  // new row. PayPal retries the same webhook up to 25 times; without that
+  // gate we'd double-grant on every retry. See recordPaymentEvent for the
+  // gating logic.
 
   if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
     const subscriptionId = resource.id;
@@ -1273,7 +1338,7 @@ async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: any): Pr
     try { return JSON.stringify(event).slice(0, 8000); } catch { return null; }
   })();
 
-  await c.env.DB.prepare(
+  const insertResult = await c.env.DB.prepare(
     `INSERT OR IGNORE INTO payments
        (id, paypal_event_id, paypal_subscription_id, paypal_capture_id,
         email, user_id, plan, event_type, amount_cents, currency, status,
@@ -1284,6 +1349,21 @@ async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: any): Pr
     email, userId, plan, eventType, amountCents, currency, status,
     rawJson, new Date().toISOString(),
   ).run();
+
+  // Grant reel credits ONLY when this is a freshly-inserted PAYMENT.SALE.COMPLETED
+  // row (not a retry-dedup'd no-op). meta.changes === 1 means INSERT OR IGNORE
+  // actually inserted; 0 means the unique paypal_event_id index already had it.
+  // This pattern is the simplest race-free idempotency for "do this side-effect
+  // exactly once per webhook event".
+  if (eventType === 'PAYMENT.SALE.COMPLETED' && insertResult.meta?.changes === 1 && userId && plan) {
+    try {
+      await grantReelCreditsForRenewal(c.env, userId, plan);
+    } catch (e: any) {
+      console.error(`[reels] grant failed for user ${userId} sale ${captureId}: ${e?.message || e}`);
+      // Don't throw — the audit row is already in. A failed grant won't
+      // double-charge the customer; admin can manually credit if needed.
+    }
+  }
 }
 
 // ── Admin: Customers dashboard ───────────────────────────────────────────────
