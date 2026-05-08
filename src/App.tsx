@@ -12,6 +12,7 @@ import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
 import { CreditPackModal } from './components/CreditPackModal';
+import { TestReelPublishButton } from './components/TestReelPublishButton';
 import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
@@ -3973,7 +3974,17 @@ const Dashboard: React.FC = () => {
                             {new Date(sp.scheduledFor).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} · {new Date(sp.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                           {sp.pillar && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">{sp.pillar}</span>}
-                          {isVideo && <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">🎬 Reel</span>}
+                          {isVideo && (
+                            <>
+                              <span className="text-[10px] bg-purple-900/40 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">🎬 Reel</span>
+                              <span
+                                title="Each reel debits 1 credit when you click Accept. Credits never expire."
+                                className="text-[10px] bg-pink-500/15 text-pink-300 border border-pink-500/25 px-2 py-0.5 rounded-full font-semibold"
+                              >
+                                1 credit
+                              </span>
+                            </>
+                          )}
                           {(sp as any)._needsReview && (
                             <span title={(sp as any)._reviewReason || 'AI may have invented details — please review'} className="text-[10px] bg-red-900/50 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-bold">
                               ⚠️ Needs review
@@ -4026,6 +4037,37 @@ const Dashboard: React.FC = () => {
 
                 {/* Accept All bottom */}
                 <div className="space-y-2">
+                  {/* Reel credit summary — shown only when the batch contains
+                      reels. Lets the user see what they're committing before
+                      they click Accept. The accept handler enforces the cap
+                      already (extra reels get demoted to image), but surfacing
+                      the math up-front avoids "wait, why did 2 of my reels
+                      become images?" surprise. */}
+                  {(() => {
+                    const reelsInBatch = smartPosts.filter((p: any) => p.postType === 'video').length;
+                    if (reelsInBatch === 0) return null;
+                    const creditsAfter = effectiveReelCredits === Infinity ? Infinity : Math.max(0, effectiveReelCredits - reelsInBatch);
+                    return (
+                      <div className="bg-purple-500/8 border border-purple-500/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                        <div className="text-xs text-purple-200/85">
+                          <span className="font-bold text-purple-300">{reelsInBatch} reel{reelsInBatch === 1 ? '' : 's'}</span>
+                          {' '}in this batch ·{' '}
+                          <span className="text-white/55">{reelsInBatch} credit{reelsInBatch === 1 ? '' : 's'} debited on accept</span>
+                          {effectiveReelCredits !== Infinity && (
+                            <> · You'll have <span className="font-bold text-white">{creditsAfter}</span> credit{creditsAfter === 1 ? '' : 's'} left</>
+                          )}
+                        </div>
+                        {effectiveReelCredits !== Infinity && effectiveReelCredits < reelsInBatch && (
+                          <button
+                            onClick={() => setShowCreditPackModal(true)}
+                            className="text-[11px] bg-pink-500/20 hover:bg-pink-500/30 border border-pink-500/30 text-pink-300 font-bold px-3 py-1.5 rounded-lg transition whitespace-nowrap"
+                          >
+                            Buy more credits
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <button
                     onClick={handleAcceptSmartPosts}
                     disabled={isAccepting}
@@ -5124,6 +5166,12 @@ const Dashboard: React.FC = () => {
                   }}
                 />
               </div>
+
+              {/* Pre-flight smoke test for FB Page Reels publishing. Catches
+                  permission/token issues at config time instead of letting a
+                  whole batch of scheduled reels silently fall back to image
+                  posts. Cheap (no Kling cost — just FB Graph API ping). */}
+              {fbConnected && <TestReelPublishButton clientId={activeClientId} />}
 
             </div>
 
