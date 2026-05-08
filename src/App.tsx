@@ -4949,6 +4949,45 @@ const Dashboard: React.FC = () => {
               <div className="h-px flex-1 bg-white/6" />
             </div>
 
+            {/* Plain-English explainer — Dean opens this page and sees only an
+                "Add Campaign" button. Without this block he has no idea what a
+                campaign is or when he'd use one. Keep the copy short, give 3
+                concrete examples, lead with the outcome ("the AI will…"). */}
+            <div className="glass rounded-2xl p-5 space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/20 flex items-center justify-center shrink-0">
+                  <Target size={16} className="text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white">What's a Campaign?</p>
+                  <p className="text-xs text-white/45 mt-1 leading-relaxed">
+                    A campaign is a <strong className="text-white/70">date range with a goal</strong>. Once you add one,
+                    every post the AI writes between those dates will weave that goal in automatically — countdowns,
+                    themes, calls-to-action — without you needing to write it yourself.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pl-12">
+                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                  <p className="text-[10px] font-bold text-amber-300/80">Run a sale</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"20% off all sessions May 15–25 — use urgent language as we count down."</p>
+                </div>
+                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                  <p className="text-[10px] font-bold text-amber-300/80">Promote an event</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Sunshine Coast workshop on June 14 — drive bookings, mention limited spots."</p>
+                </div>
+                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                  <p className="text-[10px] font-bold text-amber-300/80">Seasonal push</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Mother's Day gift voucher — May 1–12, gentle nostalgic tone."</p>
+                </div>
+              </div>
+              <p className="text-[10px] text-white/25 pl-12 leading-relaxed">
+                <strong className="text-white/40">How it works:</strong> click "Add Campaign", set a start &amp; end date,
+                write a sentence telling the AI what to focus on. That's it — your next batch of scheduled posts will
+                pick it up. Add as many campaigns as you want; if dates overlap, the AI blends them.
+              </p>
+            </div>
+
             <div className="space-y-3">
               {campaigns.map(c => (
                 <div key={c.id} className="glass rounded-2xl p-4 space-y-3">
