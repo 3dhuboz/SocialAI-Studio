@@ -552,16 +552,25 @@ const Dashboard: React.FC = () => {
           setPosts(loaded);
           localStorage.setItem('sai_posts', JSON.stringify(loaded));
         }
-        // Load campaigns
-        try {
-          const loadedCampaigns = await db.getCampaigns(null);
-          setCampaigns(loadedCampaigns.map(c => ({
-            id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-            startDate: c.start_date || '', endDate: c.end_date || '',
-            rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-            enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
-          })));
-        } catch { /* campaigns will remain empty */ }
+        // Load campaigns — skip in portal mode for the same reason posts are
+        // skipped above. In portal mode the initial sync runs in parallel with
+        // the active-client effect (line 660). Both call setCampaigns; whichever
+        // resolves last wins. The initial sync queries client_id IS NULL — so
+        // when it wins the race it leaks the agency owner's *own* campaigns
+        // (e.g. Penny Wise IT's "promote SocialAI Studio" campaigns) into a
+        // portal-only client view. The active-client effect handles loading the
+        // correct campaigns for the portal client workspace.
+        if (authMode !== 'portal') {
+          try {
+            const loadedCampaigns = await db.getCampaigns(null);
+            setCampaigns(loadedCampaigns.map(c => ({
+              id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
+              startDate: c.start_date || '', endDate: c.end_date || '',
+              rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
+              enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+            })));
+          } catch { /* campaigns will remain empty */ }
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('D1 sync error:', msg);
@@ -4523,7 +4532,13 @@ const Dashboard: React.FC = () => {
                     {CLIENT.plans.map(plan => {
                       const isCurrent = effectivePlan === plan.id;
                       const planOrder = ['starter', 'growth', 'pro', 'agency'];
-                      const currentIdx = planOrder.indexOf(activePlan ?? '');
+                      // Use effectivePlan (the plan of the workspace currently
+                      // being viewed) NOT activePlan (the agency owner's own
+                      // plan). In a portal/client workspace activePlan is the
+                      // agency owner's tier (often 'agency'), which made every
+                      // higher tier compute as a "Downgrade" relative to
+                      // 'agency' even when the *workspace's* plan was Starter.
+                      const currentIdx = planOrder.indexOf(effectivePlan);
                       const planIdx = planOrder.indexOf(plan.id);
                       const isUpgrade = planIdx > currentIdx;
                       const isNew = !activePlan;
