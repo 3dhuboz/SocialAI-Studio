@@ -33,6 +33,17 @@ function isTokenReason(reason: string | undefined): boolean {
   return /token|expired|reconnect|permission|forbidden|page not found|connect facebook|manage_pages|no facebook page connected/i.test(reason);
 }
 
+// posts.reasoning is dual-use: the cron writes a failure sentence on Missed,
+// but Smart Schedule writes its scheduling rationale ("Posted at 09:00 on
+// Tuesday — researched peak engagement…") at create-time, and that rationale
+// is still in the column on a Missed post created BEFORE the cron started
+// overwriting it. Showing "Why: Posted at 09:00 on Tuesday…" on a Missed post
+// is gibberish. Recognise actual failure phrasings; suppress the rest.
+function looksLikeFailureReason(reason: string | undefined): boolean {
+  if (!reason) return false;
+  return /token|expired|connected|reconnect|permission|forbidden|page not found|connect facebook|manage_pages|rate limit|failed|denied|fb api|image upload|could not publish/i.test(reason);
+}
+
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -286,7 +297,7 @@ export const CalendarGrid: React.FC<Props> = ({
                           post.status === 'Scheduled' ? 'bg-blue-500/15 text-blue-300' :
                           'bg-white/8 text-white/30'
                         }`}
-                        title={post.status === 'Missed' && post.reasoning ? post.reasoning : undefined}
+                        title={post.status === 'Missed' && looksLikeFailureReason(post.reasoning) ? post.reasoning : undefined}
                       >{post.status === 'Missed' ? '⚠ Missed' : post.status}</span>
                       <span className="text-[11px] text-white/25">
                         {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -295,8 +306,10 @@ export const CalendarGrid: React.FC<Props> = ({
                     <p className="text-xs text-white/60 line-clamp-2 leading-relaxed">{post.content}</p>
                     {/* Surface the cron's failure reason inline so the user knows
                         WHY a post is Missed without opening the modal. The cron
-                        writes a human sentence into post.reasoning on failure. */}
-                    {post.status === 'Missed' && post.reasoning && (
+                        writes a human sentence into post.reasoning on failure.
+                        Suppress non-failure reasoning (Smart Schedule rationale)
+                        — see looksLikeFailureReason for why. */}
+                    {post.status === 'Missed' && looksLikeFailureReason(post.reasoning) && (
                       <p className="text-[10px] text-red-300/80 mt-1 leading-snug">
                         <span className="font-semibold text-red-300">Why: </span>{post.reasoning}
                       </p>
