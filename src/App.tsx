@@ -497,12 +497,17 @@ const Dashboard: React.FC = () => {
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
           if (d.agencyBillingUrl) setAgencyBillingUrl(d.agencyBillingUrl);
-          if (d.insightReport) {
-            setInsightReport(d.insightReport as InsightReport);
-            const ageMs = Date.now() - new Date((d.insightReport as InsightReport).generatedAt).getTime();
-            if (ageMs > 24 * 60 * 60 * 1000) setInsightStale(true);
-          } else {
-            setInsightStale(true);
+          // Skip insightReport in portal mode — same race condition as posts/
+          // campaigns/profile. The agency owner's insight report would otherwise
+          // briefly (or persistently) show inside a portal client's view.
+          if (authMode !== 'portal') {
+            if (d.insightReport) {
+              setInsightReport(d.insightReport as InsightReport);
+              const ageMs = Date.now() - new Date((d.insightReport as InsightReport).generatedAt).getTime();
+              if (ageMs > 24 * 60 * 60 * 1000) setInsightStale(true);
+            } else {
+              setInsightStale(true);
+            }
           }
         }
         // Check for pending PayPal activation
