@@ -19,11 +19,15 @@ interface Props {
   onSave: (id: string, updates: Partial<SocialPost>) => Promise<void>;
   onRegenImage: (postId: string, prompt: string) => void;
   onUpload: (postId: string) => void;
+  /** Reset a failed reel back to 'pending' so the prewarm cron picks it up
+   *  again. No credit re-charge — user already paid; this is just a retry of
+   *  the same paid attempt. */
+  onRetryReel?: (postId: string) => Promise<void>;
 }
 
 export const PostModal: React.FC<Props> = ({
   post, image, isGeneratingImage, fbConnected, hasApiKey,
-  onClose, onPublish, onDelete, onSave, onRegenImage, onUpload,
+  onClose, onPublish, onDelete, onSave, onRegenImage, onUpload, onRetryReel,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(post.content);
@@ -151,6 +155,14 @@ export const PostModal: React.FC<Props> = ({
                     <p className="text-[11px] text-red-300/80 mt-2 leading-snug">
                       <span className="font-semibold">Why: </span>{post.videoError}
                     </p>
+                  )}
+                  {post.videoStatus === 'failed' && onRetryReel && post.status === 'Scheduled' && (
+                    <button
+                      onClick={() => onRetryReel(post.id)}
+                      className="text-[11px] mt-2 inline-flex items-center gap-1.5 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 px-2.5 py-1 rounded-lg transition font-semibold"
+                    >
+                      <RefreshCw size={10} /> Retry reel generation
+                    </button>
                   )}
                   {!post.videoStatus && (
                     <p className="text-[11px] text-white/40 mt-2 leading-snug">
