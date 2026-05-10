@@ -575,7 +575,7 @@ STRICT ANTI-GENERIC RULES (forbidden tokens — DO NOT WRITE under any condition
 - Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name the EXACT product — ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods' — name the specific item. NO people, NO hands, NO faces."}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name ONE real, tangible, photographable scene from the physical world — pick from: ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods', 'pricing', 'plans', 'features', 'comparison', 'tiers' — name the specific item. NO people, NO hands, NO faces. NO UI mockups, NO app screens, NO dashboards, NO charts, NO graphs, NO tables, NO infographics, NO diagrams, NO pricing tiers, NO comparison grids, NO landing pages, NO marketing graphics — even if the topic is about software, pricing, or subscriptions, the image MUST depict a real-world physical scene (an object, a place, a moment), NEVER a screen or chart."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
@@ -807,9 +807,15 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
   const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
   const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
+  // For SaaS/promo/pricing topics the AI sometimes interprets the brief as
+  // "render the pricing UI" — producing a blurry pricing-table mockup that
+  // sells nothing. Reject any prompt that's primarily describing a digital
+  // interface, chart, infographic, or comparison grid. NB: keep this in sync
+  // with generateMarketingImageUrl below — duplicated for now.
+  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
 
   // If the AI wrote a title instead of a visual description, generate a type-specific fallback
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague)
+  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
     ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
     : prompt;
 
@@ -826,7 +832,9 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
   // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
   // the specific AI tells that show up most often on food/wellness shots.
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
+  // Added: UI/chart/table/infographic/dashboard negatives — promo/pricing
+  // topics were rendering as blurry pricing-table mockups (Penny Wise post).
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
@@ -876,8 +884,12 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
   const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
   const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
   const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
+  // Mirror of guardrail in generateMarketingImage above. Reject UI/chart/
+  // pricing-table prompts so promo/SaaS posts can't render as blurry
+  // marketing-graphic mockups (Penny Wise pricing-table regression).
+  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
 
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague)
+  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
     ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
     : prompt;
 
@@ -892,7 +904,9 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
   // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
   // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
   // the specific AI tells that show up most often on food/wellness shots.
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
+  // Added: UI/chart/table/infographic/dashboard negatives — promo/pricing
+  // topics were rendering as blurry pricing-table mockups.
+  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
 
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
