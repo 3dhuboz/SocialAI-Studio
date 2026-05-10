@@ -3298,6 +3298,8 @@ const Dashboard: React.FC = () => {
               planName={planCfg?.name}
               lastPulled={lastPulled}
               onGoToSettings={() => setActiveTab('settings')}
+              onGoToCalendar={() => setActiveTab('calendar')}
+              onGoToInsights={() => setActiveTab('insights')}
             />
 
             {/* ── Sub-mode toggle ── */}
