@@ -1251,6 +1251,104 @@ app.post('/api/paypal-credit-pack-confirm', async (c) => {
   }
 });
 
+// ── Reels: Pre-flight smoke test ────────────────────────────────────────────
+// Verifies the user's Facebook Page can actually accept a Reel publish via
+// /video_reels — catches "FB token expired", "publish_video scope missing",
+// "page disconnected" before the user schedules a batch and watches it all
+// fail at publish time. Safe + free: kicks off upload_phase=start and
+// abandons the resulting video_id (FB GCs unreferenced uploads after a few
+// hours, no actual reel ever publishes).
+//
+// This is the PROACTIVE counterpart to the cron's reactive image-fallback
+// safety net. Aligns with the user's #1 priority (reliability) — surface the
+// failure at config time, not at publish time.
+app.post('/api/test-reel-publish', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+  const body = await c.req.json<{ clientId?: string | null }>().catch(() => null);
+  const clientId = body?.clientId || null;
+
+  // Load social tokens for the appropriate workspace (mirrors the cron's
+  // resolution logic exactly so this test matches what the cron actually does).
+  const tokensRaw = clientId
+    ? await c.env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
+    : await c.env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
+  const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+  if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
+    return c.json({
+      ok: false,
+      stage: 'no-tokens',
+      message: 'No Facebook page connected. Open Settings → Connected Accounts → Connect Facebook.',
+    }, 200);
+  }
+
+  const base = 'https://graph.facebook.com/v21.0';
+  const pageId = tokens.facebookPageId;
+  const token = tokens.facebookPageAccessToken;
+
+  // Step 1 — verify page lookup works (catches expired/revoked tokens cheap).
+  try {
+    const pageRes = await fetch(`${base}/${pageId}?fields=name,access_token&access_token=${encodeURIComponent(token)}`);
+    const pageData = await pageRes.json() as any;
+    if (!pageRes.ok || pageData.error) {
+      return c.json({
+        ok: false,
+        stage: 'page-lookup',
+        message: `Facebook rejected the page token: ${pageData.error?.message || `HTTP ${pageRes.status}`}. Reconnect Facebook in Settings to refresh.`,
+      }, 200);
+    }
+    const pageName = pageData.name as string;
+
+    // Step 2 — kick off video_reels upload_phase=start. If the page lacks the
+    // publish_video permission OR has Reels disabled, this returns an error.
+    // We DON'T follow through to transfer/finish — FB GCs the unreferenced
+    // upload session. No actual reel publishes.
+    const startRes = await fetch(`${base}/${pageId}/video_reels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_phase: 'start', access_token: token }),
+    });
+    const startData = await startRes.json() as any;
+    if (!startRes.ok || startData.error) {
+      const errMsg = startData.error?.message || `HTTP ${startRes.status}`;
+      const errCode = startData.error?.code;
+      // FB error codes: 200 = permission denied, 100 = invalid param, 190 = token expired
+      const friendly =
+        errCode === 200 ? 'Page is missing the publish_video permission. Reconnect Facebook in Settings and accept all permissions.'
+        : errCode === 190 ? 'Facebook token expired. Reconnect Facebook in Settings.'
+        : `Facebook rejected the test: ${errMsg}`;
+      return c.json({
+        ok: false,
+        stage: 'reels-start',
+        page_name: pageName,
+        fb_error_code: errCode,
+        message: friendly,
+      }, 200);
+    }
+    if (!startData.video_id || !startData.upload_url) {
+      return c.json({
+        ok: false,
+        stage: 'reels-start',
+        page_name: pageName,
+        message: 'Facebook accepted the request but returned no video_id — Reels API may be misconfigured. Contact support.',
+      }, 200);
+    }
+
+    return c.json({
+      ok: true,
+      page_name: pageName,
+      message: `Reels publishing is configured correctly for ${pageName}. Scheduled reels will publish automatically.`,
+    });
+  } catch (err: any) {
+    return c.json({
+      ok: false,
+      stage: 'network',
+      message: `Could not reach Facebook: ${err?.message || 'unknown'}. Try again in a moment.`,
+    }, 200);
+  }
+});
+
 // ── PayPal: Webhook (subscription lifecycle from PayPal) ────────────────────
 // PayPal posts subscription events (ACTIVATED, CANCELLED) here. Public
 // endpoint — protected by signature verification against PAYPAL_WEBHOOK_ID.
