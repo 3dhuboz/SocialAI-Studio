@@ -2145,14 +2145,37 @@ const Dashboard: React.FC = () => {
                               shotsStr.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
                             ].filter(Boolean).join(' — ').slice(0, 300) || videoScriptModal.hookText;
 
-                            // Use the post's generated image as the input frame if available
-                            const inputImage = videoScriptModal.imageUrl || '';
+                            // Kling i2v REQUIRES a starting frame — without one
+                            // the proxy returns "promptImage is required" and
+                            // the user is dead-ended. If the post hasn't been
+                            // image-generated yet (imageUrl missing) we run a
+                            // FLUX call here on the post's imagePrompt (or the
+                            // hook text as a last-resort) so the reel button
+                            // self-heals instead of erroring.
+                            let inputImage = videoScriptModal.imageUrl || '';
+                            if (!inputImage) {
+                              const seedPrompt = (videoScriptModal.imagePrompt || videoScriptModal.hookText || '').trim();
+                              if (!seedPrompt) {
+                                throw new Error('No image and no prompt to seed one — open the post and add an image first.');
+                              }
+                              // Reserve 0–25% of the progress bar for the
+                              // starting-frame step so the user sees motion
+                              // immediately rather than a stalled bar.
+                              setVideoModalProgress(0.05);
+                              inputImage = await FalService.generateImage(seedPrompt);
+                              setVideoModalProgress(0.25);
+                            }
 
                             const url = await FalService.generateVideo(
                               motionPrompt,
                               inputImage,
                               5,
-                              (p) => setVideoModalProgress(p),
+                              // Remap Kling's 0–1 progress into 0.25–1.0 if we
+                              // already burned the first quarter on FLUX, else
+                              // pass through unchanged.
+                              videoScriptModal.imageUrl
+                                ? (p) => setVideoModalProgress(p)
+                                : (p) => setVideoModalProgress(0.25 + p * 0.75),
                             );
                             setVideoModalUrl(url);
                           } catch (e: any) {

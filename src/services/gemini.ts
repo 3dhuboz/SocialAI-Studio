@@ -252,6 +252,30 @@ const getImagePromptExamples = (businessType: string): string => {
   return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one item' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
 };
 
+/**
+ * Picks ONE example from the OR-joined string getImagePromptExamples returns.
+ *
+ * Bug history (2026-05): both generateMarketingImage callsites had a
+ * regex like `.replace(SLASH ' or ' DOT-STAR SLASH, '')` that was supposed
+ * to strip everything after the first example — but the joiner is uppercase
+ * ` OR ` (see getImagePromptExamples line 161), so the regex matched nothing
+ * and the ENTIRE 8-example concatenation was sent to FLUX as one prompt. FLUX then
+ * blended scenes (e.g. a tech-business prompt rendered as a cafe because
+ * "coffee shop counter scene with laptop" was one of the OR'd examples).
+ *
+ * This helper splits on the actual ` OR ` joiner, strips wrapping quotes,
+ * and picks ONE example at random per call so accept-all generates varied
+ * imagery instead of always defaulting to the first scene.
+ */
+function pickExampleScene(joinedExamples: string): string {
+  const parts = joinedExamples
+    .split(/\s+OR\s+/i)
+    .map(s => s.replace(/^e\.g\.\s*/i, '').replace(/^['"]/, '').replace(/['"]$/, '').trim())
+    .filter(Boolean);
+  if (!parts.length) return joinedExamples;
+  return parts[Math.floor(Math.random() * parts.length)];
+}
+
 // ── Real-data ground-truth fetcher (FB-scraped facts) ──
 // The AI used to invent testimonials and stats because it had nothing real.
 // Now we pull a slice of the client_facts table (populated by the Worker
@@ -820,9 +844,12 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   // with generateMarketingImageUrl below — duplicated for now.
   const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
 
-  // If the AI wrote a title instead of a visual description, generate a type-specific fallback
+  // If the AI wrote a title instead of a visual description, generate a
+  // type-specific fallback. pickExampleScene splits on the ` OR ` joiner and
+  // picks ONE example at random — fixes the long-standing case-mismatch bug
+  // where the entire 8-example string got mashed into a single prompt.
   const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
-    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
+    ? pickExampleScene(getImagePromptExamples(businessType))
     : prompt;
 
   // Strip people/portrait/human descriptions — AI images of people always look fake
@@ -895,8 +922,11 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
   // marketing-graphic mockups (Penny Wise pricing-table regression).
   const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
 
+  // pickExampleScene picks ONE example from the OR-joined string at random —
+  // fixes the case-mismatched regex bug that was sending all 8 examples to
+  // FLUX as a mashed-together prompt (see helper docstring above).
   const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
-    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
+    ? pickExampleScene(getImagePromptExamples(businessType))
     : prompt;
 
   const cleanPrompt = effectivePrompt

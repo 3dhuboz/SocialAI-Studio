@@ -141,6 +141,24 @@ const uuid = () => crypto.randomUUID();
 //   3. Generic "marketing graphic" FLUX output — adds a wide UI/chart/
 //      infographic negative list to the suffix as a last-line defense.
 //
+// Neutral-scene fallback bank — used when isAbstractUI matches and we need
+// to swap a UI/dashboard/screenshot prompt for something photographable. The
+// previous single fallback ('calm tidy desk with morning daylight…') made
+// every cron-regenerated promo post look identical, AND was a poor match for
+// non-tech businesses. This bank gives the cron a randomised, varied set of
+// candid-looking scenes that work across most SMB industries (cafes, IT,
+// salons, real estate, etc.) without committing to a specific subject.
+const SAFE_FALLBACK_SCENES = [
+  'calm tidy desk with morning daylight, plant and open notebook beside closed laptop, real-world wear and texture',
+  'overhead flatlay of an open notebook, ceramic mug and pen on a linen runner, soft daylight',
+  'minimal home office windowsill with potted plant and warm sunrise light through a window',
+  'matte black smartphone face-down on a marble surface beside an espresso cup, top-down, morning light',
+  'close-up of a leather-bound journal and brass pen on a wooden desk, golden hour shadows',
+  'aerial view of a beige aesthetic workspace with notebook, pen, plant and closed laptop',
+  'abstract texture of warm afternoon sunlight casting shadows across a textured wall',
+  'cosy reading corner with stacked books, mug and a folded throw blanket, candid composition',
+];
+
 // Returns null if the prompt is too short to be useful — caller should skip.
 function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | null {
   const prompt = (rawPrompt || '').trim();
@@ -148,10 +166,11 @@ function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | nu
 
   // If the AI's prompt is primarily describing a digital interface, chart,
   // or comparison grid, FLUX will render a blurry pricing-table mockup that
-  // sells nothing. Swap to a neutral real-world scene instead.
+  // sells nothing. Swap to a randomised neutral real-world scene from the
+  // fallback bank above so cron-regenerated posts stop looking identical.
   const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
   const safeBase = isAbstractUI
-    ? 'calm tidy desk with morning daylight, plant and open notebook beside closed laptop, real-world wear and texture'
+    ? SAFE_FALLBACK_SCENES[Math.floor(Math.random() * SAFE_FALLBACK_SCENES.length)]
     : prompt;
 
   const cleaned = safeBase
