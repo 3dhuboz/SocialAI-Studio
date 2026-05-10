@@ -188,14 +188,20 @@ const getImagePromptExamples = (businessType: string): string => {
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('web', 'software', 'tech', 'digital', 'saas') || /\bit\b/.test(t) || /\bi\.t\b/.test(t)) return [
-    "'modern office workspace with multiple monitors showing code, dramatic blue glow'",
-    "'close-up of fingers typing on mechanical keyboard, dark moody desk setup'",
-    "'minimalist phone screen showing clean app UI, marble surface, top-down'",
+    // Reworked 2026-05 — original examples were UI-centric (phone screen
+    // showing clean app UI, wireframe sketches, fingers typing) which both
+    // (a) tripped the new isAbstractUI fallback regex when the AI quoted
+    // them and (b) primed the AI to write UI-flavoured prompts even for
+    // non-pricing topics. New examples lean into the "calm hands-off
+    // automation" outcome — physical scenes, no UI mentions, no people.
+    "'matte black smartphone face-down on marble surface beside espresso cup, top-down, morning light'",
+    "'mechanical keyboard with backlit keys on a dark moody desk, candid close-up, no person'",
     "'rack of glowing server hardware, abstract tech atmosphere, neon accents'",
-    "'small business owner reviewing tablet at coffee shop counter, warm natural light'",
-    "'creative wall of sticky notes and wireframe sketches, daylight window'",
-    "'aerial view of clean desk with notebook, pen, plant, and laptop, beige aesthetic'",
+    "'aerial view of clean desk with notebook, pen, plant and closed laptop, beige aesthetic'",
+    "'coffee shop counter scene with laptop, latte and notebook, warm afternoon light, no person'",
+    "'creative wall of post-it notes in a bright office, daylight from window, candid texture'",
     "'abstract close-up of glowing fibre cables in dark room, blue+orange contrast'",
+    "'home office windowsill with plant, mug and a closed notebook at sunrise'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('festival', 'event')) return [

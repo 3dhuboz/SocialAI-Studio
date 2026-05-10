@@ -2302,6 +2302,18 @@ app.all('/api/fal-proxy', async (c) => {
   if (action === 'generate-image' && c.req.method === 'POST') {
     const { prompt } = await c.req.json() as any;
     if (!prompt) return c.json({ error: 'prompt is required' }, 400);
+    // Defense-in-depth tripwire (don't block — log only). Every legitimate
+    // caller appends a negative-prompt suffix that includes "no UI" / "no
+    // text" / "candid iPhone" (see buildSafeImagePrompt at top of file, and
+    // generateMarketingImage in src/services/gemini.ts). If none of those
+    // markers are present, the prompt came from an unvalidated source —
+    // log a warning so CF Worker logs surface the regression without
+    // breaking any future legitimate caller that uses a different suffix.
+    // This is the choke point that catches the App.tsx-bypass-style bug
+    // class going forward.
+    if (!/(no UI|no text|candid iPhone)/i.test(prompt)) {
+      console.warn(`[fal-proxy] generate-image prompt missing safety suffix — uid=${uid}, prompt prefix="${prompt.substring(0, 80)}"`);
+    }
     const res = await fetch('https://fal.run/fal-ai/flux/dev', {
       method: 'POST', headers: authHeader,
       body: JSON.stringify({ prompt, image_size: 'square_hd', num_inference_steps: 25, num_images: 1, enable_safety_checker: true, guidance_scale: 3.5 }),
