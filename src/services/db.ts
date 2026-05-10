@@ -50,6 +50,9 @@ export interface DbUserData {
   /** v5 — single reel credits balance. Plan grants + purchased credits both
    *  accrue here. Reel generation decrements by 1. Never expires. */
   reel_credits?: number;
+  /** v6 — 'monthly' | 'yearly'. Drives the renewal-grant multiplier (×1 or ×12)
+   *  in the PayPal PAYMENT.SALE.COMPLETED webhook handler. */
+  billing_cycle?: string | null;
 }
 
 export interface DbPost {
