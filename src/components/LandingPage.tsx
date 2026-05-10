@@ -208,9 +208,20 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       on mobile. Headline drops gradient on the lead phrase to feel
                       less "tech demo", reserves the gradient for the closer. */}
                   <div className="text-center md:text-left">
-                    <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.18em] text-amber-300/80 uppercase mb-7">
-                      <span className="w-6 h-px bg-amber-300/40" />
-                      Crafted in Australia · For small business
+                    {/* DOUBLE EYEBROW — left chip is the "what's new" pulse,
+                        right chip is the original Aussie editorial frame.
+                        Pulsing rose dot + rose tint earns the eye without
+                        breaking the amber palette since rose is one step
+                        warmer on the same arc. */}
+                    <div className="flex flex-wrap items-center gap-3 mb-7 justify-center md:justify-start">
+                      <span className="inline-flex items-center gap-1.5 text-[10px] sm:text-[11px] font-black tracking-[0.18em] uppercase bg-rose-500/10 border border-rose-500/25 text-rose-300 rounded-full px-2.5 py-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                        New · AI Reels
+                      </span>
+                      <span className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.18em] text-amber-300/80 uppercase">
+                        <span className="w-6 h-px bg-amber-300/40" />
+                        Crafted in Australia
+                      </span>
                     </div>
                     <h1 className="text-[2.25rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-black mb-6 leading-[1.02] tracking-[-0.02em]">
                       {portalContent?.hero_title ? (
@@ -228,7 +239,11 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       )}
                     </h1>
                     <p className="text-base sm:text-lg md:text-[1.075rem] text-white/70 mb-8 max-w-xl mx-auto md:mx-0 leading-[1.6]">
-                      {portalContent?.hero_subtitle || "Built for Aussie cafes, tradies, salons and small retailers. We read your existing posts to learn your voice, so every caption sounds like you on a good day — not a robot."}
+                      {portalContent?.hero_subtitle || (
+                        <>
+                          Built for Aussie cafes, tradies, salons and small retailers. We read your existing posts to learn your voice — captions sound like you on a good day, not a robot. <span className="text-amber-300/90 font-semibold">Now generating AI Reels too</span> — image-to-video with auto-mixed music.
+                        </>
+                      )}
                     </p>
                     <div className="flex flex-col sm:flex-row gap-4 justify-center md:justify-start items-center">
                       <button
@@ -375,7 +390,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                         { icon: Brain, bold: 'AI-written brief.', text: 'Concept, mood, captions — drafted to match your business and tone.' },
                         { icon: Play, bold: 'Image-to-video animation.', text: 'Kling v1.6 turns any photo into a cinematic 5–10 second reel.' },
                         { icon: Zap, bold: 'Mood-matched music, auto-mixed.', text: 'Royalty-free Mixkit tracks scored to the vibe and stitched in-browser.' },
-                        { icon: Instagram, bold: 'One-click publish to Instagram Reels.', text: 'Facebook Reels coming soon. Preview, download, or post — your call.' },
+                        { icon: Instagram, bold: 'One-click publish to Facebook & Instagram Reels.', text: 'Schedule it like any other post — preview, download, or publish on the spot.' },
                       ].map((f, i) => (
                         <div key={i} className="flex items-start gap-3">
                           <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/25 flex items-center justify-center flex-shrink-0 mt-0.5">

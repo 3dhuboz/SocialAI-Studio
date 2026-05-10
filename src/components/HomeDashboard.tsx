@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Calendar, Wand2, BarChart3, Settings, Clock, Users, TrendingUp,
   Sparkles, ArrowRight, CheckCircle, AlertCircle, Brain, Zap,
   Facebook, Instagram, Lightbulb, Target, Star, RefreshCw,
+  Film, X,
 } from 'lucide-react';
 import { SocialPost, ContentCalendarStats } from '../types';
 
@@ -31,6 +32,11 @@ interface Props {
 }
 
 const TIPS = [
+  // Reels lives at index 0 so dayOfYear seeding gives ~50% of customers a
+  // reel-flavoured tip each day — it's the headline new feature, deserves
+  // top-of-rotation placement until it's not "new" anymore (drop the leading
+  // "NEW ·" prefix in 2026-08 and demote to a normal Tip).
+  { icon: Film,       color: 'text-rose-300',    bg: 'bg-rose-500/10   border-rose-500/20',   title: 'NEW · AI Reels are live', body: 'Generate cinematic image-to-video reels with auto-mixed music — Smart Schedule can mix them in alongside your normal posts. Pro plan includes 4 credits/month; credit packs from $9.99.' },
   { icon: Clock,      color: 'text-amber-400',   bg: 'bg-amber-500/10  border-amber-500/20',  title: 'Best time to post', body: 'Facebook engagement peaks between 9–11am and 1–3pm on weekdays. Try scheduling your next post in that window.' },
   { icon: Target,     color: 'text-blue-400',    bg: 'bg-blue-500/10   border-blue-500/20',   title: 'Consistency wins', body: '3–5 posts per week outperforms daily posting for most small businesses. Quality and regularity beats volume.' },
   { icon: Brain,      color: 'text-purple-400',  bg: 'bg-purple-500/10 border-purple-500/20', title: 'Hook in the first line', body: 'Only the first 2 lines show before "See more". Make them count — ask a question, make a bold claim, or open a loop.' },
@@ -38,6 +44,11 @@ const TIPS = [
   { icon: RefreshCw,  color: 'text-pink-400',    bg: 'bg-pink-500/10   border-pink-500/20',   title: 'Repurpose top content', body: 'Check Insights for your best-performing posts, then use Smart Schedule to create variations of what already works.' },
   { icon: Lightbulb,  color: 'text-amber-300',   bg: 'bg-amber-500/8   border-amber-500/15',  title: 'Use pillars', body: 'Rotate through 3–4 content pillars (e.g. Behind the scenes, Product spotlight, Tips, Customer stories) to keep your feed varied.' },
 ];
+
+// localStorage key for the one-time "AI Reels are live" announcement banner.
+// Bump the suffix when announcing the next major launch so prior dismissals
+// don't auto-hide the new banner. Stored as plain '1'/missing — no JSON.
+const REELS_ANNOUNCE_KEY = 'sa_announce_dismissed_reels_v1';
 
 export const HomeDashboard: React.FC<Props> = ({
   posts, stats, liveStats, hasApiKey, fbConnected,
@@ -48,6 +59,18 @@ export const HomeDashboard: React.FC<Props> = ({
   const now = useMemo(() => new Date(), []);
   const hour = now.getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  // Reel-launch announcement — lazy-init from localStorage so SSR-safe and
+  // we don't flash the banner on remount after a user has dismissed it.
+  const [showReelAnnounce, setShowReelAnnounce] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return window.localStorage.getItem(REELS_ANNOUNCE_KEY) !== '1'; }
+    catch { return true; }
+  });
+  const dismissReelAnnounce = () => {
+    setShowReelAnnounce(false);
+    try { window.localStorage.setItem(REELS_ANNOUNCE_KEY, '1'); } catch {}
+  };
 
   const nowTime = now.getTime();
   const upcomingPosts = useMemo(() =>
@@ -215,6 +238,46 @@ export const HomeDashboard: React.FC<Props> = ({
           ))}
         </div>
       </div>
+
+      {/* ── AI Reels launch announcement (dismissable, persists via
+            localStorage). Sits between the action grid and the next-post
+            preview so it's prominent on first visit but easy to dismiss
+            once the customer has clicked through or learned it exists. ── */}
+      {showReelAnnounce && (
+        <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-rose-950/40 via-amber-950/30 to-amber-950/20 border border-rose-500/25 px-5 py-4 flex items-center justify-between gap-4 flex-wrap glass">
+          {/* faint glow halo, same trick as the landing-page reels spotlight */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_15%_50%,rgba(244,63,94,0.12),transparent_55%)] pointer-events-none" />
+          <div className="relative flex items-center gap-3 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+              <Film size={16} className="text-rose-300" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white flex items-center gap-2">
+                <span className="text-[10px] font-black tracking-[0.18em] uppercase bg-rose-500/20 text-rose-200 px-1.5 py-0.5 rounded">New</span>
+                AI Reels are live
+              </p>
+              <p className="text-xs text-white/55 mt-0.5 leading-relaxed">
+                Image-to-video with auto-mixed music, scheduled like any other post. Pro plan includes 4 credits/month — credit packs from $9.99.
+              </p>
+            </div>
+          </div>
+          <div className="relative flex items-center gap-2 shrink-0">
+            <button
+              onClick={onGoSchedule}
+              className="bg-gradient-to-r from-rose-500 to-amber-500 text-black font-black text-xs px-4 py-2 rounded-xl hover:opacity-90 transition flex items-center gap-1.5 shadow-lg shadow-rose-500/20"
+            >
+              Make a reel <ArrowRight size={12} />
+            </button>
+            <button
+              onClick={dismissReelAnnounce}
+              aria-label="Dismiss reel announcement"
+              className="w-8 h-8 rounded-lg text-white/35 hover:text-white/80 hover:bg-white/5 flex items-center justify-center transition"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Next post preview + Tips side-by-side ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
