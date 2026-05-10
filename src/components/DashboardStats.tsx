@@ -66,7 +66,11 @@ const Popover: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({
   return (
     <div
       ref={ref}
-      className="!absolute top-full mt-2 left-0 z-50 w-72 glass-card noise rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fadeSlideDown"
+      // Solid-ish dark bg (not .glass-card) so content behind doesn't bleed through.
+      // Dropping `noise` here removes the position-relative override that previously
+      // forced us into `!absolute` (see PR #54) — plain `absolute` is sufficient now.
+      className="absolute top-full mt-2 left-0 z-50 w-72 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fadeSlideDown border border-white/10 backdrop-blur-xl"
+      style={{ background: 'linear-gradient(135deg, rgba(20,20,28,0.96) 0%, rgba(12,12,18,0.94) 100%)' }}
     >
       {children}
     </div>
