@@ -47,6 +47,8 @@ interface Props {
   planName: string | undefined;
   lastPulled: Date | null;
   onGoToSettings: () => void;
+  onGoToCalendar: () => void;
+  onGoToInsights: () => void;
 }
 
 type CardId = 'posts' | 'next' | 'engagement' | 'status';
@@ -74,6 +76,7 @@ const Popover: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({
 export const DashboardStats: React.FC<Props> = ({
   posts, stats, liveStats, hasApiKey, fbConnected,
   activePlan, planName, lastPulled, onGoToSettings,
+  onGoToCalendar, onGoToInsights,
 }) => {
   const [open, setOpen] = useState<CardId | null>(null);
   const toggle = (id: CardId) => setOpen(o => o === id ? null : id);
@@ -107,13 +110,11 @@ export const DashboardStats: React.FC<Props> = ({
       {/* ── Card 1: Scheduled Posts ── */}
       <div className="relative">
         <button
-          onClick={() => toggle('posts')}
+          onClick={onGoToCalendar}
+          aria-label="View scheduled posts in Calendar"
           className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'posts' ? 'border-amber-500/40 !bg-white/5' : ''}`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-white/30">Scheduled Posts</p>
-            <Info size={11} className="text-white/15 group-hover:text-white/40 transition" />
-          </div>
+          <p className="text-xs text-white/30 mb-1 pr-7">Scheduled Posts</p>
           <p className="text-3xl font-black text-white">{upcomingPosts.length}</p>
           <div className="flex items-center justify-between mt-1">
             <p className="text-xs text-white/25">{publishedPosts.length} published all-time</p>
@@ -136,6 +137,15 @@ export const DashboardStats: React.FC<Props> = ({
               </div>
             </div>
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggle('posts')}
+          aria-label="More info about scheduled posts"
+          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'posts' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+        >
+          <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
 
         {open === 'posts' && (
@@ -208,13 +218,11 @@ export const DashboardStats: React.FC<Props> = ({
       {/* ── Card 2: Next Post ── */}
       <div className="relative">
         <button
-          onClick={() => toggle('next')}
+          onClick={onGoToCalendar}
+          aria-label="View next post in Calendar"
           className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'next' ? 'border-purple-500/40 !bg-white/5' : ''}`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-white/30">Next Post</p>
-            <Info size={11} className="text-white/15 group-hover:text-white/40 transition" />
-          </div>
+          <p className="text-xs text-white/30 mb-1 pr-7">Next Post</p>
           {nextPost ? (
             <>
               <p className="text-sm font-black text-amber-400 leading-tight">
@@ -234,6 +242,15 @@ export const DashboardStats: React.FC<Props> = ({
               <p className="text-[11px] text-white/15 mt-1.5">Use Smart AI to generate posts</p>
             </div>
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggle('next')}
+          aria-label="More info about next post"
+          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'next' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+        >
+          <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
 
         {open === 'next' && (
@@ -306,13 +323,11 @@ export const DashboardStats: React.FC<Props> = ({
       {/* ── Card 3: Engagement Rate ── */}
       <div className="relative">
         <button
-          onClick={() => toggle('engagement')}
+          onClick={onGoToInsights}
+          aria-label="View engagement details in Insights"
           className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'engagement' ? 'border-emerald-500/40 !bg-white/5' : ''}`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-white/30">Engagement Rate</p>
-            <Info size={11} className="text-white/15 group-hover:text-white/40 transition" />
-          </div>
+          <p className="text-xs text-white/30 mb-1 pr-7">Engagement Rate</p>
           <p className="text-3xl font-black text-white">
             {animatedEngagement}
             <span className="text-lg text-white/40">%</span>
@@ -331,6 +346,15 @@ export const DashboardStats: React.FC<Props> = ({
               <span><Heart size={9} className="inline mr-0.5" />{liveStats.engagedUsers28d.toLocaleString()} engaged</span>
             </div>
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggle('engagement')}
+          aria-label="More info about engagement"
+          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'engagement' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+        >
+          <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
 
         {open === 'engagement' && (
@@ -398,13 +422,11 @@ export const DashboardStats: React.FC<Props> = ({
       {/* ── Card 4: Status ── */}
       <div className="relative">
         <button
-          onClick={() => toggle('status')}
+          onClick={onGoToSettings}
+          aria-label="Open Settings"
           className={`w-full text-left glass card-hover press rounded-2xl p-4 group ${open === 'status' ? 'border-blue-500/40 !bg-white/5' : ''}`}
         >
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-white/30">Status</p>
-            <Info size={11} className="text-white/15 group-hover:text-white/40 transition" />
-          </div>
+          <p className="text-xs text-white/30 mb-1 pr-7">Status</p>
           <div className="space-y-1.5 mt-1">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-green-400">
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-green-400 animate-pulse" />
@@ -424,6 +446,15 @@ export const DashboardStats: React.FC<Props> = ({
           <div className={`mt-2.5 text-[10px] font-bold ${statusColor}`}>
             {activeCount === 2 ? '✓ All systems go' : activeCount === 1 ? '⚠ Setup incomplete' : '✗ Action needed'}
           </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggle('status')}
+          aria-label="More info about system status"
+          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'status' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+        >
+          <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
 
         {open === 'status' && (
