@@ -11,6 +11,7 @@ import { useDb } from './hooks/useDb';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
+import { CreditPackModal } from './components/CreditPackModal';
 import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
@@ -1129,6 +1130,9 @@ const Dashboard: React.FC = () => {
   // those live on activeClientWorkspace.reelCredits). The "effective" balance
   // below picks the right one based on whether a client workspace is active.
   const [userReelCredits, setUserReelCredits] = useState<number>(0);
+  // Modal state — opened from the Settings video toggle / Plan & Billing tab
+  // to let any user (Starter through Agency) buy a one-off credit pack.
+  const [showCreditPackModal, setShowCreditPackModal] = useState(false);
   const [setupStatus, setSetupStatus] = useState<SetupStatus>('ordered');
   const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
   // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai credits, API keys).
@@ -2369,6 +2373,29 @@ const Dashboard: React.FC = () => {
             setShowTrialPaywall(false);
             setPricingDefaultPlan('growth');
             setShowPricing(true);
+          }}
+        />
+      )}
+      {/* Credit Pack purchase modal — opened from the Settings AI Reels toggle
+          (or future "Out of credits" upsells in Smart Schedule). PayPal Smart
+          Buttons render the order client-side; the worker verifies + credits. */}
+      {showCreditPackModal && (
+        <CreditPackModal
+          clientId={activeClientId}
+          onClose={() => setShowCreditPackModal(false)}
+          onPurchased={(creditsAdded) => {
+            // Optimistically refresh local state so the dashboard reflects the
+            // credit immediately. The worker has already persisted to D1; this
+            // is purely a local-state sync to avoid a reload.
+            if (activeClientId) {
+              setClients(prev => prev.map(c =>
+                c.id === activeClientId
+                  ? { ...c, reelCredits: (c.reelCredits ?? 0) + creditsAdded }
+                  : c
+              ));
+            } else {
+              setUserReelCredits(prev => prev + creditsAdded);
+            }
           }}
         />
       )}
@@ -4990,8 +5017,26 @@ const Dashboard: React.FC = () => {
                 </div>
               )}
               {!canUseReels && (
-                <div className="mt-4 bg-white/3 border border-white/8 rounded-xl px-4 py-3">
-                  <p className="text-xs text-white/55">Pro includes 4 reel credits/month. Agency: 20/month across all clients. Or buy a one-off pack on the Plan & Billing tab — credits never expire.</p>
+                <div className="mt-4 bg-white/3 border border-white/8 rounded-xl px-4 py-3 flex items-start gap-3 flex-wrap">
+                  <p className="text-xs text-white/55 flex-1 min-w-[200px]">
+                    Pro includes 4 reel credits/month. Agency: 20/month across all clients. Or buy a one-off pack — credits never expire.
+                  </p>
+                  <button
+                    onClick={() => setShowCreditPackModal(true)}
+                    className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-bold px-4 py-2 rounded-lg hover:opacity-90 transition flex items-center gap-1.5"
+                  >
+                    Buy credits →
+                  </button>
+                </div>
+              )}
+              {canUseReels && effectiveReelCredits !== Infinity && (
+                <div className="mt-3 flex justify-end">
+                  <button
+                    onClick={() => setShowCreditPackModal(true)}
+                    className="text-xs text-purple-400/70 hover:text-purple-300 underline transition"
+                  >
+                    + Buy more credits
+                  </button>
                 </div>
               )}
             </div>

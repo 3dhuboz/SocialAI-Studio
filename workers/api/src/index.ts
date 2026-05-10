@@ -996,6 +996,22 @@ const REEL_CREDITS_PER_MONTH: Record<string, number> = {
   agency: 20,
 };
 
+// Server-side canonical credit-pack pricing. The frontend `reelCreditPacks`
+// config in client.config.ts defines what's offered; this map is the source
+// of truth for what we'll actually credit when a PayPal order is captured.
+// Mismatches (client-tampered amounts) are rejected.
+//
+// To change pricing: update both this map AND the frontend config — they
+// must stay in sync. Better long-term: serve this from the worker so there's
+// only one source. For now duplication is acceptable because the canonical
+// validator lives on the server (this map), and the client copy is just
+// presentational.
+const REEL_CREDIT_PACKS: Record<string, { credits: number; amount: number; currency: string }> = {
+  small:  { credits: 3,  amount: 9.99,  currency: 'AUD' },
+  medium: { credits: 10, amount: 24.99, currency: 'AUD' },
+  large:  { credits: 25, amount: 49.99, currency: 'AUD' },
+};
+
 const PAYPAL_API_BASE = 'https://api-m.paypal.com';
 const ADMIN_NOTIFY_EMAIL = 'steve@pennywiseit.com.au';
 
@@ -1138,6 +1154,100 @@ app.post('/api/paypal-verify', async (c) => {
   } catch (err: any) {
     console.error('PayPal verify error:', err?.message || err);
     return c.json({ error: 'Verification failed. Please contact support.' }, 500);
+  }
+});
+
+// ── PayPal: Credit pack capture confirmation ─────────────────────────────────
+// Frontend's PayPal Smart Buttons render an order client-side and onApprove
+// hands us the orderID. Trust nothing from the client — fetch the order from
+// PayPal directly, verify it's actually paid and the amount matches our
+// canonical price for the requested pack size, then credit the user.
+//
+// Idempotency: payments.paypal_capture_id is the unique key (PayPal order_id
+// for captures). Replays of the same orderID won't double-credit.
+app.post('/api/paypal-credit-pack-confirm', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+  const body = await c.req.json<{ orderId?: string; packId?: string; clientId?: string | null }>().catch(() => null);
+  if (!body?.orderId || !body?.packId) return c.json({ error: 'Missing orderId or packId' }, 400);
+  const pack = REEL_CREDIT_PACKS[body.packId];
+  if (!pack) return c.json({ error: `Unknown pack: ${body.packId}` }, 400);
+
+  // Idempotency check — if we've already processed this order, return success
+  // without re-crediting. Lets the frontend safely retry on flaky network.
+  const existing = await c.env.DB.prepare(
+    `SELECT 1 FROM payments WHERE paypal_capture_id = ? LIMIT 1`
+  ).bind(body.orderId).first();
+  if (existing) {
+    console.log(`[credit-pack] order ${body.orderId} already processed — idempotent return`);
+    return c.json({ success: true, credits_added: 0, already_processed: true });
+  }
+
+  try {
+    const token = await paypalAccessToken(c.env);
+    const orderRes = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders/${body.orderId}`, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    const order = await orderRes.json() as any;
+    if (!orderRes.ok) {
+      console.error(`[credit-pack] PayPal lookup ${body.orderId} returned ${orderRes.status}: ${JSON.stringify(order)}`);
+      return c.json({ error: 'Could not verify order with PayPal — please contact support if you were charged.' }, 502);
+    }
+    if (order.status !== 'COMPLETED' && order.status !== 'APPROVED') {
+      return c.json({ error: `Order not yet captured (status: ${order.status}). Try again in a moment.` }, 400);
+    }
+    // Validate amount + currency against canonical pack price.
+    const unit = order.purchase_units?.[0];
+    const captureAmount = unit?.payments?.captures?.[0]?.amount || unit?.amount;
+    const paidValue = parseFloat(captureAmount?.value ?? '0');
+    const paidCurrency = captureAmount?.currency_code || '';
+    if (!Number.isFinite(paidValue) || Math.abs(paidValue - pack.amount) > 0.01 || paidCurrency !== pack.currency) {
+      console.warn(`[credit-pack] amount mismatch for ${body.orderId}: paid ${paidValue} ${paidCurrency}, expected ${pack.amount} ${pack.currency}`);
+      return c.json({ error: 'Order amount does not match pack price. If you were charged, please contact support.' }, 400);
+    }
+
+    // Credit the appropriate workspace — client_id passed by frontend if the
+    // user is in an agency-managed client view (Agency plan); otherwise the
+    // user's own balance. Both columns share the same semantics.
+    const targetClientId = body.clientId || null;
+    if (targetClientId) {
+      // Verify client belongs to this user before crediting (no privilege escalation).
+      const ok = await c.env.DB.prepare(`SELECT 1 FROM clients WHERE id = ? AND user_id = ? LIMIT 1`)
+        .bind(targetClientId, uid).first();
+      if (!ok) return c.json({ error: 'Invalid clientId for this user.' }, 403);
+      await c.env.DB.prepare(
+        `UPDATE clients SET reel_credits = COALESCE(reel_credits, 0) + ? WHERE id = ? AND user_id = ?`
+      ).bind(pack.credits, targetClientId, uid).run();
+    } else {
+      await c.env.DB.prepare(
+        `UPDATE users SET reel_credits = COALESCE(reel_credits, 0) + ? WHERE id = ?`
+      ).bind(pack.credits, uid).run();
+    }
+
+    // Audit-trail row in payments. Reuse the existing schema: event_type
+    // 'CREDIT_PACK_PURCHASE' is new but the column is free-form text.
+    const captureId = unit?.payments?.captures?.[0]?.id || body.orderId;
+    const email = order.payer?.email_address || null;
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO payments
+         (id, paypal_event_id, paypal_subscription_id, paypal_capture_id,
+          email, user_id, plan, event_type, amount_cents, currency, status,
+          raw_event, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      uuid(), `credit_pack:${captureId}`, null, body.orderId,
+      email, uid, null, 'CREDIT_PACK_PURCHASE',
+      Math.round(pack.amount * 100), pack.currency, 'completed',
+      JSON.stringify({ pack: body.packId, credits: pack.credits, clientId: targetClientId }).slice(0, 8000),
+      new Date().toISOString(),
+    ).run();
+
+    console.log(`[credit-pack] credited ${pack.credits} reels to ${targetClientId ? `client ${targetClientId}` : `user ${uid}`} (pack: ${body.packId}, order: ${body.orderId})`);
+    return c.json({ success: true, credits_added: pack.credits });
+  } catch (err: any) {
+    console.error('[credit-pack] confirm error:', err?.message || err);
+    return c.json({ error: 'Server error confirming purchase. If you were charged, please contact support.' }, 500);
   }
 });
 
