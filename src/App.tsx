@@ -1537,19 +1537,20 @@ const Dashboard: React.FC = () => {
     setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
   };
 
-  // ── Image generation: fal.ai FLUX → Gemini Imagen → Pollinations.ai (free) ──
+  // ── Image generation: routes through the validated pipeline in
+  // services/gemini.ts (generateMarketingImage). Previously this wrapper had
+  // a "FalService first with weak preamble" primary path that bypassed all
+  // the anti-vague-prompt / no-people / no-UI guards. That caused a real
+  // regression: a SocialAI promo post on Penny Wise rendered as a blurry
+  // pricing-table mockup because the AI imagePrompt described a UI and the
+  // weak preamble (Cinematic lighting, vibrant colours, ...) had no anti-UI
+  // negatives. Single pipeline = single place to harden. ──
   const generateImage = async (prompt: string): Promise<string | null> => {
-    if (FalService.isConfigured()) {
-      try {
-        const url = await FalService.generateImage(
-          `Professional social media marketing photograph: ${prompt}. Cinematic lighting, vibrant colours, sharp focus, commercial quality. No text, no watermarks, no logos.`
-        );
-        if (url) return url;
-      } catch (e: any) {
-        console.warn('fal.ai image gen failed, trying Gemini:', e?.message ?? e);
-      }
-    }
-    return generateMarketingImage(prompt);
+    const bizType = activeClientWorkspace?.businessType
+      || profile?.type
+      || CLIENT.defaultBusinessType
+      || 'small business';
+    return generateMarketingImage(prompt, bizType);
   };
 
   // ── Auto-generate images for calendar posts that have imagePrompt but no image ──

@@ -105,6 +105,42 @@ async function getAuthUserId(req: Request, secretKey: string, jwtKey?: string, d
 // ── UUID helper ──────────────────────────────────────────────────────────────
 const uuid = () => crypto.randomUUID();
 
+// ── Image prompt safety helper ───────────────────────────────────────────────
+// Used by all server-side fal.ai FLUX entry points (backfillImagesForUser,
+// the publish-cron JIT image gen, and the image pre-warm cron). Mirrors the
+// validation logic in src/services/gemini.ts (generateMarketingImage /
+// generateMarketingImageUrl). Catches three failure modes the bare prompt
+// has historically tripped on:
+//
+//   1. People in the image — AI faces always look fake (strips human nouns)
+//   2. UI/chart/pricing-table prompts — e.g. SaaS promo posts that the AI
+//      interpreted as "render the pricing UI", producing a blurry mockup
+//      (real regression: Penny Wise SocialAI promo post 2026-05). Swaps the
+//      offending prompt for a neutral photographable scene.
+//   3. Generic "marketing graphic" FLUX output — adds a wide UI/chart/
+//      infographic negative list to the suffix as a last-line defense.
+//
+// Returns null if the prompt is too short to be useful — caller should skip.
+function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | null {
+  const prompt = (rawPrompt || '').trim();
+  if (!prompt || prompt.length < 5) return null;
+
+  // If the AI's prompt is primarily describing a digital interface, chart,
+  // or comparison grid, FLUX will render a blurry pricing-table mockup that
+  // sells nothing. Swap to a neutral real-world scene instead.
+  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
+  const safeBase = isAbstractUI
+    ? 'calm tidy desk with morning daylight, plant and open notebook beside closed laptop, real-world wear and texture'
+    : prompt;
+
+  const cleaned = safeBase
+    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return `${cleaned || safeBase}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+}
+
 // ── Admin gate ───────────────────────────────────────────────────────────────
 // Resolves the caller's Clerk uid, looks up users.is_admin, returns either
 // { uid, email } or a 401/403 Response. Endpoints use:
@@ -1693,13 +1729,12 @@ async function backfillImagesForUser(env: Env, uid: string) {
 
   for (const post of posts) {
     try {
-      // Strip people/face vocabulary from the prompt (mirrors gemini.ts logic)
-      const raw = String((post as any).image_prompt || '');
-      const cleaned = raw
-        .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const finalPrompt = `${cleaned}, product photography, natural light, shallow depth of field, 1:1 square format, clean composition, no text, no watermarks, no people, no faces, no hands`;
+      // Validated, UI-safe prompt (see buildSafeImagePrompt at top of file).
+      // Replaces the previous inline strip + "product photography" suffix
+      // which (a) had no UI/chart guards and (b) used an older over-styled
+      // suffix that drifted away from the candid-iPhone look in gemini.ts.
+      const finalPrompt = buildSafeImagePrompt(String((post as any).image_prompt || ''));
+      if (!finalPrompt) { failed++; continue; }
 
       const res = await fetch('https://fal.run/fal-ai/flux/dev', {
         method: 'POST',
@@ -2267,6 +2302,18 @@ app.all('/api/fal-proxy', async (c) => {
   if (action === 'generate-image' && c.req.method === 'POST') {
     const { prompt } = await c.req.json() as any;
     if (!prompt) return c.json({ error: 'prompt is required' }, 400);
+    // Defense-in-depth tripwire (don't block — log only). Every legitimate
+    // caller appends a negative-prompt suffix that includes "no UI" / "no
+    // text" / "candid iPhone" (see buildSafeImagePrompt at top of file, and
+    // generateMarketingImage in src/services/gemini.ts). If none of those
+    // markers are present, the prompt came from an unvalidated source —
+    // log a warning so CF Worker logs surface the regression without
+    // breaking any future legitimate caller that uses a different suffix.
+    // This is the choke point that catches the App.tsx-bypass-style bug
+    // class going forward.
+    if (!/(no UI|no text|candid iPhone)/i.test(prompt)) {
+      console.warn(`[fal-proxy] generate-image prompt missing safety suffix — uid=${uid}, prompt prefix="${prompt.substring(0, 80)}"`);
+    }
     const res = await fetch('https://fal.run/fal-ai/flux/dev', {
       method: 'POST', headers: authHeader,
       body: JSON.stringify({ prompt, image_size: 'square_hd', num_inference_steps: 25, num_images: 1, enable_safety_checker: true, guidance_scale: 3.5 }),
@@ -2555,15 +2602,16 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
         && promptForGen !== 'N/A'
         && promptForGen.length > 5;
       if (needsImage && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
-        try {
-          // Mirrors the suffix in src/services/gemini.ts so JIT-generated images
-          // look the same as accept-time images (candid iPhone vibe, no AI tells).
-          const cleaned = promptForGen
-            .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers)\b/gi, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-          const finalPrompt = `${cleaned}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
-
+        // Validated, UI-safe prompt (see buildSafeImagePrompt at top of
+        // file). Mirrors the validation in src/services/gemini.ts so JIT-
+        // generated images look the same as accept-time images (candid
+        // iPhone vibe) AND don't render as pricing-table mockups when the
+        // post topic is promotional/SaaS. Returns null for prompts too
+        // short/invalid to be useful — in that case we skip image gen
+        // entirely and the post publishes text-only (same outcome as if
+        // the fal.ai call had failed, which is non-fatal here).
+        const finalPrompt = buildSafeImagePrompt(promptForGen);
+        if (finalPrompt) try {
           const ctrl = new AbortController();
           const timeout = setTimeout(() => ctrl.abort(), 15000);
           const falRes = await fetch('https://fal.run/fal-ai/flux/dev', {
@@ -2816,13 +2864,16 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
     const prompt = rawPrompt ? rawPrompt.split('|claim:')[0].trim() : '';
     if (!prompt || prompt.length < 5) continue;
     try {
-      // Same suffix as src/services/gemini.ts + the publish-cron JIT path so all
-      // three image-gen entry points produce visually consistent output.
-      const cleaned = prompt
-        .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers)\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const finalPrompt = `${cleaned}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands`;
+      // Validated, UI-safe prompt (see buildSafeImagePrompt at top of file).
+      // All three server-side image-gen paths now share the same validation:
+      //   1. backfillImagesForUser (admin manual catch-up)
+      //   2. cronPublishMissedPosts JIT (publish-time backfill)
+      //   3. this image pre-warm cron (proactive ahead-of-publish)
+      const finalPrompt = buildSafeImagePrompt(prompt);
+      if (!finalPrompt) {
+        console.warn(`[CRON prewarm] skipped post ${(post as any).id}: prompt too short or invalid`);
+        continue;
+      }
 
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 15000);
