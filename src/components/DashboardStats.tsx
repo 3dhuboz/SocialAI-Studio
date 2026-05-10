@@ -66,7 +66,7 @@ const Popover: React.FC<{ onClose: () => void; children: React.ReactNode }> = ({
   return (
     <div
       ref={ref}
-      className="absolute top-full mt-2 left-0 z-50 w-72 glass-card noise rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fadeSlideDown"
+      className="!absolute top-full mt-2 left-0 z-50 w-72 glass-card noise rounded-2xl shadow-2xl shadow-black/60 overflow-hidden animate-fadeSlideDown"
     >
       {children}
     </div>
