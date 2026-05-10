@@ -32,7 +32,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt
+  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
 
@@ -2407,6 +2407,8 @@ const Dashboard: React.FC = () => {
           onClose={() => setShowAccount(false)}
           onUpgrade={() => { setShowAccount(false); setShowPricing(true); }}
           onSignOut={() => { setShowAccount(false); logOut(); }}
+          reelCredits={effectiveReelCredits === Infinity ? undefined : effectiveReelCredits}
+          onBuyReelCredits={() => setShowCreditPackModal(true)}
         />
       )}
       {/* Header — sticky top-0. Padding-top honours iPhone notch so the
@@ -2490,6 +2492,24 @@ const Dashboard: React.FC = () => {
                 className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 px-2.5 py-1 rounded-full transition text-xs font-semibold whitespace-nowrap"
               >
                 <ClipboardList size={11} /> Complete Setup
+              </button>
+            )}
+            {/* Reel credit balance chip — visible whenever the user has any
+                credits OR could buy them. Clicking opens the credit pack modal.
+                Keeps reel availability legible at-a-glance so users don't
+                wonder "do I have credits?" before they start a Smart Schedule. */}
+            {!isAdminMode && effectiveReelCredits !== Infinity && (
+              <button
+                onClick={() => setShowCreditPackModal(true)}
+                title={canUseReels ? `${effectiveReelCredits} reel credit${effectiveReelCredits === 1 ? '' : 's'} — click to buy more` : 'No reel credits — click to buy a pack'}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold transition whitespace-nowrap ${
+                  canUseReels
+                    ? 'bg-purple-500/12 hover:bg-purple-500/20 border-purple-500/25 text-purple-300'
+                    : 'bg-white/3 hover:bg-white/8 border-white/10 text-white/45 hover:text-white/70'
+                }`}
+              >
+                <Film size={11} />
+                <span>{effectiveReelCredits}</span>
               </button>
             )}
             {!CLIENT.clientMode && (
@@ -3358,6 +3378,24 @@ const Dashboard: React.FC = () => {
               }}
               onRegenImage={handleCalendarRegenImage}
               onUpload={handleCalendarUpload}
+              onRetryReel={async (postId) => {
+                // Reset failed reel back to 'pending' so the prewarm cron
+                // picks it up next tick. No credit charge — user already paid
+                // for this reel attempt; this is just a redo of the same paid
+                // attempt. The PUT colMap accepts these v5 columns directly.
+                try {
+                  await db.updatePost(postId, {
+                    videoStatus: 'pending', videoRequestId: null,
+                    videoStartedAt: null, videoError: null, videoUrl: null,
+                  } as any);
+                  setPosts(prev => prev.map(p => p.id === postId
+                    ? { ...p, videoStatus: 'pending' as const, videoRequestId: undefined, videoStartedAt: undefined, videoError: undefined, videoUrl: undefined }
+                    : p));
+                  toast('Reel queued for regeneration — typically ready in 1–3 min.', 'success');
+                } catch (e: any) {
+                  toast(`Retry failed: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+                }
+              }}
               onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
               onGoSmart={() => setActiveTab('smart')}
               onGoSettings={() => setActiveTab('settings')}

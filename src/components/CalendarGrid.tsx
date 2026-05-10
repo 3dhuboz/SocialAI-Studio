@@ -19,6 +19,7 @@ interface Props {
   onSave: (id: string, updates: Partial<SocialPost>) => Promise<void>;
   onRegenImage: (postId: string, prompt: string) => void;
   onUpload: (postId: string) => void;
+  onRetryReel?: (postId: string) => Promise<void>;
   onGoCreate: () => void;
   onGoSmart: () => void;
   onGoSettings?: () => void;
@@ -53,7 +54,7 @@ function isSameDay(a: Date, b: Date) {
 
 export const CalendarGrid: React.FC<Props> = ({
   posts, calendarImages, calendarGenSet, fbConnected, hasApiKey,
-  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onGoCreate, onGoSmart, onGoSettings, toast: toastFn,
+  onDelete, onPublish, onRetry, onSave, onRegenImage, onUpload, onRetryReel, onGoCreate, onGoSmart, onGoSettings, toast: toastFn,
 }) => {
   const today = new Date();
   const [viewDate, setViewDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -408,6 +409,7 @@ export const CalendarGrid: React.FC<Props> = ({
           onSave={async (id, updates) => { await onSave(id, updates); setSelectedPost(prev => prev ? { ...prev, ...updates } : prev); }}
           onRegenImage={onRegenImage}
           onUpload={onUpload}
+          onRetryReel={onRetryReel}
         />
       )}
     </div>

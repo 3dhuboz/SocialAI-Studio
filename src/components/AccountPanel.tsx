@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   X, CreditCard, LogOut, Trash2, KeyRound, ChevronRight,
   CheckCircle, AlertTriangle, Loader2, ExternalLink, Crown, Zap,
-  ShieldCheck, User, Receipt, RefreshCw,
+  ShieldCheck, User, Receipt, RefreshCw, Film,
 } from 'lucide-react';
 import { useUser } from '@clerk/react';
 import { useDb } from '../hooks/useDb';
@@ -17,6 +17,13 @@ interface Props {
   onClose: () => void;
   onUpgrade: () => void;
   onSignOut: () => void;
+  /** v5+ reel credit balance for the user's effective workspace.
+   *  Undefined → don't render the credits row (e.g. legacy users without v5
+   *  schema applied yet). */
+  reelCredits?: number;
+  /** Opens the credit pack modal — set by App.tsx. Undefined → hide the
+   *  Buy CTA (e.g. portal mode without PayPal config). */
+  onBuyReelCredits?: () => void;
 }
 
 const planColors: Record<string, string> = {
@@ -36,7 +43,7 @@ const planBorders: Record<string, string> = {
 type Section = 'main' | 'billing' | 'password' | 'delete';
 
 export const AccountPanel: React.FC<Props> = ({
-  activePlan, userEmail, onClose, onUpgrade, onSignOut,
+  activePlan, userEmail, onClose, onUpgrade, onSignOut, reelCredits, onBuyReelCredits,
 }) => {
   const { user } = useAuth();
   const { user: clerkUser } = useUser();
@@ -174,6 +181,35 @@ export const AccountPanel: React.FC<Props> = ({
                   )}
                 </div>
               </div>
+
+              {/* Reel credits card — visible whenever the schema knows about
+                  reel_credits (v5+). Surfaces balance + lets users top up
+                  without hunting through Settings. */}
+              {typeof reelCredits === 'number' && onBuyReelCredits && (
+                <div className="rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/8 via-pink-500/5 to-transparent p-4">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-[10px] font-black px-2.5 py-1 rounded-full mb-2">
+                        <Film size={9} /> AI Reel credits
+                      </div>
+                      <p className="text-2xl font-black text-white">
+                        {reelCredits}
+                        <span className="text-sm font-normal text-white/35"> credit{reelCredits === 1 ? '' : 's'}</span>
+                      </p>
+                      <p className="text-[11px] text-white/35 mt-1">Never expires · 1 credit = 1 reel</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
+                      <Film size={16} className="text-white" />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { onClose(); onBuyReelCredits(); }}
+                    className="w-full flex items-center justify-center gap-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-bold py-2 rounded-xl hover:opacity-90 transition"
+                  >
+                    <Film size={12} /> Buy more credits
+                  </button>
+                </div>
+              )}
 
               {/* Account actions */}
               <div className="bg-white/3 border border-white/8 rounded-2xl divide-y divide-white/5 overflow-hidden">
