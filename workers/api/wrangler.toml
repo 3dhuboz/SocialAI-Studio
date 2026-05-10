@@ -15,8 +15,22 @@ binding = "DB"
 database_name = "socialai-db"
 database_id = "6295841e-e5f7-4355-b0e0-c5f22e58d99d"
 
+# R2 bucket for AI-generated reel videos. fal.ai Kling URLs expire ~24h —
+# the prewarm cron copies each generated mp4 here so the publish cron has a
+# durable URL to feed FB/IG. Create the bucket with:
+#   npx wrangler r2 bucket create socialai-reels
+# Public access: enable via dashboard (R2 → socialai-reels → Settings →
+# Public access → Allow access via r2.dev) so FB/IG can fetch via file_url.
+# A custom domain (e.g. reels.socialaistudio.au) is preferred for production
+# but pub-{hash}.r2.dev works for the first ship — set R2_REELS_PUBLIC_BASE
+# in [vars] once the bucket exists and exposes its public URL.
+[[r2_buckets]]
+binding = "REELS_R2"
+bucket_name = "socialai-reels"
+preview_bucket_name = "socialai-reels"
+
 # Cron triggers:
-# */5 * * * *  — publish missed posts (every 5 min)
+# */5 * * * *  — prewarm videos + publish missed posts (every 5 min)
 # 0 3 * * *   — refresh Facebook tokens (daily 3am UTC)
 # 0 4 * * *   — refresh client_facts from connected FB Pages (daily 4am UTC)
 # 0 */6 * * * — check fal.ai credits (every 6 hours)
@@ -36,3 +50,8 @@ database_name = "socialai-db"
 database_id = "6295841e-e5f7-4355-b0e0-c5f22e58d99d"
 # To use a separate staging DB: create one with `wrangler d1 create socialai-db-staging`
 # and replace database_id above.
+
+[[env.staging.r2_buckets]]
+binding = "REELS_R2"
+bucket_name = "socialai-reels"
+preview_bucket_name = "socialai-reels"

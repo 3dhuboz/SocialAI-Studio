@@ -14,11 +14,32 @@ interface D1Database {
   exec(query: string): Promise<void>;
 }
 
+// ── R2 type shim (provided by Cloudflare runtime) ───────────────────────────
+// Minimal surface — we only put + delete reel videos. If we expand to reads
+// or signed URLs later, add those methods then.
+interface R2Bucket {
+  put(
+    key: string,
+    value: ReadableStream | ArrayBuffer | string | null,
+    options?: { httpMetadata?: { contentType?: string; cacheControl?: string } }
+  ): Promise<unknown>;
+  delete(key: string): Promise<void>;
+  head(key: string): Promise<{ size: number } | null>;
+}
+
 type Env = {
   OPENROUTER_API_KEY: string;
   CLERK_SECRET_KEY: string;
   CLERK_JWT_KEY?: string;
   DB: D1Database;
+  // R2 bucket for AI-generated reel videos. fal.ai Kling URLs expire ~24h —
+  // the prewarm cron copies each generated mp4 here so the publish cron has
+  // a durable, public URL to feed FB/IG via file_url.
+  REELS_R2?: R2Bucket;
+  // Public base URL for REELS_R2 — e.g. "https://reels.socialaistudio.au"
+  // (custom domain) or "https://pub-{hash}.r2.dev" (default public bucket).
+  // Set in [vars] in wrangler.toml once the bucket exposes a public URL.
+  R2_REELS_PUBLIC_BASE?: string;
   LATE_API_KEY?: string;
   FACEBOOK_APP_ID?: string;
   FACEBOOK_APP_SECRET?: string;
@@ -401,6 +422,9 @@ app.put('/api/db/user', async (c) => {
       lateConnectedPlatforms: 'late_connected_platforms', lateAccountIds: 'late_account_ids',
       falApiKey: 'fal_api_key', paypalSubscriptionId: 'paypal_subscription_id',
       profile: 'profile', stats: 'stats', insightReport: 'insight_report',
+      // v5 — reel credits balance. Plan grants (PayPal webhook on renewal)
+      // and one-off credit-pack purchases both increment this column.
+      reelCredits: 'reel_credits',
     };
     const jsonFields = new Set(['lateConnectedPlatforms', 'lateAccountIds', 'profile', 'stats', 'insightReport']);
     const boolFields = new Set(['isAdmin', 'onboardingDone', 'intakeFormDone']);
@@ -448,9 +472,13 @@ app.post('/api/db/posts', async (c) => {
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const body = await c.req.json<Record<string, unknown>>();
   const id = uuid();
+  // v5 columns (video_url, video_status, video_request_id, video_started_at,
+  // video_error, r2_video_key, audio_mixed_url) added at the end so existing
+  // rows + the bind order stay compatible. Frontend sends videoStatus='pending'
+  // for video posts so the prewarm cron picks them up; everything else NULL.
   await c.env.DB.prepare(
-    `INSERT INTO posts (id, user_id, client_id, content, platform, status, scheduled_for, hashtags, image_url, topic, pillar, late_post_id, image_prompt, reasoning, post_type, video_script, video_shots, video_mood)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO posts (id, user_id, client_id, content, platform, status, scheduled_for, hashtags, image_url, topic, pillar, late_post_id, image_prompt, reasoning, post_type, video_script, video_shots, video_mood, video_url, video_status, video_request_id, video_started_at, video_error, r2_video_key, audio_mixed_url)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     id, uid, body.clientId ?? null,
     body.content ?? '', body.platform ?? null, body.status ?? null,
@@ -460,7 +488,10 @@ app.post('/api/db/posts', async (c) => {
     body.postType ?? null,
     typeof body.videoScript === 'string' ? body.videoScript : (body.videoScript ? JSON.stringify(body.videoScript) : null),
     typeof body.videoShots === 'string' ? body.videoShots : (body.videoShots ? JSON.stringify(body.videoShots) : null),
-    body.videoMood ?? null
+    body.videoMood ?? null,
+    body.videoUrl ?? null, body.videoStatus ?? null, body.videoRequestId ?? null,
+    body.videoStartedAt ?? null, body.videoError ?? null, body.r2VideoKey ?? null,
+    body.audioMixedUrl ?? null
   ).run();
   return c.json({ id });
 });
@@ -478,6 +509,11 @@ app.put('/api/db/posts/:id', async (c) => {
     imageUrl: 'image_url', topic: 'topic', pillar: 'pillar',
     latePostId: 'late_post_id', imagePrompt: 'image_prompt', reasoning: 'reasoning',
     postType: 'post_type', videoScript: 'video_script', videoShots: 'video_shots', videoMood: 'video_mood',
+    // v5 — scheduled reels pipeline. videoUrl is populated by the prewarm cron;
+    // the rest track lifecycle state so polling resumes across cron ticks.
+    videoUrl: 'video_url', videoStatus: 'video_status', videoRequestId: 'video_request_id',
+    videoStartedAt: 'video_started_at', videoError: 'video_error', r2VideoKey: 'r2_video_key',
+    audioMixedUrl: 'audio_mixed_url',
   };
   for (const [k, col] of Object.entries(colMap)) {
     if (!(k in body)) continue;
@@ -610,6 +646,8 @@ app.put('/api/db/clients/:id', async (c) => {
     profile: 'profile', stats: 'stats', insightReport: 'insight_report',
     lateProfileId: 'late_profile_id', lateConnectedPlatforms: 'late_connected_platforms',
     lateAccountIds: 'late_account_ids', clientSlug: 'client_slug',
+    // v5 — reel credits per workspace; plan + purchased credits accrue here.
+    reelCredits: 'reel_credits',
   };
   const jsonFields = new Set(['profile', 'stats', 'insightReport', 'lateConnectedPlatforms', 'lateAccountIds']);
   for (const [k, col] of Object.entries(colMap)) {
@@ -2541,7 +2579,8 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
   ).bind(claimId, nowAEST).run();
 
   const rows = await env.DB.prepare(
-    `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id
+    `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id,
+            post_type, video_url, video_status, audio_mixed_url
      FROM posts WHERE status = 'Publishing' AND image_prompt LIKE '%' || ? LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
@@ -2649,7 +2688,38 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
         console.log(`[CRON] Post ${(post as any).id} needs image but JIT cap reached — publishing text-only this tick`);
       }
 
-      let publishMethod = 'text-only';
+      // ── Video / Reel publish branch ────────────────────────────────────────
+      // Reels published via the new Graph video_reels endpoint. If the prewarm
+      // cron didn't finish (video_status != 'ready'), fall through to the image
+      // path below using the thumbnail — slot still ships, just as an image
+      // post instead of a reel. This is the load-bearing safety net: the
+      // worst case is "your reel became an image post", never "your slot was
+      // marked Missed". Aligned with the user's #1 priority — reliability.
+      const postType = (post as any).post_type as string | null;
+      const videoUrl = ((post as any).audio_mixed_url || (post as any).video_url) as string | null;
+      const videoStatus = (post as any).video_status as string | null;
+
+      if (postType === 'video' && videoStatus === 'ready' && videoUrl) {
+        try {
+          // Reel caption — strip trailing hashtags from content (idempotent)
+          // and append clean hashtag block. Same idiom as fullText above.
+          const reelDescription = fullText.length > 2200 ? fullText.slice(0, 2199) : fullText;
+          const reelId = await postReelToFacebookPage(pageId, token, reelDescription, videoUrl);
+          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ? WHERE id = ?')
+            .bind('Posted', 'fb-page-reel', (post as any).id).run();
+          console.log(`[CRON] Published reel ${(post as any).id} -> ${reelId}`);
+          continue;
+        } catch (reelErr: any) {
+          // Reel publish failed — fall through to image post so the slot still
+          // ships. Persist the error so the dashboard surfaces it.
+          console.warn(`[CRON] Reel publish failed for post ${(post as any).id}: ${reelErr?.message}. Falling back to image post.`);
+          await env.DB.prepare('UPDATE posts SET video_error = ? WHERE id = ?')
+            .bind(`Reel publish failed: ${(reelErr?.message || 'unknown').slice(0, 400)}`, (post as any).id).run();
+          // Continue to image fallback below
+        }
+      }
+
+      let publishMethod = postType === 'video' ? 'video-fallback-image' : 'text-only';
 
       let fbRes: Response | null = null;
 
@@ -2831,6 +2901,138 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
 
+// ── R2 video cache ──────────────────────────────────────────────────────────
+// fal.ai Kling URLs expire ~24h. Posts can be scheduled days ahead, so we copy
+// the MP4 to our own R2 bucket and persist the durable URL on the post row.
+// FB/IG ingest the video via file_url server-side, which means the URL must be
+// publicly fetchable from Meta IPs — R2 with a public domain (or pub-{hash}.r2.dev
+// after enabling public access) handles that. fal.ai's CDN occasionally
+// rate-limits Meta's crawlers, so the copy isn't optional.
+async function cacheVideoToR2(env: Env, sourceUrl: string, postId: string): Promise<string | null> {
+  if (!env.REELS_R2) {
+    console.warn('[r2] REELS_R2 not bound — returning fal URL (will expire ~24h)');
+    return sourceUrl;
+  }
+  // Already durable — caller passed an R2 URL or our custom domain.
+  try {
+    const host = new URL(sourceUrl).host;
+    if (host.endsWith('r2.dev') || (env.R2_REELS_PUBLIC_BASE && sourceUrl.startsWith(env.R2_REELS_PUBLIC_BASE))) {
+      return sourceUrl;
+    }
+  } catch {
+    return null;
+  }
+
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 30000);
+  let res: Response;
+  try {
+    res = await fetch(sourceUrl, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!res.ok || !res.body) {
+    console.warn(`[r2] fetch ${sourceUrl} failed: ${res.status}`);
+    return null;
+  }
+
+  // 50MB defensive cap — Kling outputs are typically 2-10MB.
+  const MAX_BYTES = 50 * 1024 * 1024;
+  const len = Number(res.headers.get('content-length') || 0);
+  if (len && len > MAX_BYTES) {
+    console.warn(`[r2] video too large for post ${postId}: ${len} bytes`);
+    return null;
+  }
+
+  const key = `reels/${postId}.mp4`;
+  await env.REELS_R2.put(key, res.body, {
+    httpMetadata: { contentType: 'video/mp4', cacheControl: 'public, max-age=2592000' }, // 30d
+  });
+
+  // Custom domain if configured, else default r2.dev public bucket URL.
+  // Set R2_REELS_PUBLIC_BASE in [vars] once the bucket exposes a public URL.
+  const base = (env.R2_REELS_PUBLIC_BASE || '').replace(/\/$/, '');
+  return base ? `${base}/${key}` : null;
+}
+
+// ── Facebook Page Reels publishing ──────────────────────────────────────────
+// Three-phase resumable upload: start → transfer (FB pulls from file_url) →
+// finish/publish. Runs only inside the publish cron — never exposed as an HTTP
+// route. Mirrors the existing IG postReelToInstagram pattern in
+// src/services/facebookService.ts so error shapes are consistent.
+//
+// Permissions: pages_manage_posts + publish_video (already in OAuth scope).
+// Reel requirements: 9:16 aspect, 3-90s, H.264, MP4. Kling at aspect_ratio:'9:16'
+// satisfies all of these.
+async function postReelToFacebookPage(
+  pageId: string,
+  pageAccessToken: string,
+  description: string,
+  videoUrl: string,
+): Promise<string> {
+  const base = 'https://graph.facebook.com/v21.0';
+  if (description.length > 2200) {
+    throw new Error(`FB reel description exceeds 2200 char limit (got ${description.length})`);
+  }
+
+  // Phase 1 — start: get a video_id + upload_url.
+  const startRes = await fetch(`${base}/${pageId}/video_reels`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ upload_phase: 'start', access_token: pageAccessToken }),
+  });
+  const startData = await startRes.json() as any;
+  if (startData.error) throw new Error(`FB reel start: ${startData.error.message}`);
+  const videoId: string | undefined = startData.video_id;
+  const uploadUrl: string | undefined = startData.upload_url;
+  if (!videoId || !uploadUrl) throw new Error('FB reel start: missing video_id or upload_url');
+
+  // Phase 2 — hosted-URL transfer. FB pulls the MP4 from R2 itself.
+  const transferRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `OAuth ${pageAccessToken}`,
+      file_url: videoUrl,
+    },
+  });
+  const transferData = await transferRes.json() as any;
+  if (transferData.error) throw new Error(`FB reel transfer: ${transferData.error.message}`);
+  if (transferData.success === false) throw new Error('FB reel transfer: hosted-URL fetch failed');
+
+  // Phase 3 — poll until video processing completes (typically 30-120s).
+  const maxWait = 180_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < maxWait) {
+    const statusRes = await fetch(
+      `${base}/${videoId}?fields=status&access_token=${encodeURIComponent(pageAccessToken)}`,
+    );
+    const statusData = await statusRes.json() as any;
+    const uploadingPhase = statusData.status?.uploading_phase?.status;
+    const processingPhase = statusData.status?.processing_phase?.status;
+    if (uploadingPhase === 'error' || processingPhase === 'error') {
+      const errMsg =
+        statusData.status?.uploading_phase?.errors?.[0]?.message
+        || statusData.status?.processing_phase?.errors?.[0]?.message
+        || 'unknown FB processing error';
+      throw new Error(`FB reel processing failed: ${errMsg}`);
+    }
+    if (statusData.status?.video_status === 'ready' || uploadingPhase === 'complete') break;
+    await new Promise(r => setTimeout(r, 5000));
+  }
+
+  // Phase 4 — finish: flip the reel to PUBLISHED with the caption.
+  const finishUrl =
+    `${base}/${pageId}/video_reels`
+    + `?upload_phase=finish&video_id=${encodeURIComponent(videoId)}`
+    + `&video_state=PUBLISHED&description=${encodeURIComponent(description)}`
+    + `&access_token=${encodeURIComponent(pageAccessToken)}`;
+  const finishRes = await fetch(finishUrl, { method: 'POST' });
+  const finishData = await finishRes.json() as any;
+  if (finishData.error) throw new Error(`FB reel publish: ${finishData.error.message}`);
+  if (finishData.success === false) throw new Error('FB reel publish: finish phase rejected');
+  return videoId;
+}
+
 // Pre-warm images for posts scheduled in the next 30 minutes. Runs at the start
 // of every */5 publish cron tick BEFORE the publish loop. The goal: by the time
 // publish cron picks up a post (scheduled_for <= now), its image_url is already
@@ -2903,6 +3105,143 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
     }
   }
   return { posts_processed: generated };
+}
+
+// Pre-warm reels for video posts scheduled in the next 45 minutes. Two-state
+// machine driven by video_status:
+//   NULL/'pending'    → kick off Kling i2v on the thumbnail (image_url),
+//                        store request_id, flip to 'generating'
+//   'generating'      → poll task-status; on SUCCEEDED, fetch result, copy to
+//                        R2, set video_url + flip to 'ready'. On FAILED or
+//                        >8min stale → 'failed' (publish cron falls back to
+//                        image-only so the slot still ships)
+//
+// 45-min lookahead × 5-min ticks = 9 ticks of headroom; Kling needs 1-3min so
+// there's plenty of slack even if a tick fails. Cap at 2 in-flight per tick
+// because Kling is ~$0.30/run — pacing keeps the bill predictable.
+async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: number }> {
+  if (!env.FAL_API_KEY) return { posts_processed: 0 };
+  const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
+  const in45AEST = new Date(Date.now() + 10 * 60 * 60 * 1000 + 45 * 60 * 1000).toISOString().replace('Z', '');
+  const eightMinAgoAEST = new Date(Date.now() + 10 * 60 * 60 * 1000 - 8 * 60 * 1000).toISOString().replace('Z', '');
+
+  // First — time out any 'generating' job stuck >8 min so the publish path can
+  // fall back to image. Kling p99 is ~3 min; 8 min is "something's wrong".
+  await env.DB.prepare(
+    `UPDATE posts SET video_status = 'failed', video_error = 'Generation timed out (>8 min)'
+     WHERE post_type = 'video' AND video_status = 'generating'
+       AND video_started_at IS NOT NULL AND video_started_at < ?`
+  ).bind(eightMinAgoAEST).run();
+
+  const rows = await env.DB.prepare(
+    `SELECT id, image_url, video_script, video_request_id, video_status
+     FROM posts
+     WHERE post_type = 'video' AND status = 'Scheduled'
+       AND scheduled_for > ? AND scheduled_for <= ?
+       AND (video_status IS NULL OR video_status IN ('pending','generating'))
+       AND ${ACTIVE_CLIENT_FILTER}
+     ORDER BY scheduled_for ASC LIMIT 2`
+  ).bind(nowAEST, in45AEST).all();
+
+  const posts = rows.results ?? [];
+  if (posts.length === 0) return { posts_processed: 0 };
+  console.log(`[CRON prewarm-video] ${posts.length} reel(s) in 45-min window`);
+
+  const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
+  let processed = 0;
+
+  for (const post of posts) {
+    const postId = (post as any).id as string;
+    const status = (post as any).video_status as string | null;
+    const requestId = (post as any).video_request_id as string | null;
+    try {
+      if (!status || status === 'pending') {
+        // Kick off generation.
+        const thumbnail = (post as any).image_url as string | null;
+        const motionPrompt = (post as any).video_script as string | null;
+        if (!thumbnail) {
+          await env.DB.prepare(
+            `UPDATE posts SET video_status = 'failed', video_error = 'No thumbnail to animate' WHERE id = ?`
+          ).bind(postId).run();
+          continue;
+        }
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 15000);
+        const startRes = await fetch('https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video', {
+          method: 'POST',
+          headers: authHeader,
+          body: JSON.stringify({
+            prompt: motionPrompt || 'cinematic, smooth motion',
+            image_url: thumbnail,
+            duration: '5',
+            aspect_ratio: '9:16',
+          }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(timeout);
+        const startData: any = await startRes.json();
+        if (!startRes.ok || !startData.request_id) {
+          const reason = startData?.detail || startData?.message || `Kling HTTP ${startRes.status}`;
+          await env.DB.prepare(
+            `UPDATE posts SET video_status = 'failed', video_error = ? WHERE id = ?`
+          ).bind(`Kling start failed: ${reason}`.slice(0, 500), postId).run();
+          continue;
+        }
+        await env.DB.prepare(
+          `UPDATE posts SET video_status = 'generating', video_request_id = ?, video_started_at = ? WHERE id = ?`
+        ).bind(startData.request_id, nowAEST, postId).run();
+        processed++;
+        console.log(`[CRON prewarm-video] kicked off Kling for post ${postId}`);
+        continue;
+      }
+
+      // status === 'generating' → poll
+      if (!requestId) {
+        await env.DB.prepare(
+          `UPDATE posts SET video_status = 'failed', video_error = 'No request_id to poll' WHERE id = ?`
+        ).bind(postId).run();
+        continue;
+      }
+      const statusRes = await fetch(
+        `https://queue.fal.run/fal-ai/kling-video/requests/${requestId}/status`,
+        { headers: authHeader },
+      );
+      const statusData: any = await statusRes.json();
+      if (statusData.status === 'COMPLETED' || statusData.status === 'SUCCEEDED') {
+        // Fetch the result → get video URL → cache to R2 → mark ready.
+        const resultRes = await fetch(
+          `https://queue.fal.run/fal-ai/kling-video/requests/${requestId}`,
+          { headers: authHeader },
+        );
+        const resultData: any = await resultRes.json();
+        const falVideoUrl = resultData?.video?.url || resultData?.output?.video?.url;
+        if (!falVideoUrl) {
+          await env.DB.prepare(
+            `UPDATE posts SET video_status = 'failed', video_error = 'No video URL in Kling result' WHERE id = ?`
+          ).bind(postId).run();
+          continue;
+        }
+        const durableUrl = await cacheVideoToR2(env, falVideoUrl, postId);
+        // If R2 isn't configured, durableUrl falls back to falVideoUrl (still
+        // works for ~24h — long enough for posts scheduled within 45 min).
+        const persistedUrl = durableUrl || falVideoUrl;
+        await env.DB.prepare(
+          `UPDATE posts SET video_status = 'ready', video_url = ?, r2_video_key = ? WHERE id = ?`
+        ).bind(persistedUrl, durableUrl ? `reels/${postId}.mp4` : null, postId).run();
+        processed++;
+        console.log(`[CRON prewarm-video] reel ready for post ${postId}`);
+      } else if (statusData.status === 'FAILED') {
+        const reason = statusData?.failure || 'Kling reported FAILED';
+        await env.DB.prepare(
+          `UPDATE posts SET video_status = 'failed', video_error = ? WHERE id = ?`
+        ).bind(String(reason).slice(0, 500), postId).run();
+      }
+      // else IN_QUEUE / IN_PROGRESS — leave as 'generating', try next tick
+    } catch (e: any) {
+      console.warn(`[CRON prewarm-video] failed for post ${postId}: ${e?.message}`);
+    }
+  }
+  return { posts_processed: processed };
 }
 
 // Daily — refresh client_facts for every workspace with a connected FB Page.
@@ -3059,9 +3398,11 @@ export default {
   async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     const cron = event.cron;
     // Every 5 minutes — pre-warm images first (so publish cron always finds
-    // image_url populated for posts due in the next 30 min), then publish.
+    // image_url populated for posts due in the next 30 min), then pre-warm
+    // videos (Kling i2v + R2 cache, 45-min lookahead), then publish.
     if (cron === '*/5 * * * *') {
       await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
+      await trackCron(env, 'prewarm_videos', () => cronPrewarmVideos(env));
       await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
       return;
     }
@@ -3077,6 +3418,7 @@ export default {
     }
     // Fallback: run all (for 6-hourly credit check and any unmatched triggers)
     await trackCron(env, 'prewarm_fallback', () => cronPrewarmImages(env));
+    await trackCron(env, 'prewarm_videos_fallback', () => cronPrewarmVideos(env));
     await trackCron(env, 'publish_fallback', () => cronPublishMissedPosts(env));
     await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
   },

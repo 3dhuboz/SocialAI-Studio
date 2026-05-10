@@ -465,6 +465,7 @@ const Dashboard: React.FC = () => {
             intakeFormDone: !!row.intake_form_done,
             agencyBillingUrl: row.agency_billing_url,
             insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
+            reelCredits: typeof row.reel_credits === 'number' ? row.reel_credits : 0,
           };
           // In portal mode, skip user-level profile/stats/tokens — the client workspace effect handles those
           if (authMode !== 'portal') {
@@ -493,6 +494,10 @@ const Dashboard: React.FC = () => {
           }
           if (!isAdmin && d.plan) setActivePlan(d.plan as PlanTier);
           if (!isAdmin && d.setupStatus) setSetupStatus(d.setupStatus as SetupStatus);
+          // v5 — reel credit balance. Plan grants land via PayPal webhook on
+          // invoice.paid; purchased credit packs land via the one-off product
+          // webhook. Reel generation decrements. Never expires.
+          if (typeof d.reelCredits === 'number') setUserReelCredits(d.reelCredits);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
@@ -541,6 +546,7 @@ const Dashboard: React.FC = () => {
         setClients(loadedClients.map(c => ({
           id: c.id, name: c.name, businessType: c.business_type ?? '', createdAt: c.created_at ?? '',
           plan: c.plan as PlanTier | undefined, clientSlug: c.client_slug ?? undefined,
+          reelCredits: c.reel_credits ?? 0,
         } as ClientWorkspace)));
         // Load posts for own workspace — skip in portal mode (client workspace effect handles posts)
         if (authMode !== 'portal') {
@@ -1112,6 +1118,10 @@ const Dashboard: React.FC = () => {
 
   // Plan & setup state (sourced from Firestore via userDoc)
   const [activePlan, setActivePlan] = useState<PlanTier | null>(null);
+  // Reel credits for the user's own workspace (NOT for agency-managed clients —
+  // those live on activeClientWorkspace.reelCredits). The "effective" balance
+  // below picks the right one based on whether a client workspace is active.
+  const [userReelCredits, setUserReelCredits] = useState<number>(0);
   const [setupStatus, setSetupStatus] = useState<SetupStatus>('ordered');
   const [isAdminMode] = useState(() => localStorage.getItem('sai_admin') === '1');
   // isSuperAdmin = the app owner (Steve) only — gates umbrella settings (fal.ai credits, API keys).
@@ -1136,6 +1146,15 @@ const Dashboard: React.FC = () => {
   const canUseImages = effectivePlan === 'growth' || effectivePlan === 'pro' || effectivePlan === 'agency';
   const canUseSaturation = effectivePlan === 'pro' || effectivePlan === 'agency';
   const maxPostsPerWeek = isAdminMode ? Infinity : (planCfg?.postsPerWeek ?? 7);
+  // v5 — effective reel credit balance for the currently active workspace.
+  // Mirrors effectivePlan: client workspace's credits when one is selected,
+  // otherwise the user's own. Admins get unlimited. Reels are gated entirely
+  // by this balance — Starter/Growth users start at 0 and only get reels
+  // via purchase; Pro/Agency get monthly grants from PayPal renewal.
+  const effectiveReelCredits = isAdminMode
+    ? Infinity
+    : (activeClientId && activeClientWorkspace ? (activeClientWorkspace.reelCredits ?? 0) : userReelCredits);
+  const canUseReels = effectiveReelCredits > 0;
 
   // ── Free trial gating ─────────────────────────────────────────────────────
   // Brand-new (no-plan) signups get CLIENT.freeTrialPosts AI generations
@@ -1490,13 +1509,27 @@ const Dashboard: React.FC = () => {
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
         toast(`Generation failed: ${result.strategy.replace('Error: ', '').substring(0, 100)}`, 'error');
       } else {
-        // Enforce plan limits: strip video posts if plan doesn't support them
-        const canVideos = effectivePlan === 'pro' || effectivePlan === 'agency';
-        const cleanPosts = canVideos ? result.posts : result.posts.map(p =>
-          (p as any).postType === 'video'
-            ? { ...p, postType: 'image' as const, videoScript: undefined, videoShots: undefined, videoMood: undefined }
-            : p
-        );
+        // Enforce reel credit cap: keep at most `effectiveReelCredits` video
+        // posts; demote the rest to image. Zero credits = all video posts get
+        // demoted to image (which is the standard path for Starter/Growth or
+        // Pro/Agency users who've spent their monthly grant). Admins get
+        // Infinity which always lets every video through.
+        let reelsKept = 0;
+        const reelCap = effectiveReelCredits;
+        const cleanPosts = result.posts.map(p => {
+          if ((p as any).postType !== 'video') return p;
+          if (reelsKept < reelCap) {
+            reelsKept++;
+            return p;
+          }
+          // Demote to image post — keep the topic + caption, drop the video brief.
+          return { ...p, postType: 'image' as const, videoScript: undefined, videoShots: undefined, videoMood: undefined };
+        });
+        if (result.posts.some((p: any) => p.postType === 'video') && reelsKept === 0) {
+          toast(`Reels need credits — ${effectivePlan === 'pro' || effectivePlan === 'agency' ? 'monthly allotment used up' : 'available on Pro+ or buy a credit pack'}.`, 'info');
+        } else if (reelsKept > 0 && reelsKept < result.posts.filter((p: any) => p.postType === 'video').length) {
+          toast(`${reelsKept} reel${reelsKept === 1 ? '' : 's'} included (matched your credit balance).`, 'info');
+        }
         setSmartPosts(cleanPosts);
         setSmartStrategy(result.strategy);
         saveDraft(cleanPosts, result.strategy, autopilotMode, autopilotPlatform, activeClientId);
@@ -1717,6 +1750,10 @@ const Dashboard: React.FC = () => {
             videoScript: sp.videoScript || undefined,
             videoShots: sp.videoShots || undefined,
             videoMood: sp.videoMood || undefined,
+            // v5 — videoStatus='pending' tells the prewarm cron to claim this
+            // post and kick off Kling i2v in its 45-min lookahead window.
+            // Non-video posts leave this NULL and are ignored by the cron.
+            videoStatus: sp.postType === 'video' ? 'pending' : undefined,
           };
           const batchPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
           completedCount++;
@@ -1733,6 +1770,23 @@ const Dashboard: React.FC = () => {
         toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
       } else {
         toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
+      }
+
+      // v5 — debit reel credits for any video posts in this batch. Single
+      // workspace-level UPDATE keeps the DB and local state in sync. Server
+      // enforcement is the source of truth (the prewarm cron's eligibility
+      // check is by post_type, not credits — the credit guard is here at
+      // accept-time so you can't bank video posts you can't pay for).
+      const videosInBatch = results.filter((p: any) => p.postType === 'video').length;
+      if (videosInBatch > 0 && !isAdminMode) {
+        const newBalance = Math.max(0, effectiveReelCredits - videosInBatch);
+        if (activeClientId) {
+          await db.updateClient(activeClientId, { reelCredits: newBalance }).catch(() => {});
+          setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, reelCredits: newBalance } : c));
+        } else {
+          await db.upsertUser({ reelCredits: newBalance }).catch(() => {});
+          setUserReelCredits(newBalance);
+        }
       }
       // Surface image-gen failures so silent text-only publishes stop happening.
       // The cron now has a JIT image-backfill that catches most of these before
@@ -4877,7 +4931,9 @@ const Dashboard: React.FC = () => {
               <div className="h-px flex-1 bg-white/6" />
             </div>
 
-            {/* Short Video Toggle — Pro+ */}
+            {/* Short Video Toggle — credit-gated. Available on any plan when
+                reel credits > 0 (Pro/Agency get monthly grants; everyone can
+                buy credit packs). */}
             <div className="bg-white/3 border border-white/8 rounded-2xl p-6">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -4886,34 +4942,49 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="font-bold text-white flex items-center gap-2">
-                      Short Video / Reels
-                      {!(effectivePlan === 'pro' || effectivePlan === 'agency') && (
-                        <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">Pro</span>
+                      AI Reels
+                      {canUseReels ? (
+                        <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full font-semibold">
+                          {effectiveReelCredits === Infinity ? '∞' : effectiveReelCredits} credit{effectiveReelCredits === 1 ? '' : 's'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-white/8 text-white/55 border border-white/10 px-2 py-0.5 rounded-full font-semibold">No credits</span>
                       )}
                     </h3>
-                    <p className="text-xs text-white/30 mt-0.5">AI generates full video scripts, shot briefs & music mood for Reels alongside regular posts</p>
+                    <p className="text-xs text-white/30 mt-0.5">AI writes the brief, animates your photo via Kling, and scores it with mood-matched music — one credit per reel.</p>
                   </div>
                 </div>
                 <button
                   onClick={() => {
-                    if (!(effectivePlan === 'pro' || effectivePlan === 'agency')) { toast('Short Video posts require a Pro plan.', 'warning'); return; }
+                    if (!canUseReels) {
+                      toast(
+                        effectivePlan === 'pro' || effectivePlan === 'agency'
+                          ? 'Out of reel credits — your plan grants more on next billing cycle, or buy a credit pack.'
+                          : 'AI Reels require credits. Upgrade to Pro for monthly credits, or buy a credit pack.',
+                        'warning',
+                      );
+                      return;
+                    }
                     setProfile(prev => ({ ...prev, videoEnabled: !prev.videoEnabled }));
                     setIncludeVideos(prev => !prev);
                   }}
                   className={`relative w-12 h-6 rounded-full transition flex-shrink-0 ${
-                    profile.videoEnabled && (effectivePlan === 'pro' || effectivePlan === 'agency')
-                      ? 'bg-purple-500'
-                      : 'bg-white/15'
-                  } ${!(effectivePlan === 'pro' || effectivePlan === 'agency') ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                    profile.videoEnabled && canUseReels ? 'bg-purple-500' : 'bg-white/15'
+                  } ${!canUseReels ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
                 >
                   <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${
-                    profile.videoEnabled && (effectivePlan === 'pro' || effectivePlan === 'agency') ? 'left-7' : 'left-1'
+                    profile.videoEnabled && canUseReels ? 'left-7' : 'left-1'
                   }`} />
                 </button>
               </div>
-              {profile.videoEnabled && (effectivePlan === 'pro' || effectivePlan === 'agency') && (
+              {profile.videoEnabled && canUseReels && (
                 <div className="mt-4 bg-purple-500/8 border border-purple-500/15 rounded-xl px-4 py-3">
-                  <p className="text-xs text-purple-300">🎬 Short videos are now included in your AI content calendar. Each Reel post includes a full script, shot-by-shot brief, and music recommendation that you can film with your phone.</p>
+                  <p className="text-xs text-purple-300">🎬 Smart Schedule will mix in up to {effectiveReelCredits === Infinity ? 'unlimited' : effectiveReelCredits} reel{effectiveReelCredits === 1 ? '' : 's'} per batch. Each one debits a credit when you accept the schedule. Reels publish 45 min after Smart Schedule generates them.</p>
+                </div>
+              )}
+              {!canUseReels && (
+                <div className="mt-4 bg-white/3 border border-white/8 rounded-xl px-4 py-3">
+                  <p className="text-xs text-white/55">Pro includes 4 reel credits/month. Agency: 20/month across all clients. Or buy a one-off pack on the Plan & Billing tab — credits never expire.</p>
                 </div>
               )}
             </div>

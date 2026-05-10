@@ -14,6 +14,19 @@ export interface SocialPost {
   videoScript?: string;
   videoShots?: string;
   videoMood?: string;
+  // ── Scheduled Reels pipeline (v5) ───────────────────────────────────────
+  // videoUrl gets populated by the prewarm cron once Kling completes; the
+  // status field drives the dashboard's reel-status indicator and tells the
+  // publish cron whether the slot is reel-ready or should fall back to image.
+  videoUrl?: string;
+  videoStatus?: 'pending' | 'generating' | 'ready' | 'failed';
+  videoRequestId?: string;
+  videoStartedAt?: string;
+  videoError?: string;
+  /** R2 object key for the cached reel mp4 (e.g. 'reels/{post_id}.mp4') */
+  r2VideoKey?: string;
+  /** Mixed-audio version — populated by PR #2 (server-side ffmpeg). NULL in PR #1. */
+  audioMixedUrl?: string;
 }
 
 /** Social platform tokens — stored in dedicated D1 column, never cached in localStorage */
@@ -87,6 +100,9 @@ export interface ClientWorkspace {
   scheduledPostCount?: number;
   /** Vite CLIENT_ID slug for the branded site, e.g. "streetmeats" */
   clientSlug?: string;
+  /** v5 — reel credits balance for this workspace. Plan grants + purchased
+   *  credit packs both accrue here. Reel generation decrements by 1. */
+  reelCredits?: number;
 }
 
 export type CampaignType = 'countdown' | 'promo' | 'launch' | 'event' | 'custom';

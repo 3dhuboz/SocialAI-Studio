@@ -47,6 +47,9 @@ export interface DbUserData {
   profile?: string | object;
   stats?: string | object;
   insight_report?: string | object | null;
+  /** v5 — single reel credits balance. Plan grants + purchased credits both
+   *  accrue here. Reel generation decrements by 1. Never expires. */
+  reel_credits?: number;
 }
 
 export interface DbPost {
@@ -68,6 +71,15 @@ export interface DbPost {
   video_script?: string | null;
   video_shots?: string | null;
   video_mood?: string | null;
+  // v5 — scheduled reels pipeline. video_url populated by prewarm cron; the
+  // rest track lifecycle so polling resumes across cron ticks.
+  video_url?: string | null;
+  video_status?: 'pending' | 'generating' | 'ready' | 'failed' | null;
+  video_request_id?: string | null;
+  video_started_at?: string | null;
+  video_error?: string | null;
+  r2_video_key?: string | null;
+  audio_mixed_url?: string | null;
 }
 
 export interface DbClient {
@@ -81,6 +93,8 @@ export interface DbClient {
   stats?: object;
   insightReport?: object | null;
   client_slug?: string | null;
+  /** v5 — per-client reel credits (Agency workspaces). Same semantics as users.reel_credits. */
+  reel_credits?: number;
 }
 
 export interface DbCampaign {

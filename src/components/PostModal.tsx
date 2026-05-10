@@ -105,14 +105,58 @@ export const PostModal: React.FC<Props> = ({
           {/* ── Video Reel Preview ── */}
           {isVideo ? (
             <div className="border-b border-white/[0.06]">
-              <div className="flex items-center gap-4 p-5">
-                <AnimatedReelPreview
-                  hookText={post.videoScript?.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() || post.content}
-                  mood={post.videoMood}
-                  size="md"
+              {/* Once the prewarm cron finishes, show the actual mp4 — that's
+                  what's about to publish. Before then, fall back to the
+                  animated preview frame so the user has something to look at
+                  while it's queued. */}
+              {post.videoStatus === 'ready' && post.videoUrl ? (
+                <video
+                  src={post.videoUrl}
+                  controls
+                  playsInline
+                  className="w-full max-h-[60vh] object-contain bg-black"
                 />
+              ) : null}
+              <div className="flex items-center gap-4 p-5">
+                {!(post.videoStatus === 'ready' && post.videoUrl) && (
+                  <AnimatedReelPreview
+                    hookText={post.videoScript?.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() || post.content}
+                    mood={post.videoMood}
+                    size="md"
+                  />
+                )}
                 <div className="flex-1 min-w-0">
-                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/25">Reel</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/25">Reel</span>
+                    {/* Status pill — same colour key as the calendar list view.
+                        Surfaces whether the prewarm cron has the reel ready,
+                        is still working on it, or fell back to image. */}
+                    {post.status !== 'Posted' && post.status !== 'Missed' && (
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          post.videoStatus === 'ready'      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' :
+                          post.videoStatus === 'generating' ? 'bg-amber-500/15 text-amber-300 border-amber-500/25' :
+                          post.videoStatus === 'failed'     ? 'bg-red-500/15 text-red-300 border-red-500/25' :
+                                                              'bg-white/8 text-white/55 border-white/12'
+                        }`}
+                      >
+                        {post.videoStatus === 'ready'      ? 'Reel ready' :
+                         post.videoStatus === 'generating' ? 'Generating ~2 min' :
+                         post.videoStatus === 'failed'     ? 'Reel failed — image fallback' :
+                                                             'Queued for prewarm'}
+                      </span>
+                    )}
+                  </div>
+                  {post.videoStatus === 'failed' && post.videoError && (
+                    <p className="text-[11px] text-red-300/80 mt-2 leading-snug">
+                      <span className="font-semibold">Why: </span>{post.videoError}
+                    </p>
+                  )}
+                  {!post.videoStatus && (
+                    <p className="text-[11px] text-white/40 mt-2 leading-snug">
+                      Reel queued — generates 45 min before scheduled time.
+                    </p>
+                  )}
                   {post.videoMood && <p className="text-xs text-white/30 mt-2">Mood: {post.videoMood}</p>}
                   {post.videoScript && (
                     <button
