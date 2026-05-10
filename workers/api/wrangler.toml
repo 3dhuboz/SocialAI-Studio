@@ -5,6 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ENVIRONMENT = "production"
+# Public base URL for the REELS_R2 bucket (set via R2 → socialai-reels →
+# Settings → Public Development URL → Allow Access). Required so the prewarm
+# cron can persist a durable, publicly-fetchable URL on each reel post for
+# FB/IG to download via file_url. Without this var, cacheVideoToR2() returns
+# null and the worker falls back to fal.ai's 24h-expiry URL — which only works
+# for reels scheduled within the next ~24h. Custom domain preferred long-term.
+R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev"
 
 # Secrets — set via: npx wrangler secret put KEY_NAME
 # OPENROUTER_API_KEY  (OpenRouter API key for AI generation)
@@ -51,7 +58,7 @@ port = 8787
 
 [env.staging]
 name = "socialai-api-staging"
-vars = { ENVIRONMENT = "staging" }
+vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev" }
 
 [[env.staging.d1_databases]]
 binding = "DB"
