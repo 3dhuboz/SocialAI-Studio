@@ -75,11 +75,12 @@ export const FalService = {
    * and the tripwire stays quiet for legitimate use.
    */
   generateImage: async (prompt: string, businessType: string = 'small business'): Promise<string> => {
-    const safePrompt = buildSafeImagePromptClient(prompt, businessType);
+    const safe = buildSafeImagePromptClient(prompt, businessType);
+    if (!safe) throw new Error('Cannot generate image: prompt is empty/abstract and no business type to seed a fallback. Open the post and add an image prompt.');
     const res = await fetch(`${PROXY}?action=generate-image`, {
       method: 'POST',
       headers: await proxyHeaders(),
-      body: JSON.stringify({ prompt: safePrompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt }),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');

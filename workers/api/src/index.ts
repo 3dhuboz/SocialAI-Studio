@@ -185,8 +185,20 @@ function isAbstractUIPrompt(prompt: string): boolean {
   return false;
 }
 
-// Returns null if the prompt is too short to be useful — caller should skip.
-function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | null {
+// Canonical FLUX negative-prompt — server-side mirror of FLUX_NEGATIVE_PROMPT
+// in src/services/gemini.ts. Passed as a SEPARATE `negative_prompt` parameter
+// to fal.ai, NOT appended onto the positive prompt. (Inline negations like
+// "no hands" don't suppress concepts in diffusion models — they often pull
+// the negated subject INTO the image because the noun becomes a strong
+// contextual cue. See gemini.ts FLUX_NEGATIVE_PROMPT comment for full
+// reasoning. KEEP IN SYNC with that constant.)
+const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
+const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+
+// Returns { prompt, negativePrompt } pair, or null if the prompt is too
+// short / invalid to seed a sensible image (caller should skip image gen
+// and let the post publish text-only).
+function buildSafeImagePrompt(rawPrompt: string | null | undefined): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
   if (!prompt || prompt.length < 5) return null;
 
@@ -198,12 +210,17 @@ function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | nu
     ? SAFE_FALLBACK_SCENES[Math.floor(Math.random() * SAFE_FALLBACK_SCENES.length)]
     : prompt;
 
+  // Strip people-mentions from the POSITIVE prompt — defense-in-depth.
+  // The real enforcement is FLUX_NEGATIVE_PROMPT below.
   const cleaned = safeBase
     .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  return `${cleaned || safeBase}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+  return {
+    prompt: `${cleaned || safeBase}, ${FLUX_STYLE_SUFFIX}`,
+    negativePrompt: FLUX_NEGATIVE_PROMPT,
+  };
 }
 
 // ── Admin gate ───────────────────────────────────────────────────────────────
@@ -2103,16 +2120,18 @@ async function backfillImagesForUser(env: Env, uid: string) {
       // Replaces the previous inline strip + "product photography" suffix
       // which (a) had no UI/chart guards and (b) used an older over-styled
       // suffix that drifted away from the candid-iPhone look in gemini.ts.
-      const finalPrompt = buildSafeImagePrompt(String((post as any).image_prompt || ''));
-      if (!finalPrompt) { failed++; continue; }
+      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''));
+      if (!safe) { failed++; continue; }
 
       const res = await fetch('https://fal.run/fal-ai/flux/dev', {
         method: 'POST',
         headers: { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: finalPrompt, image_size: 'square_hd',
-          num_inference_steps: 25, num_images: 1,
-          enable_safety_checker: true, guidance_scale: 3.5,
+          prompt: safe.prompt,
+          negative_prompt: safe.negativePrompt,
+          image_size: 'square_hd',
+          num_inference_steps: 28, num_images: 1,
+          enable_safety_checker: true, guidance_scale: 5.0,
         }),
       });
       const data: any = await res.json();
@@ -2670,23 +2689,32 @@ app.all('/api/fal-proxy', async (c) => {
   const authHeader = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
 
   if (action === 'generate-image' && c.req.method === 'POST') {
-    const { prompt } = await c.req.json() as any;
+    const { prompt, negativePrompt } = await c.req.json() as any;
     if (!prompt) return c.json({ error: 'prompt is required' }, 400);
-    // Defense-in-depth tripwire (don't block — log only). Every legitimate
-    // caller appends a negative-prompt suffix that includes "no UI" / "no
-    // text" / "candid iPhone" (see buildSafeImagePrompt at top of file, and
-    // generateMarketingImage in src/services/gemini.ts). If none of those
-    // markers are present, the prompt came from an unvalidated source —
-    // log a warning so CF Worker logs surface the regression without
-    // breaking any future legitimate caller that uses a different suffix.
-    // This is the choke point that catches the App.tsx-bypass-style bug
-    // class going forward.
-    if (!/(no UI|no text|candid iPhone)/i.test(prompt)) {
-      console.warn(`[fal-proxy] generate-image prompt missing safety suffix — uid=${uid}, prompt prefix="${prompt.substring(0, 80)}"`);
+    // Defense-in-depth tripwire (don't block — log only). The "candid iPhone"
+    // marker stays — it's a stable token in our positive-prompt suffix that
+    // confirms the prompt went through buildSafeImagePromptClient. The old
+    // "no UI" / "no text" markers were removed because those tokens now live
+    // in the dedicated negative_prompt field, not the positive prompt.
+    if (!/candid iPhone/i.test(prompt)) {
+      console.warn(`[fal-proxy] generate-image prompt missing safety marker — uid=${uid}, prompt prefix="${prompt.substring(0, 80)}"`);
     }
+    // negative_prompt passed as a SEPARATE parameter (not concatenated onto
+    // prompt). FLUX-dev only suppresses concepts when they're in this field;
+    // inline "no X" in the positive prompt becomes a positive concept and
+    // often pulls X INTO the image. guidance_scale bumped 3.5 → 5.0 so the
+    // negative actually has weight at sampling time.
     const res = await fetch('https://fal.run/fal-ai/flux/dev', {
       method: 'POST', headers: authHeader,
-      body: JSON.stringify({ prompt, image_size: 'square_hd', num_inference_steps: 25, num_images: 1, enable_safety_checker: true, guidance_scale: 3.5 }),
+      body: JSON.stringify({
+        prompt,
+        negative_prompt: negativePrompt || FLUX_NEGATIVE_PROMPT,
+        image_size: 'square_hd',
+        num_inference_steps: 28,
+        num_images: 1,
+        enable_safety_checker: true,
+        guidance_scale: 5.0,
+      }),
     });
     const data = await res.json() as any;
     if (!res.ok) return c.json({ error: data?.detail || data?.message || `fal.ai HTTP ${res.status}` }, res.status as any);
@@ -2981,17 +3009,19 @@ async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: numb
         // short/invalid to be useful — in that case we skip image gen
         // entirely and the post publishes text-only (same outcome as if
         // the fal.ai call had failed, which is non-fatal here).
-        const finalPrompt = buildSafeImagePrompt(promptForGen);
-        if (finalPrompt) try {
+        const safe = buildSafeImagePrompt(promptForGen);
+        if (safe) try {
           const ctrl = new AbortController();
           const timeout = setTimeout(() => ctrl.abort(), 15000);
           const falRes = await fetch('https://fal.run/fal-ai/flux/dev', {
             method: 'POST',
             headers: { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              prompt: finalPrompt, image_size: 'square_hd',
-              num_inference_steps: 25, num_images: 1,
-              enable_safety_checker: true, guidance_scale: 3.5,
+              prompt: safe.prompt,
+              negative_prompt: safe.negativePrompt,
+              image_size: 'square_hd',
+              num_inference_steps: 28, num_images: 1,
+              enable_safety_checker: true, guidance_scale: 5.0,
             }),
             signal: ctrl.signal,
           });
@@ -3403,8 +3433,8 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
       //   1. backfillImagesForUser (admin manual catch-up)
       //   2. cronPublishMissedPosts JIT (publish-time backfill)
       //   3. this image pre-warm cron (proactive ahead-of-publish)
-      const finalPrompt = buildSafeImagePrompt(prompt);
-      if (!finalPrompt) {
+      const safe = buildSafeImagePrompt(prompt);
+      if (!safe) {
         console.warn(`[CRON prewarm] skipped post ${(post as any).id}: prompt too short or invalid`);
         continue;
       }
@@ -3415,9 +3445,11 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
         method: 'POST',
         headers: { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: finalPrompt, image_size: 'square_hd',
-          num_inference_steps: 25, num_images: 1,
-          enable_safety_checker: true, guidance_scale: 3.5,
+          prompt: safe.prompt,
+          negative_prompt: safe.negativePrompt,
+          image_size: 'square_hd',
+          num_inference_steps: 28, num_images: 1,
+          enable_safety_checker: true, guidance_scale: 5.0,
         }),
         signal: ctrl.signal,
       });

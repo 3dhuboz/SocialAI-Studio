@@ -312,6 +312,62 @@ export function isAbstractUIPrompt(prompt: string): boolean {
 }
 
 /**
+ * Regional voice block — injected into Smart Schedule and single-post prompts
+ * when the customer's location indicates Australia. Without this, Claude Haiku
+ * defaults to its training-data prior (US/UK marketing-blog cadence) and
+ * generates posts that read like Silicon Valley pitches even for a Rocky cafe.
+ *
+ * 2026-05 deep audit observation: Penny Wise IT (Rockhampton) was getting
+ * posts opening with "Your best post goes live at 3 AM on a Tuesday. Nobody
+ * sees it. Timing is everything." — textbook SV tech-blog rhythm. The fix is
+ * an explicit regional voice lock keyed off location, plus structural-pattern
+ * bans in BANNED_PATTERNS for the cadence itself.
+ *
+ * Returns "" if location doesn't look Australian so the prompt degrades
+ * gracefully for international customers (when we have any).
+ */
+export function buildRegionalVoiceBlock(location: string): string {
+  const loc = (location || '').toLowerCase();
+  if (!loc) return '';
+  const isAustralian = /\b(australia|australian|aussie|qld|queensland|nsw|new south wales|vic|victoria|sa\b|south australia|wa\b|western australia|nt\b|northern territory|tas|tasmania|act\b|brisbane|sydney|melbourne|perth|adelaide|darwin|hobart|canberra|gold coast|sunshine coast|rockhampton|rocky\b|townsville|cairns|toowoomba|ipswich|mackay|bundaberg|byron|newcastle|wollongong|geelong|launceston|fremantle|manly|bondi|surfers paradise)\b/i.test(loc);
+  if (!isAustralian) return '';
+
+  const isRegional = /\b(rockhampton|rocky\b|townsville|cairns|toowoomba|ipswich|mackay|bundaberg|regional|central queensland|north queensland|outback)\b/i.test(loc);
+
+  return `
+═══════════════════════════════════════════════════════════════════
+🇦🇺 REGIONAL VOICE LOCK — this business is in ${isRegional ? 'regional Australia' : 'Australia'}.
+═══════════════════════════════════════════════════════════════════
+Write like an actual local, not like a Sydney agency or a US tech blog.
+- USE: casual contractions ("we're", "you're", "it's", "gonna", "won't"); plain language; the way you'd talk at the pub or to a tradie mate
+- USE (sparingly, never forced): "mate", "G'day", "the missus", "Rocky" (for Rockhampton), "yeah nah", "fair dinkum", "no worries", "arvo", "brekky", "smoko"
+- AVOID like a press release: "elevate", "leverage", "synergy", "ecosystem", "thought leadership", "best-in-class", "world-class", "cutting-edge", "channell?ed creative energy", "bespoke digital platforms", "tailored solutions", "end-to-end", "value proposition"
+- AVOID US tech-blog rhythm: short three-beat declarative sentences ("Nobody sees it. Timing is everything."), "No more X-ing at a Y", "Every X. Every Y. Every Z." anaphora, opening with a hypothetical hour ("Your best post goes live at 3 AM…")
+- AVOID corporate openers: "In today's digital age", "As a business owner", "Exciting news!", "We're thrilled to announce"
+- THE VOICE TEST: Would a tradie reading this think "this sounds like my mate" or "this sounds like a wanker"? Aim for mate. Every time.
+═══════════════════════════════════════════════════════════════════
+`;
+}
+
+// Canonical FLUX negative-prompt — passed as a SEPARATE parameter so the
+// diffusion model actually suppresses these concepts at sampling time.
+//
+// 2026-05 deep audit: the previous design appended these tokens onto the
+// POSITIVE prompt as "no people, no faces, no hands, …". FLUX-dev does not
+// parse inline negations — those words become positive concepts. Worse, the
+// negative tokens often pull semantically-related content INTO the image
+// (saying "no hands" near "pizza" makes a hand more likely to appear, since
+// the model sees "hands" as a strong contextual cue). Hence the steaming
+// pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
+// `negative_prompt` and respects it properly when guidance_scale ≥ 5.
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
+
+// Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
+// negatives live in the dedicated field. The worker's tripwire still checks
+// for "candid iPhone" so we keep that token; the rest is style direction.
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+
+/**
  * Single source of truth for the client-side image-prompt safety pipeline.
  * Consolidates logic that was previously duplicated across:
  *   - generateMarketingImage          (base64 path used by accept-now flow)
@@ -320,44 +376,56 @@ export function isAbstractUIPrompt(prompt: string): boolean {
  *                                      bypassing all guards prior to audit)
  *
  * All three callers MUST go through this helper so they share the same
- * validation, scrubbing, and negative-prompt suffix. Skipping any step is
- * how the Penny-Wise pricing-table regression and the cafe-image-on-tech-post
- * bug snuck through.
+ * validation, scrubbing, and negative-prompt suffix.
  *
  * Pipeline:
  *   1. Reject obviously bad prompts (empty, "N/A", title-case names, vague nouns)
  *   2. Detect abstract-UI prompts via isAbstractUIPrompt
- *   3. If any of (1) or (2) match, swap for a randomised industry example
- *      (pickExampleScene → getImagePromptExamples)
- *   4. Strip people-mentions (AI faces always look fake)
- *   5. Append the canonical negative-prompt suffix
+ *   3. If (1) OR (2): try industry-specific example (pickExampleScene); if
+ *      businessType is generic and we'd otherwise pick a random scene that
+ *      mismatches the post topic, RETURN NULL (fail-closed) — better to
+ *      publish text-only than attach a pizza to a tech post (real Penny Wise
+ *      regression observed 2026-05)
+ *   4. Strip people-mentions from the positive prompt (defense-in-depth — the
+ *      negative_prompt is the real enforcement)
  *
- * Returns a single concatenated prompt safe to send to /api/fal-proxy. Matches
- * the worker's buildSafeImagePrompt suffix verbatim so the fal-proxy tripwire
- * (no-UI / no-text / candid-iPhone marker check) stays satisfied.
+ * Returns { prompt, negativePrompt } — both passed to fal.ai as separate
+ * parameters. Returns null when the safety pipeline can't produce a sensible
+ * image and the post should publish text-only.
  */
-export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): string {
+export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
   const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt) || /^(N\/A|none|null|undefined)$/i.test(prompt);
   const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt) && prompt.split(' ').length <= 5;
   const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
   const isAbstractUI = isAbstractUIPrompt(prompt);
+  const needsFallback = isBadPrompt || looksLikeTitle || tooVague || isAbstractUI;
 
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
+  // Fail-closed if we'd be picking a random scene against a generic business
+  // type. This is the audit fix that stops "pizza on a tech post" — the old
+  // code would happily pick a cafe scene from getImagePromptExamples for a
+  // 'small business' fallback and FLUX would render food on a SaaS topic.
+  const isGenericType = /^(small business|business|company|service provider|local business)$/i.test(businessType.trim());
+  if (needsFallback && isGenericType) {
+    console.warn(`[image-safety] fail-closed — abstract/missing prompt with generic businessType="${businessType}". Post will publish text-only.`);
+    return null;
+  }
+
+  const effectivePrompt = needsFallback
     ? pickExampleScene(getImagePromptExamples(businessType))
     : prompt;
 
-  // Strip people/portrait/human descriptions — AI images of people always look fake
+  // Strip people-mentions from the POSITIVE prompt — defense-in-depth.
+  // The real enforcement is FLUX_NEGATIVE_PROMPT below.
   const cleanPrompt = effectivePrompt
     .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Suffix tuned for "looks like a real small-business iPhone photo", not a
-  // stock-photo ad. Negatives kill the AI tells that show up most often on
-  // food/wellness shots, plus UI/chart/table/infographic negatives so
-  // promo/SaaS topics can't render as blurry pricing-table mockups.
-  return `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+  return {
+    prompt: `${cleanPrompt || effectivePrompt}, ${FLUX_STYLE_SUFFIX}`,
+    negativePrompt: FLUX_NEGATIVE_PROMPT,
+  };
 }
 
 // ── Real-data ground-truth fetcher (FB-scraped facts) ──
@@ -441,7 +509,8 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
 
   if (starPosts.length) {
     sections.push(`\n★ STAR PERFORMERS — these posts ALREADY worked for this business.`);
-    sections.push(`MATCH THIS VOICE, FORMAT, AND APPROACH. Don't copy the words — copy the rhythm, length, hook style, and energy.`);
+    sections.push(`THIS IS THE VOICE TEST. If your draft does not sound like ONE of these, you have failed and must rewrite.`);
+    sections.push(`Match the rhythm, sentence length, hook style, energy, and vocabulary. Use the same level of formality, the same use of contractions ('we're' vs 'we are'), the same emoji frequency. Do NOT introduce phrases the business has never used. Do NOT use AI marketing tropes ("Nobody sees it. Timing is everything.", "No more staring at a blank screen", "Every X. Every Y. Every Z.", "channeled creative energy", "bespoke digital platforms") — those are immediate fails.`);
     starPosts.forEach((p, i) => {
       const meta = p.metadata || {};
       const stats = `${meta.likes || 0}❤️ ${meta.comments || 0}💬 ${meta.shares || 0}🔁`;
@@ -449,7 +518,7 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
     });
   }
   if (restPosts.length) {
-    sections.push(`\nOTHER PAST POSTS (additional voice samples):`);
+    sections.push(`\nOTHER PAST POSTS (additional voice samples — match this rhythm too):`);
     restPosts.forEach((p, i) => sections.push(`${i + 1}. ${p.content.substring(0, 220)}`));
   }
   if (comments.length) {
@@ -670,7 +739,7 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 
 You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
-${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
+${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
@@ -871,7 +940,17 @@ function detectFabrication(content: string): string | null {
 
 // Catch banned phrases that slipped past the prompt. Replace with neutral
 // alternatives or strip outright. Logs on every hit so quality can be tracked.
+//
+// 2026-05 deep audit: extended with patterns observed in real generated
+// posts. The original list only caught explicit cliché phrases ("Want to
+// boost your..."). The new patterns target the structural AI cadence —
+// three-beat declarative rhythm, "No more X-ing at a Y" hypothetical,
+// "Every X. Every Y. Every Z." anaphora, "Your best post goes live at 3 AM"
+// AI-tutorial opener, and the buzzword soup ("channeled creative energy",
+// "bespoke digital platforms"). These structural patterns are what makes
+// posts read like AI even when no individual word is wrong.
 const BANNED_PATTERNS: Array<[RegExp, string]> = [
+  // ── Original list (explicit cliché phrases) ──
   [/\bWant to boost your [^?.!]+[?.!]/gi, ''],
   [/\bEngage with your audience!?/gi, ''],
   [/\bCheck out our website[^.!?]*[.!?]/gi, ''],
@@ -883,6 +962,27 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   [/\bTake your [^.!?]+ to the next level!?/gi, ''],
   [/\bExciting news!\s*/gi, ''],
   [/\bWe('?re| are) thrilled to announce[^.!?]*[.!?]\s*/gi, ''],
+  // ── 2026-05 audit additions (structural AI cadence) ──
+  // "Your best/top/favourite X goes live at 3 AM on a Tuesday. Nobody sees it."
+  [/\bYour\s+(?:best|top|favourite|favorite)\s+\w+\s+goes\s+live\s+at\s+\d[^.!?]*[.!?]\s*(?:Nobody\s+sees\s+it[.!?]\s*)?/gi, ''],
+  // "Nobody sees it. Timing is everything." — three-beat declarative rhythm
+  [/\bNobody\s+sees\s+(it|them)[.!?]\s*Timing\s+is\s+everything[.!?]\s*/gi, ''],
+  // "No more staring at a blank screen" / "No more wondering what to write"
+  [/\bNo more (staring at a blank screen|wondering what to (write|post|say)|guessing|worrying about [^.!?]+)[^.!?]*[.!?]\s*/gi, ''],
+  // "Every website coded. Every app custom-built. Every AI tool tailored." — anaphora
+  [/(?:\bEvery\s+\w+(?:\s+\w+){0,3}[.!]\s+){2,}/gi, ''],
+  // Buzzword soup: "channeled significant creative energy into bespoke digital platforms"
+  [/\b(?:channell?ed|leveraged|elevated|curated|crafted)\s+(?:significant|considerable|substantial|incredible|powerful)\s+\w+(?:\s+\w+){0,2}\s+(?:into|to|towards)\s+(?:designing|building|creating|developing)\s+(?:bespoke|tailored|custom|cutting-edge|innovative)\s+\w+/gi, ''],
+  // "bespoke digital platforms" / "bespoke AI solutions" — agency-pitch noun phrases
+  [/\bbespoke\s+(digital\s+platforms?|ai\s+(?:tools?|solutions?|platforms?)|software\s+solutions?|web\s+experiences?)/gi, 'custom builds'],
+  // "small business owners often..." / "small business owners are..." — generalising opener
+  [/\bSmall business owners (often|usually|typically|always|never|rarely)[^.!?]+[.!?]\s*/gi, ''],
+  // "Timing is everything." / "Consistency is everything." — empty epigram closers
+  [/\b(Timing|Consistency|Authenticity|Quality|Strategy)\s+is\s+everything[.!?]\s*/gi, ''],
+  // "X is the gap we close." / "That's the gap we close." — agency-speak
+  [/\bThat'?s\s+the\s+gap\s+we\s+close[.!?]\s*/gi, ''],
+  // "Making real differences." / "Making a real difference." — vague platitude
+  [/\bMaking\s+(real|a\s+real)\s+difference[s]?[.!?]\s*/gi, ''],
 ];
 function scrubBannedPhrases(content: string): string {
   let out = content;
@@ -918,10 +1018,10 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   };
 
   // Single source of truth for the safety pipeline (validation + abstract-UI
-  // detection + people-strip + canonical negative suffix). See helper
-  // docstring above. Keeps generateMarketingImage / generateMarketingImageUrl
-  // / FalService.generateImage all in lockstep.
-  const imagePrompt = buildSafeImagePromptClient(prompt, businessType);
+  // detection + people-strip + canonical negative + fail-closed). Returns
+  // null when the post should publish text-only.
+  const safe = buildSafeImagePromptClient(prompt, businessType);
+  if (!safe) return null;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
@@ -929,7 +1029,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: imagePrompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) {
@@ -968,15 +1068,16 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
  * instead of base64. Used by Accept All to persist images to D1.
  */
 export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
-  // Same shared safety pipeline as generateMarketingImage above — see
-  // buildSafeImagePromptClient docstring for full breakdown of the steps.
-  const imagePrompt = buildSafeImagePromptClient(prompt, businessType);
+  // Same shared safety pipeline as generateMarketingImage above — returns
+  // null when the post should publish text-only (fail-closed).
+  const safe = buildSafeImagePromptClient(prompt, businessType);
+  if (!safe) return null;
 
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: imagePrompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) return data.imageUrl;
@@ -1495,12 +1596,27 @@ export const generateSmartSchedule = async (
     ].filter(Boolean).join('\n');
 
     // Derive a more specific business type when the stored value is too generic (e.g. "small business")
-    // Uses description and productsServices to infer the actual industry for better benchmark data and prompting
+    // Uses description and productsServices to infer the actual industry for better benchmark data and prompting.
+    //
+    // 2026-05 deep audit: removed the SaaS / "social media management" branch.
+    // A customer USING our social-media tool will naturally type "we use a
+    // social media management platform" in their description — the old branch
+    // would silently rewrite their businessType to "SaaS & software", from
+    // which the research call invented SaaS pillars ("Feature Showcase",
+    // "Tips & Education for Small Business") and AI-marketing tropes. Real
+    // SaaS companies should set businessType explicitly in onboarding.
     const effectiveBusinessType = (() => {
       const genericTerms = ['small business', 'business', 'company', 'service provider', 'local business'];
       if (!genericTerms.includes(businessType.toLowerCase().trim())) return businessType;
       const combined = ((safeProfile?.description || '') + ' ' + (safeProfile?.productsServices || '')).toLowerCase();
-      if (combined.includes('saas') || combined.includes('software platform') || combined.includes('ai platform') || combined.includes('social media platform') || combined.includes('social media tool') || combined.includes('social media management')) return 'SaaS & software';
+      // Customer-language guard: if the description talks about SERVING
+      // customers, having a physical location, or trading hours, it's a
+      // bricks-and-mortar SMB even if the description mentions software/AI
+      // tools they use. Skip ALL inference branches in that case.
+      const hasCustomerLanguage = /\b(our customers|we serve|drop in|come visit|trading hours|opening hours|in store|in-store|shopfront|located in|at our|find us|visit us|located at)\b/i.test(combined);
+      if (hasCustomerLanguage) return businessType;
+      // The PRODUCT-built branches stay — these only fire when the user is
+      // ACTIVELY DESCRIBING what they sell, not what they use:
       if (combined.includes('web design') || combined.includes('web development') || combined.includes('website builder')) return 'web design & development';
       if (combined.includes('food') || combined.includes('restaurant') || combined.includes('cafe') || combined.includes('bbq') || combined.includes('catering')) return 'food & hospitality';
       if (combined.includes('fitness') || combined.includes('gym') || combined.includes('wellness') || combined.includes('health')) return 'health & wellness';
@@ -1508,6 +1624,10 @@ export const generateSmartSchedule = async (
       if (combined.includes('trade') || combined.includes('plumb') || combined.includes('electric') || combined.includes('construct') || combined.includes('build')) return 'trades & construction';
       if (combined.includes('real estate') || combined.includes('property')) return 'real estate';
       if (combined.includes('retail') || combined.includes('shop') || combined.includes('store') || combined.includes('boutique')) return 'retail';
+      // The OLD SaaS branch lived here. Removed per 2026-05 audit — the false
+      // positives (customers being reclassified as SaaS because they
+      // mentioned using a social-media tool) outweighed the rare correct
+      // catch (an actual SaaS that left businessType=generic).
       return businessType;
     })();
 
@@ -1729,12 +1849,14 @@ MODE: QUICK 24HR BURST — Current time is ${nowTimeStr} on ${now.toISOString().
     const highlightsExtra = isHighlights ? `
 MODE: HIGHLIGHTS ONLY — schedule posts ONLY at the absolute top 3 researched time slots across the 14-day window. Quality over quantity. Each post must be polished, pillar-defining, and perfectly timed. No filler — every post must be your single best recommendation for that pillar.` : '';
 
+    const regionalVoiceBlock = buildRegionalVoiceBlock(location);
+
     const prompt = saturationMode ? `
 You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${effectiveBusinessType}.
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
+${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. EVERY post MUST be postType="image" — never "text". Image posts get 2-3x more Facebook reach than text-only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
@@ -1786,7 +1908,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
+${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results — never generic marketing advice that could apply to any business. Do NOT invent campaigns, countdown language, or stats that are not in the business context above.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
