@@ -394,7 +394,91 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       });
       return res.json() as Promise<ImageCritique>;
     },
+
+    /**
+     * Virality Score — pre-publish engagement prediction trained on the
+     * workspace's OWN past Facebook/Instagram posts. Returns a 0-100 score
+     * relative to THIS workspace's historical engagement distribution, plus
+     * a tier (low/mid/high/viral), reasoning, and 1-3 improvement suggestions.
+     *
+     * The model anchors on the workspace's top-5 and bottom-3 past posts
+     * (from client_facts, populated nightly by the refresh-facts cron). New
+     * accounts (< 3 historical posts) get a neutral 50 with a "connect FB
+     * and run refresh-facts" hint — the real model unlocks after data lands.
+     *
+     * Call this when the user is editing a draft. Debounce ~1s client-side
+     * so a typing user doesn't hammer the endpoint. Cached server-side via
+     * Anthropic 1h prompt cache on the workspace's history block, so repeat
+     * scores during one editing session are cheap.
+     */
+    async scorePost(input: ScorePostInput): Promise<ViralityScore> {
+      const res = await f('/api/score-post', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ViralityScore>;
+    },
+
+    /**
+     * 90-second Magic Onboarding (Tier 3 wow feature).
+     *
+     * After FB Page is connected, call this once to:
+     *   1. Scrape the page (about + last 30 posts + last 30 photos)
+     *   2. Classify the business archetype from real scraped content
+     *   3. Build a "Brand DNA Card" with voice samples + reference photos +
+     *      common topics for the wizard to display
+     *
+     * Persists archetype on the users row so downstream gens use it
+     * immediately. Returns everything the wizard needs to render the
+     * "here's what we learned about your business" card.
+     */
+    async magicOnboarding(): Promise<MagicOnboardingResponse> {
+      const res = await f('/api/onboarding-magic', { method: 'POST', body: '{}' });
+      return res.json() as Promise<MagicOnboardingResponse>;
+    },
   };
+}
+
+export interface MagicOnboardingResponse {
+  ok: boolean;
+  archetype: {
+    slug: string;
+    name: string;
+    confidence: number;
+    reasoning: string;
+    content_pillars: string[];
+    voice_cues: string | null;
+  };
+  brand_dna: {
+    voice_samples: Array<{ content: string; engagement: number }>;
+    reference_photos: string[];
+    common_topics: string[];
+    about: string | null;
+  };
+  stats: {
+    posts_scraped: number;
+    photos_available: number;
+    total_facts: number;
+  };
+}
+
+export interface ScorePostInput {
+  content: string;
+  platform?: 'Facebook' | 'Instagram';
+  pillar?: string;
+  hashtags?: string[];
+  clientId?: string | null;
+}
+
+export interface ViralityScore {
+  score: number;                                              // 0-100
+  tier: 'low' | 'mid' | 'high' | 'viral';
+  reasoning: string;
+  suggestions: string[];
+  data_status: 'ok' | 'insufficient';
+  historical_posts: number;
+  workspace_p50?: number;
+  workspace_p95?: number;
 }
 
 export interface CritiqueImageInput {

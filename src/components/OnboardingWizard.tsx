@@ -3,7 +3,8 @@ import { CLIENT } from '../client.config';
 import { BusinessProfile, SocialTokens, DEFAULT_SOCIAL_TOKENS } from '../types';
 import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
-import { FacebookService } from '../services/facebookService';
+import { useDb } from '../hooks/useDb';
+import type { MagicOnboardingResponse } from '../services/db';
 import {
   CheckCircle, ArrowRight, Sparkles, Loader2,
   Building2, MapPin, Facebook, Instagram, PartyPopper, X,
@@ -46,14 +47,14 @@ export const OnboardingWizard: React.FC<Props> = ({
   onAdvanceSetup,
 }) => {
   const socialTokens = socialTokensProp ?? DEFAULT_SOCIAL_TOKENS;
+  const db = useDb();
   const [step, setStep] = useState<Step>('welcome');
   const [isSaving, setIsSaving] = useState(false);
-  // Track auto-scrape of the user's existing FB posts. Captures brand voice
-  // from real content instead of trusting the user's onboarding form to
-  // accurately describe their tone. The scraped messages get appended to
-  // profile.description so the Gemini prompt picks them up.
+  // 90-second Magic Onboarding state. After FB connection, the wizard calls
+  // /api/onboarding-magic which scrapes the page, classifies the archetype,
+  // and returns a "Brand DNA Card" the user sees before typing anything.
   const [isLearningVoice, setIsLearningVoice] = useState(false);
-  const [learnedPostsCount, setLearnedPostsCount] = useState(0);
+  const [brandDna, setBrandDna] = useState<MagicOnboardingResponse | null>(null);
   const [voiceLearnError, setVoiceLearnError] = useState<string | null>(null);
 
   const stepIdx = STEPS.indexOf(step);
@@ -349,72 +350,101 @@ export const OnboardingWizard: React.FC<Props> = ({
                   if (onSaveSocialTokens) onSaveSocialTokens(updated);
                   else onUpdateProfile({ facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true });
 
-                  // ── Auto-learn brand voice from existing FB posts ──
-                  // Reading their actual posts beats trusting whatever they
-                  // typed in the description field. A tech company that
-                  // posts about cloud migration shouldn't end up with food
-                  // captions just because the form was rushed. We grab the
-                  // most recent 5 posts with content, truncate, and append
-                  // to description so the Gemini prompt sees them.
+                  // ── 90-second Magic Onboarding (2026-05 Tier 3) ──
+                  // Replaces the old "grab last 5 posts + append to
+                  // description" flow. The new endpoint does the FULL
+                  // server-side scrape (about + 30 posts + 30 photos),
+                  // classifies the business archetype via Haiku 4.5, and
+                  // returns a Brand DNA Card. Persists archetype on the
+                  // user row so subsequent generations route through the
+                  // brand-grounded image pipeline immediately.
                   setIsLearningVoice(true);
                   setVoiceLearnError(null);
+                  setBrandDna(null);
+                  // Save tokens FIRST so the worker can scrape with them
+                  await onSave().catch(() => {});
                   try {
-                    const recent = await FacebookService.getRecentPosts(pageId, pageAccessToken, 10);
-                    const messages = recent
-                      .map(p => p.message?.trim())
-                      .filter((m): m is string => !!m && m.length >= 20)
-                      .slice(0, 5)
-                      .map(m => `• ${m.slice(0, 240)}${m.length > 240 ? '…' : ''}`);
-                    if (messages.length > 0) {
-                      const userTyped = (profile.description ?? '').trim();
-                      const learnedMarker = '\n\n--- Recent posts from our Facebook page (auto-learned, edit if needed) ---\n';
-                      // Strip any prior auto-learned block before re-adding
-                      const cleanBase = userTyped.split(learnedMarker)[0].trim();
-                      const newDesc = cleanBase + (cleanBase ? '' : '') + learnedMarker + messages.join('\n');
-                      onUpdateProfile({ description: newDesc });
-                      setLearnedPostsCount(messages.length);
-                    }
+                    const result = await db.magicOnboarding();
+                    setBrandDna(result);
                   } catch (e: any) {
-                    setVoiceLearnError(e?.message?.slice(0, 100) || 'Could not fetch past posts — your typed description will be the source of truth.');
+                    setVoiceLearnError(e?.message?.slice(0, 200) || 'Could not analyse your page — that\'s OK, the wizard will use what you typed instead.');
                   } finally {
                     setIsLearningVoice(false);
                   }
-                  void onSave();
                 }}
                 onDisconnect={() => {
                   const cleared = { ...DEFAULT_SOCIAL_TOKENS };
                   if (onSaveSocialTokens) onSaveSocialTokens(cleared);
                   else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
-                  setLearnedPostsCount(0);
+                  setBrandDna(null);
                   setVoiceLearnError(null);
                 }}
               />
 
-              {/* Brand-voice learn status — shown right after FB connection.
-                  Either spinner ("learning...") or success ("learned N posts")
-                  or the error fallback. The user sees the system actively
-                  learning, builds confidence the trial posts will be on-brand. */}
-              {(isLearningVoice || learnedPostsCount > 0 || voiceLearnError) && (
-                <div className={`rounded-2xl p-4 border text-xs leading-relaxed ${
-                  voiceLearnError
-                    ? 'bg-amber-500/8 border-amber-500/25 text-amber-200/80'
-                    : learnedPostsCount > 0
-                      ? 'bg-emerald-500/8 border-emerald-500/25 text-emerald-200/85'
-                      : 'bg-blue-500/8 border-blue-500/25 text-blue-200/85'
-                }`}>
-                  {isLearningVoice ? (
-                    <span className="flex items-center gap-2">
-                      <Loader2 size={12} className="animate-spin" />
-                      Reading your last few posts to learn how you talk to your audience…
-                    </span>
-                  ) : voiceLearnError ? (
-                    <>
-                      <strong className="text-amber-300">Couldn't auto-read your past posts</strong> — that's OK, we'll use what you typed in the previous step. ({voiceLearnError})
-                    </>
-                  ) : (
-                    <>
-                      <strong className="text-emerald-300">Learned from your last {learnedPostsCount} posts ✓</strong> — the AI now knows your tone and what you typically post about, so trial posts will sound like you, not a robot.
-                    </>
+              {/* ── 90-second Magic Onboarding status panel ──
+                  Shows: spinner while scraping → Brand DNA card when complete →
+                  error with graceful fallback if the scrape fails. */}
+              {isLearningVoice && (
+                <div className="rounded-2xl p-4 border bg-blue-500/8 border-blue-500/25 text-blue-200/85 text-xs leading-relaxed">
+                  <span className="flex items-center gap-2">
+                    <Loader2 size={12} className="animate-spin" />
+                    Reading your Facebook page — analysing tone, photos, and topics. This is the magic part…
+                  </span>
+                </div>
+              )}
+              {voiceLearnError && !isLearningVoice && (
+                <div className="rounded-2xl p-4 border bg-amber-500/8 border-amber-500/25 text-amber-200/80 text-xs leading-relaxed">
+                  <strong className="text-amber-300">Couldn't auto-analyse your page</strong> — that's OK, we'll use what you typed in the previous step. ({voiceLearnError})
+                </div>
+              )}
+              {brandDna && !isLearningVoice && (
+                <div className="rounded-2xl border bg-emerald-500/5 border-emerald-500/25 overflow-hidden">
+                  <div className="bg-emerald-500/10 px-4 py-3 border-b border-emerald-500/15">
+                    <p className="text-[10px] font-black text-emerald-300/80 uppercase tracking-widest mb-1">🧬 Brand DNA learned</p>
+                    <p className="text-sm font-bold text-white">
+                      Looks like a {brandDna.archetype.name.toLowerCase()}
+                      <span className="text-xs font-normal text-white/40 ml-2">
+                        ({Math.round(brandDna.archetype.confidence * 100)}% confident)
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-white/50 mt-1 leading-snug">{brandDna.archetype.reasoning}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-px bg-emerald-500/10">
+                    <div className="bg-[#0a0a0f] p-3 text-center">
+                      <p className="text-lg font-black text-white">{brandDna.stats.posts_scraped}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">Posts read</p>
+                    </div>
+                    <div className="bg-[#0a0a0f] p-3 text-center">
+                      <p className="text-lg font-black text-white">{brandDna.stats.photos_available}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">Brand photos</p>
+                    </div>
+                    <div className="bg-[#0a0a0f] p-3 text-center">
+                      <p className="text-lg font-black text-white">{brandDna.archetype.content_pillars.length}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">Content pillars</p>
+                    </div>
+                  </div>
+                  {brandDna.brand_dna.reference_photos.length > 0 && (
+                    <div className="px-4 py-3 border-t border-emerald-500/10">
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Reference photos (will steer all generated images)</p>
+                      <div className="flex gap-2">
+                        {brandDna.brand_dna.reference_photos.slice(0, 3).map((url, i) => (
+                          <img key={i} src={url} alt="" className="w-16 h-16 rounded-lg object-cover border border-white/10" loading="lazy" />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {brandDna.brand_dna.voice_samples.length > 0 && (
+                    <div className="px-4 py-3 border-t border-emerald-500/10">
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Top-performing posts (your voice)</p>
+                      <div className="space-y-1.5">
+                        {brandDna.brand_dna.voice_samples.slice(0, 2).map((sample, i) => (
+                          <p key={i} className="text-[11px] text-white/70 leading-relaxed bg-white/3 rounded-lg px-3 py-2">
+                            <span className="text-emerald-400/70 font-mono text-[9px] mr-1.5">{sample.engagement}↑</span>
+                            "{sample.content.slice(0, 140)}{sample.content.length > 140 ? '…' : ''}"
+                          </p>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

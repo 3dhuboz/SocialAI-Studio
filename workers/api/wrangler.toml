@@ -46,12 +46,13 @@ preview_bucket_name = "socialai-reels"
 # is a deploy-checklist breadcrumb so we don't pile up orphan mp4s.
 
 # Cron triggers:
-# */5 * * * *  — prewarm videos + publish missed posts (every 5 min)
-# 0 3 * * *   — refresh Facebook tokens (daily 3am UTC)
-# 0 4 * * *   — refresh client_facts from connected FB Pages (daily 4am UTC)
-# 0 */6 * * * — check fal.ai credits (every 6 hours)
+# */5 * * * *   — prewarm videos + publish missed posts (every 5 min)
+# 0 3 * * *    — refresh Facebook tokens (daily 3am UTC)
+# 0 4 * * *    — refresh client_facts from connected FB Pages (daily 4am UTC)
+# 0 */6 * * *  — check fal.ai credits (every 6 hours)
+# 0 21 * * 0   — Autonomous Weekly Review (Monday 7am AEST = Sun 21:00 UTC)
 [triggers]
-crons = ["*/5 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *"]
+crons = ["*/5 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *", "0 21 * * 0"]
 
 [dev]
 port = 8787
