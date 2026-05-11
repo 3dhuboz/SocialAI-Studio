@@ -70,14 +70,26 @@ export const OnboardingWizard: React.FC<Props> = ({
   };
 
   // Trial users can't advance without enough business context for the AI
-  // to generate ON-TOPIC posts. Without a real description, a tech company
-  // ends up with cinnamon-roll captions because the AI has nothing to go on.
-  // Minimum 50 chars on description forces real signal, not just "we sell things".
+  // to generate ON-TOPIC posts. Without real signal, a tech company ends up
+  // with cinnamon-roll captions because the AI has nothing to anchor on.
+  //
+  // 2026-05 audit root cause #3: description alone wasn't enough — the AI
+  // prompt also reads profile.productsServices (anchors imagery + topic
+  // generation) and profile.contentTopics (sets the calendar's subject
+  // palette). When those were blank, the prompt silently degraded and the
+  // AI invented generic marketing trope content. Both now required in the
+  // wizard. 30-char min each — enough for "Sourdough, pastries, custom
+  // celebration cakes" without forcing a paragraph.
+  const descLen = profile.description?.trim().length ?? 0;
+  const productsLen = profile.productsServices?.trim().length ?? 0;
+  const topicsLen = profile.contentTopics?.trim().length ?? 0;
   const canAdvanceBusiness =
     profile.name.trim() && profile.name !== CLIENT.defaultBusinessName &&
     profile.type.trim() && profile.type !== CLIENT.defaultBusinessType &&
     profile.location.trim() && profile.location !== CLIENT.defaultLocation &&
-    (profile.description?.trim().length ?? 0) >= 50;
+    descLen >= 50 &&
+    productsLen >= 30 &&
+    topicsLen >= 30;
 
   // ── Overlay backdrop ──────────────────────────────────
   return (
@@ -174,7 +186,7 @@ export const OnboardingWizard: React.FC<Props> = ({
             <div className="space-y-5">
               <div>
                 <h2 className="text-xl font-black text-white mb-1">Tell us about your business</h2>
-                <p className="text-xs text-white/35">The AI uses this to write posts in your brand voice.</p>
+                <p className="text-xs text-white/35">A few quick questions so the AI writes posts that actually match what you do.</p>
               </div>
               <div className="space-y-4">
                 <div>
@@ -212,38 +224,77 @@ export const OnboardingWizard: React.FC<Props> = ({
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50"
                   />
                 </div>
-                {/* What do you actually do — the field that stops the AI from
-                    posting eggs to a tech company. The Gemini prompt feeds
-                    profile.description into every generation; without
-                    specificity here, posts are generic at best, wrong at
-                    worst. Min 50 chars enforces real signal. */}
+                {/* Description / story — the AI prompt feeds this into every
+                    generation. Without it, posts are generic at best, wrong
+                    at worst (cinnamon-roll captions on a tech post). Min 50
+                    chars enforces real signal.
+                    Placeholder switched away from "Brisbane IT consultancy"
+                    in the 2026-05 audit — that example biased users toward
+                    SaaS-flavoured descriptions and triggered the
+                    effectiveBusinessType reclassifier. Bakery example is
+                    neutral. */}
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
-                    What does your business actually do? <span className="text-red-400">*</span>
+                    Tell us about your business in your own words <span className="text-red-400">*</span>
                   </label>
-                  {/* 2026-05 audit: changed placeholder away from "Brisbane IT
-                      consultancy" — that example biased new users toward
-                      IT/SaaS-flavoured descriptions, which then triggered the
-                      effectiveBusinessType reclassifier and made every post
-                      sound like SaaS marketing copy. New example is a bakery
-                      so the placeholder doesn't anchor the model toward tech. */}
                   <textarea
                     value={profile.description ?? ''}
                     onChange={e => onUpdateProfile({ description: e.target.value })}
-                    placeholder="e.g. Family-run sourdough bakery in Bondi. We bake everything fresh from 4am — sourdough loaves, pastries, custom celebration cakes. Locals come for the cinnamon scrolls and the chat. Open Tue–Sun, closed Mondays. We do not ship — pickup only."
+                    placeholder="e.g. Family-run sourdough bakery in Bondi. We bake everything fresh from 4am — same recipe Nonna used in 1982. Locals come for the cinnamon scrolls and the chat. Open Tue–Sun, closed Mondays. Pickup only — no shipping, no delivery."
                     rows={4}
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
                   />
-                  <p className={`text-[11px] mt-1.5 ${
-                    (profile.description?.trim().length ?? 0) >= 50
-                      ? 'text-emerald-400/80'
-                      : 'text-white/35'
-                  }`}>
-                    {(profile.description?.trim().length ?? 0) >= 50
+                  <p className={`text-[11px] mt-1.5 ${descLen >= 50 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {descLen >= 50
                       ? '✓ Plenty of detail — the AI will write posts that actually sound like your business.'
-                      : `${50 - (profile.description?.trim().length ?? 0)} more characters to go. The more detail (who you serve, what you sell, what makes you different), the more on-brand your posts will be.`}
+                      : `${50 - descLen} more characters to go. The more detail (who you serve, what you sell, what makes you different), the more on-brand your posts will be.`}
                   </p>
                 </div>
+
+                {/* Products / services — feeds gemini.ts buildPromptBlock as a
+                    structured anchor for imagery + topic generation. Without
+                    it, the prompt block silently drops "Products/services:"
+                    and the AI invents generic content. 2026-05 audit fix. */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
+                    What do you actually sell or offer? <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    value={profile.productsServices ?? ''}
+                    onChange={e => onUpdateProfile({ productsServices: e.target.value })}
+                    placeholder="e.g. Sourdough loaves, croissants, seasonal pastries, specialty coffee, breakfast plates, and custom celebration cakes by order."
+                    rows={3}
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
+                  />
+                  <p className={`text-[11px] mt-1.5 ${productsLen >= 30 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {productsLen >= 30
+                      ? '✓ Got it — the AI knows what to put in images and posts.'
+                      : `${30 - productsLen} more characters. List your top products or services, comma-separated is fine.`}
+                  </p>
+                </div>
+
+                {/* Content topics — sets the calendar's subject palette. The
+                    Smart Schedule prompt reads this verbatim ("Content topics
+                    & themes to focus on: ...") so it directly steers what
+                    the AI plans for the week. */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
+                    What should we post about? <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    value={profile.contentTopics ?? ''}
+                    onChange={e => onUpdateProfile({ contentTopics: e.target.value })}
+                    placeholder="e.g. Behind the scenes of our baking, seasonal specials, coffee tips, local community events, new menu items, customer shoutouts."
+                    rows={3}
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
+                  />
+                  <p className={`text-[11px] mt-1.5 ${topicsLen >= 30 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {topicsLen >= 30
+                      ? '✓ Solid topic mix — your calendar will stay relevant.'
+                      : `${30 - topicsLen} more characters. Think 4-6 themes the AI should rotate through.`}
+                  </p>
+                </div>
+
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
                     Brand Personality / Tone
