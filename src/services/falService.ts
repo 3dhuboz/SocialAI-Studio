@@ -1,4 +1,4 @@
-import { aiAuthHeaders } from './gemini';
+import { aiAuthHeaders, buildSafeImagePromptClient } from './gemini';
 
 const WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -64,12 +64,22 @@ export const FalService = {
   /**
    * Generate a marketing image via fal.ai FLUX/schnell.
    * Returns a public image URL, or throws on failure.
+   *
+   * 2026-05 audit fix: prompt now flows through buildSafeImagePromptClient
+   * (the same pipeline generateMarketingImage / generateMarketingImageUrl
+   * use). Previously this was the ONE caller that bypassed all client-side
+   * safety guards — the worker still ran its own buildSafeImagePrompt as a
+   * second-line defense, but bare prompts hit fal.ai with no UI/people
+   * scrubbing and no negative suffix, plus the worker fal-proxy logged
+   * a tripwire warning on every call. Now the suffix is added once, here,
+   * and the tripwire stays quiet for legitimate use.
    */
-  generateImage: async (prompt: string): Promise<string> => {
+  generateImage: async (prompt: string, businessType: string = 'small business'): Promise<string> => {
+    const safePrompt = buildSafeImagePromptClient(prompt, businessType);
     const res = await fetch(`${PROXY}?action=generate-image`, {
       method: 'POST',
       headers: await proxyHeaders(),
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt: safePrompt }),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');

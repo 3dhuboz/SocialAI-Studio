@@ -159,6 +159,32 @@ const SAFE_FALLBACK_SCENES = [
   'cosy reading corner with stacked books, mug and a folded throw blanket, candid composition',
 ];
 
+// Server-side mirror of isAbstractUIPrompt in src/services/gemini.ts.
+//
+// Bug history (2026-05 audit): the old regex used bare-word matches on
+// common nouns (`plan|tier|table|column|grid`) which false-positived on
+// legitimate small-business prompts:
+//   - "meal plan" / "business plan" / "floor plan"  → matched "plan"
+//   - "wine tier" / "premium tier" (product line)   → matched "tier"
+//   - "tea table" / "picnic table" / "dinner table" → matched "table"
+//   - "fence grid" / "rebar grid"                   → matched "grid"
+//   - "centre column" (architectural)               → matched "column"
+// Result: cafe / wellness posts that mentioned a meal plan or wine tier got
+// silently swapped for the abstract-UI fallback scene, defeating the whole
+// point of business-specific imagery.
+//
+// New regex requires a UI-context noun (pricing|comparison|feature|bar|pie|
+// line|architecture…) before the ambiguous word. Always-bad terms (dashboard,
+// infographic, etc.) still match bare. KEEP IN SYNC with the client copy.
+function isAbstractUIPrompt(prompt: string): boolean {
+  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
+  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
+  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
+  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
+  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
+  return false;
+}
+
 // Returns null if the prompt is too short to be useful — caller should skip.
 function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | null {
   const prompt = (rawPrompt || '').trim();
@@ -168,8 +194,7 @@ function buildSafeImagePrompt(rawPrompt: string | null | undefined): string | nu
   // or comparison grid, FLUX will render a blurry pricing-table mockup that
   // sells nothing. Swap to a randomised neutral real-world scene from the
   // fallback bank above so cron-regenerated posts stop looking identical.
-  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
-  const safeBase = isAbstractUI
+  const safeBase = isAbstractUIPrompt(prompt)
     ? SAFE_FALLBACK_SCENES[Math.floor(Math.random() * SAFE_FALLBACK_SCENES.length)]
     : prompt;
 

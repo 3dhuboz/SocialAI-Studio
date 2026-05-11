@@ -276,6 +276,90 @@ function pickExampleScene(joinedExamples: string): string {
   return parts[Math.floor(Math.random() * parts.length)];
 }
 
+/**
+ * Test if a prompt is describing a digital interface, chart, infographic,
+ * or comparison grid — situations where FLUX produces a blurry pricing-table
+ * mockup instead of a photographable scene.
+ *
+ * Bug history (2026-05 audit): the previous regex used bare-word matches on
+ * common nouns (`plan|tier|table|column|grid`) which false-positived on
+ * legitimate small-business prompts:
+ *   - "meal plan", "business plan", "floor plan"  → matched "plan"
+ *   - "wine tier", "premium tier" (product line)  → matched "tier"
+ *   - "tea table", "picnic table", "dinner table" → matched "table"
+ *   - "fence grid", "rebar grid"                  → matched "grid"
+ *   - "centre column" (architectural)             → matched "column"
+ * Result: cafe/wellness posts that mentioned a meal plan or wine tier got
+ * swapped for the abstract-UI fallback scene, defeating the whole point of
+ * business-specific imagery.
+ *
+ * New regex requires a UI-context noun (pricing|comparison|feature|bar|pie|
+ * line|architecture…) before the ambiguous word. Always-bad terms (dashboard,
+ * infographic, etc.) still match bare. KEEP IN SYNC with the worker's copy
+ * of this regex in workers/api/src/index.ts (buildSafeImagePrompt).
+ */
+export function isAbstractUIPrompt(prompt: string): boolean {
+  // Tier 1 — terms that are ALWAYS bad regardless of context
+  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
+  // Tier 2 — context-dependent: only bad when paired with a UI-type noun
+  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
+  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
+  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
+  // Tier 3 — explicit "illustration of" / "diagram of" — clear intent for
+  // abstract art rather than photographic content
+  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
+  return false;
+}
+
+/**
+ * Single source of truth for the client-side image-prompt safety pipeline.
+ * Consolidates logic that was previously duplicated across:
+ *   - generateMarketingImage          (base64 path used by accept-now flow)
+ *   - generateMarketingImageUrl       (URL path used by accept-all-to-D1)
+ *   - FalService.generateImage        (reel-modal seed-frame path — was
+ *                                      bypassing all guards prior to audit)
+ *
+ * All three callers MUST go through this helper so they share the same
+ * validation, scrubbing, and negative-prompt suffix. Skipping any step is
+ * how the Penny-Wise pricing-table regression and the cafe-image-on-tech-post
+ * bug snuck through.
+ *
+ * Pipeline:
+ *   1. Reject obviously bad prompts (empty, "N/A", title-case names, vague nouns)
+ *   2. Detect abstract-UI prompts via isAbstractUIPrompt
+ *   3. If any of (1) or (2) match, swap for a randomised industry example
+ *      (pickExampleScene → getImagePromptExamples)
+ *   4. Strip people-mentions (AI faces always look fake)
+ *   5. Append the canonical negative-prompt suffix
+ *
+ * Returns a single concatenated prompt safe to send to /api/fal-proxy. Matches
+ * the worker's buildSafeImagePrompt suffix verbatim so the fal-proxy tripwire
+ * (no-UI / no-text / candid-iPhone marker check) stays satisfied.
+ */
+export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): string {
+  const prompt = (rawPrompt || '').trim();
+  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt) || /^(N\/A|none|null|undefined)$/i.test(prompt);
+  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt) && prompt.split(' ').length <= 5;
+  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
+  const isAbstractUI = isAbstractUIPrompt(prompt);
+
+  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
+    ? pickExampleScene(getImagePromptExamples(businessType))
+    : prompt;
+
+  // Strip people/portrait/human descriptions — AI images of people always look fake
+  const cleanPrompt = effectivePrompt
+    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Suffix tuned for "looks like a real small-business iPhone photo", not a
+  // stock-photo ad. Negatives kill the AI tells that show up most often on
+  // food/wellness shots, plus UI/chart/table/infographic negatives so
+  // promo/SaaS topics can't render as blurry pricing-table mockups.
+  return `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+}
+
 // ── Real-data ground-truth fetcher (FB-scraped facts) ──
 // The AI used to invent testimonials and stats because it had nothing real.
 // Now we pull a slice of the client_facts table (populated by the Worker
@@ -833,41 +917,11 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     } catch { return null; }
   };
 
-  // Validate the AI's image prompt — reject titles, pillar names, and vague descriptions
-  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
-  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
-  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
-  // For SaaS/promo/pricing topics the AI sometimes interprets the brief as
-  // "render the pricing UI" — producing a blurry pricing-table mockup that
-  // sells nothing. Reject any prompt that's primarily describing a digital
-  // interface, chart, infographic, or comparison grid. NB: keep this in sync
-  // with generateMarketingImageUrl below — duplicated for now.
-  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
-
-  // If the AI wrote a title instead of a visual description, generate a
-  // type-specific fallback. pickExampleScene splits on the ` OR ` joiner and
-  // picks ONE example at random — fixes the long-standing case-mismatch bug
-  // where the entire 8-example string got mashed into a single prompt.
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
-    ? pickExampleScene(getImagePromptExamples(businessType))
-    : prompt;
-
-  // Strip people/portrait/human descriptions — AI images of people always look fake
-  const cleanPrompt = effectivePrompt
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Structure: subject first, then style, then negative — per prompt engineering best practices
-  // Suffix tuned for "looks like a real small-business iPhone photo", not a
-  // stock-photo ad. The previous suffix used "product photography, shallow
-  // depth of field, overhead angle, clean composition" which combined with
-  // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
-  // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
-  // the specific AI tells that show up most often on food/wellness shots.
-  // Added: UI/chart/table/infographic/dashboard negatives — promo/pricing
-  // topics were rendering as blurry pricing-table mockups (Penny Wise post).
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+  // Single source of truth for the safety pipeline (validation + abstract-UI
+  // detection + people-strip + canonical negative suffix). See helper
+  // docstring above. Keeps generateMarketingImage / generateMarketingImageUrl
+  // / FalService.generateImage all in lockstep.
+  const imagePrompt = buildSafeImagePromptClient(prompt, businessType);
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
@@ -914,35 +968,9 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
  * instead of base64. Used by Accept All to persist images to D1.
  */
 export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
-  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
-  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
-  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
-  // Mirror of guardrail in generateMarketingImage above. Reject UI/chart/
-  // pricing-table prompts so promo/SaaS posts can't render as blurry
-  // marketing-graphic mockups (Penny Wise pricing-table regression).
-  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
-
-  // pickExampleScene picks ONE example from the OR-joined string at random —
-  // fixes the case-mismatched regex bug that was sending all 8 examples to
-  // FLUX as a mashed-together prompt (see helper docstring above).
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
-    ? pickExampleScene(getImagePromptExamples(businessType))
-    : prompt;
-
-  const cleanPrompt = effectivePrompt
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Suffix tuned for "looks like a real small-business iPhone photo", not a
-  // stock-photo ad. The previous suffix used "product photography, shallow
-  // depth of field, overhead angle, clean composition" which combined with
-  // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
-  // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
-  // the specific AI tells that show up most often on food/wellness shots.
-  // Added: UI/chart/table/infographic/dashboard negatives — promo/pricing
-  // topics were rendering as blurry pricing-table mockups.
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+  // Same shared safety pipeline as generateMarketingImage above — see
+  // buildSafeImagePromptClient docstring for full breakdown of the steps.
+  const imagePrompt = buildSafeImagePromptClient(prompt, businessType);
 
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
@@ -1035,9 +1063,36 @@ Return ONLY raw JSON, no markdown:
   "thumbnailPrompt": "A 15-20 word vivid description of the perfect FIRST FRAME of this video. Must be visually striking, set the scene, and be specific to this business. Describe: subject, action, setting, lighting, colors, camera angle.",
   "videoPrompt": "A 20-30 word cinematic motion description for AI video generation. Describe: what moves, camera motion (pan/zoom/track), lighting changes, the key visual transition. Must match the first shot and be specific to this business topic."
 }`;
-    const raw = (await callAI(prompt, { temperature: 0.85, responseFormat: 'json' })).trim();
+    // 2026-05 audit: temp 0.85→0.55. Reels were drifting into invented
+    // testimonials and oddly hot adjectives because of the high temp. 0.55
+    // keeps creative variety without letting Claude fabricate stats/quotes.
+    const raw = (await callAI(prompt, { temperature: 0.55, responseFormat: 'json' })).trim();
     const parsed = parseAiJson(raw);
-    return parsed ? { ...DEFAULT_VIDEO_SCRIPT, ...parsed } : { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
+    if (!parsed) return { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
+
+    // Post-flight scrub: even with the ANTI-GENERIC RULES in the prompt, the
+    // model occasionally smuggles people/hands/staff into shots and still
+    // emits banned marketing tropes ("boost your brand!", "thrilled to
+    // announce", etc.) into the spoken script. Run the same regex pass on
+    // every text field of the brief so the downstream Kling i2v call doesn't
+    // get a "person walking through café" prompt that produces an uncanny
+    // human and so the spoken script doesn't read like a 2014 sales email.
+    const stripPeople = (s: string) => s
+      .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|gazing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers|talking head)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s+([,.!?])/g, '$1')
+      .trim();
+
+    const cleaned: VideoScript = {
+      ...DEFAULT_VIDEO_SCRIPT,
+      ...parsed,
+      hook: scrubBannedPhrases(parsed.hook || ''),
+      script: scrubBannedPhrases(parsed.script || ''),
+      shots: Array.isArray(parsed.shots) ? parsed.shots.map((s: string) => stripPeople(scrubBannedPhrases(s || ''))) : [],
+      thumbnailPrompt: stripPeople(parsed.thumbnailPrompt || ''),
+      videoPrompt: stripPeople(parsed.videoPrompt || ''),
+    };
+    return cleaned;
   } catch (error: any) {
     return { ...DEFAULT_VIDEO_SCRIPT, script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}` };
   }
@@ -1059,7 +1114,12 @@ Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
     const raw = (await callAI(prompt, { temperature: 0.8, responseFormat: 'json' })).trim();
-    return parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
+    const parsed = parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
+    // 2026-05 audit: the rewrite endpoint was unguarded — Smart Schedule's
+    // generated posts go through scrubBannedPhrases (line 1802ish) but a
+    // user-triggered Rewrite did not. Same banned-tropes pipeline now applies.
+    if (parsed.content) parsed.content = scrubBannedPhrases(parsed.content);
+    return parsed;
   } catch (error: any) {
     const msg = error?.message || String(error);
     return { content: `AI Error: ${msg.substring(0, 120)}`, hashtags: [] };
