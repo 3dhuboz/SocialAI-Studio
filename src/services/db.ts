@@ -316,6 +316,20 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<{ payments: PaymentEvent[] }>;
     },
 
+    /**
+     * Admin AI-quality scan — returns Scheduled posts whose content trips the
+     * server-side fabrication / cadence / trope detector. Mirrors the client
+     * detectFabrication used at generation time. 2026-05 audit follow-up: lets
+     * admins find pre-deployment posts that need regenerating before publish.
+     */
+    async getFlaggedPosts(
+      status: 'Scheduled' | 'Posted' | 'Missed' | 'Draft' = 'Scheduled',
+      limit = 500,
+    ): Promise<{ scanned: number; flagged_count: number; flagged: FlaggedPost[]; status_filter: string }> {
+      const res = await f(`/api/admin/scan-flagged-posts?status=${status}&limit=${limit}`);
+      return res.json() as Promise<{ scanned: number; flagged_count: number; flagged: FlaggedPost[]; status_filter: string }>;
+    },
+
     // ── Customer: Billing screen ──────────────────────────────────────────────
     // Returns the SIGNED-IN user's plan + their own payment history.
 
@@ -352,6 +366,16 @@ export interface AdminCustomer {
   post_count: number;
   total_paid_cents: number;
   total_refunded_cents: number;
+}
+
+export interface FlaggedPost {
+  id: string;
+  scheduled_for: string | null;
+  platform: string | null;
+  workspace: string;
+  content_preview: string;
+  image_prompt_preview: string | null;
+  reasons: string[];
 }
 
 export interface PaymentEvent {
