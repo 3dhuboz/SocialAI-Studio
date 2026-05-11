@@ -927,6 +927,14 @@ function detectFabrication(content: string): string | null {
     [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
     [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
     [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
+    // 2026-05 audit additions: invented frequency/cadence claims (real Penny
+    // Wise post: "Small business owners in Rockhampton are already posting
+    // 7-14 times per week on autopilot")
+    [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
+    [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
+    // 2026-05 audit additions: leading questions with implied stat (real Penny
+    // Wise post: "How many hours could you reclaim this week?")
+    [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
     // Fake urgency / countdowns / events without source
     [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
     [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
@@ -934,6 +942,27 @@ function detectFabrication(content: string): string | null {
   for (const [pattern, reason] of checks) {
     const match = content.match(pattern);
     if (match) return `${reason} ("${match[0]}")`;
+  }
+  // 2026-05 audit: structural cadence detector. Three or more consecutive
+  // short declarative sentences (≤6 words each) is the AI rhythm signature
+  // — exactly what produced "Nobody sees it. Timing is everything." Posts
+  // can have one or two short sentences for emphasis but a string of them
+  // reads as AI-generated. We flag here so the post regenerates with looser
+  // pacing; if it still fails after retries, _needsReview surfaces it.
+  const sentences = content.split(/[.!?]\s+/).filter(s => s.trim().length > 0);
+  let consecutiveShort = 0;
+  let maxRun = 0;
+  for (const s of sentences) {
+    const wordCount = s.trim().split(/\s+/).length;
+    if (wordCount <= 6) {
+      consecutiveShort++;
+      if (consecutiveShort > maxRun) maxRun = consecutiveShort;
+    } else {
+      consecutiveShort = 0;
+    }
+  }
+  if (maxRun >= 3) {
+    return `AI cadence — ${maxRun} consecutive short sentences (≤6 words). Reads like a tech blog, not a small business.`;
   }
   return null;
 }

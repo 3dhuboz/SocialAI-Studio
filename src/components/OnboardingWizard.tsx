@@ -221,10 +221,16 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
                     What does your business actually do? <span className="text-red-400">*</span>
                   </label>
+                  {/* 2026-05 audit: changed placeholder away from "Brisbane IT
+                      consultancy" — that example biased new users toward
+                      IT/SaaS-flavoured descriptions, which then triggered the
+                      effectiveBusinessType reclassifier and made every post
+                      sound like SaaS marketing copy. New example is a bakery
+                      so the placeholder doesn't anchor the model toward tech. */}
                   <textarea
                     value={profile.description ?? ''}
                     onChange={e => onUpdateProfile({ description: e.target.value })}
-                    placeholder="e.g. Brisbane IT consultancy. We help small accounting firms move from on-prem servers to the cloud — fast onboarding, no contracts, 24/7 local support. We don't do enterprise; small business is our whole thing."
+                    placeholder="e.g. Family-run sourdough bakery in Bondi. We bake everything fresh from 4am — sourdough loaves, pastries, custom celebration cakes. Locals come for the cinnamon scrolls and the chat. Open Tue–Sun, closed Mondays. We do not ship — pickup only."
                     rows={4}
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
                   />
