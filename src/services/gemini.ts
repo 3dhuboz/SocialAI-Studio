@@ -370,6 +370,17 @@ export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, port
 // for "candid iPhone" so we keep that token; the rest is style direction.
 export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
 
+// People-mention regex — defense-in-depth scrub of positive prompts.
+// The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
+// strip catches lingering subject words before they reach the diffusion model.
+const PEOPLE_REGEX = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi;
+
+// Reused by generateVideoBrief — same intent, slightly broader vocab
+// (talking head, no "looking/standing/sitting/wearing/happy" — those describe
+// the camera shot rather than the subject and may legitimately appear in
+// video-shot direction).
+const PEOPLE_REGEX_VIDEO = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|gazing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers|talking head)\b/gi;
+
 /**
  * Single source of truth for the client-side image-prompt safety pipeline.
  * Consolidates logic that was previously duplicated across:
@@ -421,7 +432,7 @@ export function buildSafeImagePromptClient(rawPrompt: string, businessType: stri
   // Strip people-mentions from the POSITIVE prompt — defense-in-depth.
   // The real enforcement is FLUX_NEGATIVE_PROMPT below.
   const cleanPrompt = effectivePrompt
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+    .replace(PEOPLE_REGEX, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -918,35 +929,39 @@ Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_st
   }
 }
 
+// Module-scoped fabrication patterns. Hot path — called 1-2× per generated
+// post (Smart Schedule batches up to 21 posts), so we don't want to recompile
+// the array on every invocation. Each entry: [regex, human-readable reason].
+const FAB_CHECKS: Array<[RegExp, string]> = [
+  // Fake customer testimonials
+  [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
+  [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
+  [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
+  [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
+  // Fake statistics — match "45% increase" AND "by 45%" / "up to 45%" / "of 45%"
+  // shapes. The "by" variant came up in real Penny Wise posts ("Boost
+  // engagement by 45% with our new feature") and the original narrow regex
+  // missed it.
+  [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving|higher|lower|faster)/i, 'invented percentage statistic'],
+  [/\b(?:by|of|up\s+to|reach(?:ing|ed)?|gain(?:ing|ed)?|boost(?:ing|ed)?\s+\w+\s+by)\s+\d{1,3}(?:\.\d+)?%/i, 'invented percentage statistic ("by X%" form)'],
+  [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
+  [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
+  [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
+  // 2026-05 audit additions: invented frequency/cadence claims (real Penny
+  // Wise post: "Small business owners in Rockhampton are already posting
+  // 7-14 times per week on autopilot")
+  [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
+  [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
+  // 2026-05 audit additions: leading questions with implied stat (real Penny
+  // Wise post: "How many hours could you reclaim this week?")
+  [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
+  // Fake urgency / countdowns / events without source
+  [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
+  [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
+];
+
 export function detectFabrication(content: string): string | null {
-  const checks: Array<[RegExp, string]> = [
-    // Fake customer testimonials
-    [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
-    [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-    [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
-    [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
-    // Fake statistics — match "45% increase" AND "by 45%" / "up to 45%" / "of 45%"
-    // shapes. The "by" variant came up in real Penny Wise posts ("Boost
-    // engagement by 45% with our new feature") and the original narrow regex
-    // missed it.
-    [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving|higher|lower|faster)/i, 'invented percentage statistic'],
-    [/\b(?:by|of|up\s+to|reach(?:ing|ed)?|gain(?:ing|ed)?|boost(?:ing|ed)?\s+\w+\s+by)\s+\d{1,3}(?:\.\d+)?%/i, 'invented percentage statistic ("by X%" form)'],
-    [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
-    [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
-    [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
-    // 2026-05 audit additions: invented frequency/cadence claims (real Penny
-    // Wise post: "Small business owners in Rockhampton are already posting
-    // 7-14 times per week on autopilot")
-    [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
-    [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
-    // 2026-05 audit additions: leading questions with implied stat (real Penny
-    // Wise post: "How many hours could you reclaim this week?")
-    [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
-    // Fake urgency / countdowns / events without source
-    [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
-    [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
-  ];
-  for (const [pattern, reason] of checks) {
+  for (const [pattern, reason] of FAB_CHECKS) {
     const match = content.match(pattern);
     if (match) return `${reason} ("${match[0]}")`;
   }
@@ -1026,9 +1041,15 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
 export function scrubBannedPhrases(content: string): string {
   let out = content;
   for (const [pattern, replacement] of BANNED_PATTERNS) {
-    if (pattern.test(out)) {
+    // Single pass: replace() with a /g regex always scans from index 0, so we
+    // skip the prior `test() then replace()` two-pass and just diff references
+    // to know whether anything matched. Avoids both wasted work AND the
+    // lastIndex-state footgun that comes with sharing /g regexes across
+    // test()/replace() callsites.
+    const next = out.replace(pattern, replacement);
+    if (next !== out) {
       console.warn(`[gemini] scrubbing banned phrase: ${pattern}`);
-      out = out.replace(pattern, replacement);
+      out = next;
     }
   }
   // Tidy double-spaces and stray punctuation left after deletions.
@@ -1218,7 +1239,7 @@ Return ONLY raw JSON, no markdown:
     // get a "person walking through café" prompt that produces an uncanny
     // human and so the spoken script doesn't read like a 2014 sales email.
     const stripPeople = (s: string) => s
-      .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|gazing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers|talking head)\b/gi, '')
+      .replace(PEOPLE_REGEX_VIDEO, '')
       .replace(/\s+/g, ' ')
       .replace(/\s+([,.!?])/g, '$1')
       .trim();

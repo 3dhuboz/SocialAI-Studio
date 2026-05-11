@@ -3,6 +3,7 @@
  * Client-side API helper for the Cloudflare Worker D1 database.
  * Replaces all direct Firestore SDK calls.
  */
+import type { SocialPost } from '../types';
 
 const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -323,11 +324,11 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
      * admins find pre-deployment posts that need regenerating before publish.
      */
     async getFlaggedPosts(
-      status: 'Scheduled' | 'Posted' | 'Missed' | 'Draft' = 'Scheduled',
+      status: SocialPost['status'] = 'Scheduled',
       limit = 500,
-    ): Promise<{ scanned: number; flagged_count: number; flagged: FlaggedPost[]; status_filter: string }> {
+    ): Promise<{ scanned: number; flagged: FlaggedPost[] }> {
       const res = await f(`/api/admin/scan-flagged-posts?status=${status}&limit=${limit}`);
-      return res.json() as Promise<{ scanned: number; flagged_count: number; flagged: FlaggedPost[]; status_filter: string }>;
+      return res.json() as Promise<{ scanned: number; flagged: FlaggedPost[] }>;
     },
 
     // ── Customer: Billing screen ──────────────────────────────────────────────

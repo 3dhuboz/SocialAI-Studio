@@ -2179,9 +2179,7 @@ app.get('/api/admin/scan-flagged-posts', async (c) => {
 
   return c.json({
     scanned: posts.length,
-    flagged_count: flagged.length,
     flagged,
-    status_filter: status,
   });
 });
 

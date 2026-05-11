@@ -2,22 +2,14 @@ import React, { useState } from 'react';
 import { ShieldAlert, Trash2, Loader2, CheckCircle, Facebook, Instagram } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type { FlaggedPost } from '../services/db';
+import type { SocialPost } from '../types';
 
 /**
- * AdminQualityScan — collapsible admin card that scans Scheduled posts for
- * AI-fabrication / cadence / trope patterns via the worker endpoint added in
- * the 2026-05 audit (workers/api/src/index.ts → /api/admin/scan-flagged-posts).
- *
- * Mounted inside AdminCustomers above the customer list. Lets admins find and
- * delete pre-deployment posts whose copy reads like generic AI marketing — the
- * exact failure mode that prompted PR #59.
- *
- * Read-only by default: the scan only returns metadata + a content preview.
- * Per-post Delete button calls db.deletePost(id) (already wired up since v1).
- * No bulk operations — admin must triage each flagged post by hand.
+ * AdminQualityScan — collapsible admin card. Read-only by default: the scan
+ * only returns metadata + a content preview. Per-post Delete button calls
+ * db.deletePost(id). No bulk operations — admin must triage each flagged post
+ * by hand (deliberate, since false-positives still happen).
  */
-type ScanStatus = 'Scheduled' | 'Posted' | 'Missed' | 'Draft';
-
 export const AdminQualityScan: React.FC = () => {
   const db = useDb();
   const [expanded, setExpanded] = useState(false);
@@ -25,15 +17,14 @@ export const AdminQualityScan: React.FC = () => {
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [scanStatus, setScanStatus] = useState<ScanStatus>('Scheduled');
+  const [scanStatus, setScanStatus] = useState<SocialPost['status']>('Scheduled');
 
   const runScan = async () => {
     setScanLoading(true);
     setScanError(null);
     try {
       const res = await db.getFlaggedPosts(scanStatus, 500);
-      setScanResult({ scanned: res.scanned, flagged: res.flagged });
-      // Auto-expand on first results so the admin sees them
+      setScanResult(res);
       if (!expanded) setExpanded(true);
     } catch (e: any) {
       setScanError(e?.message || 'Scan failed');
@@ -57,10 +48,10 @@ export const AdminQualityScan: React.FC = () => {
 
   const flaggedCount = scanResult?.flagged.length ?? 0;
   const hasFlags = flaggedCount > 0;
+  const scanButtonLabel = scanLoading ? 'Scanning…' : scanResult ? 'Re-scan' : 'Scan now';
 
   return (
     <div className="bg-[#111118] border border-white/8 rounded-2xl overflow-hidden">
-      {/* Header row — clickable to expand/collapse */}
       <button
         onClick={() => setExpanded(e => !e)}
         className="w-full flex items-center justify-between gap-3 p-4 hover:bg-white/3 transition text-left"
@@ -93,7 +84,7 @@ export const AdminQualityScan: React.FC = () => {
             <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider">Status:</label>
             <select
               value={scanStatus}
-              onChange={e => setScanStatus(e.target.value as ScanStatus)}
+              onChange={e => setScanStatus(e.target.value as SocialPost['status'])}
               disabled={scanLoading}
               className="text-[10px] bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-white/60 focus:outline-none focus:border-amber-500/40 disabled:opacity-40"
             >
@@ -108,7 +99,7 @@ export const AdminQualityScan: React.FC = () => {
               className="text-xs font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 px-4 py-2 rounded-xl flex items-center gap-2 transition disabled:opacity-40"
             >
               {scanLoading ? <Loader2 size={12} className="animate-spin" /> : <ShieldAlert size={12} />}
-              {scanLoading ? 'Scanning…' : (scanResult ? 'Re-scan' : 'Scan now')}
+              {scanButtonLabel}
             </button>
           </div>
 
@@ -130,7 +121,9 @@ export const AdminQualityScan: React.FC = () => {
 
           {scanResult && scanResult.flagged.length > 0 && (
             <div className="space-y-2">
-              {scanResult.flagged.map(post => (
+              {scanResult.flagged.map(post => {
+                const isDeleting = deletingId === post.id;
+                return (
                 <div
                   key={post.id}
                   className="bg-black/30 border border-rose-500/20 rounded-2xl p-3 space-y-2"
@@ -170,17 +163,16 @@ export const AdminQualityScan: React.FC = () => {
                     </div>
                     <button
                       onClick={() => handleDelete(post.id)}
-                      disabled={deletingId === post.id}
+                      disabled={isDeleting}
                       className="text-[10px] font-bold bg-rose-500/10 border border-rose-500/25 text-rose-300 hover:bg-rose-500/20 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition disabled:opacity-40"
                     >
-                      {deletingId === post.id
-                        ? <Loader2 size={9} className="animate-spin" />
-                        : <Trash2 size={9} />}
-                      {deletingId === post.id ? 'Deleting…' : 'Delete'}
+                      {isDeleting ? <Loader2 size={9} className="animate-spin" /> : <Trash2 size={9} />}
+                      {isDeleting ? 'Deleting…' : 'Delete'}
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
