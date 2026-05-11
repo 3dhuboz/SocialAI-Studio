@@ -127,8 +127,31 @@ describe('detectFabrication — invented stats and cadence', () => {
     'Fresh sourdough out the oven at 7am. Drop in before they go.',
     'Open till 2pm. Come say hi. We have got pastries fresh out of the oven and the coffee machine is warmed up.',
     'Plans include 7-14 posts/week and image generation.', // brand-form preserved
+    // 2026-05-11 false-positive regression: rhetorical anthropomorphizing is
+    // not a fabricated testimonial. The pattern previously matched `says:` +
+    // quote blindly, flagging legitimate copy about stock photos.
+    'Stock photos are dead. Your audience can spot a generic one a mile away. It says: "I didn\'t care enough."',
+    'A generic ad says: "buy now" — and nobody listens.',
+    'The tagline says: "We do everything" and means nothing.',
   ])('does NOT flag clean post: "%s"', (input) => {
     expect(detectFabrication(input)).toBeNull();
+  });
+
+  // The detector should still catch human-attributed fake quotes — adding
+  // a quote-form testimonial case to lock that behavior in alongside the
+  // rhetorical-personification exclusion above. Reason can vary because the
+  // detector picks the first matching pattern (e.g. "happy customer raved"
+  // hits the testimonial-shape check before the quote check); any fab-style
+  // reason is acceptable as long as the post is flagged.
+  it.each([
+    ['Sarah says: "best service ever."', /invented quote/i],
+    ['Our client raved: "amazing work."', /invented quote/i],
+    ['John told us: "this changed our business."', /invented quote/i],
+    ['One happy customer raved: "amazing work."', /invented/i],
+  ])('still flags human-attributed quote: "%s"', (input, reasonRegex) => {
+    const result = detectFabrication(input);
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(reasonRegex);
   });
 });
 

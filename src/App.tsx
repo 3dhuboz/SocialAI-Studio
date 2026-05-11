@@ -786,7 +786,21 @@ const Dashboard: React.FC = () => {
       setActiveArchetype(null);
       return;
     }
-    if (!profile.description || profile.description.trim().length < 50) return;
+    // Need ENOUGH signal to classify accurately. Bail only if all three
+    // free-text fields are empty / too short — otherwise we trust the
+    // classifier (which weighs businessType + description + productsServices
+    // + contentTopics) to pick the right archetype.
+    //
+    // 2026-05-11 fix: previously only `description >= 50 chars` was checked,
+    // which silently disabled classification for profiles where the owner
+    // wrote a long products/services list but skipped the description.
+    // Result: image-gen fell back to keyword match against businessType,
+    // which mis-classified SaaS/agency businesses as food-leaning.
+    const desc = (profile.description || '').trim();
+    const ps = (profile.productsServices || '').trim();
+    const ct = (profile.contentTopics || '').trim();
+    const hasContext = desc.length >= 50 || ps.length >= 30 || ct.length >= 30;
+    if (!hasContext) return;
     const timer = setTimeout(async () => {
       try {
         const cached = await db.getBusinessArchetype();

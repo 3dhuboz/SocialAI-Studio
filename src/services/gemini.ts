@@ -999,7 +999,12 @@ const FAB_CHECKS: Array<[RegExp, string]> = [
   // Fake customer testimonials
   [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
   [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-  [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
+  // Invented quote: matches `<subject> says: "..."` but excludes rhetorical
+  // anthropomorphizing like `It says: "..."`, `the stock photo says: "..."`
+  // — those are figures of speech, not fake testimonials. Real fabrications
+  // attribute to a human/customer/brand entity: `John says:`, `our customer
+  // raved:`, `Sarah told us:`.
+  [/\b(?<!\b(?:it|this|that|one|nothing|everything|message|photo|image|caption|post|content|feed|story|stock|generic|ad|advert|brand|tagline)\s)(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
   [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
   // Fake statistics — match "45% increase" AND "by 45%" / "up to 45%" / "of 45%"
   // shapes. The "by" variant came up in real Penny Wise posts ("Boost
