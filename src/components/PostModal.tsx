@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X, Facebook, Instagram, Send, Trash2, Save, Loader2,
   Calendar, Clock, Edit2, CheckCircle, Image as ImageIcon,
-  RefreshCw, Upload, Hash
+  RefreshCw, Upload, Hash, TrendingUp, Sparkles
 } from 'lucide-react';
 import { SocialPost } from '../types';
 import { AnimatedReelPreview } from './AnimatedReelPreview';
+import { useDb } from '../hooks/useDb';
+import type { ViralityScore } from '../services/db';
 
 interface Props {
   post: SocialPost;
@@ -73,6 +75,44 @@ export const PostModal: React.FC<Props> = ({
   const isIG = post.platform === 'Instagram';
   const isVideo = post.postType === 'video';
   const [showScript, setShowScript] = useState(false);
+
+  // ── Virality Score (2026-05 Tier 3) ──
+  // Debounced 1.5s prediction trained on the workspace's own past engagement.
+  // Only runs for editable posts (Draft/Scheduled) — Posted/Missed are history.
+  const db = useDb();
+  const isScorable = post.status === 'Draft' || post.status === 'Scheduled';
+  const scoringContent = isEditing ? editContent : post.content;
+  const [viralityScore, setViralityScore] = useState<ViralityScore | null>(null);
+  const [isScoringPost, setIsScoringPost] = useState(false);
+  useEffect(() => {
+    if (!isScorable) return;
+    if (!scoringContent || scoringContent.trim().length < 10) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsScoringPost(true);
+      try {
+        const result = await db.scorePost({
+          content: scoringContent,
+          platform: post.platform,
+          pillar: post.pillar,
+          hashtags: post.hashtags,
+        });
+        if (!cancelled) setViralityScore(result);
+      } catch (e) {
+        if (!cancelled) console.warn('[score-post]', e);
+      } finally {
+        if (!cancelled) setIsScoringPost(false);
+      }
+    }, 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [scoringContent, post.platform, post.pillar, isScorable]);
+
+  const tierColours: Record<NonNullable<ViralityScore['tier']>, { bg: string; text: string; border: string }> = {
+    low:   { bg: 'bg-red-500/15',    text: 'text-red-300',    border: 'border-red-500/30' },
+    mid:   { bg: 'bg-amber-500/15',  text: 'text-amber-300',  border: 'border-amber-500/30' },
+    high:  { bg: 'bg-emerald-500/15', text: 'text-emerald-300', border: 'border-emerald-500/30' },
+    viral: { bg: 'bg-purple-500/20', text: 'text-purple-200', border: 'border-purple-500/40' },
+  };
 
   return (
     <div
@@ -260,6 +300,56 @@ export const PostModal: React.FC<Props> = ({
                 {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
+
+            {/* ── Virality Score (Tier 3 wow feature) ──
+                 Pre-publish prediction trained on this workspace's own past
+                 engagement. Only shows for editable posts; debounced 1.5s on
+                 content edits. Insufficient-data state surfaces a hint to
+                 connect FB instead of a fake score. */}
+            {isScorable && (viralityScore || isScoringPost) && (
+              <div className="mb-4">
+                {isScoringPost && !viralityScore ? (
+                  <div className="flex items-center gap-2 text-[11px] text-white/35 bg-white/3 rounded-xl px-3 py-2">
+                    <Loader2 size={11} className="animate-spin text-amber-400/60" />
+                    Predicting engagement based on your past posts…
+                  </div>
+                ) : viralityScore?.data_status === 'insufficient' ? (
+                  <div className="flex items-start gap-2 text-[11px] text-white/40 bg-white/3 rounded-xl px-3 py-2.5 border border-white/8">
+                    <Sparkles size={12} className="text-amber-400/50 shrink-0 mt-0.5" />
+                    <span>{viralityScore.reasoning}</span>
+                  </div>
+                ) : viralityScore && (
+                  <div className={`rounded-xl border ${tierColours[viralityScore.tier].border} ${tierColours[viralityScore.tier].bg} overflow-hidden`}>
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      <TrendingUp size={20} className={tierColours[viralityScore.tier].text} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2">
+                          <span className={`text-2xl font-black ${tierColours[viralityScore.tier].text}`}>{viralityScore.score}</span>
+                          <span className="text-[10px] text-white/40 uppercase tracking-widest font-bold">/ 100 · {viralityScore.tier}</span>
+                          {isScoringPost && <Loader2 size={10} className="animate-spin text-white/30 ml-auto" />}
+                        </div>
+                        <p className="text-[11px] text-white/70 leading-snug mt-0.5">{viralityScore.reasoning}</p>
+                      </div>
+                    </div>
+                    {viralityScore.suggestions.length > 0 && (
+                      <ul className="border-t border-white/5 px-4 py-2.5 space-y-1 bg-black/20">
+                        {viralityScore.suggestions.map((s, i) => (
+                          <li key={i} className="text-[11px] text-white/55 flex items-start gap-2 leading-snug">
+                            <span className="text-amber-400/60 mt-0.5">→</span>
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(viralityScore.workspace_p50 !== undefined && viralityScore.workspace_p95 !== undefined) && (
+                      <p className="text-[10px] text-white/30 px-4 py-1.5 border-t border-white/5 bg-black/20">
+                        Trained on {viralityScore.historical_posts} past posts · your median engagement {viralityScore.workspace_p50.toFixed(0)}, top-tier ≥{viralityScore.workspace_p95.toFixed(0)}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Content ── */}
             {isEditing ? (

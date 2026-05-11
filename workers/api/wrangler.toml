@@ -45,6 +45,24 @@ preview_bucket_name = "socialai-reels"
 # Lifecycle rules belong in the bucket config, not wrangler.toml — this comment
 # is a deploy-checklist breadcrumb so we don't pile up orphan mp4s.
 
+# ── Phase 2: Vectorize semantic classifier (opt-in) ──
+# Uncomment these two blocks + run the commands below to enable the
+# Vectorize layer in the business-archetype classifier. The code in
+# workers/api/src/index.ts (classifyViaVectorize + the rebuild-index
+# endpoint) automatically activates when both bindings are present.
+#
+# Setup commands (one-time):
+#   npx wrangler vectorize create archetypes --dimensions=768 --metric=cosine
+#   curl -X POST https://socialai-api.steve-700.workers.dev/api/admin/rebuild-archetype-index \
+#        -H "Authorization: Bearer $YOUR_ADMIN_TOKEN"
+#
+# [ai]
+# binding = "AI"
+#
+# [[vectorize]]
+# binding = "ARCHETYPE_VEC"
+# index_name = "archetypes"
+
 # Cron triggers:
 # */5 * * * *   — prewarm videos + publish missed posts (every 5 min)
 # 0 3 * * *    — refresh Facebook tokens (daily 3am UTC)

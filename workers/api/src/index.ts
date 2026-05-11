@@ -27,6 +27,24 @@ interface R2Bucket {
   head(key: string): Promise<{ size: number } | null>;
 }
 
+// Cloudflare Workers AI binding — used by Phase 2 Vectorize layer to embed
+// business descriptions with @cf/baai/bge-base-en-v1.5 (768-dim, free tier
+// covers 30M queried dims/month).
+interface AiRunner {
+  run(model: string, input: { text: string | string[] } | Record<string, unknown>): Promise<any>;
+}
+
+// Cloudflare Vectorize binding — semantic similarity search over the 13
+// archetype descriptions. When this binding is configured, the classifier
+// uses it as a cheap-fast first stage before falling through to Haiku.
+interface VectorizeIndex {
+  query(vector: number[], opts?: { topK?: number; returnMetadata?: boolean | 'all' | 'indexed'; returnValues?: boolean }): Promise<{
+    matches: Array<{ id: string; score: number; metadata?: Record<string, unknown>; values?: number[] }>;
+  }>;
+  upsert(vectors: Array<{ id: string; values: number[]; metadata?: Record<string, unknown> }>): Promise<{ mutationId: string }>;
+  describe(): Promise<{ vectorsCount: number; dimensions: number }>;
+}
+
 type Env = {
   OPENROUTER_API_KEY: string;
   /** When set, Anthropic-model calls (anthropic/claude-*) route direct to
@@ -35,6 +53,17 @@ type Env = {
    *  ~5.5% saved on OpenRouter's markup, ~25-40ms saved on routing latency.
    *  See callAnthropicDirect helper. Set with: wrangler secret put ANTHROPIC_API_KEY */
   ANTHROPIC_API_KEY?: string;
+  /** Phase 2 archetype classifier — Cloudflare Vectorize binding. Wire by
+   *  adding `[[vectorize]] binding = "ARCHETYPE_VEC"` to wrangler.toml +
+   *  creating the index with `wrangler vectorize create archetypes
+   *  --dimensions=768 --metric=cosine`. When this binding is configured,
+   *  /api/classify-business uses cosine similarity as Layer 0.5 between the
+   *  cheap keyword match and the LLM fallback. See classifyViaVectorize. */
+  ARCHETYPE_VEC?: VectorizeIndex;
+  /** Cloudflare Workers AI binding — needed for the bge-base-en-v1.5
+   *  embedding model. Wire by adding `[ai] binding = "AI"` to wrangler.toml.
+   *  Free tier: 30M queried dimensions / month. */
+  AI?: AiRunner;
   CLERK_SECRET_KEY: string;
   CLERK_JWT_KEY?: string;
   DB: D1Database;
@@ -3136,6 +3165,27 @@ app.post('/api/classify-business', async (c) => {
     };
   }
 
+  // ── Layer 0.5 — Cloudflare Vectorize semantic match (Phase 2) ──
+  // When the ARCHETYPE_VEC + AI bindings are configured, embed the
+  // fingerprint with bge-base-en-v1.5 and query the index for the closest
+  // archetype description. If top-1 cosine ≥ 0.78, accept it and skip the
+  // LLM. This is the "cheap-fast first stage" the strategic review
+  // recommended — ~50ms + free at SMB scale, vs ~$0.001 + 1500ms for Haiku.
+  if (!chosen && c.env.ARCHETYPE_VEC && c.env.AI) {
+    try {
+      const vec = await classifyViaVectorize(c.env, fingerprint);
+      if (vec && vec.confidence >= 0.78) {
+        chosen = {
+          slug: vec.slug,
+          confidence: vec.confidence,
+          reasoning: `Vectorize match: cosine similarity ${vec.confidence.toFixed(3)} to "${vec.slug}". Skipped LLM classifier.`,
+        };
+      }
+    } catch (e: any) {
+      console.warn(`[classify] Vectorize layer failed, falling through to LLM:`, e?.message);
+    }
+  }
+
   // ── Layer 1 — Haiku 4.5 zero-shot classifier with JSON output ──
   if (!chosen) {
     const apiKey = c.env.OPENROUTER_API_KEY;
@@ -3240,6 +3290,104 @@ Respond ONLY with valid JSON matching this exact shape:
       content_pillars: JSON.parse(matched.content_pillars),
       banned_trope_extras: matched.banned_trope_extras ? JSON.parse(matched.banned_trope_extras) : null,
     },
+  });
+});
+
+// ── Vectorize semantic classifier (Phase 2) ───────────────────────────────
+//
+// Embeds the business fingerprint with @cf/baai/bge-base-en-v1.5 (768-dim,
+// English-optimised) and queries the archetypes index for the closest match
+// by cosine similarity. Returns null if bindings aren't configured or the
+// index is empty (caller falls through to Haiku).
+//
+// Confidence interpretation:
+//   ≥ 0.85 — strong match, archetype is the right one
+//   0.78 to 0.85 — good match, skip LLM
+//   0.65 to 0.78 — uncertain, let LLM decide
+//   < 0.65 — poor match, definitely needs LLM
+async function classifyViaVectorize(
+  env: Env,
+  fingerprint: string,
+): Promise<{ slug: string; confidence: number } | null> {
+  if (!env.ARCHETYPE_VEC || !env.AI) return null;
+
+  // Embed the fingerprint with bge-base-en-v1.5. Output is a 768-dim vector.
+  const embedResult: any = await env.AI.run('@cf/baai/bge-base-en-v1.5', { text: fingerprint });
+  const vector = embedResult?.data?.[0] || embedResult?.embedding || embedResult?.vector;
+  if (!Array.isArray(vector) || vector.length !== 768) {
+    console.warn(`[vectorize] bge-base returned unexpected shape:`, typeof vector, Array.isArray(vector) ? vector.length : 'not array');
+    return null;
+  }
+
+  const result = await env.ARCHETYPE_VEC.query(vector, { topK: 1, returnMetadata: 'indexed' });
+  const match = result.matches?.[0];
+  if (!match) return null;
+
+  // Vectorize cosine scores are in [-1, 1] but for embedding similarity they
+  // always come out in [0, 1] in practice. Treat the score as the confidence
+  // directly — bge-base on normalised English text is well-calibrated.
+  return { slug: match.id, confidence: match.score };
+}
+
+/** Admin endpoint: rebuild the Vectorize index from the business_archetypes
+ *  table. Run this once after creating the Vectorize index, then any time
+ *  the archetype descriptions change.
+ *
+ *  Returns the number of archetypes indexed + the index's reported size.
+ *
+ *  Auth: requires admin (uses requireAdmin gate).
+ */
+app.post('/api/admin/rebuild-archetype-index', async (c) => {
+  const adminCheck = await requireAdmin(c);
+  if (adminCheck instanceof Response) return adminCheck;
+
+  if (!c.env.ARCHETYPE_VEC || !c.env.AI) {
+    return c.json({ error: 'ARCHETYPE_VEC and AI bindings not configured — add to wrangler.toml first' }, 400);
+  }
+
+  const archetypeRows = await c.env.DB.prepare(
+    `SELECT slug, name, description FROM business_archetypes ORDER BY slug`
+  ).all<{ slug: string; name: string; description: string }>();
+  const archetypes = archetypeRows.results || [];
+  if (archetypes.length === 0) {
+    return c.json({ error: 'business_archetypes table is empty — run seed_v7_archetypes.sql first' }, 400);
+  }
+
+  // Embed in batches (bge-base supports array input; CF Workers AI may have
+  // per-call payload limits so we batch to be safe).
+  const vectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
+  for (const a of archetypes) {
+    try {
+      const embedResult: any = await c.env.AI.run('@cf/baai/bge-base-en-v1.5', {
+        text: `${a.name}. ${a.description}`,
+      });
+      const vec = embedResult?.data?.[0] || embedResult?.embedding;
+      if (!Array.isArray(vec)) {
+        console.warn(`[rebuild-index] embed failed for ${a.slug}`);
+        continue;
+      }
+      vectors.push({
+        id: a.slug,
+        values: vec,
+        metadata: { name: a.name, description: a.description.slice(0, 500) },
+      });
+    } catch (e: any) {
+      console.warn(`[rebuild-index] ${a.slug} failed: ${e?.message}`);
+    }
+  }
+
+  if (vectors.length === 0) {
+    return c.json({ error: 'No vectors generated — AI binding may be misconfigured' }, 500);
+  }
+
+  const upsertResult = await c.env.ARCHETYPE_VEC.upsert(vectors);
+  const describe = await c.env.ARCHETYPE_VEC.describe();
+  return c.json({
+    ok: true,
+    indexed: vectors.length,
+    mutation_id: upsertResult.mutationId,
+    index_size: describe.vectorsCount,
+    dimensions: describe.dimensions,
   });
 });
 
