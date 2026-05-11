@@ -338,7 +338,73 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       const res = await f('/api/billing');
       return res.json() as Promise<BillingInfo>;
     },
+
+    /**
+     * Business Archetype Classifier (2026-05 Phase 1).
+     *
+     * getBusinessArchetype(): fetch the cached archetype for the signed-in
+     *   user. Returns null when the user hasn't been classified yet (caller
+     *   should then call classifyBusiness).
+     *
+     * classifyBusiness({...}): run the Haiku classifier. Caches on the user
+     *   row server-side. Pass force=true to bypass the cache.
+     *
+     * Both endpoints replace the runtime keyword switch that used to live in
+     * gemini.ts getImagePromptExamples. The archetype object returned here
+     * is the single source of truth for image examples, voice cues, and
+     * content pillars used by the AI generation pipeline.
+     */
+    async getBusinessArchetype(): Promise<ArchetypeResponse | null> {
+      try {
+        const res = await f('/api/business-archetype');
+        return res.json() as Promise<ArchetypeResponse>;
+      } catch (e: any) {
+        // 404 means not yet classified — caller should kick off classification
+        if (/\(404\)/.test(e?.message || '')) return null;
+        throw e;
+      }
+    },
+
+    async classifyBusiness(input: ClassifyBusinessInput): Promise<ArchetypeResponse> {
+      const res = await f('/api/classify-business', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ArchetypeResponse>;
+    },
   };
+}
+
+// ── Business Archetype types ──────────────────────────────────────────────────
+
+export interface ClassifyBusinessInput {
+  businessType?: string;
+  description?: string;
+  productsServices?: string;
+  contentTopics?: string;
+  /** Bypass the cache and re-classify even if archetype_slug is set. */
+  force?: boolean;
+}
+
+export interface ArchetypeData {
+  slug: string;
+  name: string;
+  description: string;
+  image_examples: string[];
+  image_avoid_notes: string | null;
+  voice_cues: string | null;
+  content_pillars: string[];
+  banned_trope_extras: string[] | null;
+}
+
+export interface ArchetypeResponse {
+  classified: true;
+  cached?: boolean;
+  archetype_slug?: string;
+  confidence: number | null;
+  reasoning: string | null;
+  classified_at?: string | null;
+  archetype: ArchetypeData;
 }
 
 // ── Admin / billing types ─────────────────────────────────────────────────────

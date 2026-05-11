@@ -17,7 +17,7 @@ import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -759,6 +759,56 @@ const Dashboard: React.FC = () => {
       setPortalContent({ hero_title: '', hero_subtitle: '', hero_cta_text: '' });
     }
   }, [activeClientId, clients]);
+
+  // ── Business Archetype loader (2026-05 Phase 1) ──────────────────────────
+  //
+  // On user load and on substantial profile changes, fetch the cached
+  // archetype (POST /api/business-archetype). If not yet classified, kick off
+  // the Haiku classifier with the user's current business profile and cache
+  // the verdict server-side. Activating the archetype here tells gemini.ts
+  // which image-prompt + voice-cue bank to use for downstream generations.
+  //
+  // Debounced 1.5s so typing in the onboarding wizard doesn't fire on every
+  // keystroke. Only runs once profile.description is meaningful (≥50 chars)
+  // — below that there isn't enough signal for the classifier to do better
+  // than the synchronous keyword match in gemini.ts.
+  //
+  // For multi-client (agency) users, the archetype is currently user-level
+  // only. Per-client archetypes are a Phase 1B follow-up — for now, client
+  // workspaces fall back to the synchronous keyword match against the
+  // workspace's businessType (no LLM call, instant). See gemini.ts
+  // setActiveArchetype docstring.
+  useEffect(() => {
+    if (!user) return;
+    if (activeClientId !== null) {
+      // On a client workspace — clear the active archetype so gemini.ts uses
+      // the synchronous keyword match against that workspace's businessType
+      setActiveArchetype(null);
+      return;
+    }
+    if (!profile.description || profile.description.trim().length < 50) return;
+    const timer = setTimeout(async () => {
+      try {
+        const cached = await db.getBusinessArchetype();
+        if (cached) {
+          setActiveArchetype(cached.archetype.slug);
+          return;
+        }
+        const classified = await db.classifyBusiness({
+          businessType: profile.type,
+          description: profile.description,
+          productsServices: profile.productsServices,
+          contentTopics: profile.contentTopics,
+        });
+        setActiveArchetype(classified.archetype.slug);
+        console.log(`[archetype] classified as "${classified.archetype.slug}" (confidence ${classified.confidence}) — ${classified.reasoning}`);
+      } catch (e: any) {
+        // Non-fatal — gemini.ts falls back to synchronous keyword match
+        console.warn('[archetype] load/classify failed:', e?.message || e);
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [user?.uid, activeClientId, profile.type, profile.description, profile.productsServices, profile.contentTopics]);
 
   // Restore own workspace (profile, posts, tokens) when switching back from a client
   useEffect(() => {

@@ -2778,6 +2778,277 @@ app.get('/api/db/facts', async (c) => {
   return c.json({ facts: rows.results || [] });
 });
 
+// ── Business Archetype classifier (2026-05 Phase 1) ──────────────────────────
+//
+// Replaces the hardcoded if-cascade in gemini.ts getImagePromptExamples /
+// socialMediaResearch.ts INDUSTRY_KEYWORDS. The flow:
+//
+//   Layer 0  — keyword match against the archetypes' `keywords` array
+//              (free, sub-ms). If unambiguous (single archetype matches),
+//              return it with confidence 0.9.
+//   Layer 1  — Haiku 4.5 zero-shot classifier with JSON-mode response. Reads
+//              all archetype descriptions from D1, picks the best match,
+//              returns { archetype_slug, confidence, reasoning }. ~$0.001/call.
+//   Layer 2  — Phase 2 will add Cloudflare Vectorize as a cheaper-than-Haiku
+//              second layer between 0 and 1. Schema is ready (`description`
+//              column is what gets embedded). Not built yet.
+//
+// Cached on the users row so we don't re-classify every generation.
+
+interface ArchetypeRow {
+  slug: string;
+  name: string;
+  description: string;
+  keywords: string;
+  image_examples: string;
+  image_avoid_notes: string | null;
+  voice_cues: string | null;
+  content_pillars: string;
+  banned_trope_extras: string | null;
+}
+
+/** GET /api/business-archetype — returns the user's cached archetype + the
+ *  full archetype row joined from the library. Returns 404 if not classified
+ *  yet (caller should POST /api/classify-business to populate). */
+app.get('/api/business-archetype', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+  const userRow = await c.env.DB.prepare(
+    `SELECT archetype_slug, archetype_confidence, archetype_reasoning, archetype_classified_at FROM users WHERE id = ?`
+  ).bind(uid).first<{ archetype_slug: string | null; archetype_confidence: number | null; archetype_reasoning: string | null; archetype_classified_at: string | null }>();
+
+  if (!userRow?.archetype_slug) {
+    return c.json({ error: 'Not yet classified', classified: false }, 404);
+  }
+
+  const arch = await c.env.DB.prepare(
+    `SELECT * FROM business_archetypes WHERE slug = ?`
+  ).bind(userRow.archetype_slug).first<ArchetypeRow>();
+
+  if (!arch) {
+    // Cached slug points to a now-deleted archetype — caller should re-classify
+    return c.json({ error: 'Cached archetype no longer exists', classified: false, stale_slug: userRow.archetype_slug }, 404);
+  }
+
+  return c.json({
+    classified: true,
+    archetype: {
+      slug: arch.slug,
+      name: arch.name,
+      description: arch.description,
+      keywords: JSON.parse(arch.keywords),
+      image_examples: JSON.parse(arch.image_examples),
+      image_avoid_notes: arch.image_avoid_notes,
+      voice_cues: arch.voice_cues,
+      content_pillars: JSON.parse(arch.content_pillars),
+      banned_trope_extras: arch.banned_trope_extras ? JSON.parse(arch.banned_trope_extras) : null,
+    },
+    confidence: userRow.archetype_confidence,
+    reasoning: userRow.archetype_reasoning,
+    classified_at: userRow.archetype_classified_at,
+  });
+});
+
+/** POST /api/classify-business — runs the Haiku classifier, caches the result
+ *  on the user row, returns the verdict. Body fields are optional except at
+ *  least one of businessType/description must be present.
+ *
+ *  Body: { businessType?, description?, productsServices?, contentTopics?, force?: boolean }
+ *  force=true bypasses the cache and re-classifies even if archetype_slug is set.
+ */
+app.post('/api/classify-business', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  if (await isRateLimited(c.env.DB, `classify:${uid}`, 10)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+
+  const body = await c.req.json().catch(() => ({})) as {
+    businessType?: string;
+    description?: string;
+    productsServices?: string;
+    contentTopics?: string;
+    force?: boolean;
+  };
+  const { businessType = '', description = '', productsServices = '', contentTopics = '', force = false } = body;
+
+  // Build the brand fingerprint string — what the classifier sees and what
+  // Phase 2 will embed for Vectorize similarity search.
+  const fingerprint = [
+    businessType && `Business type: ${businessType}`,
+    description && `Description: ${description}`,
+    productsServices && `Products/services: ${productsServices}`,
+    contentTopics && `Content topics: ${contentTopics}`,
+  ].filter(Boolean).join('\n');
+
+  if (!fingerprint.trim()) {
+    return c.json({ error: 'At least one of businessType / description must be non-empty.' }, 400);
+  }
+
+  // Honour the cache unless force=true
+  if (!force) {
+    const cached = await c.env.DB.prepare(
+      `SELECT archetype_slug, archetype_confidence, archetype_reasoning FROM users WHERE id = ?`
+    ).bind(uid).first<{ archetype_slug: string | null; archetype_confidence: number | null; archetype_reasoning: string | null }>();
+    if (cached?.archetype_slug) {
+      const arch = await c.env.DB.prepare(`SELECT * FROM business_archetypes WHERE slug = ?`).bind(cached.archetype_slug).first<ArchetypeRow>();
+      if (arch) {
+        return c.json({
+          classified: true,
+          cached: true,
+          archetype_slug: cached.archetype_slug,
+          confidence: cached.archetype_confidence,
+          reasoning: cached.archetype_reasoning,
+          archetype: {
+            slug: arch.slug, name: arch.name, description: arch.description,
+            image_examples: JSON.parse(arch.image_examples),
+            image_avoid_notes: arch.image_avoid_notes, voice_cues: arch.voice_cues,
+            content_pillars: JSON.parse(arch.content_pillars),
+            banned_trope_extras: arch.banned_trope_extras ? JSON.parse(arch.banned_trope_extras) : null,
+          },
+        });
+      }
+    }
+  }
+
+  // Load all archetypes from D1
+  const archetypeRows = await c.env.DB.prepare(
+    `SELECT slug, name, description, keywords, image_examples, image_avoid_notes, voice_cues, content_pillars, banned_trope_extras FROM business_archetypes ORDER BY slug`
+  ).all<ArchetypeRow>();
+  const archetypes = (archetypeRows.results || []) as ArchetypeRow[];
+
+  if (archetypes.length === 0) {
+    return c.json({ error: 'business_archetypes table is empty — run seed_v7_archetypes.sql' }, 500);
+  }
+
+  // ── Layer 0 — keyword match ──
+  // Count keyword hits per archetype. If ONE archetype scores ≥2 hits AND
+  // beats the runner-up by ≥2, we're confident enough to skip the LLM.
+  const fingerprintLower = fingerprint.toLowerCase();
+  const scores: Array<{ slug: string; hits: number }> = archetypes.map(a => ({
+    slug: a.slug,
+    hits: (JSON.parse(a.keywords) as string[]).filter(kw => fingerprintLower.includes(kw.toLowerCase())).length,
+  }));
+  scores.sort((a, b) => b.hits - a.hits);
+  const top = scores[0];
+  const second = scores[1];
+  let chosen: { slug: string; confidence: number; reasoning: string } | null = null;
+  if (top && top.hits >= 2 && (!second || top.hits - second.hits >= 2)) {
+    chosen = {
+      slug: top.slug,
+      confidence: 0.9,
+      reasoning: `Keyword match: ${top.hits} keywords matched, beating runner-up by ${top.hits - (second?.hits ?? 0)}. Skipped LLM classifier.`,
+    };
+  }
+
+  // ── Layer 1 — Haiku 4.5 zero-shot classifier with JSON output ──
+  if (!chosen) {
+    const apiKey = c.env.OPENROUTER_API_KEY;
+    if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500);
+
+    // Build the system prompt — list every archetype with its description.
+    // Haiku reads this once per classification (~2k tokens) and picks one.
+    const archetypeListing = archetypes.map(a =>
+      `• ${a.slug} — ${a.name}: ${a.description}`
+    ).join('\n');
+
+    const systemPrompt = `You are a business-archetype classifier for a social-media SaaS. You will be given a description of a business. You MUST classify it into exactly ONE of the archetypes below.
+
+The archetypes:
+
+${archetypeListing}
+
+Rules:
+1. Choose the archetype whose description most closely matches the business. The goal is to pick the BEST IMAGERY + VOICE template for this business.
+2. If the business is a bricks-and-mortar food venue (cafe, bakery, restaurant), prefer "food-restaurant" over "retail-ecommerce".
+3. If the business is a digital/marketing/SaaS service (no physical venue, sells software or services online), use "tech-saas-agency" — NOT "professional-services". professional-services is for accountants/lawyers/architects with regulated credentials.
+4. If the business is a specialist sub-type with a dedicated archetype (e.g. BBQ pitmaster, butcher shop, breathwork coach), prefer the specialist over the general parent.
+5. confidence: return 0.95 if you're sure, 0.75 if you had to choose between two close candidates, 0.5 if you genuinely don't know. Be honest.
+6. reasoning: ONE sentence explaining the choice. Mention the specific words from the input that drove the decision.
+
+Respond ONLY with valid JSON matching this exact shape:
+{
+  "archetype_slug": "<one of the slugs above>",
+  "confidence": <number between 0 and 1>,
+  "reasoning": "<one sentence>"
+}`;
+
+    const orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://socialaistudio.au',
+        'X-Title': 'SocialAI Studio — Business Classifier',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku-4.5',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: fingerprint },
+        ],
+        temperature: 0.1,
+        max_tokens: 200,
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!orResponse.ok) {
+      const errText = await orResponse.text().catch(() => '');
+      return c.json({ error: `Haiku classifier call failed: ${orResponse.status} ${errText.slice(0, 200)}` }, 502);
+    }
+
+    const orJson = await orResponse.json() as any;
+    const raw = orJson.choices?.[0]?.message?.content || '';
+    let parsed: { archetype_slug?: string; confidence?: number; reasoning?: string };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return c.json({ error: 'Haiku returned malformed JSON', raw: raw.slice(0, 500) }, 502);
+    }
+
+    // Validate the slug is one we actually have
+    const validSlug = archetypes.find(a => a.slug === parsed.archetype_slug);
+    if (!validSlug) {
+      return c.json({ error: `Haiku returned unknown slug "${parsed.archetype_slug}"`, valid_slugs: archetypes.map(a => a.slug) }, 502);
+    }
+
+    chosen = {
+      slug: parsed.archetype_slug!,
+      confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.7,
+      reasoning: (parsed.reasoning || 'Haiku classifier verdict').slice(0, 400),
+    };
+  }
+
+  // ── Cache on the user row ──
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(
+    `UPDATE users SET archetype_slug = ?, archetype_confidence = ?, archetype_reasoning = ?, archetype_classified_at = ? WHERE id = ?`
+  ).bind(chosen.slug, chosen.confidence, chosen.reasoning, now, uid).run();
+
+  // ── Return the full picture ──
+  const matched = archetypes.find(a => a.slug === chosen!.slug)!;
+  return c.json({
+    classified: true,
+    cached: false,
+    archetype_slug: chosen.slug,
+    confidence: chosen.confidence,
+    reasoning: chosen.reasoning,
+    classified_at: now,
+    archetype: {
+      slug: matched.slug,
+      name: matched.name,
+      description: matched.description,
+      image_examples: JSON.parse(matched.image_examples),
+      image_avoid_notes: matched.image_avoid_notes,
+      voice_cues: matched.voice_cues,
+      content_pillars: JSON.parse(matched.content_pillars),
+      banned_trope_extras: matched.banned_trope_extras ? JSON.parse(matched.banned_trope_extras) : null,
+    },
+  });
+});
+
 // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────────
 app.all('/api/fal-proxy', async (c) => {
   const apiKey = c.env.FAL_API_KEY;

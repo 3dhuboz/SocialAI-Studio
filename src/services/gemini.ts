@@ -142,11 +142,57 @@ function tryRecoverTruncated(raw: string): any {
 const AI_WORKER = (((import.meta as any).env as Record<string, string> | undefined) || {}).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
-/** Generate business-specific image prompt examples based on business type.
- * Provides 6-8 DIFFERENT compositions per industry so the AI doesn't fall
- * back to the same "device on desk" / "product on board" template every post.
- * Each call returns ALL examples so the model has a wide variety palette. */
+// ── Business Archetype Library (2026-05 Phase 1) ──
+//
+// The bundled ARCHETYPES constant is the client-side source of truth for the
+// keyword-based fast path. The server-side classifier endpoint reads the same
+// data from D1 (seeded from this module). At generation time:
+//
+//   1. activeArchetypeSlug is set by App.tsx after fetching the user's cached
+//      archetype from /api/business-archetype (set once per session)
+//   2. getImagePromptExamples first looks up examples from the cached archetype
+//   3. Falls back to the synchronous keyword match against ARCHETYPES
+//   4. Falls back to the legacy hardcoded switch (kept for safety during the
+//      transition — will be removed in a follow-up once we've confirmed the
+//      archetype path is hit for >99% of generations)
+//
+// See src/data/archetypes.ts for the canonical archetype list and
+// workers/api/src/index.ts for the /api/classify-business endpoint.
+import { ARCHETYPES, matchArchetypeByKeyword, getArchetypeBySlug } from '../data/archetypes';
+
+let activeArchetypeSlug: string | null = null;
+
+/** Called by App.tsx once per session after fetching /api/business-archetype.
+ *  Subsequent image-prompt lookups will prefer this archetype's example bank
+ *  over the keyword-match fallback. Pass null to clear (e.g. workspace switch). */
+export function setActiveArchetype(slug: string | null) {
+  activeArchetypeSlug = slug;
+}
+
+/** Generate business-specific image prompt examples.
+ *
+ *  Resolution order:
+ *    1. Cached archetype (set by setActiveArchetype after classifier run)
+ *    2. Synchronous keyword match against ARCHETYPES (covers any business
+ *       whose type/description hits a keyword — works instantly with no
+ *       server call, even before the classifier runs)
+ *    3. Legacy hardcoded keyword switch (the original 11-branch cascade,
+ *       kept temporarily as a safety net)
+ *
+ *  Provides 6-10 DIFFERENT compositions per archetype so the AI doesn't fall
+ *  back to the same template every post. Each call returns ALL examples
+ *  OR-joined so the AI has variety. */
 const getImagePromptExamples = (businessType: string): string => {
+  // Layer 1: use the user's classified archetype if available
+  if (activeArchetypeSlug) {
+    const arch = getArchetypeBySlug(activeArchetypeSlug);
+    if (arch) return arch.imageExamples.map(s => `'${s}'`).join(' OR ');
+  }
+  // Layer 2: synchronous keyword match (works during the brief window before
+  // the classifier returns, or for businesses that haven't been classified yet)
+  const kwMatch = matchArchetypeByKeyword(businessType);
+  if (kwMatch) return kwMatch.imageExamples.map(s => `'${s}'`).join(' OR ');
+  // Layer 3: fall through to legacy hardcoded switch below
   const t = businessType.toLowerCase();
   // Use word-boundary check for short tokens to avoid false matches (e.g. "it"
   // matching "kit", "fit", "with"). Long tokens use plain substring.
