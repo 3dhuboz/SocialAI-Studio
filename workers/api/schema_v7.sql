@@ -59,3 +59,14 @@ ALTER TABLE users ADD COLUMN archetype_classified_at TEXT;
 
 -- Index for the fast workspace-archetype lookup at generation time.
 CREATE INDEX IF NOT EXISTS idx_users_archetype_slug ON users(archetype_slug);
+
+-- ── 2026-05 audit fix: cron post-claim lock ──
+-- The publish cron previously appended `|claim:UUID` onto the image_prompt
+-- column to mark posts as owned by a specific cron invocation, then matched
+-- on `image_prompt LIKE '%' || ?`. This corrupted the prompt column (the JIT
+-- image-gen branch had to split on `|claim:` to recover the original), wasted
+-- the index, and was racy under retry. Proper columns let the cron use a
+-- normal indexed equality match without touching the content column.
+ALTER TABLE posts ADD COLUMN claim_id TEXT;
+ALTER TABLE posts ADD COLUMN claim_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_posts_claim ON posts(claim_id) WHERE claim_id IS NOT NULL;

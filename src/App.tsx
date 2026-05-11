@@ -2215,7 +2215,9 @@ const Dashboard: React.FC = () => {
                               // Pass profile.type so the safety pipeline picks
                               // an industry-matched fallback if the seed prompt
                               // turns out vague/abstract (post-audit 2026-05).
-                              inputImage = await FalService.generateImage(seedPrompt, profile.type);
+                              const genResult = await FalService.generateImage(seedPrompt, profile.type, activeClientId);
+                              inputImage = genResult.url;
+                              if (genResult.referencesUsed > 0) console.log(`[image] brand-grounded via ${genResult.model} with ${genResult.referencesUsed} references`);
                               setVideoModalProgress(0.25);
                             }
 

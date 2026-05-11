@@ -372,7 +372,45 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       });
       return res.json() as Promise<ArchetypeResponse>;
     },
+
+    /**
+     * Vision-grounded image+caption critique (2026-05 image-stack upgrade).
+     *
+     * After generating an image, pass [image_url, caption, archetype] back
+     * to Haiku 4.5 vision and ask: does this image actually match the post?
+     * Returns a score 0-10, a verdict, reasoning, and a regenerate signal.
+     *
+     * Catches the failure mode the user screenshotted today — food image
+     * on a SaaS post — BEFORE it gets published. ~$0.003/image, ~500ms.
+     *
+     * Recommended threshold: if score <= 4 OR regenerate=true, run the
+     * image-gen again with a refined prompt; if score 5-7, flag for human
+     * review on the calendar; if score 8+, ship it.
+     */
+    async critiqueImageCaption(input: CritiqueImageInput): Promise<ImageCritique> {
+      const res = await f('/api/critique-image-caption', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ImageCritique>;
+    },
   };
+}
+
+export interface CritiqueImageInput {
+  imageUrl: string;
+  caption: string;
+  businessType?: string;
+  /** Optional archetype slug — gives the vision model the right context
+   *  (e.g. it knows a food image on a tech-saas-agency archetype is wrong). */
+  archetype?: string;
+}
+
+export interface ImageCritique {
+  score: number;          // 0-10
+  match: 'yes' | 'partial' | 'no';
+  reasoning: string;
+  regenerate: boolean;
 }
 
 // ── Business Archetype types ──────────────────────────────────────────────────

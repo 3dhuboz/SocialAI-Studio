@@ -177,7 +177,7 @@ export const ARCHETYPES: Archetype[] = [
     slug: 'health-wellness',
     name: 'Health & Wellness',
     description: 'Gyms, yoga studios, pilates, beauty salons, spas, massage therapists, physios, chiros. Service-based, body-focused, often subscription/booking model. Imagery is space + tools, NEVER bodies.',
-    keywords: ['gym', 'fitness', 'pilates', 'personal trainer', 'beauty', 'salon', 'spa', 'massage', 'physio', 'chiro', 'wellness', 'health', 'dental', 'medical', 'osteo'],
+    keywords: ['gym', 'fitness', 'pilates', 'yoga', 'yoga studio', 'personal trainer', 'beauty', 'salon', 'spa', 'massage', 'physio', 'chiro', 'wellness', 'health', 'dental', 'medical', 'osteo'],
     imageExamples: [
       'meditation cushion in sunlit room with linen curtains, calm atmosphere',
       'overhead flatlay of journal, herbal tea, and dried flowers, wellness aesthetic',

@@ -102,7 +102,7 @@ INSERT OR REPLACE INTO business_archetypes (slug, name, description, keywords, i
   'health-wellness',
   'Health & Wellness',
   'Gyms, yoga studios, pilates, beauty salons, spas, massage therapists, physios, chiros. Service-based, body-focused, often subscription/booking model. Imagery is space + tools, NEVER bodies.',
-  '["gym","fitness","pilates","personal trainer","beauty","salon","spa","massage","physio","chiro","wellness","health","dental","medical","osteo"]',
+  '["gym","fitness","pilates","yoga","yoga studio","personal trainer","beauty","salon","spa","massage","physio","chiro","wellness","health","dental","medical","osteo"]',
   '["meditation cushion in sunlit room with linen curtains, calm atmosphere","overhead flatlay of journal, herbal tea, and dried flowers, wellness aesthetic","rolled yoga mat on polished wood floor, soft window light","minimal treatment room interior with linen and timber, peaceful atmosphere","fitness equipment in modern gym at dawn, candid empty space","close-up of hands holding warm ceramic mug, cozy lighting (hands acceptable for tea/treatment shots)"]',
   'NEVER include people exercising, in treatment, or in poses. NEVER render before/after comparison shots. Focus on calm space, ritual tools, daylight.',
   'Grounded, body-respectful, non-prescriptive. Avoid medical claims unless registered. Reference movement, breath, recovery rituals.',
