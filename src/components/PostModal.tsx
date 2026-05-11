@@ -124,6 +124,7 @@ export const PostModal: React.FC<Props> = ({
               <div className="flex items-center gap-4 p-5">
                 {!(post.videoStatus === 'ready' && post.videoUrl) && (
                   <AnimatedReelPreview
+                    imageUrl={post.image}
                     hookText={post.videoScript?.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() || post.content}
                     mood={post.videoMood}
                     size="md"

@@ -3942,6 +3942,7 @@ const Dashboard: React.FC = () => {
                       {/* Image / Video area */}
                       {isVideo ? (
                         <AnimatedReelPreview
+                          imageUrl={smartPostImages[i] || (sp as any).image}
                           hookText={
                             (sp as any).videoScript
                               ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim()

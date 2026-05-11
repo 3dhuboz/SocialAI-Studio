@@ -266,6 +266,7 @@ export const CalendarGrid: React.FC<Props> = ({
                   {/* Thumbnail */}
                   {post.postType === 'video' ? (
                     <AnimatedReelPreview
+                      imageUrl={calendarImages[post.id] || post.image}
                       hookText={post.videoScript?.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() || post.content}
                       mood={post.videoMood}
                       size="sm"

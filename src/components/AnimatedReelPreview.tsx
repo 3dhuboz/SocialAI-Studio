@@ -1,6 +1,11 @@
 import React from 'react';
 
 interface AnimatedReelPreviewProps {
+  /** When set, renders the real reel thumbnail underneath the play-button
+   *  overlay. The image is the JIT-generated still that's fed to Kling as
+   *  the i2v seed frame — the same one stored in posts.image_url. Without
+   *  this, the component falls back to its decorative animated placeholder. */
+  imageUrl?: string;
   hookText?: string;
   mood?: string;
   size?: 'sm' | 'md';
@@ -9,6 +14,7 @@ interface AnimatedReelPreviewProps {
 }
 
 export const AnimatedReelPreview: React.FC<AnimatedReelPreviewProps> = ({
+  imageUrl,
   hookText = '',
   mood,
   size = 'md',
@@ -17,11 +23,12 @@ export const AnimatedReelPreview: React.FC<AnimatedReelPreviewProps> = ({
 }) => {
   const w = size === 'sm' ? 'w-20' : 'w-24';
   const h = size === 'sm' ? 'h-32' : 'h-40';
+  const hasImage = !!imageUrl;
 
   return (
     <div
       className={`${w} ${h} rounded-xl flex-shrink-0 overflow-hidden relative border border-purple-500/30 shadow-lg shadow-purple-900/30 glass ${onClick ? 'cursor-pointer group/reel' : ''} ${className}`}
-      style={{ background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
+      style={hasImage ? { background: '#000' } : { background: 'linear-gradient(160deg,#2d1b69 0%,#1a0a3a 40%,#0d0d1a 100%)' }}
       onClick={onClick}
     >
       <style>{`
@@ -52,23 +59,39 @@ export const AnimatedReelPreview: React.FC<AnimatedReelPreviewProps> = ({
         }
       `}</style>
 
-      {/* Animated gradient background blob */}
-      <div
-        className="absolute inset-0 rounded-xl"
-        style={{
-          background: 'radial-gradient(ellipse at 30% 40%, rgba(147,51,234,0.45) 0%, transparent 70%), radial-gradient(ellipse at 70% 70%, rgba(79,70,229,0.35) 0%, transparent 60%)',
-          animation: 'reel-bg-shift 3s ease-in-out infinite',
-        }}
-      />
+      {/* Real thumbnail (when image_url is populated by the prewarm cron) —
+          dims slightly so the play-button overlay reads against any image */}
+      {hasImage && (
+        <>
+          <img
+            src={imageUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+          <div className="absolute inset-0 bg-black/25" />
+        </>
+      )}
 
-      {/* Scanline sweep */}
-      <div
-        className="absolute left-0 right-0 h-8 pointer-events-none"
-        style={{
-          background: 'linear-gradient(to bottom, transparent, rgba(255,255,255,0.06), transparent)',
-          animation: 'reel-scan 3s linear infinite',
-        }}
-      />
+      {/* Animated gradient placeholder (only when no real thumbnail) */}
+      {!hasImage && (
+        <>
+          <div
+            className="absolute inset-0 rounded-xl"
+            style={{
+              background: 'radial-gradient(ellipse at 30% 40%, rgba(147,51,234,0.45) 0%, transparent 70%), radial-gradient(ellipse at 70% 70%, rgba(79,70,229,0.35) 0%, transparent 60%)',
+              animation: 'reel-bg-shift 3s ease-in-out infinite',
+            }}
+          />
+          <div
+            className="absolute left-0 right-0 h-8 pointer-events-none"
+            style={{
+              background: 'linear-gradient(to bottom, transparent, rgba(255,255,255,0.06), transparent)',
+              animation: 'reel-scan 3s linear infinite',
+            }}
+          />
+        </>
+      )}
 
       {/* Top bar */}
       <div className="absolute top-2 left-2 right-2 flex items-center justify-between z-20">
