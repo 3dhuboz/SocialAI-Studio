@@ -190,7 +190,16 @@ const getImagePromptExamples = (businessType: string): string => {
     "'kraut being lifted with wooden tongs above jar, action shot'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
-  if (has('web', 'software', 'tech', 'digital', 'saas') || /\bit\b/.test(t) || /\bi\.t\b/.test(t)) return [
+  // Keywords expanded 2026-05 follow-up: SocialAI Studio's OWN agency posts
+  // were generating food images because "Marketing Agency" / "Social Media
+  // Studio" / "Creative Studio" didn't hit any branch and fell through to
+  // the default. The reworked tech examples (laptop, keyboard, post-its,
+  // home office) are equally appropriate for SaaS, marketing/social agency,
+  // and creative-studio businesses — so they all share this branch.
+  if (
+    has('web', 'software', 'tech', 'digital', 'saas', 'agency', 'marketing', 'studio', 'creative', 'consultancy', 'consult', 'automation') ||
+    /\bit\b/.test(t) || /\bi\.t\b/.test(t)
+  ) return [
     // Reworked 2026-05 — original examples were UI-centric (phone screen
     // showing clean app UI, wireframe sketches, fingers typing) which both
     // (a) tripped the new isAbstractUI fallback regex when the AI quoted
@@ -205,6 +214,8 @@ const getImagePromptExamples = (businessType: string): string => {
     "'creative wall of post-it notes in a bright office, daylight from window, candid texture'",
     "'abstract close-up of glowing fibre cables in dark room, blue+orange contrast'",
     "'home office windowsill with plant, mug and a closed notebook at sunrise'",
+    "'multi-screen agency desk with calendar view glowing softly, late evening, no person'",
+    "'whiteboard wall with kanban sticky-notes, daylight, creative studio atmosphere'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('festival', 'event')) return [
@@ -252,7 +263,13 @@ const getImagePromptExamples = (businessType: string): string => {
     "'studio interior with plants, soft daylight, peaceful empty space'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
-  return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one item' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
+  // Default fallback when no industry keyword matched. 2026-05 follow-up:
+  // re-anchored on neutral compositional language (no food/product hints)
+  // so FLUX doesn't default to cafe/restaurant scenes when given a vague
+  // businessType. The downstream `pickExampleScene` picks ONE of these,
+  // then it's combined with the post's own imagePrompt so the AI's topic
+  // still drives the subject — the example only sets composition + lighting.
+  return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one tool of the trade' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
 };
 
 /**
@@ -952,6 +969,11 @@ const FAB_CHECKS: Array<[RegExp, string]> = [
   // 7-14 times per week on autopilot")
   [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
   [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
+  // 2026-05 SaaS follow-up: "generates 7-14 posts per week" / "writes 30
+  // captions a month" — the marketing-claim verb form. Distinct from the
+  // "posting NN times" shape above. The literal "7-14 posts/week" survives
+  // (brand-guide preferred form) — only the verb-driven sentence form trips.
+  [/\b(?:generates?|writes?|produces?|delivers?|creates?|cranks?\s+out)\s+\d+(?:[-–]\d+)?\s+(?:posts?|captions?|articles?|videos?|reels?)\s+(?:per|a|each)\s+(?:day|week|month)/i, 'invented content-generation cadence claim'],
   // 2026-05 audit additions: leading questions with implied stat (real Penny
   // Wise post: "How many hours could you reclaim this week?")
   [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
@@ -1029,14 +1051,59 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:channell?ed|leveraged|elevated|curated|crafted)\s+(?:significant|considerable|substantial|incredible|powerful)\s+\w+(?:\s+\w+){0,2}\s+(?:into|to|towards)\s+(?:designing|building|creating|developing)\s+(?:bespoke|tailored|custom|cutting-edge|innovative)\s+\w+/gi, ''],
   // "bespoke digital platforms" / "bespoke AI solutions" — agency-pitch noun phrases
   [/\bbespoke\s+(digital\s+platforms?|ai\s+(?:tools?|solutions?|platforms?)|software\s+solutions?|web\s+experiences?)/gi, 'custom builds'],
-  // "small business owners often..." / "small business owners are..." — generalising opener
-  [/\bSmall business owners (often|usually|typically|always|never|rarely)[^.!?]+[.!?]\s*/gi, ''],
+  // "small business owners often/usually/post/struggle..." — generalising opener.
+  // Widened 2026-05 follow-up: SocialAI's own self-promo posts used the bare
+  // present-tense verb ("Small business owners post inconsistently because…")
+  // which the older adverb-only regex missed. Sentence-anchored so it doesn't
+  // chomp legitimate mid-sentence mentions like "we welcome small business owners".
+  [/(?:^|[.!?]\s+)Small business owners\s+(?:often|usually|typically|always|never|rarely|post|struggle|find|don'?t|can'?t|miss|forget|wish|need|want|hate|love)\b[^.!?]+[.!?]\s*/gim, ''],
   // "Timing is everything." / "Consistency is everything." — empty epigram closers
   [/\b(Timing|Consistency|Authenticity|Quality|Strategy)\s+is\s+everything[.!?]\s*/gi, ''],
   // "X is the gap we close." / "That's the gap we close." — agency-speak
   [/\bThat'?s\s+the\s+gap\s+we\s+close[.!?]\s*/gi, ''],
   // "Making real differences." / "Making a real difference." — vague platitude
   [/\bMaking\s+(real|a\s+real)\s+difference[s]?[.!?]\s*/gi, ''],
+
+  // ── 2026-05 SaaS-genre additions (observed in SocialAI Studio self-promo) ──
+  // These target the agency-selling-SaaS marketing genre. Distinct from the
+  // local-business cliches above. Brand-guide tension: $X/mo and 7-14
+  // posts/week ARE legitimate brand facts — we strip only the trope
+  // CONSTRUCTION around them, not the values themselves.
+
+  // "Staring at a blank caption for 20 minutes?" — hyperbolic-stat opener
+  [/\bStaring at (?:a|the|your) (?:blank|empty) \S+(?:\s+\S+){0,2} for \d+ (?:seconds?|minutes?|hours?)\b[^.!?]*[.!?]?\s*/gi, ''],
+  // "Ready to reclaim those hours?" / "Ready to automate?" — rhetorical SaaS-CTA closer.
+  // Closed verb list keeps legitimate openers like "Ready to order?" / "Ready to eat?"
+  // safe. Sentence-anchored + case-sensitive `Ready` so mid-sentence lowercase
+  // "are you ready to automate" doesn't false-positive — that smoke test bit me.
+  [/(?:^|[.!?]\s+)Ready to (?:reclaim|automate|scale|simplify|streamline|transform|elevate|level\s+up|unlock|supercharge)\b[^.!?]*\?\s*/gm, ''],
+  // "..., no lock-in" / "..., cancel anytime" — strips the SaaS pitch fragment
+  // while preserving the price itself (which the brand guide tells the AI to use)
+  [/\s*,\s*no\s+(?:lock-?in|contracts?|commitments?|credit\s+card\s+required|setup\s+fees?|hidden\s+fees?)\b[.!]?\s*/gi, ''],
+  // "Your social media on autopilot" — abstract "X on autopilot" cliché.
+  // Critical: the product is named "AI Content Autopilot" so we anchor on the
+  // possessive "Your X on autopilot" shape, NOT bare "autopilot".
+  [/\bYour\s+(?:social\s+media|business|marketing|content|growth|sales)\s+on\s+autopilot\b[.!]?\s*/gi, ''],
+  // "Consistency without the burnout" / "Growth without the grind" — X-without-Y antipattern
+  [/\b(?:Consistency|Growth|Scale|Success|Results|Quality|Productivity|Reach|Visibility)\s+without\s+(?:the\s+)?(?:burnout|chaos|stress|overwhelm|effort|work|grind|hassle|headache|complexity)\b[.!?]?\s*/gi, ''],
+  // "Scale your agency without scaling your workload" — pun/wordplay marketing
+  [/\b(?:Scale|Grow|Expand)\s+(?:your\s+\S+(?:\s+\S+){0,2}\s+)?without\s+scaling\b[^.!?]*[.!?]?\s*/gi, ''],
+  // "That's not laziness—that's reality" — em-dash/hyphen parallel construction.
+  // \S+ for hyphenated words; matches em-dash, en-dash, or plain hyphen.
+  [/\bThat'?s\s+not\s+\S+(?:\s+\S+){0,3}\s*[—–-]\s*that'?s\s+\S+(?:\s+\S+){0,3}[.!?]\s*/gi, ''],
+  // "Multi-client management, white-label client portals, centralized analytics" —
+  // comma-separated SaaS feature list. Requires TWO of the list items to start
+  // with a SaaS-flavour prefix so a normal "Monday, Wednesday, Friday" or
+  // "burgers, salads, shakes" list can't accidentally trigger.
+  [/\b(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:and\s+)?\S+/gi, ''],
+  // "Managing multiple client social accounts?" — rhetorical opener with quantifier.
+  // Requires a quantifier (multiple/several/all your/etc.) so we don't strip
+  // legitimate sentences like "Managing your booking is easy."
+  [/(?:^|[.!?]\s+)(?:Managing|Juggling|Handling|Running|Tracking|Wrangling)\s+(?:multiple|several|all\s+your|countless|too\s+many)\s+\S+(?:\s+\S+){0,3}\?\s*/gim, ''],
+  // "Link in bio." / "Learn more—link in bio." — Facebook-inappropriate CTA
+  // that's actually an Instagram cargo-culted phrase. Prompt-level guidance
+  // already discourages this but doesn't always work; this is the safety net.
+  [/\b(?:Learn\s+more\s*[—–-]\s*)?(?:Click\s+(?:the\s+)?)?link\s+in\s+bio\b[.!]?\s*(?=$|[.!?\s])/gim, ''],
 ];
 export function scrubBannedPhrases(content: string): string {
   let out = content;

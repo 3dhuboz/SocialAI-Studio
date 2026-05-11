@@ -163,6 +163,9 @@ run('detectFabrication — invented stats & cadence', [
   { name: 'Fake testimonial signature → flagged', input: 'Loved it! — Sarah J., Brisbane', expect: o => o !== null && /testimonial signature/i.test(o), describeExpected: 'signature flagged' },
   { name: 'Clean post → NOT flagged', input: 'Fresh sourdough out the oven at 7am. Drop in before they go.', expect: o => o === null, describeExpected: 'null (no flag)' },
   { name: 'Two short sentences (OK) → NOT flagged', input: 'Open till 2pm. Come say hi. We have got pastries fresh out of the oven and the coffee machine is warmed up.', expect: o => o === null, describeExpected: 'null (no flag — only 2 consecutive shorts)' },
+  // 2026-05 SaaS-marketing genre additions
+  { name: 'SocialAI screenshot: "generates 7-14 posts per week" → flagged', input: 'Our AI Content Autopilot generates 7-14 posts per week-captions, hashtags, and all.', expect: o => o !== null && /content-generation cadence/i.test(o), describeExpected: 'content-generation cadence flagged' },
+  { name: 'Brand-guide preferred "7-14 posts/week" form → NOT flagged', input: 'Plans include 7-14 posts/week and image generation.', expect: o => o === null, describeExpected: 'null (preserves brand-guide preferred form)' },
 ], detectFabrication);
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -177,6 +180,19 @@ const tropeCases: Array<[string, string, RegExp]> = [
   ['"Small business owners often..." stripped', 'Small business owners often post when convenient, not when scrolled.', /Small business owners often/i],
   ['"Timing is everything." closer stripped', 'Get it right. Timing is everything.', /Timing is everything/i],
   ['"That\'s the gap we close." stripped', "We help you fill it. That's the gap we close.", /the gap we close/i],
+  // ── 2026-05 SaaS-marketing genre additions ──
+  ['"Staring at a blank caption for 20 minutes?" stripped', 'Staring at a blank caption for 20 minutes? SocialAI writes them.', /Staring at a blank caption for 20 minutes/i],
+  ['"Ready to reclaim those hours?" stripped', 'AI does the work. Ready to reclaim those hours?', /Ready to reclaim those hours/i],
+  ['"Ready to automate?" stripped', 'Set it and forget it. Ready to automate?', /Ready to automate/i],
+  ['"no lock-in" pitch fragment stripped (price preserved separately)', 'From $29/mo, no lock-in. Cancel anytime.', /no lock-in/i],
+  ['"Your social media on autopilot" stripped', 'Your social media on autopilot from $29/mo.', /Your social media on autopilot/i],
+  ['"Consistency without the burnout" stripped', 'Post every day. Consistency without the burnout.', /Consistency without the burnout/i],
+  ['"Scale your agency without scaling your workload" stripped', 'Scale your agency without scaling your workload.', /without scaling/i],
+  ['"That\'s not laziness-that\'s reality" stripped (hyphen variant)', "They're busy. That's not laziness-that's reality.", /That'?s not laziness/i],
+  ['"Multi-client, white-label, centralized" feature list stripped', 'Multi-client management, white-label client portals, centralized analytics.', /Multi-client management,\s+white-label/i],
+  ['"Managing multiple client social accounts?" stripped', 'Managing multiple client social accounts? Let us help.', /Managing multiple client social accounts\?/i],
+  ['"Link in bio." stripped', 'Learn more—link in bio.', /link in bio/i],
+  ['"Small business owners post inconsistently because..." stripped', 'Small business owners post inconsistently because they are busy. We fix that.', /Small business owners post inconsistently/i],
 ];
 for (const [name, input, leftoverRegex] of tropeCases) {
   const out = scrubBannedPhrases(input);
@@ -185,6 +201,35 @@ for (const [name, input, leftoverRegex] of tropeCases) {
     pass++;
   } else {
     console.log(`  ❌ ${name}`);
+    console.log(`     input: ${input}`);
+    console.log(`     got:   ${out}`);
+    fail++;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// scrubBannedPhrases — false-positive guards (these MUST survive scrubbing)
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n━━━ scrubBannedPhrases — preservation guards ━━━');
+const preservationCases: Array<[string, string, RegExp]> = [
+  // Brand-guide-mandated facts that must survive (line 1548-1549 of gemini.ts)
+  ['"$29/mo" pricing literal preserved', 'Plans from $29/mo include images.', /\$29\/mo/],
+  ['Product name "AI Content Autopilot" preserved', 'Our AI Content Autopilot does the work for you.', /AI Content Autopilot/],
+  ['"7-14 posts/week" brand-form preserved (no marketing verb)', 'Plans include 7-14 posts/week.', /7-14 posts\/week/],
+  // Legitimate small-business content that must NOT be over-scrubbed
+  ['Menu list "burgers, salads, shakes" preserved (no SaaS-prefix)', 'Our menu features burgers, salads, and shakes.', /burgers, salads/],
+  ['Hours list "Open Mon, Wed, Fri" preserved', 'Open Monday, Wednesday, Friday 9am-5pm.', /Monday, Wednesday/],
+  ['"Ready to order?" preserved (food-truck rhetorical opener)', 'Lunch starts at 11. Ready to order?', /Ready to order\?/],
+  ['"Are you ready to automate?" — different structure, preserved', 'Are you ready to automate your workflow?', /Are you ready/],
+  ['Mid-sentence "small business owners" preserved', 'We welcome small business owners in our co-working space.', /small business owners/],
+];
+for (const [name, input, requiredRegex] of preservationCases) {
+  const out = scrubBannedPhrases(input);
+  if (requiredRegex.test(out)) {
+    console.log(`  ✅ ${name}`);
+    pass++;
+  } else {
+    console.log(`  ❌ ${name} — content was over-scrubbed`);
     console.log(`     input: ${input}`);
     console.log(`     got:   ${out}`);
     fail++;
