@@ -795,9 +795,16 @@ const Dashboard: React.FC = () => {
     const ct = (profile.contentTopics || '').trim();
     const hasContext = desc.length >= 50 || ps.length >= 30 || ct.length >= 30;
     if (!hasContext) {
+      // Silent bail used to mask the root cause for workspaces whose
+      // profile text was always too thin (e.g. signups that skipped the
+      // wizard's description field). Log it so it's visible during
+      // onboarding — worker-side POST /api/db/posts has a safety-net
+      // classifier that picks up these cases on first post creation.
+      console.log(`[archetype] insufficient context to classify — desc=${desc.length} ps=${ps.length} ct=${ct.length} (need desc≥50 or ps≥30 or ct≥30)`);
       setActiveArchetype(null);
       return;
     }
+    console.log(`[archetype] classifier scheduled in 1.5s — desc=${desc.length} ps=${ps.length} ct=${ct.length}${activeClientId ? ` (client=${activeClientId})` : ''}`);
     const timer = setTimeout(async () => {
       try {
         if (activeClientId) {
@@ -818,6 +825,7 @@ const Dashboard: React.FC = () => {
         const cached = await db.getBusinessArchetype();
         if (cached) {
           setActiveArchetype(cached.archetype.slug);
+          console.log(`[archetype] using cached "${cached.archetype.slug}" (confidence ${cached.confidence})`);
           return;
         }
         const classified = await db.classifyBusiness({

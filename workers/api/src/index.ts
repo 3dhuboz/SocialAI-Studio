@@ -1,4 +1,4 @@
-import { Hono, Context } from 'hono';
+import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env';
 import { getAuthUserId, requireAdmin, isRateLimited } from './auth';
@@ -9,10 +9,13 @@ import {
   sniffArchetypeFromCaption,
 } from './lib/image-safety';
 import { critiqueImageInternal } from './lib/critique';
-import { resolveArchetypeSlug } from './lib/archetypes';
+import {
+  ArchetypeRow,
+  resolveArchetypeSlug,
+  classifyArchetypeFromFingerprint,
+} from './lib/archetypes';
 import { generateImageWithBrandRefs } from './lib/image-gen';
 import { refreshFactsForWorkspace } from './lib/facebook-facts';
-import { sendResendEmail } from './lib/email';
 import { cronRefreshTokens } from './cron/refresh-tokens';
 import { cronCheckFalCredits } from './cron/check-fal-credits';
 import { cronWeeklyReview } from './cron/weekly-review';
@@ -32,6 +35,7 @@ import { registerClientsRoutes } from './routes/clients';
 import { registerArchetypeRoutes } from './routes/archetypes';
 import { registerFacebookRoutes } from './routes/facebook';
 import { registerAiRoutes } from './routes/ai';
+import { registerPaypalRoutes } from './routes/paypal';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -80,6 +84,7 @@ registerCampaignRoutes(app);
 registerFactsRoutes(app);
 registerArchetypeRoutes(app);
 registerFacebookRoutes(app);
+registerPaypalRoutes(app);
 
 
 // ── UUID helper ──────────────────────────────────────────────────────────────
@@ -108,684 +113,6 @@ const PLAN_PRICE_AUD: Record<string, number> = {
 
 // ── DB: Campaigns — see routes/campaigns.ts ─────────────────────────────────
 
-// ── Onboarding health check ───────────────────────────────────────────────────
-// Public endpoint — returns only boolean readiness flags + Resend domain
-// verification status. No secrets, no customer info. Safe to leave open
-// since the data here is the same observability you'd get by attempting
-// a live signup yourself.
-app.get('/api/health/onboarding', async (c) => {
-  const out: Record<string, any> = {};
-
-  // PayPal credentials — try to fetch an OAuth token. If credentials are
-  // wrong/missing this throws.
-  try {
-    await paypalAccessToken(c.env);
-    out.paypal_credentials_ok = true;
-  } catch (e: any) {
-    out.paypal_credentials_ok = false;
-    out.paypal_error = (e?.message || 'unknown').slice(0, 120);
-  }
-
-  // PayPal webhook ID configured (worker secret only — value not returned)
-  out.paypal_webhook_id_set = !!c.env.PAYPAL_WEBHOOK_ID;
-
-  // Resend — try to list domains and find socialaistudio.au. Many of our
-  // Resend keys are scoped to "Sending access" only, which means /v1/domains
-  // returns 401 with name="restricted_api_key". That's a GOOD outcome —
-  // sending emails still works; we just can't introspect domain verification
-  // from here. Treat that case as "key is fine, can't verify domain via API".
-  if (c.env.RESEND_API_KEY) {
-    try {
-      const res = await fetch('https://api.resend.com/domains', {
-        headers: { Authorization: `Bearer ${c.env.RESEND_API_KEY}` },
-      });
-      if (res.status === 401) {
-        const body = await res.json().catch(() => ({})) as { name?: string };
-        if (body.name === 'restricted_api_key') {
-          out.resend = {
-            api_key_set: true,
-            sending_only: true,
-            note: 'Key is sending-only — domain status not introspectable. Verify socialaistudio.au manually in Resend dashboard.',
-          };
-        } else {
-          out.resend = { api_key_set: true, auth_error: true };
-        }
-      } else if (res.ok) {
-        const data = await res.json() as { data?: Array<{ name: string; status: string }> };
-        const dom = (data.data || []).find(d => d.name === 'socialaistudio.au');
-        out.resend = {
-          api_key_set: true,
-          sending_only: false,
-          domain_found: !!dom,
-          domain_status: dom?.status || null,
-          domain_verified: dom?.status === 'verified',
-        };
-      } else {
-        out.resend = { api_key_set: true, http_status: res.status };
-      }
-    } catch (e: any) {
-      out.resend = { api_key_set: true, error: (e?.message || 'unknown').slice(0, 120) };
-    }
-  } else {
-    out.resend = { api_key_set: false };
-  }
-
-  // D1 connectivity — minimal probe, no row content returned.
-  try {
-    const r = await c.env.DB.prepare('SELECT 1 as ok').first<{ ok: number }>();
-    out.db_ok = r?.ok === 1;
-  } catch (e: any) {
-    out.db_ok = false;
-    out.db_error = (e?.message || 'unknown').slice(0, 120);
-  }
-
-  return c.json(out);
-});
-
-// ── PayPal subscription endpoints ─────────────────────────────────────────────
-// Live here on the worker (not the CF Pages Function) so they can use the
-// PAYPAL_* and RESEND_API_KEY worker secrets directly. The Pages Functions
-// at functions/api/paypal-{webhook,verify}.js are thin proxies to these
-// routes — keeps PayPal's webhook URL stable while consolidating secrets.
-//
-// Plan-ID → tier mapping. Keep in sync with src/client.config.ts paypalPlanIds
-// and paypalYearlyPlanIds. Both monthly and yearly IDs map to the same tier
-// since `clients.plan` doesn't distinguish billing cycle.
-const PAYPAL_PLAN_TIER: Record<string, string> = {
-  // Monthly
-  'P-1AB09838JG575723YNG3TKPY': 'starter',
-  'P-5JX42118D0152071LNG3TLDY': 'growth',
-  'P-0MN86219YF921874FNG3TLRY': 'pro',
-  'P-5VB80462AU714124YNG3TL7Q': 'agency',
-  // Yearly
-  'P-62C327553Y779300FNHDUU7Y': 'starter',
-  'P-60J02873W1559770VNHDUVAA': 'growth',
-  'P-6G9907746Y8649457NHDUVAA': 'pro',
-  'P-1BH48559DE324360CNHDUVAA': 'agency',
-};
-
-// Plan IDs that bill yearly. PAYMENT.SALE.COMPLETED for these fires once a
-// year, so reel-credit grants must be multiplied by 12 to give the user the
-// same effective monthly cadence as a monthly subscriber.
-const PAYPAL_YEARLY_PLAN_IDS = new Set([
-  'P-62C327553Y779300FNHDUU7Y',
-  'P-60J02873W1559770VNHDUVAA',
-  'P-6G9907746Y8649457NHDUVAA',
-  'P-1BH48559DE324360CNHDUVAA',
-]);
-
-// Reel credits granted per billing cycle, per plan tier. Mirrored in the
-// frontend `client.configs/*.ts` plan feature lines — keep them in sync.
-// Yearly subscribers get this × 12 on each annual renewal (PAYMENT.SALE.COMPLETED
-// fires once for them per year).
-const REEL_CREDITS_PER_MONTH: Record<string, number> = {
-  starter: 0,
-  growth: 0,
-  pro: 4,
-  agency: 20,
-};
-
-// Server-side canonical credit-pack pricing. The frontend `reelCreditPacks`
-// config in client.config.ts defines what's offered; this map is the source
-// of truth for what we'll actually credit when a PayPal order is captured.
-// Mismatches (client-tampered amounts) are rejected.
-//
-// To change pricing: update both this map AND the frontend config — they
-// must stay in sync. Better long-term: serve this from the worker so there's
-// only one source. For now duplication is acceptable because the canonical
-// validator lives on the server (this map), and the client copy is just
-// presentational.
-const REEL_CREDIT_PACKS: Record<string, { credits: number; amount: number; currency: string }> = {
-  small:  { credits: 3,  amount: 9.99,  currency: 'AUD' },
-  medium: { credits: 10, amount: 24.99, currency: 'AUD' },
-  large:  { credits: 25, amount: 49.99, currency: 'AUD' },
-};
-
-const PAYPAL_API_BASE = 'https://api-m.paypal.com';
-const ADMIN_NOTIFY_EMAIL = 'steve@pennywiseit.com.au';
-
-// Grant reel credits for a recurring PayPal payment (PAYMENT.SALE.COMPLETED).
-// Looks up the user's billing_cycle to decide the multiplier (yearly subs
-// get 12× the monthly amount on each annual renewal so total cadence matches
-// monthly subs). Caller MUST gate on a fresh INSERT to the payments table —
-// this function does no idempotency check of its own; relying on the table's
-// unique paypal_event_id index in the caller is simpler and race-free.
-async function grantReelCreditsForRenewal(env: Env, userId: string, plan: string): Promise<void> {
-  const perCycle = REEL_CREDITS_PER_MONTH[plan] ?? 0;
-  if (perCycle === 0) return; // starter/growth — no plan-included reels
-
-  const u = await env.DB.prepare(
-    `SELECT billing_cycle, reel_credits FROM users WHERE id = ?`
-  ).bind(userId).first<{ billing_cycle: string | null; reel_credits: number | null }>();
-  if (!u) return;
-
-  // NULL billing_cycle → assume monthly (the safer default for legacy users).
-  const multiplier = u.billing_cycle === 'yearly' ? 12 : 1;
-  const grant = perCycle * multiplier;
-  const newBalance = (u.reel_credits ?? 0) + grant;
-
-  await env.DB.prepare(
-    `UPDATE users SET reel_credits = ? WHERE id = ?`
-  ).bind(newBalance, userId).run();
-  console.log(`[reels] granted ${grant} credit(s) to user ${userId} (${plan}/${u.billing_cycle ?? 'monthly'}) → ${newBalance} total`);
-}
-
-async function paypalAccessToken(env: Env): Promise<string> {
-  const id = env.PAYPAL_CLIENT_ID;
-  const secret = env.PAYPAL_CLIENT_SECRET;
-  if (!id || !secret) throw new Error('PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET worker secret missing');
-  const creds = btoa(`${id}:${secret}`);
-  const res = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
-    method: 'POST',
-    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials',
-  });
-  const data = await res.json() as { access_token?: string };
-  if (!data.access_token) throw new Error('Failed to obtain PayPal access token');
-  return data.access_token;
-}
-
-async function paypalVerifyWebhookSignature(req: Request, rawBody: string, token: string, env: Env): Promise<boolean> {
-  if (!env.PAYPAL_WEBHOOK_ID) throw new Error('PAYPAL_WEBHOOK_ID worker secret missing');
-  const body = {
-    auth_algo: req.headers.get('paypal-auth-algo'),
-    cert_url: req.headers.get('paypal-cert-url'),
-    transmission_id: req.headers.get('paypal-transmission-id'),
-    transmission_sig: req.headers.get('paypal-transmission-sig'),
-    transmission_time: req.headers.get('paypal-transmission-time'),
-    webhook_id: env.PAYPAL_WEBHOOK_ID,
-    webhook_event: JSON.parse(rawBody),
-  };
-  const res = await fetch(`${PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json() as { verification_status?: string };
-  return data.verification_status === 'SUCCESS';
-}
-
-function welcomeEmailHtml(plan: string): string {
-  const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
-  const steps = ['Log in and complete your business profile','Connect your Facebook & Instagram pages','Generate your first AI post and schedule it'];
-  const stepsHtml = steps.map((s, i) =>
-    `<div style="display:flex;align-items:center;gap:12px;"><div style="width:24px;height:24px;background:#f59e0b22;border:1px solid #f59e0b44;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#f59e0b;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</div><span style="color:#d1d5db;font-size:13px;">${s}</span></div>`
-  ).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:#f59e0b;font-weight:800;font-size:15px;">Social AI Studio</span></div></div><div style="background:linear-gradient(135deg,#f59e0b22,#ef444411);border:1px solid #f59e0b33;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><div style="font-size:48px;margin-bottom:16px;">🎉</div><h1 style="color:#ffffff;font-size:26px;font-weight:900;margin:0 0 12px;">You're all set!</h1><p style="color:#9ca3af;font-size:15px;line-height:1.6;margin:0 0 24px;">Your <strong style="color:#f59e0b;">${planName} Plan</strong> is now active. Welcome to Social AI Studio — let's grow your social media together.</p><a href="https://socialaistudio.au" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#000;font-weight:900;font-size:14px;padding:14px 32px;border-radius:50px;text-decoration:none;">Open Dashboard →</a></div><div style="background:#111118;border:1px solid #1f2937;border-radius:16px;padding:24px 28px;margin-bottom:16px;"><h2 style="color:#ffffff;font-size:14px;font-weight:700;margin:0 0 16px;">What happens next?</h2><div style="display:flex;flex-direction:column;gap:12px;">${stepsHtml}</div></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:support@pennywiseit.com.au" style="color:#f59e0b;text-decoration:none;">support@pennywiseit.com.au</a> · <a href="https://socialaistudio.au" style="color:#f59e0b;text-decoration:none;">socialaistudio.au</a></p></div></body></html>`;
-}
-
-function cancellationEmailHtml(): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:#f59e0b;font-weight:800;font-size:15px;">Social AI Studio</span></div></div><div style="background:#111118;border:1px solid #374151;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><h1 style="color:#ffffff;font-size:22px;font-weight:900;margin:0 0 12px;">Subscription Cancelled</h1><p style="color:#9ca3af;font-size:14px;line-height:1.6;margin:0 0 24px;">Your Social AI Studio subscription has been cancelled. You'll retain access until the end of your current billing period.</p><p style="color:#6b7280;font-size:13px;margin:0;">Changed your mind? <a href="https://socialaistudio.au" style="color:#f59e0b;text-decoration:none;">Reactivate your plan</a> anytime.</p></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:support@pennywiseit.com.au" style="color:#f59e0b;text-decoration:none;">support@pennywiseit.com.au</a></p></div></body></html>`;
-}
-
-// ── PayPal: Verify subscription ─────────────────────────────────────────────
-// Called from the frontend (PricingTable.tsx) immediately after PayPal's
-// onApprove fires. Confirms with PayPal that the subscription is active,
-// stores a pending activation in D1 (consumed by App.tsx on the user's
-// next render), and sends the welcome email so it goes out even when the
-// PayPal webhook doesn't fire (or fires late).
-app.post('/api/paypal-verify', async (c) => {
-  const body = await c.req.json<{ subscriptionId?: string; uid?: string | null; planId?: string }>().catch(() => null);
-  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
-  const { subscriptionId, planId } = body;
-  if (!subscriptionId || !planId) return c.json({ error: 'Missing subscriptionId or planId' }, 400);
-
-  try {
-    const token = await paypalAccessToken(c.env);
-    const res = await fetch(`${PAYPAL_API_BASE}/v1/billing/subscriptions/${subscriptionId}`, {
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    });
-    const sub = await res.json() as { status?: string; subscriber?: { email_address?: string; payer_id?: string } };
-    if (sub.status !== 'ACTIVE') {
-      return c.json({ error: `Subscription not yet active (status: ${sub.status}). Please wait and try again.` }, 400);
-    }
-
-    const email = sub.subscriber?.email_address || '';
-    const payerId = sub.subscriber?.payer_id || '';
-    const id = uuid();
-    await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
-       VALUES (?,?,?,?,?,?,0)`
-    ).bind(id, planId, email, subscriptionId, payerId, new Date().toISOString()).run();
-
-    // Send welcome email here (don't wait for the webhook — it's the safety net,
-    // not the primary signal). Skipped silently if RESEND_API_KEY isn't set.
-    if (email) {
-      await sendResendEmail(c.env, {
-        to: email,
-        subject: `Welcome to Social AI Studio — your ${planId} plan is active!`,
-        html: welcomeEmailHtml(planId),
-      });
-      await sendResendEmail(c.env, {
-        to: ADMIN_NOTIFY_EMAIL,
-        subject: `New subscriber: ${email} — ${planId} plan`,
-        html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${planId}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>`,
-      });
-    }
-
-    return c.json({ success: true, plan: planId });
-  } catch (err: any) {
-    console.error('PayPal verify error:', err?.message || err);
-    return c.json({ error: 'Verification failed. Please contact support.' }, 500);
-  }
-});
-
-// ── PayPal: Credit pack capture confirmation ─────────────────────────────────
-// Frontend's PayPal Smart Buttons render an order client-side and onApprove
-// hands us the orderID. Trust nothing from the client — fetch the order from
-// PayPal directly, verify it's actually paid and the amount matches our
-// canonical price for the requested pack size, then credit the user.
-//
-// Idempotency: payments.paypal_capture_id is the unique key (PayPal order_id
-// for captures). Replays of the same orderID won't double-credit.
-app.post('/api/paypal-credit-pack-confirm', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-
-  const body = await c.req.json<{ orderId?: string; packId?: string; clientId?: string | null }>().catch(() => null);
-  if (!body?.orderId || !body?.packId) return c.json({ error: 'Missing orderId or packId' }, 400);
-  const pack = REEL_CREDIT_PACKS[body.packId];
-  if (!pack) return c.json({ error: `Unknown pack: ${body.packId}` }, 400);
-
-  // Idempotency check — if we've already processed this order, return success
-  // without re-crediting. Lets the frontend safely retry on flaky network.
-  const existing = await c.env.DB.prepare(
-    `SELECT 1 FROM payments WHERE paypal_capture_id = ? LIMIT 1`
-  ).bind(body.orderId).first();
-  if (existing) {
-    console.log(`[credit-pack] order ${body.orderId} already processed — idempotent return`);
-    return c.json({ success: true, credits_added: 0, already_processed: true });
-  }
-
-  try {
-    const token = await paypalAccessToken(c.env);
-    const orderRes = await fetch(`${PAYPAL_API_BASE}/v2/checkout/orders/${body.orderId}`, {
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    });
-    const order = await orderRes.json() as any;
-    if (!orderRes.ok) {
-      console.error(`[credit-pack] PayPal lookup ${body.orderId} returned ${orderRes.status}: ${JSON.stringify(order)}`);
-      return c.json({ error: 'Could not verify order with PayPal — please contact support if you were charged.' }, 502);
-    }
-    if (order.status !== 'COMPLETED' && order.status !== 'APPROVED') {
-      return c.json({ error: `Order not yet captured (status: ${order.status}). Try again in a moment.` }, 400);
-    }
-    // Validate amount + currency against canonical pack price.
-    const unit = order.purchase_units?.[0];
-    const captureAmount = unit?.payments?.captures?.[0]?.amount || unit?.amount;
-    const paidValue = parseFloat(captureAmount?.value ?? '0');
-    const paidCurrency = captureAmount?.currency_code || '';
-    if (!Number.isFinite(paidValue) || Math.abs(paidValue - pack.amount) > 0.01 || paidCurrency !== pack.currency) {
-      console.warn(`[credit-pack] amount mismatch for ${body.orderId}: paid ${paidValue} ${paidCurrency}, expected ${pack.amount} ${pack.currency}`);
-      return c.json({ error: 'Order amount does not match pack price. If you were charged, please contact support.' }, 400);
-    }
-
-    // Credit the appropriate workspace — client_id passed by frontend if the
-    // user is in an agency-managed client view (Agency plan); otherwise the
-    // user's own balance. Both columns share the same semantics.
-    const targetClientId = body.clientId || null;
-    if (targetClientId) {
-      // Verify client belongs to this user before crediting (no privilege escalation).
-      const ok = await c.env.DB.prepare(`SELECT 1 FROM clients WHERE id = ? AND user_id = ? LIMIT 1`)
-        .bind(targetClientId, uid).first();
-      if (!ok) return c.json({ error: 'Invalid clientId for this user.' }, 403);
-      await c.env.DB.prepare(
-        `UPDATE clients SET reel_credits = COALESCE(reel_credits, 0) + ? WHERE id = ? AND user_id = ?`
-      ).bind(pack.credits, targetClientId, uid).run();
-    } else {
-      await c.env.DB.prepare(
-        `UPDATE users SET reel_credits = COALESCE(reel_credits, 0) + ? WHERE id = ?`
-      ).bind(pack.credits, uid).run();
-    }
-
-    // Audit-trail row in payments. Reuse the existing schema: event_type
-    // 'CREDIT_PACK_PURCHASE' is new but the column is free-form text.
-    const captureId = unit?.payments?.captures?.[0]?.id || body.orderId;
-    const email = order.payer?.email_address || null;
-    await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO payments
-         (id, paypal_event_id, paypal_subscription_id, paypal_capture_id,
-          email, user_id, plan, event_type, amount_cents, currency, status,
-          raw_event, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).bind(
-      uuid(), `credit_pack:${captureId}`, null, body.orderId,
-      email, uid, null, 'CREDIT_PACK_PURCHASE',
-      Math.round(pack.amount * 100), pack.currency, 'completed',
-      JSON.stringify({ pack: body.packId, credits: pack.credits, clientId: targetClientId }).slice(0, 8000),
-      new Date().toISOString(),
-    ).run();
-
-    console.log(`[credit-pack] credited ${pack.credits} reels to ${targetClientId ? `client ${targetClientId}` : `user ${uid}`} (pack: ${body.packId}, order: ${body.orderId})`);
-    return c.json({ success: true, credits_added: pack.credits });
-  } catch (err: any) {
-    console.error('[credit-pack] confirm error:', err?.message || err);
-    return c.json({ error: 'Server error confirming purchase. If you were charged, please contact support.' }, 500);
-  }
-});
-
-// ── Reels: Pre-flight smoke test ────────────────────────────────────────────
-// Verifies the user's Facebook Page can actually accept a Reel publish via
-// /video_reels — catches "FB token expired", "publish_video scope missing",
-// "page disconnected" before the user schedules a batch and watches it all
-// fail at publish time. Safe + free: kicks off upload_phase=start and
-// abandons the resulting video_id (FB GCs unreferenced uploads after a few
-// hours, no actual reel ever publishes).
-//
-// This is the PROACTIVE counterpart to the cron's reactive image-fallback
-// safety net. Aligns with the user's #1 priority (reliability) — surface the
-// failure at config time, not at publish time.
-app.post('/api/test-reel-publish', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-
-  const body = await c.req.json<{ clientId?: string | null }>().catch(() => null);
-  const clientId = body?.clientId || null;
-
-  // Load social tokens for the appropriate workspace (mirrors the cron's
-  // resolution logic exactly so this test matches what the cron actually does).
-  const tokensRaw = clientId
-    ? await c.env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
-    : await c.env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
-  const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
-  if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
-    return c.json({
-      ok: false,
-      stage: 'no-tokens',
-      message: 'No Facebook page connected. Open Settings → Connected Accounts → Connect Facebook.',
-    }, 200);
-  }
-
-  const base = 'https://graph.facebook.com/v21.0';
-  const pageId = tokens.facebookPageId;
-  const token = tokens.facebookPageAccessToken;
-
-  // Step 1 — verify page lookup works (catches expired/revoked tokens cheap).
-  try {
-    const pageRes = await fetch(`${base}/${pageId}?fields=name,access_token&access_token=${encodeURIComponent(token)}`);
-    const pageData = await pageRes.json() as any;
-    if (!pageRes.ok || pageData.error) {
-      return c.json({
-        ok: false,
-        stage: 'page-lookup',
-        message: `Facebook rejected the page token: ${pageData.error?.message || `HTTP ${pageRes.status}`}. Reconnect Facebook in Settings to refresh.`,
-      }, 200);
-    }
-    const pageName = pageData.name as string;
-
-    // Step 2 — kick off video_reels upload_phase=start. If the page lacks the
-    // publish_video permission OR has Reels disabled, this returns an error.
-    // We DON'T follow through to transfer/finish — FB GCs the unreferenced
-    // upload session. No actual reel publishes.
-    const startRes = await fetch(`${base}/${pageId}/video_reels`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ upload_phase: 'start', access_token: token }),
-    });
-    const startData = await startRes.json() as any;
-    if (!startRes.ok || startData.error) {
-      const errMsg = startData.error?.message || `HTTP ${startRes.status}`;
-      const errCode = startData.error?.code;
-      // FB error codes: 200 = permission denied, 100 = invalid param, 190 = token expired
-      const friendly =
-        errCode === 200 ? 'Page is missing the publish_video permission. Reconnect Facebook in Settings and accept all permissions.'
-        : errCode === 190 ? 'Facebook token expired. Reconnect Facebook in Settings.'
-        : `Facebook rejected the test: ${errMsg}`;
-      return c.json({
-        ok: false,
-        stage: 'reels-start',
-        page_name: pageName,
-        fb_error_code: errCode,
-        message: friendly,
-      }, 200);
-    }
-    if (!startData.video_id || !startData.upload_url) {
-      return c.json({
-        ok: false,
-        stage: 'reels-start',
-        page_name: pageName,
-        message: 'Facebook accepted the request but returned no video_id — Reels API may be misconfigured. Contact support.',
-      }, 200);
-    }
-
-    return c.json({
-      ok: true,
-      page_name: pageName,
-      message: `Reels publishing is configured correctly for ${pageName}. Scheduled reels will publish automatically.`,
-    });
-  } catch (err: any) {
-    return c.json({
-      ok: false,
-      stage: 'network',
-      message: `Could not reach Facebook: ${err?.message || 'unknown'}. Try again in a moment.`,
-    }, 200);
-  }
-});
-
-// ── PayPal: Webhook (subscription lifecycle from PayPal) ────────────────────
-// PayPal posts subscription events (ACTIVATED, CANCELLED) here. Public
-// endpoint — protected by signature verification against PAYPAL_WEBHOOK_ID.
-// Acts as the safety-net for /api/paypal-verify in case the user closes the
-// browser tab mid-flow.
-app.post('/api/paypal-webhook', async (c) => {
-  const rawBody = await c.req.raw.text();
-  let event: any;
-  try { event = JSON.parse(rawBody); } catch { return c.text('Invalid JSON', 400); }
-
-  try {
-    const token = await paypalAccessToken(c.env);
-    const valid = await paypalVerifyWebhookSignature(c.req.raw, rawBody, token, c.env);
-    if (!valid) {
-      console.error('PayPal webhook signature verification failed');
-      return c.text('Webhook signature invalid', 400);
-    }
-  } catch (err: any) {
-    console.error('Webhook verification error:', err?.message || err);
-    return c.text('Webhook verification failed', 400);
-  }
-
-  const resource = event.resource || {};
-  const eventType = event.event_type;
-
-  if (eventType === 'BILLING.SUBSCRIPTION.ACTIVATED') {
-    const subscriptionId = resource.id;
-    const paypalPlanId = resource.plan_id;
-    const email = resource.subscriber?.email_address || '';
-    const payerId = resource.subscriber?.payer_id || '';
-    const plan = PAYPAL_PLAN_TIER[paypalPlanId];
-    if (!plan) {
-      console.warn('No plan matched for PayPal plan ID:', paypalPlanId);
-      return c.text('No plan matched — skipped.', 200);
-    }
-    const billingCycle = PAYPAL_YEARLY_PLAN_IDS.has(paypalPlanId) ? 'yearly' : 'monthly';
-
-    const id = uuid();
-    // INSERT OR IGNORE — verify endpoint may have already created the row.
-    // Keying on subscription_id would be cleaner but the existing schema uses
-    // a uuid primary key; the consumed flag handles double-consumption.
-    await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed, billing_cycle)
-       VALUES (?,?,?,?,?,?,0,?)`
-    ).bind(id, plan, email, subscriptionId, payerId, new Date().toISOString(), billingCycle).run();
-    // If a verify-endpoint row already exists, patch in billing_cycle so the
-    // frontend's consumeActivation flow propagates it to the users row.
-    await c.env.DB.prepare(
-      `UPDATE pending_activations SET billing_cycle = COALESCE(billing_cycle, ?)
-       WHERE paypal_subscription_id = ? AND consumed = 0`
-    ).bind(billingCycle, subscriptionId).run();
-    console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan} (${billingCycle})`);
-
-    if (email) {
-      await sendResendEmail(c.env, { to: email, subject: `Welcome to Social AI Studio — your ${plan} plan is active!`, html: welcomeEmailHtml(plan) });
-      await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan} (${billingCycle})<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
-    }
-  }
-
-  // PAYMENT.SALE.COMPLETED grants reel credits — but the grant is gated on
-  // the audit-trail INSERT below (recordPaymentEvent) actually inserting a
-  // new row. PayPal retries the same webhook up to 25 times; without that
-  // gate we'd double-grant on every retry. See recordPaymentEvent for the
-  // gating logic.
-
-  if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED') {
-    const subscriptionId = resource.id;
-    const email = resource.subscriber?.email_address || '';
-    const id = uuid();
-    await c.env.DB.prepare(
-      `INSERT INTO pending_cancellations (id, email, paypal_subscription_id, cancelled_at, consumed)
-       VALUES (?,?,?,?,0)`
-    ).bind(id, email ?? null, subscriptionId ?? null, new Date().toISOString()).run();
-    console.log(`PayPal cancellation stored for ${email || subscriptionId}`);
-
-    if (email) {
-      await sendResendEmail(c.env, { to: email, subject: 'Your Social AI Studio subscription has been cancelled', html: cancellationEmailHtml() });
-      await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
-    }
-  }
-
-  // Audit-trail mirror — every event we care about gets a row in `payments`.
-  // Append-only, dedup'd by paypal_event_id. The admin Customers dashboard
-  // and the customer Billing screen read from this table; the `pending_*`
-  // tables stay short-lived (consumed-then-ignored).
-  try {
-    await recordPaymentEvent(c, event);
-  } catch (e) {
-    console.error('recordPaymentEvent failed (webhook continues):', String(e));
-  }
-
-  return c.text('OK', 200);
-});
-
-/**
- * Mirror a PayPal webhook event into our `payments` table for audit + admin
- * visibility. Idempotent via the unique index on paypal_event_id — a retried
- * delivery will INSERT OR IGNORE without producing a duplicate row.
- *
- * Event types handled:
- *   BILLING.SUBSCRIPTION.ACTIVATED  → status 'completed', no amount
- *   BILLING.SUBSCRIPTION.CANCELLED  → status 'cancelled', no amount
- *   PAYMENT.SALE.COMPLETED          → status 'completed', positive amount_cents
- *   PAYMENT.SALE.REFUNDED           → status 'refunded',  negative amount_cents
- *   BILLING.SUBSCRIPTION.PAYMENT.FAILED → status 'failed', no amount
- *
- * Other event types are intentionally ignored (we'd just be storing noise).
- */
-async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: any): Promise<void> {
-  const eventId = event?.id;
-  const eventType = event?.event_type as string | undefined;
-  const resource = event?.resource || {};
-  if (!eventId || !eventType) return;
-
-  let subscriptionId: string | null = null;
-  let captureId: string | null = null;
-  let amountCents: number | null = null;
-  let currency = 'AUD';
-  let status: 'completed' | 'cancelled' | 'refunded' | 'failed' | null = null;
-  let email: string | null = resource.subscriber?.email_address || null;
-  let plan: string | null = null;
-
-  switch (eventType) {
-    case 'BILLING.SUBSCRIPTION.ACTIVATED': {
-      subscriptionId = resource.id || null;
-      const paypalPlanId = resource.plan_id;
-      if (paypalPlanId) plan = PAYPAL_PLAN_TIER[paypalPlanId] ?? null;
-      status = 'completed';
-      break;
-    }
-    case 'BILLING.SUBSCRIPTION.CANCELLED': {
-      subscriptionId = resource.id || null;
-      status = 'cancelled';
-      break;
-    }
-    case 'PAYMENT.SALE.COMPLETED': {
-      captureId = resource.id || null;
-      // billing_agreement_id is the subscription_id for recurring sales.
-      subscriptionId = resource.billing_agreement_id || null;
-      const total = parseFloat(resource.amount?.total ?? '0');
-      if (Number.isFinite(total) && total > 0) {
-        amountCents = Math.round(total * 100);
-      }
-      currency = resource.amount?.currency || 'AUD';
-      status = 'completed';
-      break;
-    }
-    case 'PAYMENT.SALE.REFUNDED': {
-      captureId = resource.id || null;
-      subscriptionId = resource.billing_agreement_id || null;
-      const total = parseFloat(resource.amount?.total ?? '0');
-      if (Number.isFinite(total) && total > 0) {
-        // Negative so SUMming amount_cents gives net revenue.
-        amountCents = -Math.abs(Math.round(total * 100));
-      }
-      currency = resource.amount?.currency || 'AUD';
-      status = 'refunded';
-      break;
-    }
-    case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED': {
-      subscriptionId = resource.id || null;
-      status = 'failed';
-      break;
-    }
-    default:
-      return;
-  }
-
-  // Resolve user_id + email + plan via the subscription_id (or email fallback).
-  // PAYMENT.SALE.* events don't carry subscriber email; we hop through the
-  // users table via paypal_subscription_id to enrich the row.
-  let userId: string | null = null;
-  if (subscriptionId) {
-    const u = await c.env.DB.prepare(
-      'SELECT id, email, plan FROM users WHERE paypal_subscription_id = ?'
-    ).bind(subscriptionId).first<{ id: string; email: string | null; plan: string | null }>();
-    if (u) {
-      userId = u.id;
-      if (!email) email = u.email;
-      if (!plan && u.plan) plan = u.plan;
-    }
-  }
-  if (!userId && email) {
-    const u = await c.env.DB.prepare(
-      'SELECT id, plan FROM users WHERE email = ?'
-    ).bind(email).first<{ id: string; plan: string | null }>();
-    if (u) {
-      userId = u.id;
-      if (!plan && u.plan) plan = u.plan;
-    }
-  }
-
-  // Cap raw_event so a single huge webhook can't blow row size limits.
-  const rawJson = (() => {
-    try { return JSON.stringify(event).slice(0, 8000); } catch { return null; }
-  })();
-
-  const insertResult = await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO payments
-       (id, paypal_event_id, paypal_subscription_id, paypal_capture_id,
-        email, user_id, plan, event_type, amount_cents, currency, status,
-        raw_event, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(
-    uuid(), eventId, subscriptionId, captureId,
-    email, userId, plan, eventType, amountCents, currency, status,
-    rawJson, new Date().toISOString(),
-  ).run();
-
-  // Grant reel credits ONLY when this is a freshly-inserted PAYMENT.SALE.COMPLETED
-  // row (not a retry-dedup'd no-op). meta.changes === 1 means INSERT OR IGNORE
-  // actually inserted; 0 means the unique paypal_event_id index already had it.
-  // This pattern is the simplest race-free idempotency for "do this side-effect
-  // exactly once per webhook event".
-  if (eventType === 'PAYMENT.SALE.COMPLETED' && insertResult.meta?.changes === 1 && userId && plan) {
-    try {
-      await grantReelCreditsForRenewal(c.env, userId, plan);
-    } catch (e: any) {
-      console.error(`[reels] grant failed for user ${userId} sale ${captureId}: ${e?.message || e}`);
-      // Don't throw — the audit row is already in. A failed grant won't
-      // double-charge the customer; admin can manually credit if needed.
-    }
-  }
-}
 
 // ── Admin: Customers dashboard ───────────────────────────────────────────────
 // Powers the agency owner's "Customers" tab. All endpoints gated by
@@ -1780,124 +1107,6 @@ async function tryCreateCFPagesProject(
   };
 }
 
-// ── Admin: PayPal subscription diagnostic ─────────────────────────────────────
-// Queries PayPal for every plan ID baked into client.config.ts, returns each
-// plan's status + billing cycle + currency. Use this when the hermes checkout
-// shows "We're sorry. Things don't appear to be working" — the most common
-// cause is one or more plans being in CREATED/INACTIVE state instead of ACTIVE.
-//
-// Usage:
-//   curl -X POST https://socialai-api.steve-700.workers.dev/api/admin/paypal-diagnose \
-//     -H "X-Bootstrap-Secret: $FACTS_BOOTSTRAP_SECRET"
-//
-// Auth: same FACTS_BOOTSTRAP_SECRET as the other admin endpoints — no new
-// surface area.
-app.post('/api/admin/paypal-diagnose', async (c) => {
-  const provided = c.req.header('X-Bootstrap-Secret');
-  if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
-  const clientId = c.env.PAYPAL_CLIENT_ID;
-  const clientSecret = c.env.PAYPAL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
-    return c.json({ error: 'PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET worker secret missing' }, 500);
-  }
-
-  // PayPal plan IDs — keep in sync with src/client.config.ts
-  const PLAN_IDS = {
-    monthly: {
-      starter: 'P-1AB09838JG575723YNG3TKPY',
-      growth:  'P-5JX42118D0152071LNG3TLDY',
-      pro:     'P-0MN86219YF921874FNG3TLRY',
-      agency:  'P-5VB80462AU714124YNG3TL7Q',
-    },
-    yearly: {
-      starter: 'P-62C327553Y779300FNHDUU7Y',
-      growth:  'P-60J02873W1559770VNHDUVAA',
-      pro:     'P-6G9907746Y8649457NHDUVAA',
-      agency:  'P-1BH48559DE324360CNHDUVAA',
-    },
-  };
-
-  // Get OAuth token
-  const creds = btoa(`${clientId}:${clientSecret}`);
-  const tokenRes = await fetch('https://api-m.paypal.com/v1/oauth2/token', {
-    method: 'POST',
-    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials',
-  });
-  const tokenData = await tokenRes.json() as any;
-  if (!tokenData.access_token) {
-    return c.json({ error: 'PayPal auth failed', detail: tokenData }, 500);
-  }
-  const token = tokenData.access_token;
-  const appId = tokenData.app_id || null;
-
-  // Query each plan
-  type PlanStatus = {
-    label: string;
-    planId: string;
-    httpStatus: number;
-    status?: string;
-    interval?: string;
-    price?: string;
-    currency?: string;
-    setupFee?: string;
-    productId?: string;
-    error?: string;
-  };
-  const results: PlanStatus[] = [];
-  const issues: string[] = [];
-
-  const checkPlan = async (label: string, planId: string) => {
-    const res = await fetch(`https://api-m.paypal.com/v1/billing/plans/${planId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const r: PlanStatus = { label, planId, httpStatus: res.status };
-    if (!res.ok) {
-      try {
-        const err = await res.json() as any;
-        r.error = err?.details?.[0]?.description || err?.message || `HTTP ${res.status}`;
-      } catch {
-        r.error = `HTTP ${res.status}`;
-      }
-      issues.push(`${label} (${planId}) — ${r.error}`);
-      results.push(r);
-      return;
-    }
-    const plan = await res.json() as any;
-    const billingCycle = plan.billing_cycles?.[0];
-    const price = billingCycle?.pricing_scheme?.fixed_price;
-    const setupFee = plan.payment_preferences?.setup_fee;
-    r.status = plan.status;
-    r.interval = billingCycle?.frequency
-      ? `${billingCycle.frequency.interval_count} ${billingCycle.frequency.interval_unit}`
-      : undefined;
-    r.price = price ? price.value : undefined;
-    r.currency = price ? price.currency_code : undefined;
-    r.setupFee = setupFee ? `${setupFee.value} ${setupFee.currency_code}` : 'none';
-    r.productId = plan.product_id;
-    if (plan.status !== 'ACTIVE') {
-      issues.push(`${label} (${planId}) is ${plan.status} — must be ACTIVE. Run: POST /v1/billing/plans/${planId}/activate`);
-    }
-    if (r.currency && r.currency !== 'AUD') {
-      issues.push(`${label} (${planId}) is in ${r.currency} not AUD — currency mismatch causes hermes to fail`);
-    }
-    results.push(r);
-  };
-
-  for (const [label, id] of Object.entries(PLAN_IDS.monthly)) await checkPlan(label, id);
-  for (const [label, id] of Object.entries(PLAN_IDS.yearly)) await checkPlan(`${label}-yearly`, id);
-
-  return c.json({
-    paypalAppId: appId,
-    plans: results,
-    issues,
-    verdict: issues.length === 0
-      ? 'All plans look healthy. The hermes "We\'re sorry" error is likely browser-anti-fraud (CDP debugging attached) or PayPal app domain restriction missing socialaistudio.au. Check developer.paypal.com → your live app → return URLs / domains.'
-      : 'Plan-level issues found — see "issues" array. Fix those first before assuming it\'s a browser/domain problem.',
-  });
-});
 
 app.post('/api/admin/bootstrap-all-facts', async (c) => {
   const provided = c.req.header('X-Bootstrap-Secret');
@@ -2069,33 +1278,59 @@ app.post('/api/onboarding-magic', async (c) => {
     ownPosts.length > 0 && `Recent posts:\n${ownPosts.map(p => `- ${p.content.slice(0, 200)}`).join('\n')}`,
   ].filter(Boolean).join('\n');
 
-  // Inline the classifier call (re-uses the same logic from /api/classify-business)
-  const archetypeRows = await c.env.DB.prepare(
-    `SELECT slug, name, description, image_examples, voice_cues, content_pillars FROM business_archetypes ORDER BY slug`
-  ).all<{ slug: string; name: string; description: string; image_examples: string; voice_cues: string | null; content_pillars: string }>();
-  const archetypes = archetypeRows.results || [];
-
-  const archetypeListing = archetypes.map(a =>
-    `• ${a.slug} — ${a.name}: ${a.description}`
-  ).join('\n');
-
-  const classifySystem = `You are a business-archetype classifier. Pick the BEST match for this business from the list below. Respond ONLY with valid JSON {"archetype_slug":"...","confidence":0-1,"reasoning":"one sentence"}.\n\n${archetypeListing}`;
-
+  // Route through the shared 3-layer classifier (keyword → Vectorize →
+  // Haiku) so /api/onboarding-magic and /api/classify-business agree on
+  // the verdict. Falls back to 'professional-services' when the
+  // fingerprint is empty or the classifier errors — we MUST persist a slug
+  // here so the first post after onboarding doesn't ship with NULL
+  // archetype.
   let archetypeSlug = 'professional-services';
   let archetypeConfidence = 0.5;
   let archetypeReasoning = 'default fallback';
-  try {
-    const result = c.env.ANTHROPIC_API_KEY
-      ? await callAnthropicDirect({ apiKey: c.env.ANTHROPIC_API_KEY, model: 'claude-haiku-4-5', systemPrompt: classifySystem, prompt: fingerprint || 'No data yet', temperature: 0.1, maxTokens: 200, responseFormat: 'json' })
-      : await callOpenRouter(apiKey, classifySystem, fingerprint || 'No data yet', 0.1, 200);
-    const parsed = JSON.parse(result.text);
-    if (archetypes.find(a => a.slug === parsed.archetype_slug)) {
-      archetypeSlug = parsed.archetype_slug;
-      archetypeConfidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.7;
-      archetypeReasoning = (parsed.reasoning || '').slice(0, 300);
+  let archetypePayload: {
+    slug: string;
+    name: string;
+    description: string;
+    voice_cues: string | null;
+    content_pillars: string[];
+    image_examples?: string[];
+    image_avoid_notes?: string | null;
+    banned_trope_extras?: string[] | null;
+  } | null = null;
+
+  if (fingerprint.trim()) {
+    const result = await classifyArchetypeFromFingerprint(c.env, fingerprint);
+    if ('chosen' in result) {
+      archetypeSlug = result.chosen.slug;
+      archetypeConfidence = result.chosen.confidence;
+      archetypeReasoning = result.chosen.reasoning.slice(0, 300);
+      archetypePayload = result.archetypePayload;
+    } else {
+      console.warn(`[onboarding-magic] classifier failed: ${result.error} — falling back to ${archetypeSlug}`);
     }
-  } catch (e: any) {
-    console.warn(`[onboarding-magic] classifier failed:`, e?.message);
+  } else {
+    console.warn(`[onboarding-magic] empty fingerprint — falling back to ${archetypeSlug}`);
+  }
+
+  // Fallback path (empty fingerprint OR classifier error): load the
+  // fallback archetype's payload directly so the response shape is
+  // consistent with the happy path.
+  if (!archetypePayload) {
+    const fallback = await c.env.DB.prepare(
+      `SELECT slug, name, description, image_examples, image_avoid_notes, voice_cues, content_pillars, banned_trope_extras FROM business_archetypes WHERE slug = ?`
+    ).bind(archetypeSlug).first<ArchetypeRow>();
+    if (fallback) {
+      archetypePayload = {
+        slug: fallback.slug,
+        name: fallback.name,
+        description: fallback.description,
+        image_examples: JSON.parse(fallback.image_examples),
+        image_avoid_notes: fallback.image_avoid_notes,
+        voice_cues: fallback.voice_cues,
+        content_pillars: JSON.parse(fallback.content_pillars),
+        banned_trope_extras: fallback.banned_trope_extras ? JSON.parse(fallback.banned_trope_extras) : null,
+      };
+    }
   }
 
   // 6. Persist classifier verdict
@@ -2104,7 +1339,6 @@ app.post('/api/onboarding-magic', async (c) => {
   ).bind(archetypeSlug, archetypeConfidence, archetypeReasoning, new Date().toISOString(), uid).run();
 
   // 7. Build the Brand DNA Card payload
-  const matched = archetypes.find(a => a.slug === archetypeSlug)!;
   const topTopics = Array.from(new Set(
     ownPosts.flatMap(p => p.content.toLowerCase().match(/\b[a-z]{5,}\b/g) || [])
       .filter(w => !/the|and|with|that|this|from|have|will|your/.test(w))
@@ -2113,12 +1347,12 @@ app.post('/api/onboarding-magic', async (c) => {
   return c.json({
     ok: true,
     archetype: {
-      slug: matched.slug,
-      name: matched.name,
+      slug: archetypePayload?.slug ?? archetypeSlug,
+      name: archetypePayload?.name ?? archetypeSlug,
       confidence: archetypeConfidence,
       reasoning: archetypeReasoning,
-      content_pillars: JSON.parse(matched.content_pillars),
-      voice_cues: matched.voice_cues,
+      content_pillars: archetypePayload?.content_pillars ?? [],
+      voice_cues: archetypePayload?.voice_cues ?? null,
     },
     brand_dna: {
       voice_samples: ownPosts.map(p => ({ content: p.content.slice(0, 240), engagement: p.engagement_score })),
@@ -2738,80 +1972,6 @@ app.all('/api/runway-proxy/*', async (c) => {
   return c.body(text, { status: res.status as any });
 });
 
-// ── PayPal Verify ───────────────────────────────────────────────────────────────
-// Called by the frontend after PayPal checkout completes.
-// Verifies with PayPal that the subscription is active, then stores a pending
-// activation record. Uses INSERT OR IGNORE so a webhook-created record wins.
-app.post('/api/paypal-verify', async (c) => {
-  const clientId = c.env.PAYPAL_CLIENT_ID;
-  const clientSecret = c.env.PAYPAL_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return c.json({ error: 'PayPal credentials not configured' }, 500);
-
-  const { subscriptionId, uid, planId } = await c.req.json();
-  if (!subscriptionId || !planId) return c.json({ error: 'Missing subscriptionId or planId' }, 400);
-
-  // Get PayPal access token
-  const creds = btoa(`${clientId}:${clientSecret}`);
-  const tokenRes = await fetch('https://api-m.paypal.com/v1/oauth2/token', {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${creds}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials',
-  });
-  const tokenData = await tokenRes.json() as any;
-  if (!tokenData.access_token) return c.json({ error: 'Failed to get PayPal token' }, 500);
-
-  // Get subscription details from PayPal
-  const subRes = await fetch(`https://api-m.paypal.com/v1/billing/subscriptions/${subscriptionId}`, {
-    headers: {
-      Authorization: `Bearer ${tokenData.access_token}`,
-      'Content-Type': 'application/json',
-    },
-  });
-  if (!subRes.ok) return c.json({ error: 'Failed to fetch subscription from PayPal' }, 500);
-  const subscription = await subRes.json() as any;
-
-  if (subscription.status !== 'ACTIVE') {
-    return c.json({
-      error: `Subscription not yet active (status: ${subscription.status}). Please wait a moment and try again.`,
-    }, 400);
-  }
-
-  // Warn if the claimed planId doesn't match the PayPal subscription's actual plan.
-  // We can't fully validate here without the plan ID mapping, but we log the discrepancy.
-  const paypalPlanId = subscription.plan_id;
-  if (paypalPlanId) {
-    console.log(`PayPal verify: claimed planId=${planId}, subscription plan_id=${paypalPlanId}`);
-  }
-
-  const customerEmail = subscription.subscriber?.email_address || '';
-  const payerId = subscription.subscriber?.payer_id || '';
-  const docId = uid || customerEmail || subscriptionId;
-
-  // INSERT OR IGNORE: webhook may have already inserted the authoritative record.
-  // Do not overwrite it — the webhook-set plan is trusted over the client-claimed planId.
-  await c.env.DB.prepare(`
-    INSERT OR IGNORE INTO pending_activations
-    (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    docId,
-    planId,
-    customerEmail,
-    subscriptionId,
-    payerId,
-    new Date().toISOString(),
-    0
-  ).run();
-
-  console.log(`PayPal activation stored for ${docId} → plan: ${planId}`);
-  return c.json({ success: true, plan: planId });
-});
-
-// NOTE: PayPal webhook is handled by the Cloudflare Pages Function at
-// functions/api/paypal-webhook.js — do not duplicate it here.
 
 // ── Cron Triggers ────────────────────────────────────────────────────────────
 // */5 * * * *  → missed post publisher (every 5 min)
