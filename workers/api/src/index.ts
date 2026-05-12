@@ -4,10 +4,7 @@ import type { Env } from './env';
 import { getAuthUserId, requireAdmin, isRateLimited } from './auth';
 import { callAnthropicDirect, callOpenRouter } from './lib/anthropic';
 import {
-  ARCHETYPE_IMAGE_GUARDRAILS,
   FLUX_NEGATIVE_PROMPT,
-  FLUX_STYLE_SUFFIX,
-  applyArchetypeGuardrails,
   buildSafeImagePrompt,
 } from './lib/image-safety';
 import { critiqueImageInternal } from './lib/critique';
@@ -16,6 +13,7 @@ import {
   resolveArchetypeSlug,
   classifyArchetypeFromFingerprint,
 } from './lib/archetypes';
+import { generateImageWithBrandRefs } from './lib/image-gen';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -57,124 +55,6 @@ const uuid = () => crypto.randomUUID();
 // The resolveArchetypeSlug helper below stays here because it needs Env
 // to query D1 — image-safety.ts is intentionally pure for testability.
 
-
-// ── Brand-grounded image generation (2026-05 image-stack upgrade) ─────────
-//
-// Single helper that all internal image-gen callers (cron prewarm, JIT
-// publish, manual backfill, fal-proxy endpoint) share. Routing logic:
-//
-//   1. Fetch the user's top-N scraped FB photos from client_facts (already
-//      populated by the daily refresh-facts cron — these are the user's
-//      REAL existing posts' imagery, ranked by engagement_score).
-//   2. If ≥1 photo: route to FLUX Pro Kontext with refs ($0.04/image,
-//      4 refs max). Generated image inherits brand colour palette,
-//      lighting, composition style — drops "every customer's images look
-//      identical because FLUX-dev defaults" failure mode.
-//   3. If no photos (fresh workspace, no FB connection yet): fall back to
-//      FLUX-dev ($0.025/MP, no refs) — preserves current behaviour, no
-//      regression.
-//
-// Returns { imageUrl, modelUsed, referencesUsed } so cron logs can audit
-// cost + verify the brand-grounded path actually fires for users who
-// should get it.
-// When `forceFallback` is true, skip the LLM-generated prompt entirely and
-// pick a guaranteed-safe scene from the archetype's fallback bank. Used by
-// the critique retry loop in cronPrewarmImages — if the first attempt
-// scored ≤3 for image/caption mismatch, the LLM prompt is suspect and the
-// safe path is a hand-curated archetype scene that always matches.
-async function generateImageWithBrandRefs(
-  env: Env,
-  userId: string,
-  clientId: string | null,
-  safePrompt: { prompt: string; negativePrompt: string },
-  options: { forceFallback?: boolean } = {},
-): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number }> {
-  const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
-
-  // Archetype guardrail: look up the (client OR user) archetype and rewrite
-  // the prompt if it contains subjects forbidden for that archetype (e.g. a
-  // SaaS business's image_prompt drifted to "plated food on rustic wood
-  // board"). Schema v9: prefers clients.archetype_slug when clientId set,
-  // falls back to users.archetype_slug — so an agency owner running a food
-  // client gets food guardrails on that client's posts, not tech guardrails.
-  const archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
-
-  let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };
-  if (options.forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {
-    // Critique-retry mode: skip the LLM prompt entirely, force a curated
-    // archetype scene. This is the last-resort path when the original gen
-    // failed vision critique.
-    const fallback = ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug];
-    const scene = fallback.fallbackScenes[Math.floor(Math.random() * fallback.fallbackScenes.length)];
-    guarded = {
-      prompt: `${scene}, ${FLUX_STYLE_SUFFIX}`,
-      negativePrompt: `${safePrompt.negativePrompt}, ${fallback.extraNegatives}`,
-      swappedForFallback: true,
-    };
-    console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene`);
-  } else {
-    guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
-    if (guarded.swappedForFallback) {
-      console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene`);
-    }
-  }
-
-  let referenceImageUrls: string[] = [];
-  try {
-    const photoRows = await env.DB.prepare(
-      `SELECT metadata FROM client_facts
-       WHERE user_id = ? AND COALESCE(client_id, '') = ? AND fact_type = 'photo'
-       ORDER BY engagement_score DESC, verified_at DESC
-       LIMIT 4`
-    ).bind(userId, clientId || '').all<{ metadata: string }>();
-    for (const row of photoRows.results || []) {
-      try {
-        const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-        if (meta?.url && typeof meta.url === 'string') referenceImageUrls.push(meta.url);
-      } catch { /* skip */ }
-    }
-  } catch (e) {
-    console.warn(`[image-gen] brand-ref fetch failed for uid=${userId}:`, e);
-  }
-
-  if (referenceImageUrls.length > 0) {
-    const res = await fetch('https://fal.run/fal-ai/flux-pro/kontext', {
-      method: 'POST', headers: authHeader,
-      body: JSON.stringify({
-        prompt: guarded.prompt,
-        image_urls: referenceImageUrls.slice(0, 4),
-        aspect_ratio: '1:1',
-        num_images: 1,
-        guidance_scale: 3.5,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json() as any;
-      const imageUrl = data?.images?.[0]?.url || null;
-      if (imageUrl) return { imageUrl, modelUsed: 'flux-pro-kontext', referencesUsed: referenceImageUrls.length };
-    }
-    console.warn(`[image-gen] flux-pro-kontext failed (status ${res.status}), falling back to flux-dev`);
-  }
-
-  const res = await fetch('https://fal.run/fal-ai/flux/dev', {
-    method: 'POST', headers: authHeader,
-    body: JSON.stringify({
-      prompt: guarded.prompt,
-      negative_prompt: guarded.negativePrompt,
-      image_size: 'square_hd',
-      num_inference_steps: 28,
-      num_images: 1,
-      enable_safety_checker: true,
-      guidance_scale: 5.0,
-    }),
-  });
-  const data = await res.json() as any;
-  if (!res.ok) {
-    console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
-    return { imageUrl: null, modelUsed: 'flux-dev', referencesUsed: 0 };
-  }
-  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', referencesUsed: 0 };
-}
 
 // ── Plan price source-of-truth (KEEP IN SYNC WITH src/client.config.ts) ──────
 // MRR computation needs to know the monthly price per plan. Mirror the
