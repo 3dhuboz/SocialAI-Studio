@@ -446,11 +446,17 @@ function buildSafeImagePrompt(rawPrompt: string | null | undefined): { prompt: s
 // Returns { imageUrl, modelUsed, referencesUsed } so cron logs can audit
 // cost + verify the brand-grounded path actually fires for users who
 // should get it.
+// When `forceFallback` is true, skip the LLM-generated prompt entirely and
+// pick a guaranteed-safe scene from the archetype's fallback bank. Used by
+// the critique retry loop in cronPrewarmImages — if the first attempt
+// scored ≤3 for image/caption mismatch, the LLM prompt is suspect and the
+// safe path is a hand-curated archetype scene that always matches.
 async function generateImageWithBrandRefs(
   env: Env,
   userId: string,
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
+  options: { forceFallback?: boolean } = {},
 ): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
@@ -469,9 +475,24 @@ async function generateImageWithBrandRefs(
     console.warn(`[image-gen] archetype lookup failed for uid=${userId}:`, e);
   }
 
-  const guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
-  if (guarded.swappedForFallback) {
-    console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene`);
+  let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };
+  if (options.forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {
+    // Critique-retry mode: skip the LLM prompt entirely, force a curated
+    // archetype scene. This is the last-resort path when the original gen
+    // failed vision critique.
+    const fallback = ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug];
+    const scene = fallback.fallbackScenes[Math.floor(Math.random() * fallback.fallbackScenes.length)];
+    guarded = {
+      prompt: `${scene}, ${FLUX_STYLE_SUFFIX}`,
+      negativePrompt: `${safePrompt.negativePrompt}, ${fallback.extraNegatives}`,
+      swappedForFallback: true,
+    };
+    console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene`);
+  } else {
+    guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
+    if (guarded.swappedForFallback) {
+      console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene`);
+    }
   }
 
   let referenceImageUrls: string[] = [];
@@ -864,6 +885,88 @@ async function callAnthropicDirect(opts: {
   const data = await res.json() as any;
   const text = (data?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
   return { text, usage: data?.usage || {} };
+}
+
+// ── Vision critique helper (internal, no auth) ───────────────────────────
+//
+// Shared logic with the /api/critique-image-caption HTTP endpoint, lifted
+// out so the prewarm cron + JIT publish-time paths can call it without
+// going through HTTP. Returns null on any failure (network, malformed JSON,
+// missing API key) — caller treats null as "skip critique, ship the
+// image" so a transient critique outage never blocks the publish pipeline.
+//
+// Cost: ~$0.003/call via Haiku 4.5 vision over OpenRouter. Cron prewarm
+// budget: 8 posts/tick × 12 ticks/hour worst-case = $0.29/hour at full
+// queue, much lower in practice (most ticks have 0-2 posts to score).
+async function critiqueImageInternal(
+  env: Env,
+  params: { imageUrl: string; caption: string; archetypeSlug: string | null; businessType?: string },
+): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
+  if (!env.OPENROUTER_API_KEY) return null;
+  const { imageUrl, caption, archetypeSlug, businessType = 'small business' } = params;
+
+  const systemPrompt = `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
+
+Score the image-caption pair on a 0-10 scale:
+- 10 = perfect match: image visually reinforces the caption's specific topic
+- 7-9 = good match: image fits the caption's theme and business archetype
+- 4-6 = partial match: image is on-brand but doesn't reinforce the specific topic
+- 1-3 = poor match: image is off-topic or off-brand (e.g. food image on a tech post)
+- 0 = catastrophic mismatch: image is offensive, inappropriate, or completely unrelated
+
+Business archetype context: ${archetypeSlug || businessType}.
+
+Common failure modes to catch:
+- Food/restaurant imagery on a SaaS or tech-services post
+- Generic stock-photo aesthetic (laptop on desk) on a specific local-business post
+- People/faces in images (violates the no-people policy that's enforced upstream)
+- Text overlay artifacts (FLUX rendered fake menu text, pricing badges, etc.)
+- Subject mismatch (caption mentions a product the image doesn't show)
+
+Return JSON ONLY, no prose. Schema:
+{"score": <0-10>, "match": "yes"|"partial"|"no", "reasoning": "<one sentence>"}`;
+
+  try {
+    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://socialaistudio.au',
+        'X-Title': 'SocialAI Studio — Cron Image Critique',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku-4.5',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?` },
+              { type: 'image_url', image_url: { url: imageUrl } },
+            ],
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 250,
+        response_format: { type: 'json_object' },
+      }),
+    });
+    if (!orRes.ok) {
+      console.warn(`[critique] HTTP ${orRes.status} — skipping`);
+      return null;
+    }
+    const orJson = await orRes.json() as any;
+    const raw = orJson.choices?.[0]?.message?.content || '';
+    const parsed = JSON.parse(raw);
+    const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5;
+    const match = (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial';
+    const reasoning = (parsed.reasoning || '').toString().slice(0, 300);
+    return { score, match, reasoning };
+  } catch (e: any) {
+    console.warn(`[critique] failed: ${e?.message || e}`);
+    return null;
+  }
 }
 
 // ── DB: User ─────────────────────────────────────────────────────────────────
@@ -2631,7 +2734,7 @@ async function backfillImagesForUser(env: Env, uid: string) {
   // prompt but no URL. Cap at 30 per call so a single backfill can't blow the
   // fal.ai budget.
   const rows = await env.DB.prepare(
-    `SELECT p.id, p.image_prompt, p.client_id
+    `SELECT p.id, p.image_prompt, p.client_id, p.content
      FROM posts p
      LEFT JOIN clients c ON p.client_id = c.id
      WHERE p.status = 'Scheduled'
@@ -2644,23 +2747,61 @@ async function backfillImagesForUser(env: Env, uid: string) {
   ).bind(uid, uid).all();
 
   const posts = rows.results || [];
-  let succeeded = 0; let failed = 0; const errors: string[] = [];
+  let succeeded = 0; let failed = 0; let critiqueRetries = 0; const errors: string[] = [];
+
+  // Cache the archetype slug for the run — backfill processes one user's posts,
+  // so we look it up once and re-use it across all critique calls.
+  let archetypeSlug: string | null = null;
+  try {
+    const userRow = await env.DB.prepare(
+      'SELECT archetype_slug FROM users WHERE id = ?'
+    ).bind(uid).first<{ archetype_slug: string | null }>();
+    archetypeSlug = userRow?.archetype_slug || null;
+  } catch { /* best-effort */ }
 
   for (const post of posts) {
     try {
       const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''));
       if (!safe) { failed++; continue; }
 
+      const postId = (post as any).id as string;
+      const clientId = (post as any).client_id as string | null;
+      const caption = ((post as any).content as string | null) || '';
+
       // 2026-05 image-stack upgrade: brand-grounded via FLUX Pro Kontext
       // when the workspace has scraped FB photos available, FLUX-dev when
       // it doesn't. See generateImageWithBrandRefs at the top of this file.
-      const gen = await generateImageWithBrandRefs(env, uid, (post as any).client_id || null, safe);
-      if (gen.imageUrl) {
-        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(gen.imageUrl, (post as any).id).run();
+      const gen = await generateImageWithBrandRefs(env, uid, clientId, safe);
+      let finalUrl = gen.imageUrl;
+
+      // Vision-critique gate (mirror of cronPrewarmImages). One retry with a
+      // forced archetype fallback if the first attempt scored ≤3 for
+      // image/caption mismatch. Skipped when caption is empty or
+      // OPENROUTER_API_KEY is missing.
+      if (finalUrl && caption.length > 20) {
+        const critique = await critiqueImageInternal(env, {
+          imageUrl: finalUrl,
+          caption,
+          archetypeSlug,
+        });
+        if (critique) {
+          console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
+          if (critique.score <= 3) {
+            const retry = await generateImageWithBrandRefs(env, uid, clientId, safe, { forceFallback: true });
+            if (retry.imageUrl) {
+              finalUrl = retry.imageUrl;
+              critiqueRetries++;
+            }
+          }
+        }
+      }
+
+      if (finalUrl) {
+        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(finalUrl, postId).run();
         succeeded++;
       } else {
         failed++;
-        errors.push(`${(post as any).id}: image gen failed via ${gen.modelUsed}`);
+        errors.push(`${postId}: image gen failed via ${gen.modelUsed}`);
       }
     } catch (e: any) {
       failed++;
@@ -2669,7 +2810,7 @@ async function backfillImagesForUser(env: Env, uid: string) {
     // Pace fal.ai — 700ms between calls so 30 posts = ~21s, well under any rate limit
     await new Promise(r => setTimeout(r, 700));
   }
-  return { found: posts.length, succeeded, failed, errors: errors.slice(0, 5) };
+  return { found: posts.length, succeeded, failed, critique_retries: critiqueRetries, errors: errors.slice(0, 5) };
 }
 
 // ── Admin: Provision a whitelabel portal (atomic) ─────────────────────────────
@@ -4911,7 +5052,7 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
   const in30AEST = new Date(Date.now() + 10 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString().replace('Z', '');
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, image_prompt FROM posts
+    `SELECT id, user_id, client_id, image_prompt, content FROM posts
      WHERE status = 'Scheduled'
        AND scheduled_for > ? AND scheduled_for <= ?
        AND (image_url IS NULL OR image_url = '')
@@ -4940,19 +5081,63 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
       // Pulls top FB-scraped photos for the workspace as references, falls
       // back to FLUX-dev for fresh accounts. Same helper used by JIT
       // publish + manual backfill + fal-proxy.
-      const gen = await generateImageWithBrandRefs(
-        env,
-        (post as any).user_id,
-        (post as any).client_id || null,
-        safe,
-      );
-      if (gen.imageUrl) {
+      const userId = (post as any).user_id as string;
+      const clientId = (post as any).client_id as string | null;
+      const postId = (post as any).id as string;
+      const caption = ((post as any).content as string | null) || '';
+
+      const gen = await generateImageWithBrandRefs(env, userId, clientId, safe);
+      let finalUrl = gen.imageUrl;
+      let finalModel = gen.modelUsed;
+      let finalRefs = gen.referencesUsed;
+
+      // ── Vision-critique gate (2026-05-12) ──────────────────────────────
+      // Score the generated image against the caption + workspace archetype.
+      // If the score is ≤3, the LLM-generated prompt likely produced an
+      // off-archetype image (food on a SaaS post, etc.) — regenerate ONCE
+      // using a forced archetype fallback scene, then ship whatever the
+      // second attempt produces. We don't loop further: a second failure
+      // means critique is being overly strict and shipping a 4-6 image is
+      // still better than blocking the publish pipeline.
+      //
+      // Skipped entirely when OPENROUTER_API_KEY is missing (critique
+      // helper returns null) — preserves no-regression behaviour for
+      // workspaces without the key.
+      if (finalUrl && caption.length > 20) {
+        let archetypeSlug: string | null = null;
+        try {
+          const userRow = await env.DB.prepare(
+            'SELECT archetype_slug FROM users WHERE id = ?'
+          ).bind(userId).first<{ archetype_slug: string | null }>();
+          archetypeSlug = userRow?.archetype_slug || null;
+        } catch { /* archetype lookup is best-effort */ }
+
+        const critique = await critiqueImageInternal(env, {
+          imageUrl: finalUrl,
+          caption,
+          archetypeSlug,
+        });
+        if (critique) {
+          console.log(`[CRON prewarm] post ${postId} critique score=${critique.score} match=${critique.match} — ${critique.reasoning}`);
+          if (critique.score <= 3) {
+            console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback`);
+            const retry = await generateImageWithBrandRefs(env, userId, clientId, safe, { forceFallback: true });
+            if (retry.imageUrl) {
+              finalUrl = retry.imageUrl;
+              finalModel = `${retry.modelUsed} (forced-fallback retry)`;
+              finalRefs = retry.referencesUsed;
+            }
+          }
+        }
+      }
+
+      if (finalUrl) {
         await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
-          .bind(gen.imageUrl, (post as any).id).run();
+          .bind(finalUrl, postId).run();
         generated++;
-        console.log(`[CRON prewarm] generated for post ${(post as any).id} via ${gen.modelUsed} (${gen.referencesUsed} refs)`);
+        console.log(`[CRON prewarm] generated for post ${postId} via ${finalModel} (${finalRefs} refs)`);
       } else {
-        console.warn(`[CRON prewarm] no URL for post ${(post as any).id} via ${gen.modelUsed}`);
+        console.warn(`[CRON prewarm] no URL for post ${postId} via ${finalModel}`);
       }
     } catch (e: any) {
       console.warn(`[CRON prewarm] failed for post ${(post as any).id}: ${e?.message}`);
