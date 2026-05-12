@@ -14,6 +14,8 @@ import {
   classifyArchetypeFromFingerprint,
 } from './lib/archetypes';
 import { generateImageWithBrandRefs } from './lib/image-gen';
+import { cronRefreshTokens } from './cron/refresh-tokens';
+import { cronCheckFalCredits } from './cron/check-fal-credits';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -4686,103 +4688,6 @@ async function cronRefreshFacts(env: Env): Promise<{ posts_processed: number }> 
   }
   console.log(`[CRON facts] refreshed ${processed} workspaces`);
   return { posts_processed: processed };
-}
-
-async function cronRefreshTokens(env: Env) {
-  const appId = env.FACEBOOK_APP_ID;
-  const appSecret = env.FACEBOOK_APP_SECRET;
-  if (!appId || !appSecret) { console.log('[CRON] No FB app credentials — skipping token refresh'); return; }
-
-  // Collect all workspaces (users + clients) that have a longLivedUserToken
-  const users = await env.DB.prepare('SELECT id, social_tokens FROM users WHERE social_tokens IS NOT NULL').all();
-  const clients = await env.DB.prepare('SELECT id, social_tokens FROM clients WHERE social_tokens IS NOT NULL').all();
-  const workspaces = [...(users.results ?? []).map((r: any) => ({ id: r.id, table: 'users', tokens: r.social_tokens })),
-                       ...(clients.results ?? []).map((r: any) => ({ id: r.id, table: 'clients', tokens: r.social_tokens }))];
-
-  let refreshed = 0, failed = 0;
-  for (const ws of workspaces) {
-    try {
-      const tokens = JSON.parse(ws.tokens as string);
-      if (!tokens.longLivedUserToken) continue;
-
-      // Exchange for a fresh long-lived token
-      const exchangeUrl = `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${tokens.longLivedUserToken}`;
-      const res = await fetch(exchangeUrl);
-      const data = await res.json() as any;
-      if (!data.access_token) { failed++; continue; }
-
-      // Get fresh page tokens
-      const pagesRes = await fetch(`https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${data.access_token}`);
-      const pagesData = await pagesRes.json() as any;
-      const pages = pagesData.data || [];
-
-      // Find the matching page
-      const page = pages.find((p: any) => p.id === tokens.facebookPageId) || pages[0];
-      if (!page) { failed++; continue; }
-
-      const updated = {
-        ...tokens,
-        longLivedUserToken: data.access_token,
-        facebookPageAccessToken: page.access_token,
-        facebookPageId: page.id,
-        facebookPageName: page.name,
-        instagramBusinessAccountId: page.instagram_business_account?.id || tokens.instagramBusinessAccountId || '',
-        instagramConnected: !!(page.instagram_business_account?.id || tokens.instagramBusinessAccountId),
-      };
-
-      const col = ws.table === 'users' ? 'users' : 'clients';
-      await env.DB.prepare(`UPDATE ${col} SET social_tokens = ? WHERE id = ?`).bind(JSON.stringify(updated), ws.id).run();
-      refreshed++;
-    } catch (e: any) {
-      console.error(`[CRON] Token refresh failed for ${ws.table}/${ws.id}:`, e.message);
-      failed++;
-    }
-  }
-  console.log(`[CRON] Token refresh complete: ${refreshed} refreshed, ${failed} failed`);
-
-  // Alert if any failures
-  if (failed > 0 && env.RESEND_API_KEY) {
-    await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'SocialAI Studio <noreply@socialaistudio.au>',
-        to: 'steve@3dhub.au',
-        subject: `Token refresh: ${failed} workspace(s) failed`,
-        html: `<p>${refreshed} tokens refreshed, ${failed} failed. Check worker logs.</p>`,
-      }),
-    });
-  }
-}
-
-async function cronCheckFalCredits(env: Env) {
-  const apiKey = env.FAL_API_KEY;
-  const resendKey = env.RESEND_API_KEY;
-  if (!apiKey || !resendKey) return;
-
-  try {
-    const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
-    const data = await res.json() as any;
-    const balance = data?.balance ?? data?.credits ?? null;
-    console.log(`[CRON] fal.ai balance: $${balance}`);
-
-    const threshold = 5;
-    if (balance !== null && balance < threshold) {
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'SocialAI Studio <noreply@socialaistudio.au>',
-          to: 'steve@3dhub.au',
-          subject: `fal.ai Credits Low — $${typeof balance === 'number' ? balance.toFixed(2) : balance} remaining`,
-          html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${typeof balance === 'number' ? balance.toFixed(2) : balance}</strong></p><p>Image generation will stop when credits run out.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a></div>`,
-        }),
-      });
-      console.log(`[CRON] Low balance alert sent ($${balance})`);
-    }
-  } catch (e: any) {
-    console.error('[CRON] Credit check failed:', e.message);
-  }
 }
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
