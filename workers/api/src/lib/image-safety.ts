@@ -234,6 +234,67 @@ export function applyArchetypeGuardrails(
   return { prompt: safe.prompt, negativePrompt: negative, swappedForFallback: false };
 }
 
+// Last-resort archetype detection from the post caption itself.
+//
+// The full archetype defense (guardrail-prompt-rewrite + critique-retry +
+// forced-fallback) all no-ops when `users.archetype_slug` is NULL — a
+// workspace that never ran /api/classify-business. This is exactly how
+// food-on-SaaS slipped through for SocialAI Studio's own posts (Penny Wise
+// I.T workspace was never classified, so the cron prewarm ran with
+// archetypeSlug=null and the guardrails did nothing).
+//
+// This function does cheap keyword matching on the post caption to infer
+// an archetype. Used by image-gen.ts (when DB returns null) so guardrails
+// fire even for un-classified workspaces. Returns null if no clear
+// archetype emerges — that's still safer than a guess, because the
+// downstream code already handles null gracefully (just doesn't apply
+// guardrails).
+//
+// Threshold: ≥2 keyword hits and a >=1 hit margin over the runner-up.
+// Same shape as classifyArchetypeFromFingerprint's keyword layer in
+// lib/archetypes.ts — keep them roughly aligned.
+const CAPTION_ARCHETYPE_KEYWORDS: Record<string, string[]> = {
+  'tech-saas-agency': [
+    'saas', 'software', 'platform', 'ai content', 'ai tool', 'ai-powered',
+    'autopilot', 'automation', 'dashboard', 'analytics', 'workflow',
+    'multi-client', 'whitelabel', 'agency dashboard', 'agency tools',
+    'social media tip', 'social media owner', 'cms', 'crm',
+    'subscription', 'app', 'tech company', 'i.t.',
+  ],
+  'food-restaurant': ['menu', 'dish', 'recipe', 'cuisine', 'restaurant', 'cafe', 'eatery', 'dining', 'plated', 'meal'],
+  'bbq-smokehouse': ['brisket', 'smoker', 'low and slow', 'pulled pork', 'ribs', 'bbq', 'smokehouse'],
+  'butcher-meat': ['butcher', 'steak', 'ribeye', 'aged beef', 'cuts of meat', 'wagyu'],
+  'agriculture-farming': ['paddock', 'cattle', 'livestock', 'crops', 'harvest', 'tractor', 'agronomy', 'farm-to-table'],
+  'health-wellness': ['gym', 'workout', 'fitness', 'personal trainer', 'pilates', 'crossfit'],
+  'wellness-mindfulness': ['meditation', 'mindfulness', 'breathwork', 'yoga class'],
+  'automotive-mechanic': ['mechanic', 'tyres', 'logbook service', 'workshop bay', 'oil change'],
+  'retail-ecommerce': ['boutique', 'collection drops', 'in-store', 'new arrival', 'shop online'],
+  'professional-services': ['accountant', 'tax return', 'compliance', 'legal advice', 'invoice', 'bookkeeping'],
+  'creative-arts': ['commission', 'canvas', 'gallery opening', 'artwork', 'sculpture'],
+  'outdoor-sports': ['trail', 'hiking gear', 'kayak', 'campsite', 'gravel ride'],
+  'events-festivals': ['festival lineup', 'ticket release', 'ceremony', 'wedding venue'],
+};
+
+export function sniffArchetypeFromCaption(caption: string | null | undefined): string | null {
+  if (!caption) return null;
+  const lc = caption.toLowerCase();
+  const scored: Array<{ slug: string; hits: number }> = [];
+  for (const [slug, kws] of Object.entries(CAPTION_ARCHETYPE_KEYWORDS)) {
+    let hits = 0;
+    for (const kw of kws) if (lc.includes(kw)) hits++;
+    if (hits > 0) scored.push({ slug, hits });
+  }
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => b.hits - a.hits);
+  const top = scored[0];
+  const second = scored[1] ?? { hits: 0 };
+  // Require ≥2 hits AND a ≥1 hit margin so a borderline match doesn't
+  // misroute. If two archetypes tie, return null (caller falls through
+  // to the safe-base prompt unchanged).
+  if (top.hits >= 2 && top.hits - second.hits >= 1) return top.slug;
+  return null;
+}
+
 // Returns { prompt, negativePrompt } pair, or null if the prompt is too
 // short / invalid to seed a sensible image (caller should skip image gen
 // and let the post publish text-only).

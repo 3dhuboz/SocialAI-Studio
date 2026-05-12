@@ -20,7 +20,21 @@ export async function critiqueImageInternal(
   params: { imageUrl: string; caption: string; archetypeSlug: string | null; businessType?: string },
 ): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
   if (!env.OPENROUTER_API_KEY) return null;
-  const { imageUrl, caption, archetypeSlug, businessType = 'small business' } = params;
+  const { imageUrl, caption, archetypeSlug } = params;
+  // businessType param kept on the type for backward compat with HTTP callers
+  // but no longer used — when archetypeSlug is null we now instruct the
+  // vision model to derive business type from the caption itself, which is
+  // a stronger signal than a stored "small business" default.
+
+  // If the workspace's archetype_slug is NULL (never classified), give the
+  // vision model an explicit "infer it from the caption" instruction so it
+  // doesn't fall back to scoring food-on-SaaS as "fine, it's a small
+  // business". Without this clause, ${archetypeSlug || businessType}
+  // resolves to "small business" and Haiku has no anchor to flag cross-
+  // domain mismatches.
+  const archetypeLine = archetypeSlug
+    ? `Business archetype context: ${archetypeSlug}.`
+    : `Business archetype: UNCLASSIFIED. Infer the actual business type from the caption itself before scoring — read the caption carefully for product mentions, industry verbs, and audience signals. A caption mentioning "AI Content Autopilot", "SaaS", "agency dashboard", "marketing automation", "platform" is a tech/SaaS business, NOT a food business, regardless of any other context.`;
 
   const systemPrompt = `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
 
@@ -28,15 +42,26 @@ Score the image-caption pair on a 0-10 scale:
 - 10 = perfect match: image visually reinforces the caption's specific topic
 - 7-9 = good match: image fits the caption's theme and business archetype
 - 4-6 = partial match: image is on-brand but doesn't reinforce the specific topic
-- 1-3 = poor match: image is off-topic or off-brand (e.g. food image on a tech post)
+- 1-3 = poor match: image is off-topic or off-brand
 - 0 = catastrophic mismatch: image is offensive, inappropriate, or completely unrelated
 
-Business archetype context: ${archetypeSlug || businessType}.
+${archetypeLine}
 
-Common failure modes to catch:
-- Food/restaurant imagery on a SaaS or tech-services post
+HARD RULES — any of these conditions force a score of 1-2, no exceptions:
+- Caption is about SaaS/software/AI/platform/agency tools/marketing automation
+  AND the image shows food, plated meals, restaurant interiors, BBQ, brisket,
+  smoked meats, kitchen scenes, beverages, livestock, paddocks, farms,
+  tractors, gym equipment, workout gear, salons, spas, or auto-mechanic
+  workshops → CROSS-DOMAIN BLEED. Score 1-2.
+- Caption is about a restaurant/cafe/food truck/BBQ joint AND the image
+  shows laptops, dashboards, app screens, or office settings → score 1-2.
+- Caption is about a butcher, farm, BBQ joint, or any food-adjacent business
+  AND the image shows gym equipment, yoga mats, dashboards, or office UI →
+  score 1-2.
+
+Other failure modes (typically score 2-4 depending on severity):
 - Generic stock-photo aesthetic (laptop on desk) on a specific local-business post
-- People/faces in images (violates the no-people policy that's enforced upstream)
+- People/faces in images (violates the no-people policy enforced upstream)
 - Text overlay artifacts (FLUX rendered fake menu text, pricing badges, etc.)
 - Subject mismatch (caption mentions a product the image doesn't show)
 

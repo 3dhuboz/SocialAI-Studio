@@ -6,6 +6,7 @@ import { callAnthropicDirect, callOpenRouter } from './lib/anthropic';
 import {
   FLUX_NEGATIVE_PROMPT,
   buildSafeImagePrompt,
+  sniffArchetypeFromCaption,
 } from './lib/image-safety';
 import { critiqueImageInternal } from './lib/critique';
 import {
@@ -1654,7 +1655,13 @@ app.post('/api/admin/bulk-regen-low-score-images', async (c) => {
   const { uid } = adminCheck;
 
   const body = await c.req.json().catch(() => ({})) as { threshold?: number; limit?: number };
-  const threshold = Math.min(Math.max(body.threshold ?? 4, 1), 7);
+  // Default raised from 4 → 5 to align with the prewarm cron's hardened
+  // retry threshold. The 2026-05-12 hardening flagged that food-on-SaaS
+  // posts scored 4-5 from Haiku when archetype was NULL, not the expected
+  // 1-2. The new critique prompt forces 1-2 for cross-domain bleed, but
+  // already-scored posts won't be re-scored until backfill-critique-scores
+  // re-runs them.
+  const threshold = Math.min(Math.max(body.threshold ?? 5, 1), 7);
   const limit = Math.min(Math.max(body.limit || 20, 1), 50);
 
   const rows = await c.env.DB.prepare(
@@ -1685,8 +1692,10 @@ app.post('/api/admin/bulk-regen-low-score-images', async (c) => {
 
       // Force fallback — these posts already scored badly, so trust the
       // curated archetype scene over the suspect LLM-generated prompt.
+      // Pass the caption so image-gen can sniff the archetype if the
+      // workspace's archetype_slug is NULL.
       const gen = await generateImageWithBrandRefs(
-        c.env, uid, post.client_id, safe, { forceFallback: true },
+        c.env, uid, post.client_id, safe, { forceFallback: true, caption: post.content },
       );
       if (!gen.imageUrl) {
         failed++;
@@ -1694,8 +1703,10 @@ app.post('/api/admin/bulk-regen-low-score-images', async (c) => {
         continue;
       }
 
-      // Re-critique the new image so the persisted score reflects reality
-      const archetypeSlug = await resolveArchetypeSlug(c.env, uid, post.client_id);
+      // Re-critique the new image so the persisted score reflects reality.
+      // Same archetype-sniff fallback as prewarm: DB → caption → null.
+      let archetypeSlug = await resolveArchetypeSlug(c.env, uid, post.client_id);
+      if (!archetypeSlug) archetypeSlug = sniffArchetypeFromCaption(post.content);
       const critique = await critiqueImageInternal(c.env, {
         imageUrl: gen.imageUrl,
         caption: post.content,

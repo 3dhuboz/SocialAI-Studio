@@ -19,6 +19,13 @@ import {
   detectFabrication,
   scrubBannedPhrases,
 } from '../src/services/gemini';
+// Import via namespace because the worker module has no top-level imports,
+// which makes tsx treat it as CJS and wrap named exports under `default`.
+// Workaround: bring in the whole namespace and pull the function out.
+import * as imageSafetyModule from '../workers/api/src/lib/image-safety';
+const sniffArchetypeFromCaption: (caption: string | null | undefined) => string | null =
+  (imageSafetyModule as any).sniffArchetypeFromCaption
+  ?? ((imageSafetyModule as any).default?.sniffArchetypeFromCaption);
 
 interface Case {
   name: string;
@@ -232,6 +239,66 @@ for (const [name, input, requiredRegex] of preservationCases) {
     console.log(`  ❌ ${name} — content was over-scrubbed`);
     console.log(`     input: ${input}`);
     console.log(`     got:   ${out}`);
+    fail++;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// sniffArchetypeFromCaption — last-resort archetype detection
+// ═══════════════════════════════════════════════════════════════════════════
+// Workspaces that never ran /api/classify-business have users.archetype_slug
+// = NULL. Without this sniffer, the entire image-guardrail + critique chain
+// no-ops and food imagery ships on SaaS posts. Regression test the three
+// captions that produced food images on the SocialAI Studio test run.
+console.log('\n━━━ sniffArchetypeFromCaption — caption-driven archetype detection ━━━');
+const sniffCases: Array<[string, string, string | null]> = [
+  // The three captions from the May 2026 SaaS-with-food-images bug
+  [
+    'SaaS caption with "AI Content Autopilot" + "SaaS" sniffs as tech-saas-agency',
+    "Three reasons small business owners in Rockhampton struggle with social media. SocialAI Studio solves all three. Smart scheduling + AI Content Autopilot = posts going out while you run your business.",
+    'tech-saas-agency',
+  ],
+  [
+    'SaaS caption with "Autopilot" + "dashboard" sniffs as tech-saas-agency',
+    "Staring at a blank caption? Your AI just wrote 14 this week. SocialAI Studio's AI Content Autopilot generates 7-14 posts per week and picks the best times to post-all on autopilot.",
+    'tech-saas-agency',
+  ],
+  [
+    'SaaS caption with "agency dashboard" + "multi-client" sniffs as tech-saas-agency',
+    "This week the Penny Wise I.T team shipped updates to SocialAI Studio's multi-client agency dashboard. Marketing agencies managing 10+ client accounts can now bulk-schedule posts across all clients from one workspace.",
+    'tech-saas-agency',
+  ],
+  // BBQ caption should NOT be misdetected as SaaS
+  [
+    'BBQ caption sniffs as bbq-smokehouse',
+    'Low and slow brisket coming off the smoker tomorrow at 11am. Pulled pork sandwiches ready by lunch.',
+    'bbq-smokehouse',
+  ],
+  // Food caption should sniff as food-restaurant
+  [
+    'Restaurant menu caption sniffs as food-restaurant',
+    "Tonight's dinner menu features a roasted heirloom carrot dish, the chef's seasonal special with locally sourced cuisine.",
+    'food-restaurant',
+  ],
+  // Generic small-business caption with no clear archetype signal → null
+  [
+    'Generic caption with no signal returns null',
+    'We love our community and we are proud to serve you every day.',
+    null,
+  ],
+  // Empty / null inputs handled
+  ['Empty caption returns null', '', null],
+];
+for (const [name, input, expected] of sniffCases) {
+  const out = sniffArchetypeFromCaption(input);
+  if (out === expected) {
+    console.log(`  ✅ ${name}`);
+    pass++;
+  } else {
+    console.log(`  ❌ ${name}`);
+    console.log(`     input:    ${input.slice(0, 80)}…`);
+    console.log(`     expected: ${expected}`);
+    console.log(`     got:      ${out}`);
     fail++;
   }
 }

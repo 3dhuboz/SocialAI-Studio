@@ -28,20 +28,27 @@ import {
   ARCHETYPE_IMAGE_GUARDRAILS,
   FLUX_STYLE_SUFFIX,
   applyArchetypeGuardrails,
+  sniffArchetypeFromCaption,
 } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 
 // When `forceFallback` is true, skip the LLM-generated prompt entirely and
 // pick a guaranteed-safe scene from the archetype's fallback bank. Used by
 // the critique retry loop in cronPrewarmImages — if the first attempt
-// scored ≤3 for image/caption mismatch, the LLM prompt is suspect and the
+// scored ≤5 for image/caption mismatch, the LLM prompt is suspect and the
 // safe path is a hand-curated archetype scene that always matches.
+//
+// `options.caption` is the post caption (when available). Used as a
+// last-resort archetype source when the workspace's stored slug is NULL —
+// e.g. the SocialAI Studio / Penny Wise I.T workspace that never ran
+// classify-business. Without this, every defense layer no-ops and the
+// system happily ships food imagery on SaaS posts.
 export async function generateImageWithBrandRefs(
   env: Env,
   userId: string,
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
-  options: { forceFallback?: boolean } = {},
+  options: { forceFallback?: boolean; caption?: string | null } = {},
 ): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
@@ -51,7 +58,18 @@ export async function generateImageWithBrandRefs(
   // board"). Schema v9: prefers clients.archetype_slug when clientId set,
   // falls back to users.archetype_slug — so an agency owner running a food
   // client gets food guardrails on that client's posts, not tech guardrails.
-  const archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
+  //
+  // If both the client and user have NULL archetype_slug (workspace never
+  // classified), fall back to sniffing the caption itself. This was the
+  // exact failure mode that produced food-on-SaaS posts in May 2026 —
+  // archetype was NULL, guardrails no-opped, retry no-opped, food shipped.
+  let archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
+  if (!archetypeSlug && options.caption) {
+    archetypeSlug = sniffArchetypeFromCaption(options.caption);
+    if (archetypeSlug) {
+      console.log(`[image-gen] uid=${userId} archetype unset — sniffed '${archetypeSlug}' from caption`);
+    }
+  }
 
   let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };
   if (options.forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {

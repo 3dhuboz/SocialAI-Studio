@@ -18,6 +18,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithBrandRefs } from '../lib/image-gen';
 import { resolveArchetypeSlug } from '../lib/archetypes';
+import { sniffArchetypeFromCaption } from '../lib/image-safety';
 import { critiqueImageInternal } from '../lib/critique';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 
@@ -60,20 +61,34 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
       const postId = (post as any).id as string;
       const caption = ((post as any).content as string | null) || '';
 
-      const gen = await generateImageWithBrandRefs(env, userId, clientId, safe);
+      // Pass caption into image-gen so the in-helper guardrail fires even
+      // when users.archetype_slug is NULL (the SocialAI Studio failure mode).
+      const gen = await generateImageWithBrandRefs(env, userId, clientId, safe, { caption });
       let finalUrl = gen.imageUrl;
       let finalModel = gen.modelUsed;
       let finalRefs = gen.referencesUsed;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
-      // ── Vision-critique gate (2026-05-12) ──────────────────────────────
+      // ── Vision-critique gate (2026-05-12, hardened 2026-05-12 v2) ─────
       // Score the generated image against the caption + workspace archetype.
-      // If the score is ≤3, the LLM-generated prompt likely produced an
+      // If the score is ≤5, the LLM-generated prompt likely produced an
       // off-archetype image (food on a SaaS post, etc.) — regenerate ONCE
       // using a forced archetype fallback scene, then ship whatever the
       // second attempt produces. We don't loop further: a second failure
-      // means critique is being overly strict and shipping a 4-6 image is
+      // means critique is being overly strict and shipping a 6+ image is
       // still better than blocking the publish pipeline.
+      //
+      // Threshold raised from ≤3 to ≤5 because Haiku scored food-on-SaaS
+      // posts as 4-5 (not the expected 1-2) for the Penny Wise I.T
+      // workspace, since archetype was NULL and the prompt told Haiku
+      // "small business" was the context. The hardened system prompt in
+      // lib/critique.ts now forces 1-2 for cross-domain bleed regardless,
+      // but the wider threshold catches edge cases where Haiku is generous.
+      //
+      // archetypeSlug fallback chain: DB lookup → sniff from caption →
+      // null. Sniffing means a workspace that never ran classify-business
+      // still gets archetype-aware critique + retry, instead of every
+      // defense layer no-opping.
       //
       // The final critique result is persisted on the post so PostModal can
       // render an "AI quality ✓ N/10" badge and admins can scan for
@@ -83,7 +98,13 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
       // helper returns null) — preserves no-regression behaviour for
       // workspaces without the key.
       if (finalUrl && caption.length > 20) {
-        const archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
+        let archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
+        if (!archetypeSlug) {
+          archetypeSlug = sniffArchetypeFromCaption(caption);
+          if (archetypeSlug) {
+            console.log(`[CRON prewarm] post ${postId} archetype unset — sniffed '${archetypeSlug}' from caption`);
+          }
+        }
 
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
@@ -93,9 +114,9 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
         if (critique) {
           console.log(`[CRON prewarm] post ${postId} critique score=${critique.score} match=${critique.match} — ${critique.reasoning}`);
           finalCritique = critique;
-          if (critique.score <= 3) {
-            console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback`);
-            const retry = await generateImageWithBrandRefs(env, userId, clientId, safe, { forceFallback: true });
+          if (critique.score <= 5) {
+            console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} ≤ 5)`);
+            const retry = await generateImageWithBrandRefs(env, userId, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               finalModel = `${retry.modelUsed} (forced-fallback retry)`;

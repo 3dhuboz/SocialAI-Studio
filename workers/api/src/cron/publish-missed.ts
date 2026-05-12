@@ -296,7 +296,13 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           // 2026-05 image-stack upgrade: route through generateImageWithBrandRefs
           // so JIT generation gets the same brand-grounded path the manual
           // backfill + frontend use. See helper at top of this file.
-          const gen = await generateImageWithBrandRefs(env, (post as any).user_id, (post as any).client_id || null, safe);
+          const gen = await generateImageWithBrandRefs(
+            env,
+            (post as any).user_id,
+            (post as any).client_id || null,
+            safe,
+            { caption: cleanContent },
+          );
           if (gen.imageUrl) {
             imageUrl = gen.imageUrl;
             await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
