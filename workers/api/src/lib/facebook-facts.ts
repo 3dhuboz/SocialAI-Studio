@@ -21,6 +21,68 @@
 // Shared by: refresh-facts HTTP routes (own + per-client), admin bootstrap
 // endpoint, and the daily refresh-facts cron.
 
+import type { Env } from '../env';
+
+// Lighter sibling of refreshFactsForWorkspace — caller already has tokens
+// resolved (used by /api/onboarding-magic which just JSON.parsed them).
+// Only scrapes about/posts/photos (no comments or events) because the
+// magic-onboarding flow optimises for speed (~90s budget) and the trio
+// above is enough to seed the Brand DNA Card. Wipes + re-inserts as
+// atomic-ish as D1 allows.
+export async function refreshFactsForUser(
+  env: Env,
+  userId: string,
+  pageId: string,
+  pageToken: string,
+  clientId: string | null,
+): Promise<void> {
+  const base = 'https://graph.facebook.com/v21.0';
+
+  await env.DB.prepare(
+    `DELETE FROM client_facts WHERE user_id = ? AND COALESCE(client_id, '') = ?`
+  ).bind(userId, clientId || '').run();
+
+  // About
+  try {
+    const r = await fetch(`${base}/${pageId}?fields=about,description,category&access_token=${pageToken}`);
+    const d: any = await r.json();
+    if (d?.about || d?.description) {
+      await env.DB.prepare(
+        `INSERT INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+         VALUES (?,?,?,?,?,?,?,?)`
+      ).bind(userId, clientId, 'about', d.about || d.description, JSON.stringify({ category: d.category }), pageId, 0, new Date().toISOString()).run();
+    }
+  } catch { /* skip */ }
+
+  // Posts
+  try {
+    const r = await fetch(`${base}/${pageId}/posts?fields=id,message,created_time,reactions.summary(true),shares,comments.summary(true)&limit=30&access_token=${pageToken}`);
+    const d: any = await r.json();
+    for (const p of d?.data || []) {
+      if (!p.message) continue;
+      const eng = (p.reactions?.summary?.total_count || 0) + (p.shares?.count || 0) * 3 + (p.comments?.summary?.total_count || 0) * 2;
+      await env.DB.prepare(
+        `INSERT INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+         VALUES (?,?,?,?,?,?,?,?)`
+      ).bind(userId, clientId, 'own_post', p.message, JSON.stringify({ created_time: p.created_time }), p.id, eng, new Date().toISOString()).run();
+    }
+  } catch { /* skip */ }
+
+  // Photos
+  try {
+    const r = await fetch(`${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${pageToken}`);
+    const d: any = await r.json();
+    for (const ph of d?.data || []) {
+      const url = ph.images?.[0]?.source;
+      if (!url) continue;
+      await env.DB.prepare(
+        `INSERT INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+         VALUES (?,?,?,?,?,?,?,?)`
+      ).bind(userId, clientId, 'photo', ph.name || 'Untitled photo', JSON.stringify({ url }), ph.id, 0, new Date().toISOString()).run();
+    }
+  } catch { /* skip */ }
+}
+
 export async function refreshFactsForWorkspace(
   db: D1Database,
   uid: string,
