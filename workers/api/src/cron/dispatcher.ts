@@ -24,6 +24,7 @@ import { cronRefreshFacts } from './refresh-facts';
 import { cronPublishMissedPosts } from './publish-missed';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
+import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
 // Returns void; never throws (so a failure in one cron doesn't kill the worker).
@@ -61,6 +62,21 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
     await trackCron(env, 'prewarm_videos', () => cronPrewarmVideos(env));
     await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
+    // Backlog: score every post with image_url but no critique data yet,
+    // then regen low-scoring posts. Both helpers open with a cheap COUNT(*)
+    // — once the backlog is exhausted they become free no-ops on subsequent
+    // ticks. Self-limiting because:
+    //   - critique only touches posts where image_critique_score IS NULL
+    //   - regen only touches posts where image_critique_score <= 5
+    // Once a post is scored OR regenerated to score > 5, it's done.
+    await trackCron(env, 'backlog_critique', async () => {
+      const r = await runBacklogCritique(env);
+      return { posts_processed: r.scored };
+    });
+    await trackCron(env, 'backlog_regen', async () => {
+      const r = await runBacklogRegen(env);
+      return { posts_processed: r.regenerated };
+    });
     return;
   }
   if (cron === '0 3 * * *') {
