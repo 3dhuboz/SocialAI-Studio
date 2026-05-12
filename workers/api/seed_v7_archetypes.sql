@@ -3,8 +3,10 @@
 -- Re-run after editing the source file. Idempotent.
 --
 -- Apply with: npx wrangler d1 execute socialai-db --file=workers/api/seed_v7_archetypes.sql --remote
-
-BEGIN TRANSACTION;
+--
+-- No BEGIN/COMMIT — D1's remote executor rejects BEGIN TRANSACTION/SAVEPOINT
+-- (it wraps each statement in its own transaction internally). The INSERT OR
+-- REPLACE statements below are idempotent on their own.
 
 -- food-restaurant — Food, Café & Restaurant
 INSERT OR REPLACE INTO business_archetypes (slug, name, description, keywords, image_examples, image_avoid_notes, voice_cues, content_pillars, banned_trope_extras) VALUES (
@@ -174,7 +176,5 @@ INSERT OR REPLACE INTO business_archetypes (slug, name, description, keywords, i
   '["Save the Date","Programme Reveal","Behind the Build","Day-of Logistics","Recap & Thanks"]',
   NULL
 );
-
-COMMIT;
 
 -- Seeded 13 archetypes.

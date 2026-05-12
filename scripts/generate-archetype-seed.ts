@@ -17,8 +17,10 @@ console.log('-- Source: src/data/archetypes.ts');
 console.log('-- Re-run after editing the source file. Idempotent.');
 console.log('--');
 console.log('-- Apply with: npx wrangler d1 execute socialai-db --file=workers/api/seed_v7_archetypes.sql --remote');
-console.log('');
-console.log('BEGIN TRANSACTION;');
+console.log('--');
+console.log('-- No BEGIN/COMMIT — D1\'s remote executor rejects BEGIN TRANSACTION/SAVEPOINT');
+console.log('-- (it wraps each statement in its own transaction internally). The INSERT OR');
+console.log('-- REPLACE statements below are idempotent on their own.');
 console.log('');
 
 for (const a of ARCHETYPES) {
@@ -37,6 +39,4 @@ for (const a of ARCHETYPES) {
   console.log('');
 }
 
-console.log('COMMIT;');
-console.log('');
 console.log(`-- Seeded ${ARCHETYPES.length} archetypes.`);
