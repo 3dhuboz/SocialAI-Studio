@@ -5,31 +5,9 @@
 // by every route handler, cron, and helper — having them in their own file
 // means each future extracted module can `import type { Env } from './env'`
 // without pulling in the rest of the 4000-LOC index.
-
-// ── D1 type shim (provided by Cloudflare runtime) ────────────────────────
-export interface D1PreparedStatement {
-  bind(...values: unknown[]): D1PreparedStatement;
-  first<T = Record<string, unknown>>(col?: string): Promise<T | null>;
-  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
-  run(): Promise<{ meta: { changes: number } }>;
-}
-export interface D1Database {
-  prepare(query: string): D1PreparedStatement;
-  exec(query: string): Promise<void>;
-}
-
-// ── R2 type shim (provided by Cloudflare runtime) ────────────────────────
-// Minimal surface — we only put + delete reel videos. If we expand to reads
-// or signed URLs later, add those methods then.
-export interface R2Bucket {
-  put(
-    key: string,
-    value: ReadableStream | ArrayBuffer | string | null,
-    options?: { httpMetadata?: { contentType?: string; cacheControl?: string } }
-  ): Promise<unknown>;
-  delete(key: string): Promise<void>;
-  head(key: string): Promise<{ size: number } | null>;
-}
+//
+// D1Database / R2Bucket types come from @cloudflare/workers-types (loaded
+// globally via tsconfig.types). No local shim needed for those.
 
 // Cloudflare Workers AI binding — used by Phase 2 Vectorize layer to embed
 // business descriptions with @cf/baai/bge-base-en-v1.5 (768-dim, free tier
