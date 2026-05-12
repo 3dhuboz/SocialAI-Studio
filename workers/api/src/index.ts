@@ -2169,6 +2169,183 @@ app.post('/api/admin/backfill-images-all', async (c) => {
   return c.json({ users_processed: results.length, results });
 });
 
+/** POST /api/admin/backfill-critique-scores
+ *
+ *  Retroactively score every post that has an image_url but no critique
+ *  data yet (image_critique_score IS NULL). The prewarm cron only critiques
+ *  NEW image generations; this endpoint covers the historical backlog so
+ *  the PostModal "AI N/10" badge appears on every post, not just freshly
+ *  generated ones.
+ *
+ *  Caps at 50 posts per call to keep wall-time + cost predictable.
+ *  Per-post cost: ~$0.003 (Haiku 4.5 vision). 50 × $0.003 = $0.15/call.
+ *
+ *  Admin-only (requireAdmin). Future-proof: scoped to the caller's own
+ *  posts, so when this graduates to non-admin we don't have to rewrite it.
+ */
+app.post('/api/admin/backfill-critique-scores', async (c) => {
+  const adminCheck = await requireAdmin(c);
+  if (adminCheck instanceof Response) return adminCheck;
+  const { uid } = adminCheck;
+
+  const body = await c.req.json().catch(() => ({})) as { limit?: number };
+  const limit = Math.min(Math.max(body.limit || 50, 1), 100);
+
+  const rows = await c.env.DB.prepare(
+    `SELECT p.id, p.content, p.client_id, p.image_url
+     FROM posts p
+     LEFT JOIN clients cl ON p.client_id = cl.id
+     WHERE (p.user_id = ? OR cl.user_id = ?)
+       AND p.image_url IS NOT NULL AND p.image_url != ''
+       AND p.image_critique_score IS NULL
+       AND length(p.content) > 20
+     ORDER BY p.scheduled_for DESC
+     LIMIT ?`
+  ).bind(uid, uid, limit).all<{ id: string; content: string; client_id: string | null; image_url: string }>();
+
+  const posts = rows.results || [];
+  let scored = 0;
+  let lowScores = 0;
+  let failed = 0;
+  const archetypeCache = new Map<string, string | null>();
+
+  for (const post of posts) {
+    try {
+      const cacheKey = post.client_id || '__user__';
+      if (!archetypeCache.has(cacheKey)) {
+        archetypeCache.set(cacheKey, await resolveArchetypeSlug(c.env, uid, post.client_id));
+      }
+      const archetypeSlug = archetypeCache.get(cacheKey) || null;
+
+      const critique = await critiqueImageInternal(c.env, {
+        imageUrl: post.image_url,
+        caption: post.content,
+        archetypeSlug,
+      });
+
+      if (critique) {
+        await c.env.DB.prepare(
+          `UPDATE posts SET image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
+           WHERE id = ?`
+        ).bind(critique.score, critique.reasoning, new Date().toISOString(), post.id).run();
+        scored++;
+        if (critique.score <= 4) lowScores++;
+      } else {
+        failed++;
+      }
+    } catch (e: any) {
+      failed++;
+      console.warn(`[backfill-critique] post ${post.id} failed: ${e?.message}`);
+    }
+    // Pace OpenRouter — 300ms between calls. 50 posts × 300ms = 15s.
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return c.json({
+    found: posts.length,
+    scored,
+    failed,
+    low_scores: lowScores,
+    remaining_estimate: posts.length === limit ? 'more available — run again' : 'done',
+  });
+});
+
+/** POST /api/admin/bulk-regen-low-score-images
+ *
+ *  Regenerates images for posts where image_critique_score is ≤ the
+ *  provided threshold (default 4). Each regen uses the forced-archetype-
+ *  fallback path so the new image is guaranteed on-archetype, then
+ *  re-scores so the persisted critique reflects what now ships.
+ *
+ *  Caps at 20 posts per call (fal.ai cost: 20 × ~$0.04 = $0.80/call max
+ *  if every retry needs FLUX Pro Kontext + critique).
+ *
+ *  Body: { threshold?: number (1-7, default 4), limit?: number (default 20) }
+ */
+app.post('/api/admin/bulk-regen-low-score-images', async (c) => {
+  const adminCheck = await requireAdmin(c);
+  if (adminCheck instanceof Response) return adminCheck;
+  const { uid } = adminCheck;
+
+  const body = await c.req.json().catch(() => ({})) as { threshold?: number; limit?: number };
+  const threshold = Math.min(Math.max(body.threshold ?? 4, 1), 7);
+  const limit = Math.min(Math.max(body.limit || 20, 1), 50);
+
+  const rows = await c.env.DB.prepare(
+    `SELECT p.id, p.content, p.image_prompt, p.client_id, p.image_critique_score
+     FROM posts p
+     LEFT JOIN clients cl ON p.client_id = cl.id
+     WHERE (p.user_id = ? OR cl.user_id = ?)
+       AND p.image_critique_score IS NOT NULL
+       AND p.image_critique_score <= ?
+       AND p.image_prompt IS NOT NULL AND p.image_prompt != ''
+       AND p.status IN ('Scheduled', 'Draft')
+     ORDER BY p.image_critique_score ASC, p.scheduled_for ASC
+     LIMIT ?`
+  ).bind(uid, uid, threshold, limit).all<{
+    id: string; content: string; image_prompt: string;
+    client_id: string | null; image_critique_score: number;
+  }>();
+
+  const posts = rows.results || [];
+  let regenerated = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const post of posts) {
+    try {
+      const safe = buildSafeImagePrompt(post.image_prompt);
+      if (!safe) { failed++; continue; }
+
+      // Force fallback — these posts already scored badly, so trust the
+      // curated archetype scene over the suspect LLM-generated prompt.
+      const gen = await generateImageWithBrandRefs(
+        c.env, uid, post.client_id, safe, { forceFallback: true },
+      );
+      if (!gen.imageUrl) {
+        failed++;
+        errors.push(`${post.id}: regen returned no URL via ${gen.modelUsed}`);
+        continue;
+      }
+
+      // Re-critique the new image so the persisted score reflects reality
+      const archetypeSlug = await resolveArchetypeSlug(c.env, uid, post.client_id);
+      const critique = await critiqueImageInternal(c.env, {
+        imageUrl: gen.imageUrl,
+        caption: post.content,
+        archetypeSlug,
+      });
+
+      if (critique) {
+        await c.env.DB.prepare(
+          `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
+           WHERE id = ?`
+        ).bind(gen.imageUrl, critique.score, critique.reasoning, new Date().toISOString(), post.id).run();
+      } else {
+        // Critique unavailable but we still have a new image — ship it
+        await c.env.DB.prepare(
+          `UPDATE posts SET image_url = ?, image_critique_score = NULL, image_critique_reasoning = NULL, image_critique_at = NULL
+           WHERE id = ?`
+        ).bind(gen.imageUrl, post.id).run();
+      }
+      regenerated++;
+    } catch (e: any) {
+      failed++;
+      errors.push(`${post.id}: ${e?.message}`);
+    }
+    // Pace fal.ai — 700ms between calls.
+    await new Promise(r => setTimeout(r, 700));
+  }
+
+  return c.json({
+    found: posts.length,
+    regenerated,
+    failed,
+    threshold,
+    errors: errors.slice(0, 5),
+  });
+});
+
 async function backfillImagesForUser(env: Env, uid: string) {
   const apiKey = env.FAL_API_KEY;
   if (!apiKey) return { error: 'fal.ai not configured', found: 0, succeeded: 0, failed: 0 };

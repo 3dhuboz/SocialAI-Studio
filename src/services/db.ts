@@ -369,6 +369,46 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<{ scanned: number; flagged: FlaggedPost[] }>;
     },
 
+    /**
+     * Retroactively run Haiku 4.5 vision critique against every post the
+     * caller owns that has an image_url but no critique score yet. Surfaces
+     * the "AI quality" badge on historical posts (not just freshly generated
+     * ones). Caps at 50 per call — re-run until `remaining_estimate: 'done'`.
+     */
+    async backfillCritiqueScores(limit = 50): Promise<{
+      found: number;
+      scored: number;
+      failed: number;
+      low_scores: number;
+      remaining_estimate: string;
+    }> {
+      const res = await f('/api/admin/backfill-critique-scores', {
+        method: 'POST',
+        body: JSON.stringify({ limit }),
+      });
+      return res.json() as any;
+    },
+
+    /**
+     * Bulk regenerate images for posts whose critique score is ≤ threshold
+     * (default 4). Forces the curated archetype fallback scene so the new
+     * image is guaranteed on-archetype. Re-critiques and persists the new
+     * score in one round-trip. Caps at 20 per call.
+     */
+    async bulkRegenLowScoreImages(threshold = 4, limit = 20): Promise<{
+      found: number;
+      regenerated: number;
+      failed: number;
+      threshold: number;
+      errors: string[];
+    }> {
+      const res = await f('/api/admin/bulk-regen-low-score-images', {
+        method: 'POST',
+        body: JSON.stringify({ threshold, limit }),
+      });
+      return res.json() as any;
+    },
+
     // ── Customer: Billing screen ──────────────────────────────────────────────
     // Returns the SIGNED-IN user's plan + their own payment history.
 
