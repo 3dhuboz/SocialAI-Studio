@@ -1,5 +1,10 @@
 # Worker Route-Module Split — Execution Plan
 
+> **Status (2026-05-13): Phase B complete.** index.ts is 97 LOC. 21
+> modules extracted across `lib/`, `cron/`, `routes/`. See "Done" section
+> at the bottom for the commit list and the schema-migration gotcha
+> caught on first deploy.
+
 The audit identified `workers/api/src/index.ts` (4,167 LOC, 50+ endpoints,
 9 crons, all in one file) as the highest-priority structural debt. This
 doc lays out the extraction plan as a dedicated follow-up PR.
@@ -120,3 +125,78 @@ similarly distributed. The win: each cross-tab interaction stops
 triggering a full re-render across all 5720 lines.
 
 Same extraction-rules apply — one screen per commit, behaviour-preserving.
+
+## Done — Phase B execution log (2026-05-11 → 2026-05-13)
+
+Final structure (matches plan with minor renames — `routes/admin.ts` split into
+`admin-stats.ts` (read) + `admin-actions.ts` (write); `critique.ts` →
+`post-quality.ts`; `lib/facebook.ts` → `lib/facebook-facts.ts` paired with
+`cron/refresh-facts.ts`):
+
+```
+workers/api/src/                          # 6,734 LOC total
+├── index.ts                              # 97 LOC
+├── env.ts                                # 80 LOC
+├── auth.ts                               # 250 LOC
+├── lib/                                  # 1,514 LOC across 10 files
+│   ├── anthropic.ts, archetypes.ts, backfill.ts, critique.ts, email.ts,
+│   │ facebook-facts.ts, image-gen.ts, image-safety.ts, paypal.ts,
+│   │ pricing.ts, provisioning.ts
+├── cron/                                 # ~1,000 LOC across 8 files
+│   ├── _shared.ts, dispatcher.ts, check-fal-credits.ts, prewarm-images.ts,
+│   │ prewarm-videos.ts, publish-missed.ts, refresh-facts.ts,
+│   │ refresh-tokens.ts, weekly-review.ts
+└── routes/                               # ~3,000 LOC across 19 files
+    └── activations.ts, admin-actions.ts, admin-stats.ts, ai.ts,
+      archetypes.ts, billing.ts, campaigns.ts, clients.ts, facebook.ts,
+      facts.ts, health.ts, onboarding.ts, paypal.ts, portal.ts,
+      post-quality.ts, posts.ts, proxies.ts, social-tokens.ts, user.ts
+```
+
+19 `registerXRoutes(app)` calls in index.ts mount 56 HTTP endpoints; the
+`scheduled()` handoff dispatches to 7 distinct cron jobs.
+
+### Schema migration gotcha (caught on first deploy)
+
+The cron extraction in `a8eaaa3` started referencing `posts.claim_id`,
+`posts.claim_at`, `posts.image_critique_score`, `users.archetype_slug`,
+and `clients.archetype_slug` — columns that exist in `schema_v7.sql`,
+`schema_v8.sql`, and `schema_v9.sql` but **had never been applied to
+production D1**. Previous deploys silently shipped older index.ts code
+that didn't hit these columns, so the missing schema was invisible.
+
+The Phase-B-final deploy (`eb52860`) was the first deploy where the
+new SQL actually executed against the live DB. The publish cron failed
+4 ticks in a row (`D1_ERROR: no such column: claim_id`) before the
+migrations were applied. Recovery:
+
+1. `wrangler d1 execute socialai-db --remote --file=schema_v7.sql`
+2. `wrangler d1 execute socialai-db --remote --file=schema_v8.sql`
+3. `wrangler d1 execute socialai-db --remote --file=schema_v9.sql`
+4. `wrangler d1 execute socialai-db --remote --file=seed_v7_archetypes.sql`
+   (after `commit 484c979` stripped its `BEGIN TRANSACTION` which D1's
+   remote executor rejects)
+
+Lesson for future deploys: before deploying code that references a
+new schema, verify the migration has actually been applied to remote
+D1 — `wrangler d1 execute socialai-db --remote --command="PRAGMA
+table_info(posts)"` will surface this in seconds.
+
+### Commit log
+
+- `aaeab9b` lib/facebook-facts + cron/refresh-facts
+- `8373753` cron/weekly-review
+- `a8eaaa3` publish + prewarm crons (Phase B steps 12-15)
+- `eedd27d` routes/campaigns (first route module)
+- `095211a` 6 low-risk route modules (health, user, social-tokens, portal,
+  activations, facts)
+- `238a017` fix(image-gen): NULL-archetype hole closed
+- `1c22285` fix(critique): route vision call via Anthropic direct
+- `ee217fc` routes: posts, clients, archetypes, facebook, ai
+- `efa5f21` lib/paypal + routes/paypal
+- `645b81c` routes/admin-stats + routes/billing + lib/pricing
+- `33102d6` lib/backfill + lib/provisioning + lib/facebook-facts.refreshFactsForUser
+- `558fa59` routes/admin-actions
+- `eb52860` routes/onboarding + routes/post-quality + routes/proxies + cron/dispatcher
+- `8f4537b` fix(cron): wrangler cron parser rejects `0` for SUN — use `SUN`
+- `484c979` fix(seed): drop BEGIN TRANSACTION — D1 remote executor rejects it
