@@ -24,6 +24,12 @@ import { cronPublishMissedPosts } from './cron/publish-missed';
 import { cronPrewarmImages } from './cron/prewarm-images';
 import { cronPrewarmVideos } from './cron/prewarm-videos';
 import { registerCampaignRoutes } from './routes/campaigns';
+import { registerHealthRoutes } from './routes/health';
+import { registerUserRoutes } from './routes/user';
+import { registerSocialTokensRoutes } from './routes/social-tokens';
+import { registerPortalRoutes } from './routes/portal';
+import { registerActivationRoutes } from './routes/activations';
+import { registerFactsRoutes } from './routes/facts';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -60,7 +66,13 @@ app.use(
 // registerXRoutes call mounts a handful of endpoints onto the shared app
 // instance. Order doesn't matter unless two registrations share a path
 // prefix (none currently do).
+registerHealthRoutes(app);
+registerUserRoutes(app);
+registerSocialTokensRoutes(app);
+registerPortalRoutes(app);
+registerActivationRoutes(app);
 registerCampaignRoutes(app);
+registerFactsRoutes(app);
 
 
 // ── UUID helper ──────────────────────────────────────────────────────────────
@@ -83,40 +95,7 @@ const PLAN_PRICE_AUD: Record<string, number> = {
   agency: 149,
 };
 
-app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
-
-// Cron observability — last 30 cron runs (public so the deploy-monitor widget
-// can poll without an auth token; emits no PII).
-app.get('/api/cron-health', async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT run_at, cron_type, success, posts_processed, duration_ms,
-            substr(COALESCE(error,''),1,200) as error
-     FROM cron_runs ORDER BY run_at DESC LIMIT 30`
-  ).all();
-  const runs = rows.results ?? [];
-  const lastSuccess = runs.find((r: any) => r.success === 1);
-  const lastFailure = runs.find((r: any) => r.success === 0);
-  return c.json({
-    runs,
-    last_success_at: (lastSuccess as any)?.run_at ?? null,
-    last_failure_at: (lastFailure as any)?.run_at ?? null,
-  });
-});
-
-
-// Public post schedule feed — used by deploy monitor widget
-app.get('/api/post-schedule', async (c) => {
-  const rows = await c.env.DB.prepare(
-    `SELECT p.scheduled_for, p.status, p.platform,
-            substr(p.content, 1, 80) as preview,
-            COALESCE(c.name, 'Penny Wise I.T') as workspace
-     FROM posts p LEFT JOIN clients c ON p.client_id = c.id
-     WHERE p.status IN ('Scheduled','Posted','Missed')
-       AND p.scheduled_for >= date('now','-1 day')
-     ORDER BY p.scheduled_for ASC LIMIT 30`
-  ).all();
-  return c.json({ posts: rows.results ?? [] });
-});
+// Health, cron-health, post-schedule moved to routes/health.ts.
 
 /**
  * POST /api/ai/generate
@@ -266,82 +245,6 @@ app.post('/api/ai/generate', async (c) => {
 
   const text = data.choices?.[0]?.message?.content ?? '';
   return c.json({ text, _meta: { route: 'openrouter' } });
-});
-
-// ── DB: User ─────────────────────────────────────────────────────────────────
-
-app.get('/api/db/user', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const row = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first();
-  return c.json({ user: row ?? null });
-});
-
-app.put('/api/db/user', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const body = await c.req.json<Record<string, unknown>>();
-
-  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(uid).first();
-  if (!existing) {
-    await c.env.DB.prepare(
-      `INSERT INTO users (id, email, plan, setup_status, is_admin, onboarding_done, intake_form_done,
-        agency_billing_url, late_profile_id, late_connected_platforms, late_account_ids,
-        fal_api_key, paypal_subscription_id, profile, stats, insight_report, billing_cycle)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).bind(
-      uid,
-      body.email ?? null, body.plan ?? null, body.setupStatus ?? null,
-      body.isAdmin ? 1 : 0, body.onboardingDone ? 1 : 0, body.intakeFormDone ? 1 : 0,
-      body.agencyBillingUrl ?? null, body.lateProfileId ?? null,
-      JSON.stringify(body.lateConnectedPlatforms ?? []),
-      JSON.stringify(body.lateAccountIds ?? {}),
-      body.falApiKey ?? null, body.paypalSubscriptionId ?? null,
-      JSON.stringify(body.profile ?? {}), JSON.stringify(body.stats ?? {}),
-      body.insightReport ? JSON.stringify(body.insightReport) : null,
-      body.billingCycle ?? null
-    ).run();
-  } else {
-    const sets: string[] = [];
-    const vals: unknown[] = [];
-    const fieldMap: Record<string, string> = {
-      email: 'email', plan: 'plan', setupStatus: 'setup_status', isAdmin: 'is_admin',
-      onboardingDone: 'onboarding_done', intakeFormDone: 'intake_form_done',
-      agencyBillingUrl: 'agency_billing_url', lateProfileId: 'late_profile_id',
-      lateConnectedPlatforms: 'late_connected_platforms', lateAccountIds: 'late_account_ids',
-      falApiKey: 'fal_api_key', paypalSubscriptionId: 'paypal_subscription_id',
-      profile: 'profile', stats: 'stats', insightReport: 'insight_report',
-      // v5 — reel credits balance. Plan grants (PayPal webhook on renewal)
-      // and one-off credit-pack purchases both increment this column.
-      reelCredits: 'reel_credits',
-      // v6 — 'monthly' | 'yearly'. Set when consuming a pending_activations
-      // row; drives the renewal grant multiplier (×1 or ×12) so yearly subs
-      // get the same total credits/year as monthly subs.
-      billingCycle: 'billing_cycle',
-    };
-    const jsonFields = new Set(['lateConnectedPlatforms', 'lateAccountIds', 'profile', 'stats', 'insightReport']);
-    const boolFields = new Set(['isAdmin', 'onboardingDone', 'intakeFormDone']);
-    for (const [k, col] of Object.entries(fieldMap)) {
-      if (!(k in body)) continue;
-      sets.push(`${col} = ?`);
-      const v = body[k];
-      if (jsonFields.has(k)) vals.push(v != null ? JSON.stringify(v) : null);
-      else if (boolFields.has(k)) vals.push(v ? 1 : 0);
-      else vals.push(v ?? null);
-    }
-    if (sets.length) {
-      vals.push(uid);
-      await c.env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-    }
-  }
-  return c.json({ ok: true });
-});
-
-app.delete('/api/db/user', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(uid).run();
-  return c.json({ ok: true });
 });
 
 // ── DB: Posts ─────────────────────────────────────────────────────────────────
@@ -564,163 +467,7 @@ app.delete('/api/db/clients/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── DB: Social Tokens ─────────────────────────────────────────────────────────
-// Stored in dedicated column — never mixed into profile blob, never cached client-side
-
-app.get('/api/db/social-tokens', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const clientId = c.req.query('clientId') ?? null;
-  const raw = clientId
-    ? await c.env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
-    : await c.env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
-  const tokens = raw?.social_tokens ? JSON.parse(raw.social_tokens) : {};
-  return c.json({ tokens });
-});
-
-app.put('/api/db/social-tokens', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const clientId = c.req.query('clientId') ?? null;
-  const body = await c.req.json<Record<string, unknown>>();
-  const json = JSON.stringify(body);
-  if (clientId) {
-    await c.env.DB.prepare('UPDATE clients SET social_tokens = ? WHERE id = ? AND user_id = ?').bind(json, clientId, uid).run();
-  } else {
-    await c.env.DB.prepare('UPDATE users SET social_tokens = ? WHERE id = ?').bind(json, uid).run();
-  }
-  return c.json({ ok: true });
-});
-
 // ── DB: Campaigns — see routes/campaigns.ts ─────────────────────────────────
-
-// ── DB: Portal ────────────────────────────────────────────────────────────────
-
-// Portal authentication endpoint.
-// PUBLIC: GET /api/db/portal/:slug returns ONLY non-sensitive existence info.
-//   Used by the portal frontend to confirm the slug is recognised.
-// AUTHENTICATED: GET /api/db/portal/:slug?secret=<x> returns the portal_token
-//   ONLY when the caller proves knowledge of a per-portal shared secret
-//   (set as VITE_PORTAL_SECRET env var on each Pages deploy).
-app.get('/api/db/portal/:slug', async (c) => {
-  const slug = c.req.param('slug').toLowerCase();
-  const row = await c.env.DB.prepare(
-    'SELECT email, password, portal_token, user_id, client_id FROM portal WHERE slug = ?'
-  ).bind(slug).first<{ email: string; password: string; portal_token: string | null; user_id: string | null; client_id: string | null }>();
-  if (!row) return c.json({ portal: null }, 404);
-
-  // Caller proved knowledge of the shared secret — return full record.
-  // The "password" column is reused as the per-portal shared secret.
-  const url = new URL(c.req.url);
-  const providedSecret = url.searchParams.get('secret') || c.req.header('X-Portal-Secret');
-  if (providedSecret && row.password && providedSecret === row.password) {
-    return c.json({ portal: row });
-  }
-
-  // Anonymous response: no PII, no token. Just confirms slug exists.
-  return c.json({ portal: { exists: true, client_id: row.client_id } });
-});
-
-app.put('/api/db/portal/:slug', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const slug = c.req.param('slug').toLowerCase();
-  const body = await c.req.json<{ email: string; password: string; client_id?: string }>();
-  const portalToken = crypto.randomUUID() + '-' + crypto.randomUUID();
-  await c.env.DB.prepare(
-    `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id)
-     VALUES (?,?,?,?,?,?)
-     ON CONFLICT(slug) DO UPDATE SET email=excluded.email, password=excluded.password,
-       portal_token=excluded.portal_token, user_id=excluded.user_id, client_id=excluded.client_id`
-  ).bind(slug, body.email, body.password, portalToken, uid, body.client_id ?? null).run();
-  return c.json({ ok: true, portalToken });
-});
-
-// Portal content — public GET (for rendering), authenticated PUT (for editing)
-app.get('/api/db/portal/:slug/content', async (c) => {
-  const slug = c.req.param('slug').toLowerCase();
-  const row = await c.env.DB.prepare(
-    'SELECT hero_title, hero_subtitle, hero_cta_text FROM portal WHERE slug = ?'
-  ).bind(slug).first<{ hero_title: string | null; hero_subtitle: string | null; hero_cta_text: string | null }>();
-  return c.json({ content: row ?? { hero_title: '', hero_subtitle: '', hero_cta_text: '' } });
-});
-
-app.put('/api/db/portal/:slug/content', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const slug = c.req.param('slug').toLowerCase();
-  const body = await c.req.json<{ hero_title?: string; hero_subtitle?: string; hero_cta_text?: string }>();
-  const sets: string[] = []; const vals: unknown[] = [];
-  if (body.hero_title !== undefined) { sets.push('hero_title = ?'); vals.push(body.hero_title); }
-  if (body.hero_subtitle !== undefined) { sets.push('hero_subtitle = ?'); vals.push(body.hero_subtitle); }
-  if (body.hero_cta_text !== undefined) { sets.push('hero_cta_text = ?'); vals.push(body.hero_cta_text); }
-  if (sets.length === 0) return c.json({ ok: true });
-  vals.push(slug);
-  await c.env.DB.prepare(`UPDATE portal SET ${sets.join(', ')} WHERE slug = ?`).bind(...vals).run();
-  return c.json({ ok: true });
-});
-
-// ── DB: Activations / Cancellations ──────────────────────────────────────────
-
-app.get('/api/db/activations', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const email = c.req.query('email') ?? null;
-  const byUid = await c.env.DB.prepare('SELECT * FROM pending_activations WHERE id = ? AND consumed = 0').bind(uid).first();
-  const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_activations WHERE email = ? AND consumed = 0').bind(email).first() : null;
-  const row = byUid ?? byEmail ?? null;
-  return c.json({ activation: row });
-});
-
-app.put('/api/db/activations/:id/consume', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const id = c.req.param('id');
-  await c.env.DB.prepare('UPDATE pending_activations SET consumed = 1 WHERE id = ?').bind(id).run();
-  return c.json({ ok: true });
-});
-
-app.get('/api/db/cancellations', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const email = c.req.query('email') ?? null;
-  const byUid = await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE id = ? AND consumed = 0').bind(uid).first();
-  const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE email = ? AND consumed = 0').bind(email).first() : null;
-  const row = byUid ?? byEmail ?? null;
-  return c.json({ cancellation: row });
-});
-
-app.put('/api/db/cancellations/:id/consume', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const id = c.req.param('id');
-  await c.env.DB.prepare('UPDATE pending_cancellations SET consumed = 1 WHERE id = ?').bind(id).run();
-  return c.json({ ok: true });
-});
-
-// ── Internal: Create pending activation (called from Pages Function PayPal webhook) ──
-// No Clerk auth — protected by the fact it only creates "pending" rows,
-// which require a valid authenticated user to consume.
-app.post('/api/internal/activation', async (c) => {
-  const { plan, email, paypalSubscriptionId, paypalCustomerId, activatedAt } = await c.req.json<Record<string, string>>();
-  if (!plan || !email) return c.json({ error: 'plan and email required' }, 400);
-  const id = uuid();
-  await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
-     VALUES (?,?,?,?,?,?,0)`
-  ).bind(id, plan, email, paypalSubscriptionId ?? null, paypalCustomerId ?? null, activatedAt ?? new Date().toISOString()).run();
-  return c.json({ ok: true, id });
-});
-
-app.post('/api/internal/cancellation', async (c) => {
-  const { email, paypalSubscriptionId, cancelledAt } = await c.req.json<Record<string, string>>();
-  const id = uuid();
-  await c.env.DB.prepare(
-    `INSERT INTO pending_cancellations (id, email, paypal_subscription_id, cancelled_at, consumed)
-     VALUES (?,?,?,?,0)`
-  ).bind(id, email ?? null, paypalSubscriptionId ?? null, cancelledAt ?? new Date().toISOString()).run();
-  return c.json({ ok: true, id });
-});
 
 // ── Onboarding health check ───────────────────────────────────────────────────
 // Public endpoint — returns only boolean readiness flags + Resend domain
@@ -1672,24 +1419,8 @@ app.post('/api/facebook-exchange-token', async (c) => {
 // ── Facebook Page Insights Scraper ─────────────────────────────────────────
 // Pulls a connected Page's REAL data (own posts, comments, about, photos,
 // events) into the client_facts table. The AI then writes from real ground
-// truth instead of inventing testimonials and stats. See lib/facebook-facts.
-//
-// POST /api/db/refresh-facts            → scrapes the calling user's own page
-// POST /api/db/refresh-facts/:clientId  → scrapes a specific client's page
-app.post('/api/db/refresh-facts', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const result = await refreshFactsForWorkspace(c.env.DB, uid, null);
-  return c.json(result);
-});
-
-app.post('/api/db/refresh-facts/:clientId', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const clientId = c.req.param('clientId');
-  const result = await refreshFactsForWorkspace(c.env.DB, uid, clientId);
-  return c.json(result);
-});
+// truth instead of inventing testimonials and stats. See lib/facebook-facts +
+// routes/facts.ts.
 
 // One-shot bootstrap — scrape ALL workspaces with FB tokens. Used to seed the
 // table for existing connected accounts. Protected by FACTS_BOOTSTRAP_SECRET
@@ -2606,20 +2337,7 @@ app.post('/api/admin/bootstrap-all-facts', async (c) => {
   return c.json({ workspaces_processed: results.length, results });
 });
 
-// Read facts back — used by the frontend to inject into AI prompts.
-app.get('/api/db/facts', async (c) => {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-  const clientId = c.req.query('clientId') || null;
-  const rows = await c.env.DB.prepare(
-    `SELECT fact_type, content, metadata, engagement_score, verified_at
-     FROM client_facts
-     WHERE user_id = ? AND COALESCE(client_id, '') = ?
-     ORDER BY engagement_score DESC, verified_at DESC
-     LIMIT 200`
-  ).bind(uid, clientId || '').all();
-  return c.json({ facts: rows.results || [] });
-});
+// GET /api/db/facts moved to routes/facts.ts.
 
 // ── Business Archetype classifier (2026-05 Phase 1) ──────────────────────────
 //
