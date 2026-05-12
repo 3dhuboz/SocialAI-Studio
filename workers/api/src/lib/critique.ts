@@ -5,21 +5,32 @@
 // caption HTTP endpoint, lifted out so the prewarm cron, backfill, and
 // JIT publish paths can call it without going through HTTP.
 //
+// Routing (2026-05-12 update):
+//   - ANTHROPIC_API_KEY set → Anthropic direct vision (preferred). Skips
+//     the OpenRouter markup + one upstream that can fail independently.
+//   - Falls back to OpenRouter on missing Anthropic key OR direct-call
+//     failure (network/auth glitch). The OpenRouter path is unchanged.
+//
 // Returns null on any failure (network, malformed JSON, missing API key)
 // — caller treats null as "skip critique, ship the image" so a transient
 // critique outage never blocks the publish pipeline.
 //
-// Cost: ~$0.003/call via Haiku 4.5 vision over OpenRouter. Cron prewarm
-// budget: 8 posts/tick × 12 ticks/hour worst-case = $0.29/hour at full
-// queue, much lower in practice (most ticks have 0-2 posts to score).
+// Cost: ~$0.003/call via Haiku 4.5 vision. Cron prewarm budget: 8 posts/
+// tick × 12 ticks/hour worst-case = $0.29/hour at full queue, much lower
+// in practice (most ticks have 0-2 posts to score). Anthropic direct
+// saves the ~5.5% OpenRouter markup on top.
 
 import type { Env } from '../env';
+import { callAnthropicVision } from './anthropic';
 
 export async function critiqueImageInternal(
   env: Env,
   params: { imageUrl: string; caption: string; archetypeSlug: string | null; businessType?: string },
 ): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
-  if (!env.OPENROUTER_API_KEY) return null;
+  // Need at least one provider key — Anthropic direct preferred, OpenRouter
+  // as fallback. Return null if neither is set so the caller ships the
+  // image untouched instead of blocking the publish pipeline.
+  if (!env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY) return null;
   const { imageUrl, caption, archetypeSlug } = params;
   // businessType param kept on the type for backward compat with HTTP callers
   // but no longer used — when archetypeSlug is null we now instruct the
@@ -68,7 +79,34 @@ Other failure modes (typically score 2-4 depending on severity):
 Return JSON ONLY, no prose. Schema:
 {"score": <0-10>, "match": "yes"|"partial"|"no", "reasoning": "<one sentence>"}`;
 
-  try {
+  const userPrompt = `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?`;
+  let raw = '';
+
+  // Path A — Anthropic direct (preferred when key is set). Same Haiku 4.5
+  // model, native vision API, no OpenRouter intermediary.
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      const { text } = await callAnthropicVision({
+        apiKey: env.ANTHROPIC_API_KEY,
+        model: 'claude-haiku-4-5',
+        systemPrompt,
+        prompt: userPrompt,
+        imageUrl,
+        temperature: 0.1,
+        maxTokens: 250,
+        responseFormat: 'json',
+      });
+      raw = text;
+    } catch (e: any) {
+      // Network/auth glitch on Anthropic — log and fall through to
+      // OpenRouter so we don't lose the critique entirely. The OpenRouter
+      // path is unchanged from the pre-direct era.
+      console.warn(`[critique] Anthropic direct failed, falling back to OpenRouter: ${e?.message}`);
+    }
+  }
+
+  // Path B — OpenRouter fallback (also used when Anthropic key is absent).
+  if (!raw && env.OPENROUTER_API_KEY) try {
     const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -84,7 +122,7 @@ Return JSON ONLY, no prose. Schema:
           {
             role: 'user',
             content: [
-              { type: 'text', text: `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?` },
+              { type: 'text', text: userPrompt },
               { type: 'image_url', image_url: { url: imageUrl } },
             ],
           },
@@ -95,11 +133,19 @@ Return JSON ONLY, no prose. Schema:
       }),
     });
     if (!orRes.ok) {
-      console.warn(`[critique] HTTP ${orRes.status} — skipping`);
+      console.warn(`[critique] OpenRouter HTTP ${orRes.status} — skipping`);
       return null;
     }
     const orJson = await orRes.json() as any;
-    const raw = orJson.choices?.[0]?.message?.content || '';
+    raw = orJson.choices?.[0]?.message?.content || '';
+  } catch (e: any) {
+    console.warn(`[critique] OpenRouter call failed: ${e?.message}`);
+    return null;
+  }
+
+  if (!raw) return null;
+
+  try {
     const parsed = JSON.parse(raw);
     const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5;
     const match = (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial';

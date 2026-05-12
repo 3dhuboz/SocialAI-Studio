@@ -93,6 +93,70 @@ export async function callAnthropicDirect(opts: {
   return { text, usage: data?.usage || {} };
 }
 
+// Anthropic direct vision call — image + text in, JSON-mode out.
+//
+// Used by lib/critique.ts as the preferred path when ANTHROPIC_API_KEY is
+// set (falls back to OpenRouter on missing key or network failure). Same
+// reliability + telemetry benefits as callAnthropicDirect plus:
+//   - Vision content blocks are native (no OpenRouter translation layer)
+//   - When run during prewarm cron, eliminates one upstream that can fail
+//     independently of Anthropic itself
+//
+// Anthropic vision uses `{ type: 'image', source: { type: 'url', url } }`
+// content blocks — different shape from OpenRouter's `image_url` blocks.
+// Caller passes the URL; we wrap it server-side.
+export async function callAnthropicVision(opts: {
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  prompt: string;
+  imageUrl: string;
+  temperature: number;
+  maxTokens: number;
+  responseFormat: 'json' | 'text';
+}): Promise<{ text: string; usage: any }> {
+  const { apiKey, model, systemPrompt, prompt, imageUrl, temperature, maxTokens, responseFormat } = opts;
+
+  // For JSON mode: same instruction-append idiom as callAnthropicDirect.
+  // Haiku 4.5 honours this reliably at temp ≤ 0.2.
+  const sys = responseFormat === 'json'
+    ? `${systemPrompt}\n\nReturn ONLY valid JSON, no prose, no markdown code fences.`.trim()
+    : systemPrompt;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      system: sys,
+      max_tokens: maxTokens,
+      temperature,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'url', url: imageUrl } },
+            { type: 'text', text: prompt },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Anthropic vision ${res.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = await res.json() as any;
+  const text = (data?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+  return { text, usage: data?.usage || {} };
+}
+
 // Thin OpenRouter wrapper for endpoints that don't need the full
 // /api/ai/generate ceremony (auth, rate limit, etc — those are at the
 // endpoint level). Used by /api/score-post as the OpenRouter fallback when
