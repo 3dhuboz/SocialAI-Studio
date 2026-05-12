@@ -80,4 +80,8 @@ export type Env = {
   // are baked in below if not set.
   GITHUB_REPO_OWNER?: string;
   GITHUB_REPO_NAME?: string;
+  // Shared HMAC secret with PennyBuilder. Used to authenticate the
+  // /api/admin/provision-from-pennybuilder endpoint AND to verify the
+  // HMAC-signed embed token on GET /embed.
+  PENNYBUILDER_PROVISION_SECRET?: string;
 };
