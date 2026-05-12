@@ -2773,6 +2773,7 @@ async function backfillImagesForUser(env: Env, uid: string) {
       // it doesn't. See generateImageWithBrandRefs at the top of this file.
       const gen = await generateImageWithBrandRefs(env, uid, clientId, safe);
       let finalUrl = gen.imageUrl;
+      let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
       // Vision-critique gate (mirror of cronPrewarmImages). One retry with a
       // forced archetype fallback if the first attempt scored ≤3 for
@@ -2786,18 +2787,32 @@ async function backfillImagesForUser(env: Env, uid: string) {
         });
         if (critique) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
+          finalCritique = critique;
           if (critique.score <= 3) {
             const retry = await generateImageWithBrandRefs(env, uid, clientId, safe, { forceFallback: true });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
+              const retryCritique = await critiqueImageInternal(env, {
+                imageUrl: retry.imageUrl,
+                caption,
+                archetypeSlug,
+              });
+              if (retryCritique) finalCritique = retryCritique;
             }
           }
         }
       }
 
       if (finalUrl) {
-        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(finalUrl, postId).run();
+        if (finalCritique) {
+          await env.DB.prepare(
+            `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
+             WHERE id = ?`
+          ).bind(finalUrl, finalCritique.score, finalCritique.reasoning, new Date().toISOString(), postId).run();
+        } else {
+          await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(finalUrl, postId).run();
+        }
         succeeded++;
       } else {
         failed++;
@@ -3952,8 +3967,9 @@ app.post('/api/critique-image-caption', async (c) => {
     caption?: string;
     businessType?: string;
     archetype?: string;
+    postId?: string;  // optional: persist result on the post if provided
   };
-  const { imageUrl, caption, businessType = 'small business', archetype } = body;
+  const { imageUrl, caption, businessType = 'small business', archetype, postId } = body;
   if (!imageUrl || !caption) {
     return c.json({ error: 'imageUrl and caption are required' }, 400);
   }
@@ -4026,12 +4042,26 @@ Return JSON ONLY, no prose. Schema:
     return c.json({ error: 'Vision critique returned malformed JSON', raw: raw.slice(0, 500) }, 502);
   }
 
-  return c.json({
-    score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
-    match: (['yes', 'partial', 'no'] as const).includes(parsed.match as any) ? parsed.match : 'partial',
-    reasoning: (parsed.reasoning || 'No reasoning provided').slice(0, 500),
-    regenerate: !!parsed.regenerate,
-  });
+  const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5;
+  const match = (['yes', 'partial', 'no'] as const).includes(parsed.match as any) ? parsed.match : 'partial';
+  const reasoning = (parsed.reasoning || 'No reasoning provided').slice(0, 500);
+
+  // Persist the result on the post when the caller scoped it. Best-effort —
+  // a write failure shouldn't block the critique response. The post is
+  // scoped to the calling user (via user_id check) so a malicious caller
+  // can't tag someone else's posts.
+  if (postId) {
+    try {
+      await c.env.DB.prepare(
+        `UPDATE posts SET image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
+         WHERE id = ? AND user_id = ?`
+      ).bind(score, reasoning, new Date().toISOString(), postId, uid).run();
+    } catch (e) {
+      console.warn(`[critique] persist failed for post ${postId}:`, e);
+    }
+  }
+
+  return c.json({ score, match, reasoning, regenerate: !!parsed.regenerate });
 });
 
 // ── Virality Score (2026-05 Tier 3 wow feature) ─────────────────────────
@@ -5090,6 +5120,7 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
       let finalUrl = gen.imageUrl;
       let finalModel = gen.modelUsed;
       let finalRefs = gen.referencesUsed;
+      let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
       // ── Vision-critique gate (2026-05-12) ──────────────────────────────
       // Score the generated image against the caption + workspace archetype.
@@ -5099,6 +5130,10 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
       // second attempt produces. We don't loop further: a second failure
       // means critique is being overly strict and shipping a 4-6 image is
       // still better than blocking the publish pipeline.
+      //
+      // The final critique result is persisted on the post so PostModal can
+      // render an "AI quality ✓ N/10" badge and admins can scan for
+      // low-score posts before they publish.
       //
       // Skipped entirely when OPENROUTER_API_KEY is missing (critique
       // helper returns null) — preserves no-regression behaviour for
@@ -5119,6 +5154,7 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
         });
         if (critique) {
           console.log(`[CRON prewarm] post ${postId} critique score=${critique.score} match=${critique.match} — ${critique.reasoning}`);
+          finalCritique = critique;
           if (critique.score <= 3) {
             console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback`);
             const retry = await generateImageWithBrandRefs(env, userId, clientId, safe, { forceFallback: true });
@@ -5126,14 +5162,32 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
               finalUrl = retry.imageUrl;
               finalModel = `${retry.modelUsed} (forced-fallback retry)`;
               finalRefs = retry.referencesUsed;
+              // Re-critique the retry so the persisted score reflects what
+              // actually shipped (not the original failed attempt).
+              const retryCritique = await critiqueImageInternal(env, {
+                imageUrl: retry.imageUrl,
+                caption,
+                archetypeSlug,
+              });
+              if (retryCritique) {
+                finalCritique = retryCritique;
+                console.log(`[CRON prewarm] post ${postId} retry critique score=${retryCritique.score}`);
+              }
             }
           }
         }
       }
 
       if (finalUrl) {
-        await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
-          .bind(finalUrl, postId).run();
+        if (finalCritique) {
+          await env.DB.prepare(
+            `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
+             WHERE id = ?`
+          ).bind(finalUrl, finalCritique.score, finalCritique.reasoning, new Date().toISOString(), postId).run();
+        } else {
+          await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
+            .bind(finalUrl, postId).run();
+        }
         generated++;
         console.log(`[CRON prewarm] generated for post ${postId} via ${finalModel} (${finalRefs} refs)`);
       } else {

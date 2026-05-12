@@ -84,6 +84,44 @@ export interface DbPost {
   video_error?: string | null;
   r2_video_key?: string | null;
   audio_mixed_url?: string | null;
+  // v8 — vision-critique result populated by prewarm cron + manual critique
+  image_critique_score?: number | null;
+  image_critique_reasoning?: string | null;
+  image_critique_at?: string | null;
+}
+
+/** Maps a `DbPost` row (snake_case from D1) to the front-end `SocialPost`
+ *  (camelCase). Three near-identical inline copies of this shape used to
+ *  live in App.tsx — extracted here so any new field added to `posts` is a
+ *  one-site change. Keep in sync with src/types.ts and DbPost above. */
+export function mapDbPostToSocialPost(p: DbPost): import('../types').SocialPost {
+  return {
+    id: p.id,
+    content: p.content,
+    platform: p.platform as import('../types').SocialPost['platform'],
+    status: p.status as import('../types').SocialPost['status'],
+    scheduledFor: p.scheduled_for ?? '',
+    hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
+    image: p.image_url ?? undefined,
+    topic: p.topic ?? undefined,
+    pillar: p.pillar as import('../types').SocialPost['pillar'] | undefined,
+    imagePrompt: p.image_prompt ?? undefined,
+    reasoning: p.reasoning ?? undefined,
+    postType: (p.post_type as import('../types').SocialPost['postType']) ?? undefined,
+    videoScript: p.video_script ?? undefined,
+    videoShots: p.video_shots ?? undefined,
+    videoMood: p.video_mood ?? undefined,
+    videoUrl: p.video_url ?? undefined,
+    videoStatus: p.video_status ?? undefined,
+    videoRequestId: p.video_request_id ?? undefined,
+    videoStartedAt: p.video_started_at ?? undefined,
+    videoError: p.video_error ?? undefined,
+    r2VideoKey: p.r2_video_key ?? undefined,
+    audioMixedUrl: p.audio_mixed_url ?? undefined,
+    imageCritiqueScore: p.image_critique_score ?? undefined,
+    imageCritiqueReasoning: p.image_critique_reasoning ?? undefined,
+    imageCritiqueAt: p.image_critique_at ?? undefined,
+  };
 }
 
 export interface DbClient {
@@ -488,6 +526,10 @@ export interface CritiqueImageInput {
   /** Optional archetype slug — gives the vision model the right context
    *  (e.g. it knows a food image on a tech-saas-agency archetype is wrong). */
   archetype?: string;
+  /** Optional post ID — when set, the worker persists the critique result
+   *  onto the post (image_critique_score/reasoning/at) so PostModal can show
+   *  the "AI quality ✓ N/10" badge on subsequent renders. Best-effort. */
+  postId?: string;
 }
 
 export interface ImageCritique {

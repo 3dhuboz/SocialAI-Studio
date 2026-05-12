@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   X, Facebook, Instagram, Send, Trash2, Save, Loader2,
   Calendar, Clock, Edit2, CheckCircle, Image as ImageIcon,
-  RefreshCw, Upload, Hash, TrendingUp, Sparkles
+  RefreshCw, Upload, Hash, TrendingUp, Sparkles, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 import { SocialPost } from '../types';
 import { AnimatedReelPreview } from './AnimatedReelPreview';
@@ -241,6 +241,27 @@ export const PostModal: React.FC<Props> = ({
           displayImage ? (
             <div className="relative">
               <img src={displayImage} alt="" className="w-full max-h-56 object-cover" />
+              {/* AI quality-check badge — populated by Haiku 4.5 vision at
+                  prewarm time. Colour-codes the score so the user can scan
+                  for "needs eyes on it" posts at a glance. Tooltip shows the
+                  one-sentence reasoning. */}
+              {typeof post.imageCritiqueScore === 'number' && (
+                <div
+                  className={`absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-lg backdrop-blur text-[10px] font-bold uppercase tracking-wider border ${
+                    post.imageCritiqueScore >= 8
+                      ? 'bg-emerald-500/20 border-emerald-400/30 text-emerald-300'
+                      : post.imageCritiqueScore >= 5
+                      ? 'bg-amber-500/20 border-amber-400/30 text-amber-300'
+                      : 'bg-rose-500/25 border-rose-400/40 text-rose-200'
+                  }`}
+                  title={post.imageCritiqueReasoning || 'AI quality check'}
+                >
+                  {post.imageCritiqueScore >= 5
+                    ? <ShieldCheck size={11} />
+                    : <ShieldAlert size={11} />}
+                  AI {post.imageCritiqueScore}/10
+                </div>
+              )}
               <div className="absolute top-2 right-2 flex gap-1.5">
                 {post.imagePrompt && hasApiKey && (
                   <button

@@ -8,6 +8,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { useDb } from './hooks/useDb';
+import { mapDbPostToSocialPost } from './services/db';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
@@ -560,15 +561,7 @@ const Dashboard: React.FC = () => {
         // Load posts for own workspace — skip in portal mode (client workspace effect handles posts)
         if (authMode !== 'portal') {
           const loadedPosts = await db.getPosts();
-          const loaded: SocialPost[] = loadedPosts.map(p => ({
-            id: p.id, content: p.content, platform: p.platform as SocialPost['platform'],
-            status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
-            hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
-            image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
-            imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined,
-            postType: p.post_type as SocialPost['postType'] ?? undefined,
-            videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined,
-          }));
+          const loaded: SocialPost[] = loadedPosts.map(mapDbPostToSocialPost);
           setPosts(loaded);
           localStorage.setItem('sai_posts', JSON.stringify(loaded));
         }
@@ -725,7 +718,7 @@ const Dashboard: React.FC = () => {
           setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
         } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
         const clientPosts = await db.getPosts(activeClientId);
-        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
+        setPosts(clientPosts.map(mapDbPostToSocialPost));
         // Load campaigns for this client workspace
         try {
           const loadedCampaigns = await db.getCampaigns(activeClientId);
@@ -854,7 +847,7 @@ const Dashboard: React.FC = () => {
         setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
       } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
       const ownPosts = await db.getPosts();
-      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined }));
+      const loaded: SocialPost[] = ownPosts.map(mapDbPostToSocialPost);
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
       // Load campaigns for own workspace
