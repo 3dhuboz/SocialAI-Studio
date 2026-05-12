@@ -411,6 +411,18 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<ArchetypeResponse>;
     },
 
+    /** Per-client classifier (schema v9). Persists on clients.archetype_slug
+     *  so the image-gen guardrails + vision critique use the CLIENT's
+     *  archetype, not the agency owner's, when generating for a client
+     *  workspace. Call this when switching into a client workspace. */
+    async classifyClientBusiness(clientId: string, input: ClassifyBusinessInput): Promise<ArchetypeResponse> {
+      const res = await f(`/api/clients/${encodeURIComponent(clientId)}/classify-business`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ArchetypeResponse>;
+    },
+
     /**
      * Vision-grounded image+caption critique (2026-05 image-stack upgrade).
      *

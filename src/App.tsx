@@ -773,12 +773,6 @@ const Dashboard: React.FC = () => {
   // setActiveArchetype docstring.
   useEffect(() => {
     if (!user) return;
-    if (activeClientId !== null) {
-      // On a client workspace — clear the active archetype so gemini.ts uses
-      // the synchronous keyword match against that workspace's businessType
-      setActiveArchetype(null);
-      return;
-    }
     // Need ENOUGH signal to classify accurately. Bail only if all three
     // free-text fields are empty / too short — otherwise we trust the
     // classifier (which weighs businessType + description + productsServices
@@ -789,13 +783,38 @@ const Dashboard: React.FC = () => {
     // wrote a long products/services list but skipped the description.
     // Result: image-gen fell back to keyword match against businessType,
     // which mis-classified SaaS/agency businesses as food-leaning.
+    //
+    // 2026-05-12 fix: extends to client workspaces. Schema v9 added
+    // clients.archetype_slug so each client gets its own classification.
+    // Previously the useEffect cleared activeArchetypeSlug on client
+    // workspaces and let gemini.ts keyword-match against businessType —
+    // which mis-classified niche clients (e.g. "Smokehouse" → bbq-smokehouse
+    // is right, but "Picklenick" → food-restaurant misses the deli specialty).
     const desc = (profile.description || '').trim();
     const ps = (profile.productsServices || '').trim();
     const ct = (profile.contentTopics || '').trim();
     const hasContext = desc.length >= 50 || ps.length >= 30 || ct.length >= 30;
-    if (!hasContext) return;
+    if (!hasContext) {
+      setActiveArchetype(null);
+      return;
+    }
     const timer = setTimeout(async () => {
       try {
+        if (activeClientId) {
+          // Client workspace — classify against the CLIENT'S profile, persist
+          // on clients.archetype_slug, so the worker's image-gen guardrails
+          // see the right archetype when generating for this client.
+          const classified = await db.classifyClientBusiness(activeClientId, {
+            businessType: profile.type,
+            description: profile.description,
+            productsServices: profile.productsServices,
+            contentTopics: profile.contentTopics,
+          });
+          setActiveArchetype(classified.archetype.slug);
+          console.log(`[archetype] client ${activeClientId} classified as "${classified.archetype.slug}" (confidence ${classified.confidence})`);
+          return;
+        }
+        // Own workspace — user-level archetype
         const cached = await db.getBusinessArchetype();
         if (cached) {
           setActiveArchetype(cached.archetype.slug);

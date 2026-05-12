@@ -372,6 +372,44 @@ const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
   },
 };
 
+// Resolve the archetype slug for a post given its (userId, clientId).
+// Schema v9 adds clients.archetype_slug so agency users running multiple
+// client workspaces get the RIGHT archetype per post — previously a
+// tech-saas-agency owner running a food client's account had tech
+// guardrails applied to food posts.
+//
+// Resolution order:
+//   1. If clientId set AND clients.archetype_slug populated → that wins
+//   2. Otherwise fall back to users.archetype_slug
+//
+// One DB read per call. Safe to call from cron hot paths.
+async function resolveArchetypeSlug(
+  env: Env,
+  userId: string,
+  clientId: string | null,
+): Promise<string | null> {
+  if (clientId) {
+    try {
+      const clientRow = await env.DB.prepare(
+        `SELECT archetype_slug FROM clients WHERE id = ? AND user_id = ?`
+      ).bind(clientId, userId).first<{ archetype_slug: string | null }>();
+      if (clientRow?.archetype_slug) return clientRow.archetype_slug;
+    } catch (e) {
+      console.warn(`[archetype] client lookup failed for client=${clientId}:`, e);
+      // fall through to user-level lookup
+    }
+  }
+  try {
+    const userRow = await env.DB.prepare(
+      `SELECT archetype_slug FROM users WHERE id = ?`
+    ).bind(userId).first<{ archetype_slug: string | null }>();
+    return userRow?.archetype_slug || null;
+  } catch (e) {
+    console.warn(`[archetype] user lookup failed for user=${userId}:`, e);
+    return null;
+  }
+}
+
 // Apply archetype guardrails to a built safe-prompt pair. If the prompt
 // contains subjects forbidden for the archetype, swap in a random
 // archetype-appropriate fallback scene. Always extend negative_prompt with
@@ -460,20 +498,13 @@ async function generateImageWithBrandRefs(
 ): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
-  // Archetype guardrail: look up the user's classified archetype and rewrite
+  // Archetype guardrail: look up the (client OR user) archetype and rewrite
   // the prompt if it contains subjects forbidden for that archetype (e.g. a
   // SaaS business's image_prompt drifted to "plated food on rustic wood
-  // board"). One D1 read per image generation — image gen is rare enough
-  // that this is fine; cron prewarm runs every 5 min with ≤2 posts/batch.
-  let archetypeSlug: string | null = null;
-  try {
-    const row = await env.DB.prepare(
-      `SELECT archetype_slug FROM users WHERE id = ?`
-    ).bind(userId).first<{ archetype_slug: string | null }>();
-    archetypeSlug = row?.archetype_slug || null;
-  } catch (e) {
-    console.warn(`[image-gen] archetype lookup failed for uid=${userId}:`, e);
-  }
+  // board"). Schema v9: prefers clients.archetype_slug when clientId set,
+  // falls back to users.archetype_slug — so an agency owner running a food
+  // client gets food guardrails on that client's posts, not tech guardrails.
+  const archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
 
   let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };
   if (options.forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {
@@ -2749,15 +2780,9 @@ async function backfillImagesForUser(env: Env, uid: string) {
   const posts = rows.results || [];
   let succeeded = 0; let failed = 0; let critiqueRetries = 0; const errors: string[] = [];
 
-  // Cache the archetype slug for the run — backfill processes one user's posts,
-  // so we look it up once and re-use it across all critique calls.
-  let archetypeSlug: string | null = null;
-  try {
-    const userRow = await env.DB.prepare(
-      'SELECT archetype_slug FROM users WHERE id = ?'
-    ).bind(uid).first<{ archetype_slug: string | null }>();
-    archetypeSlug = userRow?.archetype_slug || null;
-  } catch { /* best-effort */ }
+  // Schema v9: archetype is per-(user OR client). Cache by client_id within
+  // this run so we don't hit the DB once per post for the same workspace.
+  const archetypeCache = new Map<string, string | null>();
 
   for (const post of posts) {
     try {
@@ -2767,6 +2792,12 @@ async function backfillImagesForUser(env: Env, uid: string) {
       const postId = (post as any).id as string;
       const clientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
+
+      const cacheKey = clientId || '__user__';
+      if (!archetypeCache.has(cacheKey)) {
+        archetypeCache.set(cacheKey, await resolveArchetypeSlug(env, uid, clientId));
+      }
+      const archetypeSlug = archetypeCache.get(cacheKey) || null;
 
       // 2026-05 image-stack upgrade: brand-grounded via FLUX Pro Kontext
       // when the workspace has scraped FB photos available, FLUX-dev when
@@ -3480,19 +3511,141 @@ app.post('/api/classify-business', async (c) => {
     }
   }
 
-  // Load all archetypes from D1
-  const archetypeRows = await c.env.DB.prepare(
+  const result = await classifyArchetypeFromFingerprint(c.env, fingerprint);
+  if ('error' in result) return c.json({ error: result.error, valid_slugs: result.valid_slugs }, result.status as 400 | 500 | 502);
+
+  // ── Cache on the user row ──
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(
+    `UPDATE users SET archetype_slug = ?, archetype_confidence = ?, archetype_reasoning = ?, archetype_classified_at = ? WHERE id = ?`
+  ).bind(result.chosen.slug, result.chosen.confidence, result.chosen.reasoning, now, uid).run();
+
+  return c.json({
+    classified: true,
+    cached: false,
+    archetype_slug: result.chosen.slug,
+    confidence: result.chosen.confidence,
+    reasoning: result.chosen.reasoning,
+    classified_at: now,
+    archetype: result.archetypePayload,
+  });
+});
+
+/** POST /api/clients/:id/classify-business — same classifier as the user-
+ *  level endpoint but persists the result on clients.archetype_slug. Lets
+ *  agency users get the RIGHT image guardrails per client workspace.
+ *  Caller passes the client's businessType/description/products/topics
+ *  (the worker doesn't trust the client_id alone — needs the profile
+ *  fields to fingerprint accurately, since the clients table only
+ *  guarantees name + business_type). force=true bypasses the cache.
+ */
+app.post('/api/clients/:id/classify-business', async (c) => {
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+  if (await isRateLimited(c.env.DB, `classify:${uid}`, 10)) {
+    return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+  }
+  const clientId = c.req.param('id');
+
+  // Ownership check — caller must own this client. Prevents one user from
+  // re-classifying someone else's clients.
+  const clientRow = await c.env.DB.prepare(
+    `SELECT id, name, business_type, archetype_slug, archetype_confidence, archetype_reasoning
+     FROM clients WHERE id = ? AND user_id = ?`
+  ).bind(clientId, uid).first<{
+    id: string; name: string; business_type: string | null;
+    archetype_slug: string | null; archetype_confidence: number | null; archetype_reasoning: string | null;
+  }>();
+  if (!clientRow) return c.json({ error: 'Client not found' }, 404);
+
+  const body = await c.req.json().catch(() => ({})) as {
+    businessType?: string; description?: string;
+    productsServices?: string; contentTopics?: string;
+    force?: boolean;
+  };
+  const businessType = body.businessType || clientRow.business_type || '';
+  const description = body.description || '';
+  const productsServices = body.productsServices || '';
+  const contentTopics = body.contentTopics || '';
+  const force = !!body.force;
+
+  const fingerprint = [
+    clientRow.name && `Client name: ${clientRow.name}`,
+    businessType && `Business type: ${businessType}`,
+    description && `Description: ${description}`,
+    productsServices && `Products/services: ${productsServices}`,
+    contentTopics && `Content topics: ${contentTopics}`,
+  ].filter(Boolean).join('\n');
+
+  if (!fingerprint.trim()) {
+    return c.json({ error: 'At least one of businessType / description must be non-empty.' }, 400);
+  }
+
+  // Honour cache unless force=true
+  if (!force && clientRow.archetype_slug) {
+    const arch = await c.env.DB.prepare(`SELECT * FROM business_archetypes WHERE slug = ?`)
+      .bind(clientRow.archetype_slug).first<ArchetypeRow>();
+    if (arch) {
+      return c.json({
+        classified: true,
+        cached: true,
+        archetype_slug: clientRow.archetype_slug,
+        confidence: clientRow.archetype_confidence,
+        reasoning: clientRow.archetype_reasoning,
+        archetype: {
+          slug: arch.slug, name: arch.name, description: arch.description,
+          image_examples: JSON.parse(arch.image_examples),
+          image_avoid_notes: arch.image_avoid_notes, voice_cues: arch.voice_cues,
+          content_pillars: JSON.parse(arch.content_pillars),
+          banned_trope_extras: arch.banned_trope_extras ? JSON.parse(arch.banned_trope_extras) : null,
+        },
+      });
+    }
+  }
+
+  const result = await classifyArchetypeFromFingerprint(c.env, fingerprint);
+  if ('error' in result) return c.json({ error: result.error, valid_slugs: result.valid_slugs }, result.status as 400 | 500 | 502);
+
+  // ── Cache on the client row ──
+  const now = new Date().toISOString();
+  await c.env.DB.prepare(
+    `UPDATE clients SET archetype_slug = ?, archetype_confidence = ?, archetype_reasoning = ?, archetype_classified_at = ? WHERE id = ?`
+  ).bind(result.chosen.slug, result.chosen.confidence, result.chosen.reasoning, now, clientId).run();
+
+  return c.json({
+    classified: true,
+    cached: false,
+    archetype_slug: result.chosen.slug,
+    confidence: result.chosen.confidence,
+    reasoning: result.chosen.reasoning,
+    classified_at: now,
+    archetype: result.archetypePayload,
+  });
+});
+
+// ── Classifier core helper ───────────────────────────────────────────────
+// Three-layer classifier (keyword → Vectorize → Haiku) that both user-level
+// and client-level classify-business endpoints share. Returns either:
+//   { chosen, archetypePayload }    — success
+//   { error, status, valid_slugs? } — failure that caller forwards as JSON
+// Pure-ish: no DB writes, no auth, no per-caller state. Caller decides
+// where to persist (users vs clients table).
+async function classifyArchetypeFromFingerprint(
+  env: Env,
+  fingerprint: string,
+): Promise<
+  | { chosen: { slug: string; confidence: number; reasoning: string }; archetypePayload: any }
+  | { error: string; status: number; valid_slugs?: string[] }
+> {
+  const archetypeRows = await env.DB.prepare(
     `SELECT slug, name, description, keywords, image_examples, image_avoid_notes, voice_cues, content_pillars, banned_trope_extras FROM business_archetypes ORDER BY slug`
   ).all<ArchetypeRow>();
   const archetypes = (archetypeRows.results || []) as ArchetypeRow[];
-
   if (archetypes.length === 0) {
-    return c.json({ error: 'business_archetypes table is empty — run seed_v7_archetypes.sql' }, 500);
+    return { error: 'business_archetypes table is empty — run seed_v7_archetypes.sql', status: 500 };
   }
 
   // ── Layer 0 — keyword match ──
-  // Count keyword hits per archetype. If ONE archetype scores ≥2 hits AND
-  // beats the runner-up by ≥2, we're confident enough to skip the LLM.
   const fingerprintLower = fingerprint.toLowerCase();
   const scores: Array<{ slug: string; hits: number }> = archetypes.map(a => ({
     slug: a.slug,
@@ -3510,15 +3663,10 @@ app.post('/api/classify-business', async (c) => {
     };
   }
 
-  // ── Layer 0.5 — Cloudflare Vectorize semantic match (Phase 2) ──
-  // When the ARCHETYPE_VEC + AI bindings are configured, embed the
-  // fingerprint with bge-base-en-v1.5 and query the index for the closest
-  // archetype description. If top-1 cosine ≥ 0.78, accept it and skip the
-  // LLM. This is the "cheap-fast first stage" the strategic review
-  // recommended — ~50ms + free at SMB scale, vs ~$0.001 + 1500ms for Haiku.
-  if (!chosen && c.env.ARCHETYPE_VEC && c.env.AI) {
+  // ── Layer 0.5 — Cloudflare Vectorize semantic match ──
+  if (!chosen && env.ARCHETYPE_VEC && env.AI) {
     try {
-      const vec = await classifyViaVectorize(c.env, fingerprint);
+      const vec = await classifyViaVectorize(env, fingerprint);
       if (vec && vec.confidence >= 0.78) {
         chosen = {
           slug: vec.slug,
@@ -3531,17 +3679,10 @@ app.post('/api/classify-business', async (c) => {
     }
   }
 
-  // ── Layer 1 — Haiku 4.5 zero-shot classifier with JSON output ──
+  // ── Layer 1 — Haiku 4.5 zero-shot classifier ──
   if (!chosen) {
-    const apiKey = c.env.OPENROUTER_API_KEY;
-    if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500);
-
-    // Build the system prompt — list every archetype with its description.
-    // Haiku reads this once per classification (~2k tokens) and picks one.
-    const archetypeListing = archetypes.map(a =>
-      `• ${a.slug} — ${a.name}: ${a.description}`
-    ).join('\n');
-
+    if (!env.OPENROUTER_API_KEY) return { error: 'OPENROUTER_API_KEY not configured', status: 500 };
+    const archetypeListing = archetypes.map(a => `• ${a.slug} — ${a.name}: ${a.description}`).join('\n');
     const systemPrompt = `You are a business-archetype classifier for a social-media SaaS. You will be given a description of a business. You MUST classify it into exactly ONE of the archetypes below.
 
 The archetypes:
@@ -3566,7 +3707,7 @@ Respond ONLY with valid JSON matching this exact shape:
     const orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://socialaistudio.au',
         'X-Title': 'SocialAI Studio — Business Classifier',
@@ -3577,32 +3718,23 @@ Respond ONLY with valid JSON matching this exact shape:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: fingerprint },
         ],
-        temperature: 0.1,
-        max_tokens: 200,
+        temperature: 0.1, max_tokens: 200,
         response_format: { type: 'json_object' },
       }),
     });
-
     if (!orResponse.ok) {
       const errText = await orResponse.text().catch(() => '');
-      return c.json({ error: `Haiku classifier call failed: ${orResponse.status} ${errText.slice(0, 200)}` }, 502);
+      return { error: `Haiku classifier call failed: ${orResponse.status} ${errText.slice(0, 200)}`, status: 502 };
     }
-
     const orJson = await orResponse.json() as any;
     const raw = orJson.choices?.[0]?.message?.content || '';
     let parsed: { archetype_slug?: string; confidence?: number; reasoning?: string };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return c.json({ error: 'Haiku returned malformed JSON', raw: raw.slice(0, 500) }, 502);
-    }
-
-    // Validate the slug is one we actually have
+    try { parsed = JSON.parse(raw); }
+    catch { return { error: 'Haiku returned malformed JSON', status: 502 }; }
     const validSlug = archetypes.find(a => a.slug === parsed.archetype_slug);
     if (!validSlug) {
-      return c.json({ error: `Haiku returned unknown slug "${parsed.archetype_slug}"`, valid_slugs: archetypes.map(a => a.slug) }, 502);
+      return { error: `Haiku returned unknown slug "${parsed.archetype_slug}"`, status: 502, valid_slugs: archetypes.map(a => a.slug) };
     }
-
     chosen = {
       slug: parsed.archetype_slug!,
       confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.7,
@@ -3610,22 +3742,10 @@ Respond ONLY with valid JSON matching this exact shape:
     };
   }
 
-  // ── Cache on the user row ──
-  const now = new Date().toISOString();
-  await c.env.DB.prepare(
-    `UPDATE users SET archetype_slug = ?, archetype_confidence = ?, archetype_reasoning = ?, archetype_classified_at = ? WHERE id = ?`
-  ).bind(chosen.slug, chosen.confidence, chosen.reasoning, now, uid).run();
-
-  // ── Return the full picture ──
   const matched = archetypes.find(a => a.slug === chosen!.slug)!;
-  return c.json({
-    classified: true,
-    cached: false,
-    archetype_slug: chosen.slug,
-    confidence: chosen.confidence,
-    reasoning: chosen.reasoning,
-    classified_at: now,
-    archetype: {
+  return {
+    chosen,
+    archetypePayload: {
       slug: matched.slug,
       name: matched.name,
       description: matched.description,
@@ -3635,8 +3755,8 @@ Respond ONLY with valid JSON matching this exact shape:
       content_pillars: JSON.parse(matched.content_pillars),
       banned_trope_extras: matched.banned_trope_extras ? JSON.parse(matched.banned_trope_extras) : null,
     },
-  });
-});
+  };
+}
 
 // ── Vectorize semantic classifier (Phase 2) ───────────────────────────────
 //
@@ -5139,13 +5259,7 @@ async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }>
       // helper returns null) — preserves no-regression behaviour for
       // workspaces without the key.
       if (finalUrl && caption.length > 20) {
-        let archetypeSlug: string | null = null;
-        try {
-          const userRow = await env.DB.prepare(
-            'SELECT archetype_slug FROM users WHERE id = ?'
-          ).bind(userId).first<{ archetype_slug: string | null }>();
-          archetypeSlug = userRow?.archetype_slug || null;
-        } catch { /* archetype lookup is best-effort */ }
+        const archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
 
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
