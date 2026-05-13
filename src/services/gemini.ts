@@ -252,15 +252,22 @@ const getImagePromptExamples = (businessType: string): string => {
     // them and (b) primed the AI to write UI-flavoured prompts even for
     // non-pricing topics. New examples lean into the "calm hands-off
     // automation" outcome — physical scenes, no UI mentions, no people.
+    //
+    // 2026-05 follow-up: removed the 3 inherently dark examples ("dark
+    // moody desk", "server rack with neon", "fibre cables in dark room")
+    // — they rendered as mostly-black thumbnails which look like generation
+    // failures to the user. Replaced with brighter alternatives in the same
+    // visual category (workspace / tech materials) so the pool stays varied
+    // but every random pick produces a legible draft thumbnail.
     "'matte black smartphone face-down on marble surface beside espresso cup, top-down, morning light'",
-    "'mechanical keyboard with backlit keys on a dark moody desk, candid close-up, no person'",
-    "'rack of glowing server hardware, abstract tech atmosphere, neon accents'",
+    "'mechanical keyboard with white keycaps on a bright minimalist desk, candid close-up, no person'",
+    "'rows of glossy server tower casings against a clean white wall, soft daylight, no person'",
     "'aerial view of clean desk with notebook, pen, plant and closed laptop, beige aesthetic'",
     "'coffee shop counter scene with laptop, latte and notebook, warm afternoon light, no person'",
     "'creative wall of post-it notes in a bright office, daylight from window, candid texture'",
-    "'abstract close-up of glowing fibre cables in dark room, blue+orange contrast'",
+    "'macro of fibre optic cables coiled on a white surface, sharp focus, bright top-down studio light'",
     "'home office windowsill with plant, mug and a closed notebook at sunrise'",
-    "'multi-screen agency desk with calendar view glowing softly, late evening, no person'",
+    "'multi-screen agency desk with calendar view, soft morning daylight through window, no person'",
     "'whiteboard wall with kanban sticky-notes, daylight, creative studio atmosphere'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
@@ -1149,7 +1156,11 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   // "Your social media on autopilot" — abstract "X on autopilot" cliché.
   // Critical: the product is named "AI Content Autopilot" so we anchor on the
   // possessive "Your X on autopilot" shape, NOT bare "autopilot".
-  [/\bYour\s+(?:social\s+media|business|marketing|content|growth|sales)\s+on\s+autopilot\b[.!]?\s*/gi, ''],
+  // Optional leading "Ready to/Want to/Looking to <verb>" prefix so we strip
+  // the whole rhetorical construction as one unit. Without this, a phrase
+  // like "Ready to get your social media on autopilot?" left an orphan
+  // "Ready to get?" CTA in the post after the trope was stripped.
+  [/\b(?:(?:Ready|Want|Looking|Wondering)\s+to\s+\S+\s+)?your\s+(?:social\s+media|business|marketing|content|growth|sales)\s+on\s+autopilot\b[?.!]?\s*/gi, ''],
   // "Consistency without the burnout" / "Growth without the grind" — X-without-Y antipattern
   [/\b(?:Consistency|Growth|Scale|Success|Results|Quality|Productivity|Reach|Visibility)\s+without\s+(?:the\s+)?(?:burnout|chaos|stress|overwhelm|effort|work|grind|hassle|headache|complexity)\b[.!?]?\s*/gi, ''],
   // "Scale your agency without scaling your workload" — pun/wordplay marketing
