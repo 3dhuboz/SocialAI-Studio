@@ -53,6 +53,10 @@ export type Env = {
   // the prewarm cron copies each generated mp4 here so the publish cron has
   // a durable, public URL to feed FB/IG via file_url.
   REELS_R2?: R2Bucket;
+  // R2 bucket for Poster Maker PNG bytes. Keyed `posters/<id>.png`; D1 row
+  // posters.image_r2_key references the key. ~5 MB cap enforced in the upload
+  // route. Streamed back to the browser via GET /api/db/posters/:id/image.
+  POSTER_ASSETS?: R2Bucket;
   // Public base URL for REELS_R2 — e.g. "https://reels.socialaistudio.au"
   // (custom domain) or "https://pub-{hash}.r2.dev" (default public bucket).
   // Set in [vars] in wrangler.toml once the bucket exposes a public URL.
