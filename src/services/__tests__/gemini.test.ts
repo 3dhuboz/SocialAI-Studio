@@ -112,7 +112,11 @@ describe('detectFabrication — invented stats and cadence', () => {
   it.each([
     ['Small business owners in Rocky are already posting 7-14 times per week on autopilot. Join them.', /posting-frequency/i],
     ['AI does it for you. How many hours could you reclaim this week?', /implied invented stat|leading question/i],
-    ['Nobody sees it. Timing is everything. We fix that. Trust us.', /cadence|short sentences/i],
+    // 5+ consecutive ≤6-word sentences trips the structural cadence detector.
+    // (Threshold was bumped from 3 to 5 in 2026-05 to stop false-positives on
+    // natural 3-item feature lists like "AI writes your posts. Generates your
+    // images. Publishes at the right time." Sustained AI rhythm is still caught.)
+    ['Nobody sees it. Timing is everything. We fix that. Trust us. We promise.', /cadence|short sentences/i],
     ['Boost engagement by 45% with our new feature.', /percentage/i],
     ['Loved it! — Sarah J., Brisbane', /testimonial signature/i],
     // 2026-05 SaaS-genre additions

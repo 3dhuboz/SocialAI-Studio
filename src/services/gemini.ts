@@ -916,7 +916,7 @@ Content must respect the character limits above. No padding. No filler.`;
     parsed = parseRaw(text);
     if (typeof parsed.content !== 'string') break;
     // Layer A: regex detector (cheap, instant, catches known patterns)
-    const regexViolation = detectFabrication(parsed.content);
+    const regexViolation = detectFabrication(parsed.content, profileContext);
     if (regexViolation) { lastReason = regexViolation; console.warn(`[gemini] attempt ${attempt} rejected (regex): ${regexViolation}`); continue; }
     // Layer B: LLM judge (semantic — catches what regex misses). Only on attempts 1-2.
     if (attempt < 3) {
@@ -1033,17 +1033,32 @@ const FAB_CHECKS: Array<[RegExp, string]> = [
   [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
 ];
 
-export function detectFabrication(content: string): string | null {
+export function detectFabrication(content: string, brandContext: string = ''): string | null {
+  const ctxLower = brandContext.toLowerCase();
   for (const [pattern, reason] of FAB_CHECKS) {
     const match = content.match(pattern);
-    if (match) return `${reason} ("${match[0]}")`;
+    if (!match) continue;
+    // Brand-context whitelist: if the regex match is supported by the
+    // user's provided brand context, it isn't fabrication — it's a real
+    // product/business fact. Two checks:
+    //   1. Full matched phrase appears verbatim in context (case-insensitive)
+    //   2. Every numeric token in the match appears in context — handles
+    //      paraphrasing like "generates 7-14 posts" vs context's "7-14 posts/week"
+    if (ctxLower) {
+      const matchLower = match[0].toLowerCase();
+      if (ctxLower.includes(matchLower)) continue;
+      const nums = match[0].match(/\d+(?:[-–]\d+)?/g);
+      if (nums && nums.length > 0 && nums.every(n => ctxLower.includes(n))) continue;
+    }
+    return `${reason} ("${match[0]}")`;
   }
-  // 2026-05 audit: structural cadence detector. Three or more consecutive
-  // short declarative sentences (≤6 words each) is the AI rhythm signature
-  // — exactly what produced "Nobody sees it. Timing is everything." Posts
-  // can have one or two short sentences for emphasis but a string of them
-  // reads as AI-generated. We flag here so the post regenerates with looser
-  // pacing; if it still fails after retries, _needsReview surfaces it.
+  // 2026-05 audit: structural cadence detector. Five or more consecutive
+  // short declarative sentences (≤6 words each) is the AI rhythm signature.
+  // Threshold was originally 3 but produced false positives on legitimate
+  // 3-item feature lists ("AI writes your posts. Generates your images.
+  // Publishes at the right time.") which are normal marketing copy. Bumped
+  // to 5 so we only catch sustained AI rhythm, not natural punchy lists.
+  // Semantic invention is still caught by the LLM judge (judgePost).
   const sentences = content.split(/[.!?]\s+/).filter(s => s.trim().length > 0);
   let consecutiveShort = 0;
   let maxRun = 0;
@@ -1056,7 +1071,7 @@ export function detectFabrication(content: string): string | null {
       consecutiveShort = 0;
     }
   }
-  if (maxRun >= 3) {
+  if (maxRun >= 5) {
     return `AI cadence — ${maxRun} consecutive short sentences (≤6 words). Reads like a tech blog, not a small business.`;
   }
   return null;
@@ -2165,10 +2180,10 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const processOne = async (p: any) => {
       if (typeof p.content !== 'string') return p;
       let flagReason: string | null = null;
-      const regexViolation = detectFabrication(p.content);
+      const regexViolation = detectFabrication(p.content, profileBlock);
       if (regexViolation) {
         p.content = scrubBannedPhrases(p.content);
-        if (detectFabrication(p.content)) flagReason = regexViolation;
+        if (detectFabrication(p.content, profileBlock)) flagReason = regexViolation;
       } else {
         p.content = scrubBannedPhrases(p.content);
       }
@@ -2194,7 +2209,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
           undefined,
           clientId,
         );
-        if (recovered?.content && !detectFabrication(recovered.content)) {
+        if (recovered?.content && !detectFabrication(recovered.content, profileBlock)) {
           p.content = scrubBannedPhrases(recovered.content);
           if (Array.isArray(recovered.hashtags) && recovered.hashtags.length > 0) p.hashtags = recovered.hashtags;
           if (recovered.imagePrompt) p.imagePrompt = recovered.imagePrompt;
