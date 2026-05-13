@@ -16,6 +16,7 @@ import { buildSafeImagePrompt, sniffArchetypeFromCaption } from './image-safety'
 import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal } from './critique';
 import { generateImageWithBrandRefs } from './image-gen';
+import { callAnthropicVision } from './anthropic';
 
 export async function backfillImagesForUser(env: Env, uid: string) {
   const apiKey = env.FAL_API_KEY;
@@ -188,6 +189,9 @@ export async function runBacklogCritique(
   const archetypeCache = new Map<string, string | null>();
 
   for (const post of posts) {
+    let errorMsg: string | null = null;
+    let critique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
+
     try {
       const cacheKey = `${post.user_id}:${post.client_id || '__user__'}`;
       if (!archetypeCache.has(cacheKey)) {
@@ -195,11 +199,97 @@ export async function runBacklogCritique(
       }
       const archetypeSlug = archetypeCache.get(cacheKey) || null;
 
-      const critique = await critiqueImageInternal(env, {
-        imageUrl: post.image_url,
-        caption: post.content,
-        archetypeSlug,
-      });
+      // Bypass critiqueImageInternal here — that helper swallows errors
+      // via console.warn + returns null, which is useless for backlog
+      // diagnostics where every post needs a definitive reason. Call
+      // Anthropic directly and capture the exact error text so it lands
+      // in image_critique_reasoning where we can SELECT and see it.
+      const systemPrompt = archetypeSlug
+        ? `Score this image vs caption match for a ${archetypeSlug} business on a 0-10 scale. Return JSON: {"score":N, "match":"yes"|"partial"|"no", "reasoning":"one sentence"}.`
+        : `Score this image vs caption match on a 0-10 scale. Infer the business type from the caption (food, SaaS, agency, etc) — if caption is about software/SaaS/AI tools but image shows food/restaurants, score 1-2 for cross-domain bleed. Return JSON: {"score":N, "match":"yes"|"partial"|"no", "reasoning":"one sentence"}.`;
+      const userPrompt = `Caption: "${post.content.slice(0, 800)}"\n\nDoes the image match?`;
+
+      // Path A: Anthropic direct (only when key is set).
+      if (env.ANTHROPIC_API_KEY) {
+        try {
+          const { text } = await callAnthropicVision({
+            apiKey: env.ANTHROPIC_API_KEY,
+            model: 'claude-haiku-4-5',
+            systemPrompt,
+            prompt: userPrompt,
+            imageUrl: post.image_url,
+            temperature: 0.1,
+            maxTokens: 250,
+            responseFormat: 'json',
+          });
+          const parsed = JSON.parse(text);
+          critique = {
+            score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
+            match: (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial',
+            reasoning: (parsed.reasoning || '').toString().slice(0, 300),
+          };
+        } catch (e: any) {
+          errorMsg = `Anthropic: ${(e?.message || 'unknown').slice(0, 180)}`;
+        }
+      }
+
+      // Path B: OpenRouter (used when no Anthropic key OR Anthropic failed).
+      if (!critique && env.OPENROUTER_API_KEY) {
+        try {
+          const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://socialaistudio.au',
+              'X-Title': 'SocialAI Studio — Backlog Critique',
+            },
+            body: JSON.stringify({
+              model: 'anthropic/claude-haiku-4.5',
+              messages: [
+                { role: 'system', content: systemPrompt },
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: userPrompt },
+                    { type: 'image_url', image_url: { url: post.image_url } },
+                  ],
+                },
+              ],
+              temperature: 0.1,
+              max_tokens: 250,
+              response_format: { type: 'json_object' },
+            }),
+          });
+          if (!orRes.ok) {
+            const body = await orRes.text().catch(() => '');
+            const orErr = `OpenRouter HTTP ${orRes.status}: ${body.slice(0, 150)}`;
+            errorMsg = errorMsg ? `${errorMsg} | ${orErr}` : orErr;
+          } else {
+            const orJson = await orRes.json() as any;
+            const raw = (orJson.choices?.[0]?.message?.content || '').trim();
+            // Strip ```json / ``` fences — OpenRouter+Haiku sometimes wraps
+            // JSON in a markdown code block despite response_format=json_object.
+            const stripped = raw
+              .replace(/^```(?:json)?\s*/i, '')
+              .replace(/\s*```$/i, '')
+              .trim();
+            const parsed = JSON.parse(stripped);
+            critique = {
+              score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
+              match: (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial',
+              reasoning: (parsed.reasoning || '').toString().slice(0, 300),
+            };
+          }
+        } catch (e: any) {
+          const orErr = `OpenRouter threw: ${(e?.message || 'unknown').slice(0, 150)}`;
+          errorMsg = errorMsg ? `${errorMsg} | ${orErr}` : orErr;
+        }
+      }
+
+      if (!critique && !errorMsg) {
+        errorMsg = 'No vision API key configured';
+      }
 
       if (critique) {
         await env.DB.prepare(
@@ -209,31 +299,29 @@ export async function runBacklogCritique(
         scored++;
         if (critique.score <= 4) lowScores++;
       } else {
-        // Critique returned null — URL fetch failed, Anthropic+OpenRouter
-        // both down, or response unparseable. Stamp image_critique_at with
-        // a sentinel reasoning so we don't re-attempt the same post next
-        // tick. The score stays NULL (no badge in UI; not eligible for
-        // the regen path's score<=5 query — that path requires score
-        // NOT NULL).
+        // Critique failed — write the actual error into reasoning so we
+        // can SELECT and diagnose without parsing wrangler tail. Score
+        // stays NULL (no badge, not eligible for regen path).
         await env.DB.prepare(
-          `UPDATE posts SET image_critique_at = ?, image_critique_reasoning = 'Critique attempt failed — image URL likely expired (fal.ai URLs expire ~24h). Regenerate to refresh.'
+          `UPDATE posts SET image_critique_at = ?, image_critique_reasoning = ?
            WHERE id = ?`
-        ).bind(new Date().toISOString(), post.id).run();
+        ).bind(new Date().toISOString(), errorMsg || 'Critique returned no result', post.id).run();
         failed++;
       }
     } catch (e: any) {
-      // Same sentinel for thrown exceptions — keep the post out of the
-      // backlog while preserving the error reason for diagnostics.
       try {
         await env.DB.prepare(
           `UPDATE posts SET image_critique_at = ?, image_critique_reasoning = ?
            WHERE id = ?`
-        ).bind(new Date().toISOString(), `Critique threw: ${(e?.message || 'unknown').slice(0, 200)}`, post.id).run();
+        ).bind(new Date().toISOString(), `Backlog loop threw: ${(e?.message || 'unknown').slice(0, 200)}`, post.id).run();
       } catch { /* logging is best-effort */ }
       failed++;
-      console.warn(`[backlog-critique] post ${post.id} failed: ${e?.message}`);
     }
-    // Pace OpenRouter — 300ms between calls. 20 posts × 300ms = 6s.
+    // Reference critiqueImageInternal so the import lint stays happy while
+    // we're using the direct path for diagnostics. Will reinstate once the
+    // error mode is understood.
+    void critiqueImageInternal;
+    // Pace Anthropic — 300ms between calls. 20 posts × 300ms = 6s.
     await new Promise(r => setTimeout(r, 300));
   }
 

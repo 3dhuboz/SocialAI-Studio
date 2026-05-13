@@ -145,14 +145,25 @@ Return JSON ONLY, no prose. Schema:
 
   if (!raw) return null;
 
+  // Strip ```json / ``` fences — OpenRouter+Haiku occasionally wraps the
+  // structured-output JSON in a markdown code block despite the
+  // response_format=json_object hint. Without this strip every OpenRouter
+  // critique returns null and falls through to "skip critique, ship the
+  // image" which silently disables the quality gate. Anthropic direct
+  // doesn't have this problem.
+  const stripped = raw.trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(stripped);
     const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5;
     const match = (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial';
     const reasoning = (parsed.reasoning || '').toString().slice(0, 300);
     return { score, match, reasoning };
   } catch (e: any) {
-    console.warn(`[critique] failed: ${e?.message || e}`);
+    console.warn(`[critique] failed to parse: ${e?.message || e} — raw: ${stripped.slice(0, 200)}`);
     return null;
   }
 }
