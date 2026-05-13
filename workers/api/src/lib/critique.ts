@@ -23,31 +23,21 @@
 import type { Env } from '../env';
 import { callAnthropicVision } from './anthropic';
 
-export async function critiqueImageInternal(
-  env: Env,
-  params: { imageUrl: string; caption: string; archetypeSlug: string | null; businessType?: string },
-): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
-  // Need at least one provider key — Anthropic direct preferred, OpenRouter
-  // as fallback. Return null if neither is set so the caller ships the
-  // image untouched instead of blocking the publish pipeline.
-  if (!env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY) return null;
-  const { imageUrl, caption, archetypeSlug } = params;
-  // businessType param kept on the type for backward compat with HTTP callers
-  // but no longer used — when archetypeSlug is null we now instruct the
-  // vision model to derive business type from the caption itself, which is
-  // a stronger signal than a stored "small business" default.
-
-  // If the workspace's archetype_slug is NULL (never classified), give the
-  // vision model an explicit "infer it from the caption" instruction so it
-  // doesn't fall back to scoring food-on-SaaS as "fine, it's a small
-  // business". Without this clause, ${archetypeSlug || businessType}
-  // resolves to "small business" and Haiku has no anchor to flag cross-
-  // domain mismatches.
+// Shared system prompt for vision-grounded image+caption critique. Exported
+// so direct-path callers (e.g. lib/backfill.ts runBacklogCritique, which
+// inlines its own Anthropic/OpenRouter calls to capture per-post error
+// strings) can't drift from the canonical HARD RULES gate.
+//
+// archetypeSlug=null tells the vision model to infer business type from the
+// caption itself rather than falling back to a generic "small business"
+// default — without this clause, food-on-SaaS critiques scored at 6-8 because
+// Haiku had no anchor to flag cross-domain mismatches.
+export function buildCritiqueSystemPrompt(archetypeSlug: string | null): string {
   const archetypeLine = archetypeSlug
     ? `Business archetype context: ${archetypeSlug}.`
     : `Business archetype: UNCLASSIFIED. Infer the actual business type from the caption itself before scoring — read the caption carefully for product mentions, industry verbs, and audience signals. A caption mentioning "AI Content Autopilot", "SaaS", "agency dashboard", "marketing automation", "platform" is a tech/SaaS business, NOT a food business, regardless of any other context.`;
 
-  const systemPrompt = `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
+  return `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
 
 Score the image-caption pair on a 0-10 scale:
 - 10 = perfect match: image visually reinforces the caption's specific topic
@@ -78,6 +68,23 @@ Other failure modes (typically score 2-4 depending on severity):
 
 Return JSON ONLY, no prose. Schema:
 {"score": <0-10>, "match": "yes"|"partial"|"no", "reasoning": "<one sentence>"}`;
+}
+
+export async function critiqueImageInternal(
+  env: Env,
+  params: { imageUrl: string; caption: string; archetypeSlug: string | null; businessType?: string },
+): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
+  // Need at least one provider key — Anthropic direct preferred, OpenRouter
+  // as fallback. Return null if neither is set so the caller ships the
+  // image untouched instead of blocking the publish pipeline.
+  if (!env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY) return null;
+  const { imageUrl, caption, archetypeSlug } = params;
+  // businessType param kept on the type for backward compat with HTTP callers
+  // but no longer used — when archetypeSlug is null the system prompt
+  // instructs the vision model to derive business type from the caption
+  // itself, which is a stronger signal than a stored default.
+
+  const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug);
 
   const userPrompt = `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?`;
   let raw = '';

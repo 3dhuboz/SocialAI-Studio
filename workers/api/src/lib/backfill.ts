@@ -14,7 +14,7 @@
 import type { Env } from '../env';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
-import { critiqueImageInternal } from './critique';
+import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
 import { generateImageWithBrandRefs } from './image-gen';
 import { callAnthropicVision } from './anthropic';
 
@@ -199,15 +199,14 @@ export async function runBacklogCritique(
       }
       const archetypeSlug = archetypeCache.get(cacheKey) || null;
 
-      // Bypass critiqueImageInternal here — that helper swallows errors
-      // via console.warn + returns null, which is useless for backlog
-      // diagnostics where every post needs a definitive reason. Call
-      // Anthropic directly and capture the exact error text so it lands
-      // in image_critique_reasoning where we can SELECT and see it.
-      const systemPrompt = archetypeSlug
-        ? `Score this image vs caption match for a ${archetypeSlug} business on a 0-10 scale. Return JSON: {"score":N, "match":"yes"|"partial"|"no", "reasoning":"one sentence"}.`
-        : `Score this image vs caption match on a 0-10 scale. Infer the business type from the caption (food, SaaS, agency, etc) — if caption is about software/SaaS/AI tools but image shows food/restaurants, score 1-2 for cross-domain bleed. Return JSON: {"score":N, "match":"yes"|"partial"|"no", "reasoning":"one sentence"}.`;
-      const userPrompt = `Caption: "${post.content.slice(0, 800)}"\n\nDoes the image match?`;
+      // We inline the Anthropic/OpenRouter calls (rather than delegating to
+      // critiqueImageInternal) so each post can stamp the exact provider
+      // error string into image_critique_reasoning — useful for diagnosing
+      // backlog stalls via SELECT instead of `wrangler tail`. The system
+      // prompt comes from the shared builder so the HARD RULES gate matches
+      // the user-initiated path; only the error-capture differs.
+      const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug);
+      const userPrompt = `Caption that will be published with this image:\n\n"${post.content.slice(0, 800)}"\n\nDoes the image match?`;
 
       // Path A: Anthropic direct (only when key is set).
       if (env.ANTHROPIC_API_KEY) {
@@ -317,10 +316,6 @@ export async function runBacklogCritique(
       } catch { /* logging is best-effort */ }
       failed++;
     }
-    // Reference critiqueImageInternal so the import lint stays happy while
-    // we're using the direct path for diagnostics. Will reinstate once the
-    // error mode is understood.
-    void critiqueImageInternal;
     // Pace Anthropic — 300ms between calls. 20 posts × 300ms = 6s.
     await new Promise(r => setTimeout(r, 300));
   }
