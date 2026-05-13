@@ -2155,26 +2155,61 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     // Regex runs instantly. Judges fire in BATCHES OF 5 (not 21-at-once) so we
     // don't hit the worker's 30/min user rate limit and one stall doesn't block
     // all the rest. Each judge has an 8s timeout (see judgePost).
+    //
+    // Auto-recovery: when a post fails regex OR judge, regenerate it via
+    // generateSocialPost (which has its own 3-attempt retry-with-feedback loop)
+    // before falling back to _needsReview. Without this, bulk-generated posts
+    // get exactly one shot — and any caught by the cadence/judge surface as
+    // "Needs review" banners in the UI. With this, the user only sees that
+    // banner for posts that survived 4 attempts total (1 bulk + 3 single).
     const processOne = async (p: any) => {
       if (typeof p.content !== 'string') return p;
+      let flagReason: string | null = null;
       const regexViolation = detectFabrication(p.content);
       if (regexViolation) {
         p.content = scrubBannedPhrases(p.content);
-        if (detectFabrication(p.content)) {
-          p._needsReview = true;
-          p._reviewReason = regexViolation;
-          return p;
-        }
+        if (detectFabrication(p.content)) flagReason = regexViolation;
       } else {
         p.content = scrubBannedPhrases(p.content);
       }
+      if (!flagReason) {
+        try {
+          const judgement = await judgePost(p.content, facts, profileBlock || '');
+          if (!judgement.pass) flagReason = judgement.reason || 'judge flagged content';
+        } catch { /* judge failure should never block */ }
+      }
+      if (!flagReason) return p;
+
+      // Flagged — try one auto-recovery pass via the single-post generator,
+      // which retries 3× internally with the rejection reason fed back to AI.
+      console.warn(`[gemini] bulk post flagged ("${flagReason}") — auto-recovering via generateSocialPost`);
       try {
-        const judgement = await judgePost(p.content, facts, profileBlock || '');
-        if (!judgement.pass) {
-          p._needsReview = true;
-          p._reviewReason = judgement.reason || 'judge flagged content';
+        const recovered = await generateSocialPost(
+          p.topic || p.pillar || 'general',
+          p.platform,
+          businessName,
+          effectiveBusinessType,
+          tone,
+          safeProfile,
+          undefined,
+          clientId,
+        );
+        if (recovered?.content && !detectFabrication(recovered.content)) {
+          p.content = scrubBannedPhrases(recovered.content);
+          if (Array.isArray(recovered.hashtags) && recovered.hashtags.length > 0) p.hashtags = recovered.hashtags;
+          if (recovered.imagePrompt) p.imagePrompt = recovered.imagePrompt;
+          // Reasoning was about the original (flagged) draft — clear so the
+          // UI doesn't show stale commentary that no longer matches the body.
+          p.reasoning = '';
+          return p;
         }
-      } catch { /* judge failure should never block */ }
+      } catch (e) {
+        console.warn('[gemini] auto-recovery failed:', e);
+      }
+
+      // Recovery also failed — surface for human review as last resort.
+      p._needsReview = true;
+      p._reviewReason = flagReason;
       return p;
     };
     // Concurrency-limited batching (5 at a time)
