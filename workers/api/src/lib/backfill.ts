@@ -143,21 +143,38 @@ export async function runBacklogCritique(
   if (!env.OPENROUTER_API_KEY && !env.ANTHROPIC_API_KEY) {
     return { skipped: true, found: 0, scored: 0, low_scores: 0, failed: 0 };
   }
+  // Skip user-uploaded `data:image/...` URLs — Anthropic vision can only
+  // fetch http(s) URLs via source.type='url'. Pre-mark them so they drop
+  // out of the backlog query and we never re-attempt.
+  await env.DB.prepare(
+    `UPDATE posts SET image_critique_at = ?, image_critique_reasoning = 'Skipped: user-uploaded inline data URL (no critique applicable)'
+     WHERE image_url LIKE 'data:%' AND image_critique_score IS NULL AND image_critique_at IS NULL`
+  ).bind(new Date().toISOString()).run();
+
   // Cheap gate — bail before doing real work if there's nothing to do.
+  // Excludes posts we've already attempted (image_critique_at IS NOT NULL)
+  // so a single failure doesn't keep us looping on the same row forever.
   const pending = await env.DB.prepare(
     `SELECT COUNT(*) as n FROM posts
      WHERE image_url IS NOT NULL AND image_url != ''
+       AND image_url NOT LIKE 'data:%'
        AND image_critique_score IS NULL
+       AND image_critique_at IS NULL
        AND length(content) > 20`
   ).first<{ n: number }>();
   if (!pending || pending.n === 0) return { skipped: true, found: 0, scored: 0, low_scores: 0, failed: 0 };
 
-  const limit = 50;
+  // Reduced from 50 → 20: stale fal.media URLs make each critique call
+  // wait ~5s for Anthropic to time out fetching the URL. 20 × 5s = 100s
+  // worst case per tick, well under the 15-min cron limit.
+  const limit = 20;
   const rows = await env.DB.prepare(
     `SELECT id, content, client_id, user_id, image_url
      FROM posts
      WHERE image_url IS NOT NULL AND image_url != ''
+       AND image_url NOT LIKE 'data:%'
        AND image_critique_score IS NULL
+       AND image_critique_at IS NULL
        AND length(content) > 20
      ORDER BY scheduled_for DESC
      LIMIT ?`
@@ -192,13 +209,31 @@ export async function runBacklogCritique(
         scored++;
         if (critique.score <= 4) lowScores++;
       } else {
+        // Critique returned null — URL fetch failed, Anthropic+OpenRouter
+        // both down, or response unparseable. Stamp image_critique_at with
+        // a sentinel reasoning so we don't re-attempt the same post next
+        // tick. The score stays NULL (no badge in UI; not eligible for
+        // the regen path's score<=5 query — that path requires score
+        // NOT NULL).
+        await env.DB.prepare(
+          `UPDATE posts SET image_critique_at = ?, image_critique_reasoning = 'Critique attempt failed — image URL likely expired (fal.ai URLs expire ~24h). Regenerate to refresh.'
+           WHERE id = ?`
+        ).bind(new Date().toISOString(), post.id).run();
         failed++;
       }
     } catch (e: any) {
+      // Same sentinel for thrown exceptions — keep the post out of the
+      // backlog while preserving the error reason for diagnostics.
+      try {
+        await env.DB.prepare(
+          `UPDATE posts SET image_critique_at = ?, image_critique_reasoning = ?
+           WHERE id = ?`
+        ).bind(new Date().toISOString(), `Critique threw: ${(e?.message || 'unknown').slice(0, 200)}`, post.id).run();
+      } catch { /* logging is best-effort */ }
       failed++;
       console.warn(`[backlog-critique] post ${post.id} failed: ${e?.message}`);
     }
-    // Pace OpenRouter — 300ms between calls. 50 posts × 300ms = 15s.
+    // Pace OpenRouter — 300ms between calls. 20 posts × 300ms = 6s.
     await new Promise(r => setTimeout(r, 300));
   }
 
