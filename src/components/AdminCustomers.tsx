@@ -8,6 +8,7 @@ import { useDb } from '../hooks/useDb';
 import type {
   AdminStats, AdminCustomer, PaymentEvent,
 } from '../services/db';
+import { AdminQualityScan } from './AdminQualityScan';
 
 /**
  * AdminCustomers — agency-owner / admin dashboard for self-serve signups +
@@ -125,6 +126,11 @@ export const AdminCustomers: React.FC = () => {
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
+
+      {/* AI Quality Scan — collapsible admin card.
+          Added 2026-05 audit follow-up. Mounted here (above stats) so admins
+          see flagged-post counts before drilling into customer metrics. */}
+      <AdminQualityScan />
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

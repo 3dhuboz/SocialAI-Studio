@@ -3,7 +3,8 @@ import { CLIENT } from '../client.config';
 import { BusinessProfile, SocialTokens, DEFAULT_SOCIAL_TOKENS } from '../types';
 import { AppLogo } from './AppLogo';
 import { FacebookConnectButton } from './FacebookConnectButton';
-import { FacebookService } from '../services/facebookService';
+import { useDb } from '../hooks/useDb';
+import type { MagicOnboardingResponse } from '../services/db';
 import {
   CheckCircle, ArrowRight, Sparkles, Loader2,
   Building2, MapPin, Facebook, Instagram, PartyPopper, X,
@@ -46,14 +47,14 @@ export const OnboardingWizard: React.FC<Props> = ({
   onAdvanceSetup,
 }) => {
   const socialTokens = socialTokensProp ?? DEFAULT_SOCIAL_TOKENS;
+  const db = useDb();
   const [step, setStep] = useState<Step>('welcome');
   const [isSaving, setIsSaving] = useState(false);
-  // Track auto-scrape of the user's existing FB posts. Captures brand voice
-  // from real content instead of trusting the user's onboarding form to
-  // accurately describe their tone. The scraped messages get appended to
-  // profile.description so the Gemini prompt picks them up.
+  // 90-second Magic Onboarding state. After FB connection, the wizard calls
+  // /api/onboarding-magic which scrapes the page, classifies the archetype,
+  // and returns a "Brand DNA Card" the user sees before typing anything.
   const [isLearningVoice, setIsLearningVoice] = useState(false);
-  const [learnedPostsCount, setLearnedPostsCount] = useState(0);
+  const [brandDna, setBrandDna] = useState<MagicOnboardingResponse | null>(null);
   const [voiceLearnError, setVoiceLearnError] = useState<string | null>(null);
 
   const stepIdx = STEPS.indexOf(step);
@@ -70,14 +71,26 @@ export const OnboardingWizard: React.FC<Props> = ({
   };
 
   // Trial users can't advance without enough business context for the AI
-  // to generate ON-TOPIC posts. Without a real description, a tech company
-  // ends up with cinnamon-roll captions because the AI has nothing to go on.
-  // Minimum 50 chars on description forces real signal, not just "we sell things".
+  // to generate ON-TOPIC posts. Without real signal, a tech company ends up
+  // with cinnamon-roll captions because the AI has nothing to anchor on.
+  //
+  // 2026-05 audit root cause #3: description alone wasn't enough — the AI
+  // prompt also reads profile.productsServices (anchors imagery + topic
+  // generation) and profile.contentTopics (sets the calendar's subject
+  // palette). When those were blank, the prompt silently degraded and the
+  // AI invented generic marketing trope content. Both now required in the
+  // wizard. 30-char min each — enough for "Sourdough, pastries, custom
+  // celebration cakes" without forcing a paragraph.
+  const descLen = profile.description?.trim().length ?? 0;
+  const productsLen = profile.productsServices?.trim().length ?? 0;
+  const topicsLen = profile.contentTopics?.trim().length ?? 0;
   const canAdvanceBusiness =
     profile.name.trim() && profile.name !== CLIENT.defaultBusinessName &&
     profile.type.trim() && profile.type !== CLIENT.defaultBusinessType &&
     profile.location.trim() && profile.location !== CLIENT.defaultLocation &&
-    (profile.description?.trim().length ?? 0) >= 50;
+    descLen >= 50 &&
+    productsLen >= 30 &&
+    topicsLen >= 30;
 
   // ── Overlay backdrop ──────────────────────────────────
   return (
@@ -174,7 +187,7 @@ export const OnboardingWizard: React.FC<Props> = ({
             <div className="space-y-5">
               <div>
                 <h2 className="text-xl font-black text-white mb-1">Tell us about your business</h2>
-                <p className="text-xs text-white/35">The AI uses this to write posts in your brand voice.</p>
+                <p className="text-xs text-white/35">A few quick questions so the AI writes posts that actually match what you do.</p>
               </div>
               <div className="space-y-4">
                 <div>
@@ -212,32 +225,77 @@ export const OnboardingWizard: React.FC<Props> = ({
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50"
                   />
                 </div>
-                {/* What do you actually do — the field that stops the AI from
-                    posting eggs to a tech company. The Gemini prompt feeds
-                    profile.description into every generation; without
-                    specificity here, posts are generic at best, wrong at
-                    worst. Min 50 chars enforces real signal. */}
+                {/* Description / story — the AI prompt feeds this into every
+                    generation. Without it, posts are generic at best, wrong
+                    at worst (cinnamon-roll captions on a tech post). Min 50
+                    chars enforces real signal.
+                    Placeholder switched away from "Brisbane IT consultancy"
+                    in the 2026-05 audit — that example biased users toward
+                    SaaS-flavoured descriptions and triggered the
+                    effectiveBusinessType reclassifier. Bakery example is
+                    neutral. */}
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
-                    What does your business actually do? <span className="text-red-400">*</span>
+                    Tell us about your business in your own words <span className="text-red-400">*</span>
                   </label>
                   <textarea
                     value={profile.description ?? ''}
                     onChange={e => onUpdateProfile({ description: e.target.value })}
-                    placeholder="e.g. Brisbane IT consultancy. We help small accounting firms move from on-prem servers to the cloud — fast onboarding, no contracts, 24/7 local support. We don't do enterprise; small business is our whole thing."
+                    placeholder="e.g. Family-run sourdough bakery in Bondi. We bake everything fresh from 4am — same recipe Nonna used in 1982. Locals come for the cinnamon scrolls and the chat. Open Tue–Sun, closed Mondays. Pickup only — no shipping, no delivery."
                     rows={4}
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
                   />
-                  <p className={`text-[11px] mt-1.5 ${
-                    (profile.description?.trim().length ?? 0) >= 50
-                      ? 'text-emerald-400/80'
-                      : 'text-white/35'
-                  }`}>
-                    {(profile.description?.trim().length ?? 0) >= 50
+                  <p className={`text-[11px] mt-1.5 ${descLen >= 50 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {descLen >= 50
                       ? '✓ Plenty of detail — the AI will write posts that actually sound like your business.'
-                      : `${50 - (profile.description?.trim().length ?? 0)} more characters to go. The more detail (who you serve, what you sell, what makes you different), the more on-brand your posts will be.`}
+                      : `${50 - descLen} more characters to go. The more detail (who you serve, what you sell, what makes you different), the more on-brand your posts will be.`}
                   </p>
                 </div>
+
+                {/* Products / services — feeds gemini.ts buildPromptBlock as a
+                    structured anchor for imagery + topic generation. Without
+                    it, the prompt block silently drops "Products/services:"
+                    and the AI invents generic content. 2026-05 audit fix. */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
+                    What do you actually sell or offer? <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    value={profile.productsServices ?? ''}
+                    onChange={e => onUpdateProfile({ productsServices: e.target.value })}
+                    placeholder="e.g. Sourdough loaves, croissants, seasonal pastries, specialty coffee, breakfast plates, and custom celebration cakes by order."
+                    rows={3}
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
+                  />
+                  <p className={`text-[11px] mt-1.5 ${productsLen >= 30 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {productsLen >= 30
+                      ? '✓ Got it — the AI knows what to put in images and posts.'
+                      : `${30 - productsLen} more characters. List your top products or services, comma-separated is fine.`}
+                  </p>
+                </div>
+
+                {/* Content topics — sets the calendar's subject palette. The
+                    Smart Schedule prompt reads this verbatim ("Content topics
+                    & themes to focus on: ...") so it directly steers what
+                    the AI plans for the week. */}
+                <div>
+                  <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
+                    What should we post about? <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    value={profile.contentTopics ?? ''}
+                    onChange={e => onUpdateProfile({ contentTopics: e.target.value })}
+                    placeholder="e.g. Behind the scenes of our baking, seasonal specials, coffee tips, local community events, new menu items, customer shoutouts."
+                    rows={3}
+                    className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
+                  />
+                  <p className={`text-[11px] mt-1.5 ${topicsLen >= 30 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {topicsLen >= 30
+                      ? '✓ Solid topic mix — your calendar will stay relevant.'
+                      : `${30 - topicsLen} more characters. Think 4-6 themes the AI should rotate through.`}
+                  </p>
+                </div>
+
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
                     Brand Personality / Tone
@@ -292,72 +350,101 @@ export const OnboardingWizard: React.FC<Props> = ({
                   if (onSaveSocialTokens) onSaveSocialTokens(updated);
                   else onUpdateProfile({ facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true });
 
-                  // ── Auto-learn brand voice from existing FB posts ──
-                  // Reading their actual posts beats trusting whatever they
-                  // typed in the description field. A tech company that
-                  // posts about cloud migration shouldn't end up with food
-                  // captions just because the form was rushed. We grab the
-                  // most recent 5 posts with content, truncate, and append
-                  // to description so the Gemini prompt sees them.
+                  // ── 90-second Magic Onboarding (2026-05 Tier 3) ──
+                  // Replaces the old "grab last 5 posts + append to
+                  // description" flow. The new endpoint does the FULL
+                  // server-side scrape (about + 30 posts + 30 photos),
+                  // classifies the business archetype via Haiku 4.5, and
+                  // returns a Brand DNA Card. Persists archetype on the
+                  // user row so subsequent generations route through the
+                  // brand-grounded image pipeline immediately.
                   setIsLearningVoice(true);
                   setVoiceLearnError(null);
+                  setBrandDna(null);
+                  // Save tokens FIRST so the worker can scrape with them
+                  await onSave().catch(() => {});
                   try {
-                    const recent = await FacebookService.getRecentPosts(pageId, pageAccessToken, 10);
-                    const messages = recent
-                      .map(p => p.message?.trim())
-                      .filter((m): m is string => !!m && m.length >= 20)
-                      .slice(0, 5)
-                      .map(m => `• ${m.slice(0, 240)}${m.length > 240 ? '…' : ''}`);
-                    if (messages.length > 0) {
-                      const userTyped = (profile.description ?? '').trim();
-                      const learnedMarker = '\n\n--- Recent posts from our Facebook page (auto-learned, edit if needed) ---\n';
-                      // Strip any prior auto-learned block before re-adding
-                      const cleanBase = userTyped.split(learnedMarker)[0].trim();
-                      const newDesc = cleanBase + (cleanBase ? '' : '') + learnedMarker + messages.join('\n');
-                      onUpdateProfile({ description: newDesc });
-                      setLearnedPostsCount(messages.length);
-                    }
+                    const result = await db.magicOnboarding();
+                    setBrandDna(result);
                   } catch (e: any) {
-                    setVoiceLearnError(e?.message?.slice(0, 100) || 'Could not fetch past posts — your typed description will be the source of truth.');
+                    setVoiceLearnError(e?.message?.slice(0, 200) || 'Could not analyse your page — that\'s OK, the wizard will use what you typed instead.');
                   } finally {
                     setIsLearningVoice(false);
                   }
-                  void onSave();
                 }}
                 onDisconnect={() => {
                   const cleared = { ...DEFAULT_SOCIAL_TOKENS };
                   if (onSaveSocialTokens) onSaveSocialTokens(cleared);
                   else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
-                  setLearnedPostsCount(0);
+                  setBrandDna(null);
                   setVoiceLearnError(null);
                 }}
               />
 
-              {/* Brand-voice learn status — shown right after FB connection.
-                  Either spinner ("learning...") or success ("learned N posts")
-                  or the error fallback. The user sees the system actively
-                  learning, builds confidence the trial posts will be on-brand. */}
-              {(isLearningVoice || learnedPostsCount > 0 || voiceLearnError) && (
-                <div className={`rounded-2xl p-4 border text-xs leading-relaxed ${
-                  voiceLearnError
-                    ? 'bg-amber-500/8 border-amber-500/25 text-amber-200/80'
-                    : learnedPostsCount > 0
-                      ? 'bg-emerald-500/8 border-emerald-500/25 text-emerald-200/85'
-                      : 'bg-blue-500/8 border-blue-500/25 text-blue-200/85'
-                }`}>
-                  {isLearningVoice ? (
-                    <span className="flex items-center gap-2">
-                      <Loader2 size={12} className="animate-spin" />
-                      Reading your last few posts to learn how you talk to your audience…
-                    </span>
-                  ) : voiceLearnError ? (
-                    <>
-                      <strong className="text-amber-300">Couldn't auto-read your past posts</strong> — that's OK, we'll use what you typed in the previous step. ({voiceLearnError})
-                    </>
-                  ) : (
-                    <>
-                      <strong className="text-emerald-300">Learned from your last {learnedPostsCount} posts ✓</strong> — the AI now knows your tone and what you typically post about, so trial posts will sound like you, not a robot.
-                    </>
+              {/* ── 90-second Magic Onboarding status panel ──
+                  Shows: spinner while scraping → Brand DNA card when complete →
+                  error with graceful fallback if the scrape fails. */}
+              {isLearningVoice && (
+                <div className="rounded-2xl p-4 border bg-blue-500/8 border-blue-500/25 text-blue-200/85 text-xs leading-relaxed">
+                  <span className="flex items-center gap-2">
+                    <Loader2 size={12} className="animate-spin" />
+                    Reading your Facebook page — analysing tone, photos, and topics. This is the magic part…
+                  </span>
+                </div>
+              )}
+              {voiceLearnError && !isLearningVoice && (
+                <div className="rounded-2xl p-4 border bg-amber-500/8 border-amber-500/25 text-amber-200/80 text-xs leading-relaxed">
+                  <strong className="text-amber-300">Couldn't auto-analyse your page</strong> — that's OK, we'll use what you typed in the previous step. ({voiceLearnError})
+                </div>
+              )}
+              {brandDna && !isLearningVoice && (
+                <div className="rounded-2xl border bg-emerald-500/5 border-emerald-500/25 overflow-hidden">
+                  <div className="bg-emerald-500/10 px-4 py-3 border-b border-emerald-500/15">
+                    <p className="text-[10px] font-black text-emerald-300/80 uppercase tracking-widest mb-1">🧬 Brand DNA learned</p>
+                    <p className="text-sm font-bold text-white">
+                      Looks like a {brandDna.archetype.name.toLowerCase()}
+                      <span className="text-xs font-normal text-white/40 ml-2">
+                        ({Math.round(brandDna.archetype.confidence * 100)}% confident)
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-white/50 mt-1 leading-snug">{brandDna.archetype.reasoning}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-px bg-emerald-500/10">
+                    <div className="bg-[#0a0a0f] p-3 text-center">
+                      <p className="text-lg font-black text-white">{brandDna.stats.posts_scraped}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">Posts read</p>
+                    </div>
+                    <div className="bg-[#0a0a0f] p-3 text-center">
+                      <p className="text-lg font-black text-white">{brandDna.stats.photos_available}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">Brand photos</p>
+                    </div>
+                    <div className="bg-[#0a0a0f] p-3 text-center">
+                      <p className="text-lg font-black text-white">{brandDna.archetype.content_pillars.length}</p>
+                      <p className="text-[9px] text-white/40 uppercase tracking-wider mt-0.5">Content pillars</p>
+                    </div>
+                  </div>
+                  {brandDna.brand_dna.reference_photos.length > 0 && (
+                    <div className="px-4 py-3 border-t border-emerald-500/10">
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Reference photos (will steer all generated images)</p>
+                      <div className="flex gap-2">
+                        {brandDna.brand_dna.reference_photos.slice(0, 3).map((url, i) => (
+                          <img key={i} src={url} alt="" className="w-16 h-16 rounded-lg object-cover border border-white/10" loading="lazy" />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {brandDna.brand_dna.voice_samples.length > 0 && (
+                    <div className="px-4 py-3 border-t border-emerald-500/10">
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Top-performing posts (your voice)</p>
+                      <div className="space-y-1.5">
+                        {brandDna.brand_dna.voice_samples.slice(0, 2).map((sample, i) => (
+                          <p key={i} className="text-[11px] text-white/70 leading-relaxed bg-white/3 rounded-lg px-3 py-2">
+                            <span className="text-emerald-400/70 font-mono text-[9px] mr-1.5">{sample.engagement}↑</span>
+                            "{sample.content.slice(0, 140)}{sample.content.length > 140 ? '…' : ''}"
+                          </p>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

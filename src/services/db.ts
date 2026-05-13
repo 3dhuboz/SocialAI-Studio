@@ -3,6 +3,7 @@
  * Client-side API helper for the Cloudflare Worker D1 database.
  * Replaces all direct Firestore SDK calls.
  */
+import type { SocialPost } from '../types';
 
 const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -83,6 +84,44 @@ export interface DbPost {
   video_error?: string | null;
   r2_video_key?: string | null;
   audio_mixed_url?: string | null;
+  // v8 — vision-critique result populated by prewarm cron + manual critique
+  image_critique_score?: number | null;
+  image_critique_reasoning?: string | null;
+  image_critique_at?: string | null;
+}
+
+/** Maps a `DbPost` row (snake_case from D1) to the front-end `SocialPost`
+ *  (camelCase). Three near-identical inline copies of this shape used to
+ *  live in App.tsx — extracted here so any new field added to `posts` is a
+ *  one-site change. Keep in sync with src/types.ts and DbPost above. */
+export function mapDbPostToSocialPost(p: DbPost): import('../types').SocialPost {
+  return {
+    id: p.id,
+    content: p.content,
+    platform: p.platform as import('../types').SocialPost['platform'],
+    status: p.status as import('../types').SocialPost['status'],
+    scheduledFor: p.scheduled_for ?? '',
+    hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
+    image: p.image_url ?? undefined,
+    topic: p.topic ?? undefined,
+    pillar: p.pillar as import('../types').SocialPost['pillar'] | undefined,
+    imagePrompt: p.image_prompt ?? undefined,
+    reasoning: p.reasoning ?? undefined,
+    postType: (p.post_type as import('../types').SocialPost['postType']) ?? undefined,
+    videoScript: p.video_script ?? undefined,
+    videoShots: p.video_shots ?? undefined,
+    videoMood: p.video_mood ?? undefined,
+    videoUrl: p.video_url ?? undefined,
+    videoStatus: p.video_status ?? undefined,
+    videoRequestId: p.video_request_id ?? undefined,
+    videoStartedAt: p.video_started_at ?? undefined,
+    videoError: p.video_error ?? undefined,
+    r2VideoKey: p.r2_video_key ?? undefined,
+    audioMixedUrl: p.audio_mixed_url ?? undefined,
+    imageCritiqueScore: p.image_critique_score ?? undefined,
+    imageCritiqueReasoning: p.image_critique_reasoning ?? undefined,
+    imageCritiqueAt: p.image_critique_at ?? undefined,
+  };
 }
 
 export interface DbClient {
@@ -316,6 +355,60 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<{ payments: PaymentEvent[] }>;
     },
 
+    /**
+     * Admin AI-quality scan — returns Scheduled posts whose content trips the
+     * server-side fabrication / cadence / trope detector. Mirrors the client
+     * detectFabrication used at generation time. 2026-05 audit follow-up: lets
+     * admins find pre-deployment posts that need regenerating before publish.
+     */
+    async getFlaggedPosts(
+      status: SocialPost['status'] = 'Scheduled',
+      limit = 500,
+    ): Promise<{ scanned: number; flagged: FlaggedPost[] }> {
+      const res = await f(`/api/admin/scan-flagged-posts?status=${status}&limit=${limit}`);
+      return res.json() as Promise<{ scanned: number; flagged: FlaggedPost[] }>;
+    },
+
+    /**
+     * Retroactively run Haiku 4.5 vision critique against every post the
+     * caller owns that has an image_url but no critique score yet. Surfaces
+     * the "AI quality" badge on historical posts (not just freshly generated
+     * ones). Caps at 50 per call — re-run until `remaining_estimate: 'done'`.
+     */
+    async backfillCritiqueScores(limit = 50): Promise<{
+      found: number;
+      scored: number;
+      failed: number;
+      low_scores: number;
+      remaining_estimate: string;
+    }> {
+      const res = await f('/api/admin/backfill-critique-scores', {
+        method: 'POST',
+        body: JSON.stringify({ limit }),
+      });
+      return res.json() as any;
+    },
+
+    /**
+     * Bulk regenerate images for posts whose critique score is ≤ threshold
+     * (default 4). Forces the curated archetype fallback scene so the new
+     * image is guaranteed on-archetype. Re-critiques and persists the new
+     * score in one round-trip. Caps at 20 per call.
+     */
+    async bulkRegenLowScoreImages(threshold = 4, limit = 20): Promise<{
+      found: number;
+      regenerated: number;
+      failed: number;
+      threshold: number;
+      errors: string[];
+    }> {
+      const res = await f('/api/admin/bulk-regen-low-score-images', {
+        method: 'POST',
+        body: JSON.stringify({ threshold, limit }),
+      });
+      return res.json() as any;
+    },
+
     // ── Customer: Billing screen ──────────────────────────────────────────────
     // Returns the SIGNED-IN user's plan + their own payment history.
 
@@ -323,7 +416,211 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       const res = await f('/api/billing');
       return res.json() as Promise<BillingInfo>;
     },
+
+    /**
+     * Business Archetype Classifier (2026-05 Phase 1).
+     *
+     * getBusinessArchetype(): fetch the cached archetype for the signed-in
+     *   user. Returns null when the user hasn't been classified yet (caller
+     *   should then call classifyBusiness).
+     *
+     * classifyBusiness({...}): run the Haiku classifier. Caches on the user
+     *   row server-side. Pass force=true to bypass the cache.
+     *
+     * Both endpoints replace the runtime keyword switch that used to live in
+     * gemini.ts getImagePromptExamples. The archetype object returned here
+     * is the single source of truth for image examples, voice cues, and
+     * content pillars used by the AI generation pipeline.
+     */
+    async getBusinessArchetype(): Promise<ArchetypeResponse | null> {
+      try {
+        const res = await f('/api/business-archetype');
+        return res.json() as Promise<ArchetypeResponse>;
+      } catch (e: any) {
+        // 404 means not yet classified — caller should kick off classification
+        if (/\(404\)/.test(e?.message || '')) return null;
+        throw e;
+      }
+    },
+
+    async classifyBusiness(input: ClassifyBusinessInput): Promise<ArchetypeResponse> {
+      const res = await f('/api/classify-business', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ArchetypeResponse>;
+    },
+
+    /** Per-client classifier (schema v9). Persists on clients.archetype_slug
+     *  so the image-gen guardrails + vision critique use the CLIENT's
+     *  archetype, not the agency owner's, when generating for a client
+     *  workspace. Call this when switching into a client workspace. */
+    async classifyClientBusiness(clientId: string, input: ClassifyBusinessInput): Promise<ArchetypeResponse> {
+      const res = await f(`/api/clients/${encodeURIComponent(clientId)}/classify-business`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ArchetypeResponse>;
+    },
+
+    /**
+     * Vision-grounded image+caption critique (2026-05 image-stack upgrade).
+     *
+     * After generating an image, pass [image_url, caption, archetype] back
+     * to Haiku 4.5 vision and ask: does this image actually match the post?
+     * Returns a score 0-10, a verdict, reasoning, and a regenerate signal.
+     *
+     * Catches the failure mode the user screenshotted today — food image
+     * on a SaaS post — BEFORE it gets published. ~$0.003/image, ~500ms.
+     *
+     * Recommended threshold: if score <= 4 OR regenerate=true, run the
+     * image-gen again with a refined prompt; if score 5-7, flag for human
+     * review on the calendar; if score 8+, ship it.
+     */
+    async critiqueImageCaption(input: CritiqueImageInput): Promise<ImageCritique> {
+      const res = await f('/api/critique-image-caption', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ImageCritique>;
+    },
+
+    /**
+     * Virality Score — pre-publish engagement prediction trained on the
+     * workspace's OWN past Facebook/Instagram posts. Returns a 0-100 score
+     * relative to THIS workspace's historical engagement distribution, plus
+     * a tier (low/mid/high/viral), reasoning, and 1-3 improvement suggestions.
+     *
+     * The model anchors on the workspace's top-5 and bottom-3 past posts
+     * (from client_facts, populated nightly by the refresh-facts cron). New
+     * accounts (< 3 historical posts) get a neutral 50 with a "connect FB
+     * and run refresh-facts" hint — the real model unlocks after data lands.
+     *
+     * Call this when the user is editing a draft. Debounce ~1s client-side
+     * so a typing user doesn't hammer the endpoint. Cached server-side via
+     * Anthropic 1h prompt cache on the workspace's history block, so repeat
+     * scores during one editing session are cheap.
+     */
+    async scorePost(input: ScorePostInput): Promise<ViralityScore> {
+      const res = await f('/api/score-post', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as Promise<ViralityScore>;
+    },
+
+    /**
+     * 90-second Magic Onboarding (Tier 3 wow feature).
+     *
+     * After FB Page is connected, call this once to:
+     *   1. Scrape the page (about + last 30 posts + last 30 photos)
+     *   2. Classify the business archetype from real scraped content
+     *   3. Build a "Brand DNA Card" with voice samples + reference photos +
+     *      common topics for the wizard to display
+     *
+     * Persists archetype on the users row so downstream gens use it
+     * immediately. Returns everything the wizard needs to render the
+     * "here's what we learned about your business" card.
+     */
+    async magicOnboarding(): Promise<MagicOnboardingResponse> {
+      const res = await f('/api/onboarding-magic', { method: 'POST', body: '{}' });
+      return res.json() as Promise<MagicOnboardingResponse>;
+    },
   };
+}
+
+export interface MagicOnboardingResponse {
+  ok: boolean;
+  archetype: {
+    slug: string;
+    name: string;
+    confidence: number;
+    reasoning: string;
+    content_pillars: string[];
+    voice_cues: string | null;
+  };
+  brand_dna: {
+    voice_samples: Array<{ content: string; engagement: number }>;
+    reference_photos: string[];
+    common_topics: string[];
+    about: string | null;
+  };
+  stats: {
+    posts_scraped: number;
+    photos_available: number;
+    total_facts: number;
+  };
+}
+
+export interface ScorePostInput {
+  content: string;
+  platform?: 'Facebook' | 'Instagram';
+  pillar?: string;
+  hashtags?: string[];
+  clientId?: string | null;
+}
+
+export interface ViralityScore {
+  score: number;                                              // 0-100
+  tier: 'low' | 'mid' | 'high' | 'viral';
+  reasoning: string;
+  suggestions: string[];
+  data_status: 'ok' | 'insufficient';
+  historical_posts: number;
+  workspace_p50?: number;
+  workspace_p95?: number;
+}
+
+export interface CritiqueImageInput {
+  imageUrl: string;
+  caption: string;
+  businessType?: string;
+  /** Optional archetype slug — gives the vision model the right context
+   *  (e.g. it knows a food image on a tech-saas-agency archetype is wrong). */
+  archetype?: string;
+  /** Optional post ID — when set, the worker persists the critique result
+   *  onto the post (image_critique_score/reasoning/at) so PostModal can show
+   *  the "AI quality ✓ N/10" badge on subsequent renders. Best-effort. */
+  postId?: string;
+}
+
+export interface ImageCritique {
+  score: number;          // 0-10
+  match: 'yes' | 'partial' | 'no';
+  reasoning: string;
+  regenerate: boolean;
+}
+
+// ── Business Archetype types ──────────────────────────────────────────────────
+
+export interface ClassifyBusinessInput {
+  businessType?: string;
+  description?: string;
+  productsServices?: string;
+  contentTopics?: string;
+  /** Bypass the cache and re-classify even if archetype_slug is set. */
+  force?: boolean;
+}
+
+export interface ArchetypeData {
+  slug: string;
+  name: string;
+  description: string;
+  image_examples: string[];
+  image_avoid_notes: string | null;
+  voice_cues: string | null;
+  content_pillars: string[];
+  banned_trope_extras: string[] | null;
+}
+
+export interface ArchetypeResponse {
+  classified: true;
+  cached?: boolean;
+  archetype_slug?: string;
+  confidence: number | null;
+  reasoning: string | null;
+  classified_at?: string | null;
+  archetype: ArchetypeData;
 }
 
 // ── Admin / billing types ─────────────────────────────────────────────────────
@@ -352,6 +649,16 @@ export interface AdminCustomer {
   post_count: number;
   total_paid_cents: number;
   total_refunded_cents: number;
+}
+
+export interface FlaggedPost {
+  id: string;
+  scheduled_for: string | null;
+  platform: string | null;
+  workspace: string;
+  content_preview: string;
+  image_prompt_preview: string | null;
+  reasons: string[];
 }
 
 export interface PaymentEvent {

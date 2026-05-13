@@ -1,4 +1,4 @@
-import { aiAuthHeaders } from './gemini';
+import { aiAuthHeaders, buildSafeImagePromptClient } from './gemini';
 
 const WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -62,19 +62,41 @@ export const FalService = {
   },
 
   /**
-   * Generate a marketing image via fal.ai FLUX/schnell.
-   * Returns a public image URL, or throws on failure.
+   * Generate a marketing image via fal.ai. Returns a public image URL.
+   *
+   * 2026-05 image-stack upgrade: the worker auto-pulls the top scraped
+   * Facebook photos for the active workspace (from client_facts) and uses
+   * them as brand-reference images on FLUX Pro Kontext / Nano Banana Pro.
+   * Result: generated images share the business's actual visual style
+   * (lighting, palette, composition) instead of looking like stock photos.
+   *
+   * Falls back to FLUX-dev when no scraped photos exist (fresh workspace,
+   * no FB connection yet) so the path is non-regressive.
+   *
+   * Optional clientId scopes the reference photos to that workspace —
+   * agency users generating for a specific client get THAT client's
+   * brand, not the agency's.
+   *
+   * The returned object also surfaces which model was used (`model_used`)
+   * and how many references were applied (`references_used`) so the UI
+   * can show a "brand-grounded ✓" badge when the upgrade path fires.
    */
-  generateImage: async (prompt: string): Promise<string> => {
+  generateImage: async (
+    prompt: string,
+    businessType: string = 'small business',
+    clientId?: string | null,
+  ): Promise<{ url: string; model: string; referencesUsed: number }> => {
+    const safe = buildSafeImagePromptClient(prompt, businessType);
+    if (!safe) throw new Error('Cannot generate image: prompt is empty/abstract and no business type to seed a fallback. Open the post and add an image prompt.');
     const res = await fetch(`${PROXY}?action=generate-image`, {
       method: 'POST',
       headers: await proxyHeaders(),
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, clientId: clientId || null }),
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');
     if (!data.imageUrl) throw new Error('No image URL returned from fal.ai');
-    return data.imageUrl;
+    return { url: data.imageUrl, model: data.model_used || 'flux-dev', referencesUsed: data.references_used || 0 };
   },
 
   isConfigured: () => true, // FAL_API_KEY is configured server-side in Cloudflare env
