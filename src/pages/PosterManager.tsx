@@ -48,6 +48,7 @@ import {
   generatePosterArt, expandPosterBrief, generateSocialCaption, suggestPostTime,
   type PostTimeSuggestion,
 } from '../services/posterAi';
+import { BrandKitEditor } from '../components/BrandKitEditor';
 
 interface PosterManagerProps {
   /** Active workspace id (null = agency owner's own workspace). Comes from App.tsx. */
@@ -822,10 +823,12 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
         </p>
       </header>
 
-      {/* Brand Kit Editor v2 — palette + voice + preset CRUD editor lives
-          in the BrandKitContext layer for this port. It can be added back
-          inline here as a workspace-scoped section in a follow-up; the
-          context's save() method is wired and ready. */}
+      {/* ── Brand Kit Editor ─────────────────────────────────────────
+          Workspace-scoped editor — palette (11 swatches), voice
+          (register + signature + banned phrases), full preset CRUD, and
+          QR defaults. Collapsed by default. Saves to D1 via the
+          BrandKitContext; activeKit updates reactively (no reload). */}
+      <BrandKitEditor primary={styles.primary} primaryFg={styles.primaryFg} />
 
       {/* ── Quick start: free-text brief → LLM → fills the form ──────
           Macca's preferred entry point. He types the cook day in his
