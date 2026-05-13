@@ -5,7 +5,8 @@ import {
   CheckCircle, Zap, Image as ImageIcon, Calendar,
   BarChart3, Facebook, Instagram, ArrowRight, Star, Clock,
   Shield, ChevronDown, ChevronUp, Brain, Users, Play, X,
-  TrendingUp, MessageCircle, Repeat2, DollarSign, Timer, Rocket
+  TrendingUp, MessageCircle, Repeat2, DollarSign, Timer, Rocket,
+  Palette, Download, QrCode
 } from 'lucide-react';
 import { AppLogo } from './AppLogo';
 import { PostShowcase } from './PostShowcase';
@@ -463,6 +464,139 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
               </div>
             </section>
 
+            {/* POSTER MAKER — second flagship feature spotlight. Mirrors the
+                AI Reels section: amber-anchor + neutral surfaces. Visual is a
+                pure-CSS poster mockup (4:5 portrait, slight tilt) rather than
+                a real asset — matches the no-imports constraint while still
+                showing the actual output style. Hook: print-quality + ready
+                in 60 seconds without Canva. */}
+            <section className="relative py-20 sm:py-24 px-6 overflow-hidden grain-bg">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_30%,rgba(245,158,11,0.10),transparent_60%)]" />
+              <div className="relative max-w-6xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-[1.05fr_0.95fr] gap-12 lg:gap-16 items-center">
+
+                  {/* LEFT — animated poster mockup. 4:5 portrait card, tilted
+                      slightly, with brand-colored gradient, headline, photo
+                      area + QR + brand foot. "Made in 60s" floating badge. */}
+                  <div className="relative flex justify-center md:justify-start order-2 md:order-1">
+                    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(245,158,11,0.18),transparent_65%)] blur-2xl" />
+
+                    <div className="relative w-[260px] sm:w-[300px] aspect-[4/5] rounded-2xl rotate-[-3deg] hover:rotate-0 transition-transform duration-500 shadow-[0_30px_80px_-20px_rgba(245,158,11,0.35)]">
+                      {/* Poster body — amber-to-rose gradient with subtle paper-grain. */}
+                      <div className="relative w-full h-full rounded-2xl overflow-hidden bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500 p-5 flex flex-col">
+
+                        {/* Brand corner */}
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="inline-flex items-center gap-1.5 bg-black/30 backdrop-blur-sm rounded-full px-2.5 py-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                            <span className="text-[9px] font-bold tracking-[0.18em] text-white/95 uppercase">Tonight</span>
+                          </div>
+                          <span className="text-[10px] font-bold tracking-[0.22em] text-white/85 uppercase">Sat · 7pm</span>
+                        </div>
+
+                        {/* Photo area placeholder — gradient + soft halftone */}
+                        <div className="relative flex-1 rounded-lg bg-[radial-gradient(ellipse_at_70%_30%,rgba(255,255,255,0.18),transparent_50%),linear-gradient(135deg,#1f0a04,#3d1606_60%,#1a0805)] mb-4 overflow-hidden">
+                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_40%,rgba(255,200,120,0.35),transparent_45%)]" />
+                          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/40 to-transparent" />
+                          <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-md rounded-full px-2 py-0.5">
+                            <ImageIcon size={9} className="text-white/90" />
+                            <span className="text-[9px] font-bold text-white/90 tracking-wide">AI image</span>
+                          </div>
+                        </div>
+
+                        {/* Headline + sub */}
+                        <h3 className="text-2xl sm:text-[26px] font-black text-white leading-[0.95] tracking-tight mb-1">
+                          LIVE<br />MUSIC
+                        </h3>
+                        <p className="text-[11px] font-semibold text-white/85 mb-3 tracking-wide">
+                          Free entry · Kitchen open till late
+                        </p>
+
+                        {/* Footer — brand + QR */}
+                        <div className="flex items-end justify-between pt-3 border-t border-white/25">
+                          <div>
+                            <p className="text-[9px] font-bold tracking-[0.18em] text-white/70 uppercase">Your Venue</p>
+                            <p className="text-[10px] text-white/90 font-medium">123 Main St · Rockhampton</p>
+                          </div>
+                          {/* QR placeholder — 4×4 grid of squares */}
+                          <div className="w-12 h-12 rounded-md bg-white p-1 grid grid-cols-4 grid-rows-4 gap-[1px]">
+                            {[1,1,1,0,0,1,0,1,1,0,1,0,1,0,1,1].map((b, i) => (
+                              <div key={i} className={b ? 'bg-black' : 'bg-white'} />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Floating badge — "Made in 60 seconds" */}
+                      <div className="absolute -top-4 -right-4 sm:-right-6 rotate-[6deg] bg-black border border-amber-500/40 rounded-2xl px-3 py-2 shadow-2xl">
+                        <div className="flex items-center gap-1.5">
+                          <Zap size={11} className="text-amber-400" fill="currentColor" />
+                          <span className="text-[10px] font-black text-white">60-sec poster</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* RIGHT — copy block. Same headline rhythm as the hero +
+                      AI Reels section: block + block + italic-serif closer. */}
+                  <div className="order-1 md:order-2">
+                    <div className="inline-flex items-center gap-2 text-[10px] sm:text-[11px] font-bold tracking-[0.22em] text-amber-300/80 uppercase mb-5">
+                      <span className="w-6 h-px bg-amber-300/40" />
+                      New · Poster Maker
+                    </div>
+                    <h2 className="text-3xl sm:text-4xl md:text-5xl font-black mb-5 leading-[1.05] tracking-[-0.02em]">
+                      <span className="block text-white">Print-quality posters</span>
+                      <span className="block bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 bg-clip-text text-transparent">in 60 seconds.</span>
+                      <span className="block italic font-serif font-light text-white/55 pt-1">no Canva. no designer.</span>
+                    </h2>
+                    <p className="text-[15px] sm:text-base text-white/65 mb-7 max-w-lg leading-[1.6]">
+                      Drop in your event details, pick a vibe, and the AI lays out a poster in your brand colours — headline, hero image, QR code, the lot. Print A4, post to socials, or schedule it straight to Facebook.
+                    </p>
+
+                    <div className="space-y-3 mb-8">
+                      {[
+                        { icon: Palette, bold: 'Locks to your brand kit.', text: 'Palette, fonts, and voice saved per workspace — every poster looks like it came from you.' },
+                        { icon: ImageIcon, bold: 'AI hero image, on-brand.', text: 'Image generated to match the headline — square, story, or A4 portrait at the right aspect ratio.' },
+                        { icon: QrCode, bold: 'QR code, auto-included.', text: 'Booking link, menu, or socials — encoded to the corner so customers can act on the spot.' },
+                        { icon: Download, bold: 'Print or schedule, your call.', text: 'Download the PNG for the print shop, or push it into the calendar to post on Facebook + Instagram.' },
+                      ].map((f, i) => (
+                        <div key={i} className="flex items-start gap-3">
+                          <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/25 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <f.icon size={13} className="text-amber-400" />
+                          </div>
+                          <p className="text-sm text-white/65 leading-[1.55]">
+                            <strong className="text-white/90 font-bold">{f.bold}</strong> {f.text}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={onSignIn}
+                      className="group inline-flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black px-6 py-3.5 rounded-full hover:opacity-90 transition text-sm shadow-2xl shadow-amber-500/25"
+                    >
+                      Design my first poster <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Footnote strip — three short proof points, neutral surfaces */}
+                <div className="mt-14 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {[
+                    { stat: '< 60s', label: 'Brief to print-ready file', sub: 'No layout software needed' },
+                    { stat: 'A4 + Square + Story', label: 'Every aspect ratio', sub: 'Print and socials in one go' },
+                    { stat: 'Brand-locked', label: 'Your palette, your voice', sub: 'Saved once, used every time' },
+                  ].map((p, i) => (
+                    <div key={i} className="rounded-2xl p-5 text-left border bg-white/[0.03] border-white/[0.08]">
+                      <p className="text-2xl font-black text-white mb-1 tracking-tight">{p.stat}</p>
+                      <p className="font-bold text-white/85 text-sm mb-1">{p.label}</p>
+                      <p className="text-xs text-white/40 leading-relaxed">{p.sub}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
             {/* CINEMATIC TOUR — atmospheric video moment. Renders YouTube
                 thumbnail when CLIENT.youtubeVideoId is set, otherwise an
                 animated CSS placeholder until real footage drops in. */}
@@ -655,10 +789,14 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 ))}
               </div>
 
-              {/* Four supporting items — magazine columns with editorial
-                  numbering (03–06), divider lines, no icons. */}
+              {/* Six supporting items — magazine columns with editorial
+                  numbering (03–08), divider lines, no icons. Poster Maker
+                  and AI Reels also get a dedicated spotlight on the Home
+                  tab; here they sit in the comprehensive feature list. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-7 pt-2">
                 {[
+                  { title: 'Poster Maker', desc: "Print-quality A4 + square + story posters in under a minute. Auto QR code, locked to your brand palette and voice." },
+                  { title: 'AI Reels', desc: "Any photo into a cinematic 5–10 second reel. Brief written, image animated, music scored, ready for Instagram." },
                   { title: 'Smart Scheduling', desc: "AI picks the times your audience is actually online. No more 9am-because-that's-when-you-remembered." },
                   { title: 'Auto-publish to FB & IG', desc: "Posts go live automatically. No logging in, no copy-paste, no time-zone maths." },
                   { title: 'Live Analytics', desc: "Followers, reach, engagement — track what's working, drop what isn't." },

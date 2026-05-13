@@ -32,6 +32,7 @@ import { registerAdminActionsRoutes } from './routes/admin-actions';
 import { registerBillingRoutes } from './routes/billing';
 import { registerOnboardingRoutes } from './routes/onboarding';
 import { registerPostQualityRoutes } from './routes/post-quality';
+import { registerPostersRoutes } from './routes/posters';
 import { registerProxyRoutes } from './routes/proxies';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -87,6 +88,7 @@ registerAdminActionsRoutes(app);
 registerBillingRoutes(app);
 registerOnboardingRoutes(app);
 registerPostQualityRoutes(app);
+registerPostersRoutes(app);
 registerProxyRoutes(app);
 
 export default {

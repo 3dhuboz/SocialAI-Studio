@@ -45,6 +45,13 @@ preview_bucket_name = "socialai-reels"
 # Lifecycle rules belong in the bucket config, not wrangler.toml — this comment
 # is a deploy-checklist breadcrumb so we don't pile up orphan mp4s.
 
+# Poster Maker — PNG bytes for the gallery live here, keyed posters/<id>.png.
+# Created 2026-05-13 alongside schema_v11 migration. ~5 MB cap per poster
+# enforced in the upload route (routes/posters.ts POST handler).
+[[r2_buckets]]
+binding     = "POSTER_ASSETS"
+bucket_name = "socialai-posters"
+
 # ── Phase 2: Vectorize semantic classifier (opt-in) ──
 # Uncomment these two blocks + run the commands below to enable the
 # Vectorize layer in the business-archetype classifier. The code in
