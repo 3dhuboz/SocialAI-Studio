@@ -15,6 +15,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
+import { critiqueImageInternal } from '../lib/critique';
 
 export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── Vision-grounded image+caption critique (2026-05 image-stack upgrade) ──
@@ -26,124 +27,66 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   //
   // This is the move that catches "food image on SaaS post" BEFORE it gets
   // published — exactly the failure mode the user screenshotted on 2026-05-12.
-  // At ~$0.003/image (1024² → ~1334 input tokens + ~150 output tokens on Haiku
-  // 4.5 vision) it's cheaper than a wasted FB impression.
-  //
-  // 99% of competing social-AI tools don't do this — they trust whatever FLUX
-  // hallucinated. This is the cutting-edge differentiator.
+  // At ~$0.003/image on Haiku 4.5 vision it's cheaper than a wasted FB
+  // impression. 99% of competing social-AI tools don't do this — they trust
+  // whatever FLUX hallucinated.
   //
   // Body: { imageUrl, caption, businessType?, archetype?, postId? }
   // Returns: { score: 0-10, match: 'yes'|'partial'|'no', reasoning, regenerate }
+  //
+  // Delegates to critiqueImageInternal in lib/critique.ts so user-initiated
+  // critiques share the cron's HARD RULES gate, Anthropic-direct routing, and
+  // OpenRouter markdown-fence resilience. Persists on the post if postId is
+  // provided (best-effort, scoped to the calling user).
   app.post('/api/critique-image-caption', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `critique:${uid}`, 60)) {
       return c.json({ error: 'Rate limit exceeded — 60 critiques per minute' }, 429);
     }
-
-    const apiKey = c.env.OPENROUTER_API_KEY;
-    if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500);
+    if (!c.env.ANTHROPIC_API_KEY && !c.env.OPENROUTER_API_KEY) {
+      return c.json({ error: 'No critique provider configured' }, 500);
+    }
 
     const body = await c.req.json().catch(() => ({})) as {
       imageUrl?: string;
       caption?: string;
       businessType?: string;
       archetype?: string;
-      postId?: string;  // optional: persist result on the post if provided
+      postId?: string;
     };
-    const { imageUrl, caption, businessType = 'small business', archetype, postId } = body;
+    const { imageUrl, caption, businessType, archetype, postId } = body;
     if (!imageUrl || !caption) {
       return c.json({ error: 'imageUrl and caption are required' }, 400);
     }
 
-    const systemPrompt = `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
-
-Score the image-caption pair on a 0-10 scale:
-- 10 = perfect match: image visually reinforces the caption's specific topic
-- 7-9 = good match: image fits the caption's theme and business archetype
-- 4-6 = partial match: image is on-brand but doesn't reinforce the specific topic
-- 1-3 = poor match: image is off-topic or off-brand (e.g. food image on a tech post)
-- 0 = catastrophic mismatch: image is offensive, inappropriate, or completely unrelated
-
-Business archetype context: ${archetype || businessType}.
-
-Common failure modes to catch:
-- Food/restaurant imagery on a SaaS or tech-services post
-- Generic stock-photo aesthetic (laptop on desk) on a specific local-business post
-- People/faces in images (violates the no-people policy that's enforced upstream)
-- Text overlay artifacts (FLUX rendered fake menu text, pricing badges, etc.)
-- Subject mismatch (caption mentions a product the image doesn't show)
-
-Return JSON ONLY, no prose. Schema:
-{
-  "score": <0-10>,
-  "match": "yes" | "partial" | "no",
-  "reasoning": "<one sentence — be specific about what you see in the image vs what the caption says>",
-  "regenerate": <true if score <= 4, false otherwise>
-}`;
-
-    // OpenRouter supports vision via Anthropic's content-array format.
-    // Image is fetched and inlined by OpenRouter from the URL we provide.
-    const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://socialaistudio.au',
-        'X-Title': 'SocialAI Studio — Image Critique',
-      },
-      body: JSON.stringify({
-        model: 'anthropic/claude-haiku-4.5',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?` },
-              { type: 'image_url', image_url: { url: imageUrl } },
-            ],
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 300,
-        response_format: { type: 'json_object' },
-      }),
+    const result = await critiqueImageInternal(c.env, {
+      imageUrl,
+      caption,
+      archetypeSlug: archetype || null,
+      businessType,
     });
-
-    if (!orRes.ok) {
-      const errText = await orRes.text().catch(() => '');
-      return c.json({ error: `Vision critique call failed: ${orRes.status} ${errText.slice(0, 200)}` }, 502);
+    if (!result) {
+      return c.json({ error: 'Vision critique unavailable' }, 502);
     }
 
-    const orJson = await orRes.json() as any;
-    const raw = orJson.choices?.[0]?.message?.content || '';
-    let parsed: { score?: number; match?: string; reasoning?: string; regenerate?: boolean };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return c.json({ error: 'Vision critique returned malformed JSON', raw: raw.slice(0, 500) }, 502);
-    }
-
-    const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5;
-    const match = (['yes', 'partial', 'no'] as const).includes(parsed.match as any) ? parsed.match : 'partial';
-    const reasoning = (parsed.reasoning || 'No reasoning provided').slice(0, 500);
-
-    // Persist the result on the post when the caller scoped it. Best-effort —
-    // a write failure shouldn't block the critique response. The post is
-    // scoped to the calling user (via user_id check) so a malicious caller
-    // can't tag someone else's posts.
     if (postId) {
       try {
         await c.env.DB.prepare(
           `UPDATE posts SET image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
            WHERE id = ? AND user_id = ?`
-        ).bind(score, reasoning, new Date().toISOString(), postId, uid).run();
+        ).bind(result.score, result.reasoning, new Date().toISOString(), postId, uid).run();
       } catch (e) {
         console.warn(`[critique] persist failed for post ${postId}:`, e);
       }
     }
 
-    return c.json({ score, match, reasoning, regenerate: !!parsed.regenerate });
+    return c.json({
+      score: result.score,
+      match: result.match,
+      reasoning: result.reasoning,
+      regenerate: result.score <= 4,
+    });
   });
 
   // ── Virality Score (2026-05 Tier 3 wow feature) ─────────────────────────
