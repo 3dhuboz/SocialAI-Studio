@@ -66,6 +66,21 @@ export const CLIENT = {
    */
   youtubeVideoId: '',
 
+  /**
+   * LANDING PAGE POSTER SAMPLE IMAGE:
+   * URL of the hero image inside the Poster Maker spotlight mockup on the
+   * landing page (the 4:5 tilted poster card). When set, fills the dark
+   * "AI image" placeholder area with a real photo so the mockup reads as
+   * an actual poster output instead of a wireframe.
+   *
+   * Defaults to a stable Unsplash food/venue photo. Override via
+   * VITE_SAMPLE_POSTER_IMAGE_URL for a whitelabel deploy, or drop a real
+   * generated poster PNG at public/samples/poster-demo.png and set this
+   * to '/samples/poster-demo.png' to show your own brand's output.
+   */
+  samplePosterImageUrl: (import.meta as any).env?.VITE_SAMPLE_POSTER_IMAGE_URL
+    || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&h=400&fit=crop&q=70&auto=format',
+
   /** Where clients purchase plans */
   salesUrl: 'https://pennywiseit.com.au',
 
