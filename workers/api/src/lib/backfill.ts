@@ -325,6 +325,15 @@ export async function runBacklogCritique(
   return { found: posts.length, scored, low_scores: lowScores, failed };
 }
 
+// Max FLUX regen attempts per post. After this many tries, the post is
+// excluded from the regen queue and (if its scheduled_for arrives without
+// the score recovering) gets marked Missed by the publish-time quality
+// guard in cron/publish-missed.ts. Without a cap, a post whose caption is
+// hard for FLUX to render concretely (abstract wellness/coaching prompts
+// where FLUX defaults to generic stock-photo aesthetics) would loop
+// forever at ~$0.04/regen × 12 ticks/hour = ~$1/hour until publish.
+const MAX_REGEN_ATTEMPTS = 3;
+
 export async function runBacklogRegen(
   env: Env,
   threshold: number = 5,
@@ -332,14 +341,17 @@ export async function runBacklogRegen(
   if (!env.FAL_API_KEY) {
     return { skipped: true, found: 0, regenerated: 0, failed: 0 };
   }
-  // Cheap gate.
+  // Cheap gate. Excludes posts that have exhausted their regen budget so
+  // the COUNT goes to 0 once the workable backlog is drained — keeps this
+  // a free no-op on most ticks.
   const pending = await env.DB.prepare(
     `SELECT COUNT(*) as n FROM posts
      WHERE image_critique_score IS NOT NULL
        AND image_critique_score <= ?
        AND image_prompt IS NOT NULL AND image_prompt != ''
-       AND status IN ('Scheduled', 'Draft')`
-  ).bind(threshold).first<{ n: number }>();
+       AND status IN ('Scheduled', 'Draft')
+       AND COALESCE(image_regen_count, 0) < ?`
+  ).bind(threshold, MAX_REGEN_ATTEMPTS).first<{ n: number }>();
   if (!pending || pending.n === 0) return { skipped: true, found: 0, regenerated: 0, failed: 0 };
 
   const limit = 20;
@@ -350,9 +362,10 @@ export async function runBacklogRegen(
        AND image_critique_score <= ?
        AND image_prompt IS NOT NULL AND image_prompt != ''
        AND status IN ('Scheduled', 'Draft')
+       AND COALESCE(image_regen_count, 0) < ?
      ORDER BY image_critique_score ASC, scheduled_for ASC
      LIMIT ?`
-  ).bind(threshold, limit).all<{
+  ).bind(threshold, MAX_REGEN_ATTEMPTS, limit).all<{
     id: string; content: string; image_prompt: string;
     client_id: string | null; user_id: string; image_critique_score: number;
   }>();
@@ -362,6 +375,13 @@ export async function runBacklogRegen(
   let failed = 0;
 
   for (const post of posts) {
+    // Bump regen_count up front so a mid-loop throw or transient FAL
+    // failure still consumes one of the 3 attempts. Without this a
+    // generation-side error mode could starve the cap and loop indefinitely.
+    await env.DB.prepare(
+      `UPDATE posts SET image_regen_count = COALESCE(image_regen_count, 0) + 1 WHERE id = ?`,
+    ).bind(post.id).run();
+
     try {
       const safe = buildSafeImagePrompt(post.image_prompt);
       if (!safe) { failed++; continue; }

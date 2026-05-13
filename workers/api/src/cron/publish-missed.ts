@@ -197,6 +197,15 @@ async function postReelToFacebookPage(
   return videoId;
 }
 
+// Image-quality guard threshold for publish-time blocking. Posts whose
+// vision critique scored AT OR BELOW this AND have exhausted their FLUX
+// regen budget (image_regen_count >= MAX_REGEN_ATTEMPTS in runBacklogRegen)
+// are marked Missed instead of claimed for publish. Prevents shipping the
+// "generic gradient on a wellness post" failure mode we observed live —
+// the regen loop catches it but if FLUX can't produce a better image after
+// 3 tries, blocking is safer than publishing a known-bad image.
+const QUALITY_GUARD_THRESHOLD = 3;
+
 export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
@@ -209,6 +218,31 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   await env.DB.prepare(
     `UPDATE posts SET status = 'Missed', claim_id = NULL, claim_at = NULL WHERE status = 'Publishing' AND scheduled_for <= ?`
   ).bind(tenMinAgo).run();
+
+  // Image-quality guard. Posts whose image scored at/below the guard threshold
+  // AND whose FLUX regen budget is exhausted go straight to Missed with a
+  // human-readable reason — the owner gets the same publish-failure alert
+  // email as a token-expired post and can hand-fix from the calendar.
+  // Runs BEFORE the claim so these never enter the Publishing flow.
+  const qualityBlocked = await env.DB.prepare(
+    `SELECT id, user_id, client_id, image_critique_score, image_regen_count
+     FROM posts
+     WHERE status = 'Scheduled' AND scheduled_for <= ?
+       AND image_critique_score IS NOT NULL AND image_critique_score <= ?
+       AND COALESCE(image_regen_count, 0) >= 3
+       AND ${ACTIVE_CLIENT_FILTER}`
+  ).bind(nowAEST, QUALITY_GUARD_THRESHOLD).all<{
+    id: string; user_id: string | null; client_id: string | null;
+    image_critique_score: number; image_regen_count: number | null;
+  }>();
+  for (const p of (qualityBlocked.results || [])) {
+    const reason = `Image quality below threshold (score ${p.image_critique_score}/10) after ${p.image_regen_count ?? 0} regen attempts — open Calendar to upload a custom image or edit the caption to give the AI better grounding.`;
+    await env.DB.prepare(
+      `UPDATE posts SET status = 'Missed', reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?`,
+    ).bind(reason, p.id).run();
+    await notifyOwnerOnPublishFailure(env, p, reason);
+    console.log(`[CRON] Quality-blocked publish for post ${p.id} (score=${p.image_critique_score}, attempts=${p.image_regen_count})`);
+  }
 
   // Claim posts with a unique ID so concurrent cron instances don't double-post.
   // Each instance stamps its own claimId in the dedicated claim_id column,
