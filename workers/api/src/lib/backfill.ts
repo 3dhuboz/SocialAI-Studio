@@ -128,7 +128,9 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 // runBacklogCritique:
 //   Scores every post that has image_url but no image_critique_score yet.
 //   Idempotent — the WHERE clause naturally skips already-scored posts.
-//   Cap 50/tick × Haiku 4.5 vision @ ~$0.003 = $0.15/tick worst case.
+//   Cap 20/tick × Haiku 4.5 vision @ ~$0.003 = $0.06/tick worst case.
+//   (Reduced from 50 in commit ecdd138 — stale fal.media URLs cost ~5s each
+//   while Anthropic times out trying to fetch them.)
 //
 // runBacklogRegen:
 //   Regenerates images for posts that scored ≤ threshold (default 5).

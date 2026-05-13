@@ -15,10 +15,11 @@
 // /api/score-post or similar wants the same patterns, lift them to
 // lib/content-quality.ts at that point.
 //
-// Action endpoints (backfill, regen, provision, bootstrap) stay in
-// index.ts for now — they share helpers (backfillImagesForUser,
-// tryCreateClerkUser, tryCreateCFPagesProject, refreshFactsForUser) that
-// haven't been extracted yet.
+// Action endpoints (backfill, regen, provision, bootstrap) live in
+// routes/admin-actions.ts and call the lib helpers that were extracted in
+// the Phase B route-module split: lib/backfill.ts (backfillImagesForUser),
+// lib/provisioning.ts (tryCreateClerkUser, tryCreateCFPagesProject),
+// lib/facebook-facts.ts (refreshFactsForUser).
 //
 // Extracted from src/index.ts as Phase B step 20 of the route-module split.
 
