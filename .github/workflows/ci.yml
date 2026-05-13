@@ -32,14 +32,16 @@ jobs:
 
       # Guard against the on_hold filter being silently removed again.
       # If this grep fails, the cron query no longer skips paused clients.
+      # Searches the entire workers/api/src/ tree — Phase B route-module split
+      # moved ACTIVE_CLIENT_FILTER from src/index.ts to src/cron/_shared.ts.
       - name: Guard — on_hold filter present
         run: |
-          if ! grep -q "ACTIVE_CLIENT_FILTER" workers/api/src/index.ts; then
-            echo "::error::ACTIVE_CLIENT_FILTER constant missing from workers/api/src/index.ts"
+          if ! grep -rq "ACTIVE_CLIENT_FILTER" workers/api/src/; then
+            echo "::error::ACTIVE_CLIENT_FILTER constant missing from workers/api/src/"
             exit 1
           fi
-          if ! grep -q "on_hold" workers/api/src/index.ts; then
-            echo "::error::on_hold logic missing from workers/api/src/index.ts"
+          if ! grep -rq "on_hold" workers/api/src/; then
+            echo "::error::on_hold logic missing from workers/api/src/"
             exit 1
           fi
 
