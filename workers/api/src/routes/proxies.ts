@@ -28,6 +28,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
+import { generateImageWithBrandRefs } from '../lib/image-gen';
 
 export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────
@@ -63,94 +64,69 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         console.warn(`[fal-proxy] generate-image prompt missing safety marker — uid=${uid}, prompt prefix="${prompt.substring(0, 80)}"`);
       }
 
-      // ── 2026-05 Brand-grounded image generation ──
-      //
-      // Pull the user's top scraped Facebook photos from client_facts as
-      // reference images. FLUX Pro Kontext (and Nano Banana Pro on the
-      // premium path) reads these to maintain BRAND consistency — the
-      // generated image will share lighting, colour palette, and composition
-      // style with their real existing photos, NOT generic stock aesthetic.
-      //
-      // Falls back to plain FLUX-dev if no photos are scraped yet — preserves
-      // behaviour for fresh workspaces / agency clients without an FB
-      // connection. This is the move that fixes "every customer's generated
-      // image looks identical because every customer gets FLUX-dev defaults".
-      let referenceImageUrls: string[] = [];
-      try {
-        const photoRows = await c.env.DB.prepare(
-          `SELECT metadata FROM client_facts
-           WHERE user_id = ? AND COALESCE(client_id, '') = ? AND fact_type = 'photo'
-           ORDER BY engagement_score DESC, verified_at DESC
-           LIMIT 4`
-        ).bind(uid, clientId || '').all<{ metadata: string }>();
-        for (const row of photoRows.results || []) {
-          try {
-            const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-            if (meta?.url && typeof meta.url === 'string') referenceImageUrls.push(meta.url);
-          } catch { /* skip bad row */ }
+      // ── Premium tier: nano-banana-pro (Gemini 3 Pro Image) ──
+      // Up to 14 refs, $0.15/image, best brand consistency. Kept inline
+      // because the lib/image-gen.ts helper doesn't support this model —
+      // it's a premium-tier opt-in via forceModel, not the default route.
+      // Falls back to the default delegation below if no refs are available.
+      if (forceModel === 'nano-banana-pro') {
+        let referenceImageUrls: string[] = [];
+        try {
+          const photoRows = await c.env.DB.prepare(
+            `SELECT metadata FROM client_facts
+             WHERE user_id = ? AND COALESCE(client_id, '') = ? AND fact_type = 'photo'
+             ORDER BY engagement_score DESC, verified_at DESC
+             LIMIT 14`
+          ).bind(uid, clientId || '').all<{ metadata: string }>();
+          for (const row of photoRows.results || []) {
+            try {
+              const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+              if (meta?.url && typeof meta.url === 'string') referenceImageUrls.push(meta.url);
+            } catch { /* skip bad row */ }
+          }
+        } catch (e) {
+          console.warn(`[fal-proxy] nano-banana-pro brand-ref fetch failed:`, e);
         }
-      } catch (e) {
-        console.warn(`[fal-proxy] brand-ref fetch failed (continuing without refs):`, e);
+        if (referenceImageUrls.length > 0) {
+          const res = await fetch('https://fal.run/fal-ai/gemini-3-pro-image-preview', {
+            method: 'POST', headers: authHeader,
+            body: JSON.stringify({
+              prompt,
+              image_urls: referenceImageUrls.slice(0, 14),
+              aspect_ratio: '1:1',
+              num_images: 1,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json() as any;
+            const imageUrl = data?.images?.[0]?.url || null;
+            if (imageUrl) {
+              return c.json({ imageUrl, model_used: 'nano-banana-pro', references_used: referenceImageUrls.length });
+            }
+          } else {
+            console.warn(`[fal-proxy] nano-banana-pro failed (status ${res.status}), falling through to flux chain`);
+          }
+        }
+        // Fall through to the default delegation if nano-banana-pro had no
+        // refs or failed — better to ship a flux-dev image than nothing.
       }
 
-      // ── Route selection ──
-      // Default routing — choose strategy based on what data we have AND
-      // the optional forceModel override. Premium tier customers can flip
-      // to nano-banana-pro by passing forceModel; the proxy gates that
-      // path on plan but for now any auth'd user can request it.
-      const model = forceModel
-        ?? (referenceImageUrls.length > 0 ? 'flux-pro-kontext' : 'flux-dev');
-
-      let res: Response;
-      if (model === 'nano-banana-pro' && referenceImageUrls.length > 0) {
-        // Premium path: Nano Banana Pro (Gemini 3 Pro Image) — up to 14 refs,
-        // $0.15/image, best brand consistency + text rendering on the market
-        // as of Q4 2025. Endpoint: fal-ai/gemini-3-pro-image-preview.
-        res = await fetch('https://fal.run/fal-ai/gemini-3-pro-image-preview', {
-          method: 'POST', headers: authHeader,
-          body: JSON.stringify({
-            prompt,
-            image_urls: referenceImageUrls.slice(0, 14),
-            aspect_ratio: '1:1',
-            num_images: 1,
-          }),
-        });
-      } else if (model === 'flux-pro-kontext' && referenceImageUrls.length > 0) {
-        // Default brand-grounded path: FLUX Pro Kontext — up to 4 refs,
-        // $0.04/image, drop-in brand consistency without LoRA training.
-        res = await fetch('https://fal.run/fal-ai/flux-pro/kontext', {
-          method: 'POST', headers: authHeader,
-          body: JSON.stringify({
-            prompt,
-            image_urls: referenceImageUrls.slice(0, 4),
-            aspect_ratio: '1:1',
-            num_images: 1,
-            guidance_scale: 3.5,
-          }),
-        });
-      } else {
-        // Baseline path: plain FLUX-dev (no references available). Preserves
-        // existing behaviour for fresh workspaces. negative_prompt is the
-        // canonical FLUX_NEGATIVE_PROMPT — guidance_scale 5 ensures it sticks.
-        res = await fetch('https://fal.run/fal-ai/flux/dev', {
-          method: 'POST', headers: authHeader,
-          body: JSON.stringify({
-            prompt,
-            negative_prompt: negativePrompt || FLUX_NEGATIVE_PROMPT,
-            image_size: 'square_hd',
-            num_inference_steps: 28,
-            num_images: 1,
-            enable_safety_checker: true,
-            guidance_scale: 5.0,
-          }),
-        });
+      // ── Default path: delegate to lib/image-gen.ts ──
+      // Single source of truth for brand-grounded gen: same code path the
+      // cron + backfill use. Inherits the flux-pro-kontext → flux-dev
+      // graceful fallback that's load-bearing when FB CDN reference URLs
+      // are stale (the failure mode the user hit on 2026-05-13 when SaaS
+      // posts with abstract-UI prompts returned hard errors instead of
+      // falling back to plain FLUX). Also gets archetype guardrails +
+      // caption-based archetype sniffing for free.
+      const result = await generateImageWithBrandRefs(
+        c.env, uid, clientId || null,
+        { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
+      );
+      if (!result.imageUrl) {
+        return c.json({ error: 'Image generation failed — both flux-pro-kontext and flux-dev returned no image' }, 502);
       }
-      const data = await res.json() as any;
-      if (!res.ok) return c.json({ error: data?.detail || data?.message || `fal.ai HTTP ${res.status}` }, res.status as any);
-      const imageUrl = data?.images?.[0]?.url || null;
-      // Surface which strategy was actually used so the client can show a
-      // "brand-grounded ✓" badge in the UI and admins can audit cost.
-      return c.json({ imageUrl, model_used: model, references_used: referenceImageUrls.length });
+      return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed, references_used: result.referencesUsed });
     }
     if (action === 'generate-video' && c.req.method === 'POST') {
       const { promptText, promptImage, duration = 5 } = await c.req.json() as any;
