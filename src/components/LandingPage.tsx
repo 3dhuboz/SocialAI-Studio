@@ -407,27 +407,48 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
 
                     <div className="relative w-[260px] sm:w-[300px] aspect-[9/16] rounded-[2.25rem] p-[2px] bg-gradient-to-br from-amber-400/60 via-orange-400/30 to-rose-400/40 shadow-[0_30px_80px_-20px_rgba(245,158,11,0.35)]">
                       <div className="relative w-full h-full rounded-[2.1rem] overflow-hidden bg-gradient-to-br from-[#1a1410] via-[#0f0b08] to-[#0a0707]">
-                        {/* animated film bands — three offset gradients drifting
-                            on different durations creates the "video is playing"
-                            illusion without a real asset */}
-                        <div className="absolute inset-0 bg-gradient-to-b from-amber-500/25 via-rose-500/15 to-transparent animate-pulse" style={{ animationDuration: '3.2s' }} />
-                        <div className="absolute inset-x-0 top-1/3 h-1/3 bg-gradient-to-r from-orange-400/20 via-transparent to-amber-400/20 animate-pulse" style={{ animationDuration: '2.6s' }} />
+                        {/* Real reel video when CLIENT.sampleReelUrl is set —
+                            autoplays muted + looped so a visitor sees an actual
+                            generated reel instead of the placeholder. Falls
+                            back to the animated film-band illusion when
+                            unset, so a fresh whitelabel deploy stays
+                            visually correct out of the box. */}
+                        {CLIENT.sampleReelUrl ? (
+                          <video
+                            src={CLIENT.sampleReelUrl}
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : (
+                          <>
+                            {/* animated film bands — three offset gradients drifting
+                                on different durations creates the "video is playing"
+                                illusion without a real asset */}
+                            <div className="absolute inset-0 bg-gradient-to-b from-amber-500/25 via-rose-500/15 to-transparent animate-pulse" style={{ animationDuration: '3.2s' }} />
+                            <div className="absolute inset-x-0 top-1/3 h-1/3 bg-gradient-to-r from-orange-400/20 via-transparent to-amber-400/20 animate-pulse" style={{ animationDuration: '2.6s' }} />
 
-                        {/* center play glyph */}
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="w-16 h-16 rounded-full bg-white/12 backdrop-blur-md border border-white/25 flex items-center justify-center">
-                            <Play size={22} className="text-white ml-1" fill="white" />
-                          </div>
-                        </div>
+                            {/* center play glyph — only when video isn't playing */}
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="w-16 h-16 rounded-full bg-white/12 backdrop-blur-md border border-white/25 flex items-center justify-center">
+                                <Play size={22} className="text-white ml-1" fill="white" />
+                              </div>
+                            </div>
+                          </>
+                        )}
 
-                        {/* top-left "REEL" tag */}
-                        <div className="absolute top-4 left-4 inline-flex items-center gap-1.5 bg-black/40 backdrop-blur-sm border border-white/15 rounded-full px-2.5 py-1">
+                        {/* top-left "REEL" tag — overlay sits above both
+                            video and CSS placeholder branches */}
+                        <div className="absolute top-4 left-4 inline-flex items-center gap-1.5 bg-black/40 backdrop-blur-sm border border-white/15 rounded-full px-2.5 py-1 z-10">
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
                           <span className="text-[10px] font-bold tracking-[0.18em] text-white/85 uppercase">Reel</span>
                         </div>
 
-                        {/* bottom caption strip */}
-                        <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/70 via-black/30 to-transparent">
+                        {/* bottom caption strip — same overlay treatment */}
+                        <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/70 via-black/30 to-transparent z-10">
                           <p className="text-[11px] font-semibold text-white/85 mb-1.5 leading-snug">
                             Fresh sourdough, in by 7am. Tag a mate who needs one. ☕
                           </p>
