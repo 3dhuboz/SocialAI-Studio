@@ -16,3 +16,15 @@ export const PLAN_PRICE_AUD: Record<string, number> = {
   pro: 79,
   agency: 149,
 };
+
+// Poster Maker monthly quota per plan. Shared across all client workspaces
+// on Agency. Enforced in routes/posters.ts on POST + reported via
+// /api/db/posters-usage so the UI can show "X of Y this month" + an
+// upgrade CTA when at cap. Mirror these in src/client.config.ts plans[]
+// features[] strings.
+export const POSTER_QUOTA_PER_MONTH: Record<string, number> = {
+  starter: 3,
+  growth: 10,
+  pro: 30,
+  agency: 100,
+};

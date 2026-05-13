@@ -42,7 +42,7 @@ import {
 } from '../utils/posterBrandKit';
 import {
   createPosterApi, posterImageUrl,
-  type SavedPoster,
+  type SavedPoster, type PosterUsage,
 } from '../services/posters';
 import {
   generatePosterArt, expandPosterBrief, generateSocialCaption, suggestPostTime,
@@ -286,6 +286,18 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
   const [savingStatus, setSavingStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Monthly poster quota — drives the "X of Y this month" counter and the
+  // upgrade CTA when the user hits cap. Refreshed on mount + after every
+  // save. Null until the first fetch resolves; the UI renders a skeleton
+  // dash in that brief window so layout doesn't shift.
+  const [usage, setUsage] = useState<PosterUsage | null>(null);
+  const refreshUsage = useCallback(async () => {
+    try { setUsage(await posterApi.fetchUsage()); }
+    catch (err) { console.warn('[PosterManager] usage fetch failed:', err); }
+  }, [posterApi]);
+  useEffect(() => { refreshUsage(); }, [refreshUsage]);
+  const atCap = usage !== null && usage.remaining <= 0;
+
   // Filter input for the gallery. Macca regularly has 30+ posters in the
   // gallery (one every cook day for a year is ~100) — scrolling for the
   // brisket one from last August stops being fun fast. Client-side
@@ -458,11 +470,15 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
         });
         setSavingStatus('saved');
         refreshGallery();
+        refreshUsage();
         setTimeout(() => setSavingStatus(s => (s === 'saved' ? 'idle' : s)), 4000);
       } catch (err: any) {
         console.error('[PosterManager] save-to-gallery failed:', err);
         setSavingStatus('error');
         setSaveError(err?.message || 'Could not save to gallery — the PNG download still worked.');
+        // 429 means quota — fetch the latest usage so the counter shows
+        // the correct "0 left" state and the upgrade CTA appears.
+        if (/limit reached|429/i.test(String(err?.message || ''))) refreshUsage();
       }
     }, 'image/png');
   };
@@ -1147,6 +1163,47 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
               </div>
             )}
           </div>
+
+          {/* Monthly quota counter — always visible so the user knows how
+              many saves they have left before tapping Download. atCap shows
+              an amber upgrade nudge directly below; the local PNG download
+              still works even at cap, only the save-to-gallery is blocked. */}
+          <div
+            className={`flex items-center justify-between gap-3 px-3 py-2 rounded-md text-xs font-medium border ${
+              atCap
+                ? 'bg-amber-950/40 border-amber-800/60 text-amber-200'
+                : 'bg-[color:var(--pm-input-bg)] border-[color:var(--pm-input-border)] text-gray-300'
+            }`}
+          >
+            <span className="flex items-center gap-1.5">
+              <ImageIcon size={12} className={atCap ? 'text-amber-300' : 'text-gray-400'} />
+              {usage === null ? (
+                <span className="text-gray-500">Loading quota…</span>
+              ) : (
+                <>
+                  <strong className={atCap ? 'text-amber-100' : 'text-white'}>{usage.used}</strong>
+                  <span className="text-gray-500"> of </span>
+                  <strong className={atCap ? 'text-amber-100' : 'text-white'}>{usage.quota}</strong>
+                  <span className="text-gray-500"> posters this month</span>
+                </>
+              )}
+            </span>
+            {atCap && (
+              <a
+                href="/?settings=billing"
+                onClick={(e) => { e.preventDefault(); window.location.hash = '#settings'; }}
+                className="text-amber-300 underline underline-offset-2 hover:text-amber-200 font-semibold"
+              >
+                Upgrade
+              </a>
+            )}
+          </div>
+          {atCap && usage && (
+            <p className="-mt-1 text-[11px] text-amber-300/80 leading-snug">
+              Limit hit on the <span className="font-semibold capitalize">{usage.plan}</span> plan.
+              You can still download the PNG locally — only the save-to-gallery is blocked until next month or you upgrade.
+            </p>
+          )}
 
           <div className="flex flex-col gap-2">
             <button

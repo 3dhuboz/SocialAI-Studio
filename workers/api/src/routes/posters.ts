@@ -25,17 +25,59 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
+import { POSTER_QUOTA_PER_MONTH } from '../lib/pricing';
 
 const uuid = () => crypto.randomUUID();
 
 const POSTER_MAX_BYTES = 5 * 1024 * 1024;
 const POSTER_BRAND_KIT_MAX_BYTES = 64 * 1024;
 
+// Fallback when the user row has no plan set (legacy users, in-trial sign-ups
+// before billing settles). Treat as the floor tier — matches reel-credit
+// behaviour for un-paid accounts.
+const DEFAULT_PLAN_FOR_QUOTA = 'starter';
+
 /** Normalise the workspace id read from ?clientId= or body — '' means own. */
 function normalizeClientId(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = String(raw).trim();
   return trimmed ? trimmed : null;
+}
+
+/**
+ * Read the user's current month poster usage + quota in one shot. Counts ALL
+ * posters this user owns across workspaces (Agency-plan users share quota
+ * across all their client workspaces — matches the AI Reels credit model
+ * where the agency owner pays once for the whole multi-client pool).
+ *
+ * The "this month" window is anchored to UTC `start of month` — D1's SQLite
+ * supports the modifier directly, no JS date maths needed. created_at is
+ * stamped by `datetime('now')` on INSERT (see POST /api/db/posters), so
+ * comparison stays consistent.
+ */
+async function getPosterUsage(db: D1Database, userId: string): Promise<{
+  used: number;
+  quota: number;
+  plan: string;
+  remaining: number;
+}> {
+  const userRow = await db
+    .prepare('SELECT plan FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ plan: string | null }>();
+  const plan = userRow?.plan || DEFAULT_PLAN_FOR_QUOTA;
+  const quota = POSTER_QUOTA_PER_MONTH[plan] ?? POSTER_QUOTA_PER_MONTH[DEFAULT_PLAN_FOR_QUOTA];
+
+  const usageRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS used FROM posters
+       WHERE user_id = ? AND created_at >= datetime('now', 'start of month')`,
+    )
+    .bind(userId)
+    .first<{ used: number }>();
+  const used = Number(usageRow?.used ?? 0);
+
+  return { used, quota, plan, remaining: Math.max(0, quota - used) };
 }
 
 /** Row → API shape conversion. snake_case to camelCase + JSON-parse content. */
@@ -83,6 +125,17 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
     return c.json({ items: (results ?? []).map(posterRowToApi) });
   });
 
+  // GET /api/db/posters-usage
+  // Returns { used, quota, plan, remaining } for the current month. Frontend
+  // shows this as the "X of Y this month" counter on the Poster Maker UI +
+  // surfaces an upgrade CTA when remaining hits zero.
+  app.get('/api/db/posters-usage', async (c) => {
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const usage = await getPosterUsage(c.env.DB, uid);
+    return c.json(usage);
+  });
+
   // POST /api/db/posters
   // multipart/form-data with fields:
   //   image            — the rendered PNG (required, ≤5MB)
@@ -97,6 +150,24 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/db/posters', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+    // Quota gate — count-based, anchored to UTC start-of-month. Fails closed
+    // before we burn an R2 upload on a request the user can't redeem. 429
+    // (Too Many Requests) is semantically the closest standard code for
+    // "you've hit your plan ceiling, try next month or upgrade".
+    const usage = await getPosterUsage(c.env.DB, uid);
+    if (usage.used >= usage.quota) {
+      return c.json(
+        {
+          error: `Monthly poster limit reached (${usage.used} of ${usage.quota} on the ${usage.plan} plan). Upgrade for more.`,
+          used: usage.used,
+          quota: usage.quota,
+          plan: usage.plan,
+          remaining: 0,
+        },
+        429,
+      );
+    }
 
     if (!c.env.POSTER_ASSETS) {
       return c.json(

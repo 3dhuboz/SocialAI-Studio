@@ -73,6 +73,18 @@ export interface BrandKitFetchResult {
   updatedAt: number;
 }
 
+/** Monthly Poster Maker usage + quota for the current user. */
+export interface PosterUsage {
+  /** Posters created this calendar month (across all workspaces this user owns). */
+  used: number;
+  /** Plan-tier monthly cap — Starter 3 / Growth 10 / Pro 30 / Agency 100. */
+  quota: number;
+  /** Resolved plan slug: 'starter' | 'growth' | 'pro' | 'agency'. */
+  plan: string;
+  /** quota - used, floored at zero. */
+  remaining: number;
+}
+
 /**
  * Factory — call once per render where you have the Clerk token + the
  * active workspace id. Returns workspace-scoped methods. Caller passes
@@ -93,6 +105,19 @@ export function createPosterApi(getToken: GetToken, authMode: AuthMode = 'clerk'
       const res = await f(`/api/db/posters${qs}`);
       const data = await res.json() as { items?: SavedPoster[] };
       return data.items ?? [];
+    },
+
+    /** Current month's Poster Maker usage + quota. Drives the "X of Y this
+     *  month" counter on the UI and toggles the upgrade CTA when at cap. */
+    async fetchUsage(): Promise<PosterUsage> {
+      const res = await f('/api/db/posters-usage');
+      const data = await res.json() as Partial<PosterUsage>;
+      return {
+        used: Number(data?.used ?? 0),
+        quota: Number(data?.quota ?? 0),
+        plan: String(data?.plan ?? 'starter'),
+        remaining: Number(data?.remaining ?? 0),
+      };
     },
 
     /**
