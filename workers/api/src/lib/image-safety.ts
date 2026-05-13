@@ -260,6 +260,16 @@ const CAPTION_ARCHETYPE_KEYWORDS: Record<string, string[]> = {
     'multi-client', 'whitelabel', 'agency dashboard', 'agency tools',
     'social media tip', 'social media owner', 'cms', 'crm',
     'subscription', 'app', 'tech company', 'i.t.',
+    // 2026-05 widening — real SaaS marketing copy doesn't always use the
+    // technical terms above. These catch posts that describe the FEATURES
+    // and OUTCOMES customers buy (scheduling, engagement, publishing) so
+    // a post about "Smart Scheduling + engagement data" classifies even
+    // when the brand name doesn't contain 'saas'/'platform' verbatim.
+    'smart scheduling', 'engagement data', 'publishes automatically',
+    'auto-publish', 'auto publish', 'pre-publish', 'content calendar',
+    'post scheduling', 'social media management', 'content strategy',
+    'marketing automation', 'ai content', 'ai-generated', 'pennywise',
+    'socialai', 'social ai studio',
   ],
   'food-restaurant': ['menu', 'dish', 'recipe', 'cuisine', 'restaurant', 'cafe', 'eatery', 'dining', 'plated', 'meal'],
   'bbq-smokehouse': ['brisket', 'smoker', 'low and slow', 'pulled pork', 'ribs', 'bbq', 'smokehouse'],

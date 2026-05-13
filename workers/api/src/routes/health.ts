@@ -16,6 +16,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { paypalAccessToken } from '../lib/paypal';
+import { ACTIVE_CLIENT_FILTER } from '../cron/_shared';
 
 export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
@@ -40,6 +41,9 @@ export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // Public post schedule feed — used by deploy monitor widget
   app.get('/api/post-schedule', async (c) => {
+    // Filter to active clients only so the monitor view matches what the
+    // publish cron will actually do. On-hold clients' scheduled posts are
+    // never claimed by the cron — showing them here is misleading.
     const rows = await c.env.DB.prepare(
       `SELECT p.scheduled_for, p.status, p.platform,
               substr(p.content, 1, 80) as preview,
@@ -47,6 +51,7 @@ export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
        FROM posts p LEFT JOIN clients c ON p.client_id = c.id
        WHERE p.status IN ('Scheduled','Posted','Missed')
          AND p.scheduled_for >= date('now','-1 day')
+         AND ${ACTIVE_CLIENT_FILTER}
        ORDER BY p.scheduled_for ASC LIMIT 30`
     ).all();
     return c.json({ posts: rows.results ?? [] });
