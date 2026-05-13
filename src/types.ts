@@ -27,6 +27,14 @@ export interface SocialPost {
   r2VideoKey?: string;
   /** Mixed-audio version — populated by PR #2 (server-side ffmpeg). NULL in PR #1. */
   audioMixedUrl?: string;
+  // ── Vision critique result (schema v8) ───────────────────────────────────
+  // Populated by the prewarm cron (every 5 min) and by manual /api/critique-
+  // image-caption calls. The score is Haiku 4.5 vision's verdict on whether
+  // the image actually matches the caption + workspace archetype. PostModal
+  // renders a small badge when these are present.
+  imageCritiqueScore?: number;        // 0-10
+  imageCritiqueReasoning?: string;    // one-sentence explanation
+  imageCritiqueAt?: string;           // ISO timestamp
 }
 
 /** Social platform tokens — stored in dedicated D1 column, never cached in localStorage */

@@ -136,14 +136,63 @@ function tryRecoverTruncated(raw: string): any {
   return null;
 }
 
-const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
+// `import.meta.env` is Vite-only — defensively coerce so this module can also
+// be imported by node-side smoke tests (scripts/audit-smoke-test.ts) without
+// crashing at module-load.
+const AI_WORKER = (((import.meta as any).env as Record<string, string> | undefined) || {}).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
-/** Generate business-specific image prompt examples based on business type.
- * Provides 6-8 DIFFERENT compositions per industry so the AI doesn't fall
- * back to the same "device on desk" / "product on board" template every post.
- * Each call returns ALL examples so the model has a wide variety palette. */
+// ── Business Archetype Library (2026-05 Phase 1) ──
+//
+// The bundled ARCHETYPES constant is the client-side source of truth for the
+// keyword-based fast path. The server-side classifier endpoint reads the same
+// data from D1 (seeded from this module). At generation time:
+//
+//   1. activeArchetypeSlug is set by App.tsx after fetching the user's cached
+//      archetype from /api/business-archetype (set once per session)
+//   2. getImagePromptExamples first looks up examples from the cached archetype
+//   3. Falls back to the synchronous keyword match against ARCHETYPES
+//   4. Falls back to the legacy hardcoded switch (kept for safety during the
+//      transition — will be removed in a follow-up once we've confirmed the
+//      archetype path is hit for >99% of generations)
+//
+// See src/data/archetypes.ts for the canonical archetype list and
+// workers/api/src/index.ts for the /api/classify-business endpoint.
+import { ARCHETYPES, matchArchetypeByKeyword, getArchetypeBySlug } from '../data/archetypes';
+
+let activeArchetypeSlug: string | null = null;
+
+/** Called by App.tsx once per session after fetching /api/business-archetype.
+ *  Subsequent image-prompt lookups will prefer this archetype's example bank
+ *  over the keyword-match fallback. Pass null to clear (e.g. workspace switch). */
+export function setActiveArchetype(slug: string | null) {
+  activeArchetypeSlug = slug;
+}
+
+/** Generate business-specific image prompt examples.
+ *
+ *  Resolution order:
+ *    1. Cached archetype (set by setActiveArchetype after classifier run)
+ *    2. Synchronous keyword match against ARCHETYPES (covers any business
+ *       whose type/description hits a keyword — works instantly with no
+ *       server call, even before the classifier runs)
+ *    3. Legacy hardcoded keyword switch (the original 11-branch cascade,
+ *       kept temporarily as a safety net)
+ *
+ *  Provides 6-10 DIFFERENT compositions per archetype so the AI doesn't fall
+ *  back to the same template every post. Each call returns ALL examples
+ *  OR-joined so the AI has variety. */
 const getImagePromptExamples = (businessType: string): string => {
+  // Layer 1: use the user's classified archetype if available
+  if (activeArchetypeSlug) {
+    const arch = getArchetypeBySlug(activeArchetypeSlug);
+    if (arch) return arch.imageExamples.map(s => `'${s}'`).join(' OR ');
+  }
+  // Layer 2: synchronous keyword match (works during the brief window before
+  // the classifier returns, or for businesses that haven't been classified yet)
+  const kwMatch = matchArchetypeByKeyword(businessType);
+  if (kwMatch) return kwMatch.imageExamples.map(s => `'${s}'`).join(' OR ');
+  // Layer 3: fall through to legacy hardcoded switch below
   const t = businessType.toLowerCase();
   // Use word-boundary check for short tokens to avoid false matches (e.g. "it"
   // matching "kit", "fit", "with"). Long tokens use plain substring.
@@ -187,7 +236,16 @@ const getImagePromptExamples = (businessType: string): string => {
     "'kraut being lifted with wooden tongs above jar, action shot'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
-  if (has('web', 'software', 'tech', 'digital', 'saas') || /\bit\b/.test(t) || /\bi\.t\b/.test(t)) return [
+  // Keywords expanded 2026-05 follow-up: SocialAI Studio's OWN agency posts
+  // were generating food images because "Marketing Agency" / "Social Media
+  // Studio" / "Creative Studio" didn't hit any branch and fell through to
+  // the default. The reworked tech examples (laptop, keyboard, post-its,
+  // home office) are equally appropriate for SaaS, marketing/social agency,
+  // and creative-studio businesses — so they all share this branch.
+  if (
+    has('web', 'software', 'tech', 'digital', 'saas', 'agency', 'marketing', 'studio', 'creative', 'consultancy', 'consult', 'automation') ||
+    /\bit\b/.test(t) || /\bi\.t\b/.test(t)
+  ) return [
     // Reworked 2026-05 — original examples were UI-centric (phone screen
     // showing clean app UI, wireframe sketches, fingers typing) which both
     // (a) tripped the new isAbstractUI fallback regex when the AI quoted
@@ -202,6 +260,8 @@ const getImagePromptExamples = (businessType: string): string => {
     "'creative wall of post-it notes in a bright office, daylight from window, candid texture'",
     "'abstract close-up of glowing fibre cables in dark room, blue+orange contrast'",
     "'home office windowsill with plant, mug and a closed notebook at sunrise'",
+    "'multi-screen agency desk with calendar view glowing softly, late evening, no person'",
+    "'whiteboard wall with kanban sticky-notes, daylight, creative studio atmosphere'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('festival', 'event')) return [
@@ -249,8 +309,201 @@ const getImagePromptExamples = (businessType: string): string => {
     "'studio interior with plants, soft daylight, peaceful empty space'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
-  return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one item' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
+  // Default fallback when no industry keyword matched. 2026-05 follow-up:
+  // re-anchored on neutral compositional language (no food/product hints)
+  // so FLUX doesn't default to cafe/restaurant scenes when given a vague
+  // businessType. The downstream `pickExampleScene` picks ONE of these,
+  // then it's combined with the post's own imagePrompt so the AI's topic
+  // still drives the subject — the example only sets composition + lighting.
+  return `'the main product/service of ${businessType} in its natural setting, professional lighting' OR 'a tight macro detail shot of one tool of the trade' OR 'a wide environmental shot of the workspace at golden hour' OR 'an overhead flatlay arrangement on a textured surface' OR 'an action shot mid-process with motion blur'`;
 };
+
+/**
+ * Picks ONE example from the OR-joined string getImagePromptExamples returns.
+ *
+ * Bug history (2026-05): both generateMarketingImage callsites had a
+ * regex like `.replace(SLASH ' or ' DOT-STAR SLASH, '')` that was supposed
+ * to strip everything after the first example — but the joiner is uppercase
+ * ` OR ` (see getImagePromptExamples line 161), so the regex matched nothing
+ * and the ENTIRE 8-example concatenation was sent to FLUX as one prompt. FLUX then
+ * blended scenes (e.g. a tech-business prompt rendered as a cafe because
+ * "coffee shop counter scene with laptop" was one of the OR'd examples).
+ *
+ * This helper splits on the actual ` OR ` joiner, strips wrapping quotes,
+ * and picks ONE example at random per call so accept-all generates varied
+ * imagery instead of always defaulting to the first scene.
+ */
+function pickExampleScene(joinedExamples: string): string {
+  const parts = joinedExamples
+    .split(/\s+OR\s+/i)
+    .map(s => s.replace(/^e\.g\.\s*/i, '').replace(/^['"]/, '').replace(/['"]$/, '').trim())
+    .filter(Boolean);
+  if (!parts.length) return joinedExamples;
+  return parts[Math.floor(Math.random() * parts.length)];
+}
+
+/**
+ * Test if a prompt is describing a digital interface, chart, infographic,
+ * or comparison grid — situations where FLUX produces a blurry pricing-table
+ * mockup instead of a photographable scene.
+ *
+ * Bug history (2026-05 audit): the previous regex used bare-word matches on
+ * common nouns (`plan|tier|table|column|grid`) which false-positived on
+ * legitimate small-business prompts:
+ *   - "meal plan", "business plan", "floor plan"  → matched "plan"
+ *   - "wine tier", "premium tier" (product line)  → matched "tier"
+ *   - "tea table", "picnic table", "dinner table" → matched "table"
+ *   - "fence grid", "rebar grid"                  → matched "grid"
+ *   - "centre column" (architectural)             → matched "column"
+ * Result: cafe/wellness posts that mentioned a meal plan or wine tier got
+ * swapped for the abstract-UI fallback scene, defeating the whole point of
+ * business-specific imagery.
+ *
+ * New regex requires a UI-context noun (pricing|comparison|feature|bar|pie|
+ * line|architecture…) before the ambiguous word. Always-bad terms (dashboard,
+ * infographic, etc.) still match bare. KEEP IN SYNC with the worker's copy
+ * of this regex in workers/api/src/index.ts (buildSafeImagePrompt).
+ */
+export function isAbstractUIPrompt(prompt: string): boolean {
+  // Tier 1 — terms that are ALWAYS bad regardless of context
+  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
+  // Tier 2 — context-dependent: only bad when paired with a UI-type noun
+  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
+  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
+  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
+  // Tier 3 — explicit "illustration of" / "diagram of" — clear intent for
+  // abstract art rather than photographic content
+  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
+  return false;
+}
+
+/**
+ * Regional voice block — injected into Smart Schedule and single-post prompts
+ * when the customer's location indicates Australia. Without this, Claude Haiku
+ * defaults to its training-data prior (US/UK marketing-blog cadence) and
+ * generates posts that read like Silicon Valley pitches even for a Rocky cafe.
+ *
+ * 2026-05 deep audit observation: Penny Wise IT (Rockhampton) was getting
+ * posts opening with "Your best post goes live at 3 AM on a Tuesday. Nobody
+ * sees it. Timing is everything." — textbook SV tech-blog rhythm. The fix is
+ * an explicit regional voice lock keyed off location, plus structural-pattern
+ * bans in BANNED_PATTERNS for the cadence itself.
+ *
+ * Returns "" if location doesn't look Australian so the prompt degrades
+ * gracefully for international customers (when we have any).
+ */
+export function buildRegionalVoiceBlock(location: string): string {
+  const loc = (location || '').toLowerCase();
+  if (!loc) return '';
+  const isAustralian = /\b(australia|australian|aussie|qld|queensland|nsw|new south wales|vic|victoria|sa\b|south australia|wa\b|western australia|nt\b|northern territory|tas|tasmania|act\b|brisbane|sydney|melbourne|perth|adelaide|darwin|hobart|canberra|gold coast|sunshine coast|rockhampton|rocky\b|townsville|cairns|toowoomba|ipswich|mackay|bundaberg|byron|newcastle|wollongong|geelong|launceston|fremantle|manly|bondi|surfers paradise)\b/i.test(loc);
+  if (!isAustralian) return '';
+
+  const isRegional = /\b(rockhampton|rocky\b|townsville|cairns|toowoomba|ipswich|mackay|bundaberg|regional|central queensland|north queensland|outback)\b/i.test(loc);
+
+  return `
+═══════════════════════════════════════════════════════════════════
+🇦🇺 REGIONAL VOICE LOCK — this business is in ${isRegional ? 'regional Australia' : 'Australia'}.
+═══════════════════════════════════════════════════════════════════
+Write like an actual local, not like a Sydney agency or a US tech blog.
+- USE: casual contractions ("we're", "you're", "it's", "gonna", "won't"); plain language; the way you'd talk at the pub or to a tradie mate
+- USE (sparingly, never forced): "mate", "G'day", "the missus", "Rocky" (for Rockhampton), "yeah nah", "fair dinkum", "no worries", "arvo", "brekky", "smoko"
+- AVOID like a press release: "elevate", "leverage", "synergy", "ecosystem", "thought leadership", "best-in-class", "world-class", "cutting-edge", "channell?ed creative energy", "bespoke digital platforms", "tailored solutions", "end-to-end", "value proposition"
+- AVOID US tech-blog rhythm: short three-beat declarative sentences ("Nobody sees it. Timing is everything."), "No more X-ing at a Y", "Every X. Every Y. Every Z." anaphora, opening with a hypothetical hour ("Your best post goes live at 3 AM…")
+- AVOID corporate openers: "In today's digital age", "As a business owner", "Exciting news!", "We're thrilled to announce"
+- THE VOICE TEST: Would a tradie reading this think "this sounds like my mate" or "this sounds like a wanker"? Aim for mate. Every time.
+═══════════════════════════════════════════════════════════════════
+`;
+}
+
+// Canonical FLUX negative-prompt — passed as a SEPARATE parameter so the
+// diffusion model actually suppresses these concepts at sampling time.
+//
+// 2026-05 deep audit: the previous design appended these tokens onto the
+// POSITIVE prompt as "no people, no faces, no hands, …". FLUX-dev does not
+// parse inline negations — those words become positive concepts. Worse, the
+// negative tokens often pull semantically-related content INTO the image
+// (saying "no hands" near "pizza" makes a hand more likely to appear, since
+// the model sees "hands" as a strong contextual cue). Hence the steaming
+// pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
+// `negative_prompt` and respects it properly when guidance_scale ≥ 5.
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
+
+// Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
+// negatives live in the dedicated field. The worker's tripwire still checks
+// for "candid iPhone" so we keep that token; the rest is style direction.
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+
+// People-mention regex — defense-in-depth scrub of positive prompts.
+// The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
+// strip catches lingering subject words before they reach the diffusion model.
+const PEOPLE_REGEX = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi;
+
+// Reused by generateVideoBrief — same intent, slightly broader vocab
+// (talking head, no "looking/standing/sitting/wearing/happy" — those describe
+// the camera shot rather than the subject and may legitimately appear in
+// video-shot direction).
+const PEOPLE_REGEX_VIDEO = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|gazing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|customers|talking head)\b/gi;
+
+/**
+ * Single source of truth for the client-side image-prompt safety pipeline.
+ * Consolidates logic that was previously duplicated across:
+ *   - generateMarketingImage          (base64 path used by accept-now flow)
+ *   - generateMarketingImageUrl       (URL path used by accept-all-to-D1)
+ *   - FalService.generateImage        (reel-modal seed-frame path — was
+ *                                      bypassing all guards prior to audit)
+ *
+ * All three callers MUST go through this helper so they share the same
+ * validation, scrubbing, and negative-prompt suffix.
+ *
+ * Pipeline:
+ *   1. Reject obviously bad prompts (empty, "N/A", title-case names, vague nouns)
+ *   2. Detect abstract-UI prompts via isAbstractUIPrompt
+ *   3. If (1) OR (2): try industry-specific example (pickExampleScene); if
+ *      businessType is generic and we'd otherwise pick a random scene that
+ *      mismatches the post topic, RETURN NULL (fail-closed) — better to
+ *      publish text-only than attach a pizza to a tech post (real Penny Wise
+ *      regression observed 2026-05)
+ *   4. Strip people-mentions from the positive prompt (defense-in-depth — the
+ *      negative_prompt is the real enforcement)
+ *
+ * Returns { prompt, negativePrompt } — both passed to fal.ai as separate
+ * parameters. Returns null when the safety pipeline can't produce a sensible
+ * image and the post should publish text-only.
+ */
+export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): { prompt: string; negativePrompt: string } | null {
+  const prompt = (rawPrompt || '').trim();
+  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt) || /^(N\/A|none|null|undefined)$/i.test(prompt);
+  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt) && prompt.split(' ').length <= 5;
+  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
+  const isAbstractUI = isAbstractUIPrompt(prompt);
+  const needsFallback = isBadPrompt || looksLikeTitle || tooVague || isAbstractUI;
+
+  // Fail-closed if we'd be picking a random scene against a generic business
+  // type. This is the audit fix that stops "pizza on a tech post" — the old
+  // code would happily pick a cafe scene from getImagePromptExamples for a
+  // 'small business' fallback and FLUX would render food on a SaaS topic.
+  const isGenericType = /^(small business|business|company|service provider|local business)$/i.test(businessType.trim());
+  if (needsFallback && isGenericType) {
+    console.warn(`[image-safety] fail-closed — abstract/missing prompt with generic businessType="${businessType}". Post will publish text-only.`);
+    return null;
+  }
+
+  const effectivePrompt = needsFallback
+    ? pickExampleScene(getImagePromptExamples(businessType))
+    : prompt;
+
+  // Strip people-mentions from the POSITIVE prompt — defense-in-depth.
+  // The real enforcement is FLUX_NEGATIVE_PROMPT below.
+  const cleanPrompt = effectivePrompt
+    .replace(PEOPLE_REGEX, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return {
+    prompt: `${cleanPrompt || effectivePrompt}, ${FLUX_STYLE_SUFFIX}`,
+    negativePrompt: FLUX_NEGATIVE_PROMPT,
+  };
+}
 
 // ── Real-data ground-truth fetcher (FB-scraped facts) ──
 // The AI used to invent testimonials and stats because it had nothing real.
@@ -333,7 +586,8 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
 
   if (starPosts.length) {
     sections.push(`\n★ STAR PERFORMERS — these posts ALREADY worked for this business.`);
-    sections.push(`MATCH THIS VOICE, FORMAT, AND APPROACH. Don't copy the words — copy the rhythm, length, hook style, and energy.`);
+    sections.push(`THIS IS THE VOICE TEST. If your draft does not sound like ONE of these, you have failed and must rewrite.`);
+    sections.push(`Match the rhythm, sentence length, hook style, energy, and vocabulary. Use the same level of formality, the same use of contractions ('we're' vs 'we are'), the same emoji frequency. Do NOT introduce phrases the business has never used. Do NOT use AI marketing tropes ("Nobody sees it. Timing is everything.", "No more staring at a blank screen", "Every X. Every Y. Every Z.", "channeled creative energy", "bespoke digital platforms") — those are immediate fails.`);
     starPosts.forEach((p, i) => {
       const meta = p.metadata || {};
       const stats = `${meta.likes || 0}❤️ ${meta.comments || 0}💬 ${meta.shares || 0}🔁`;
@@ -341,7 +595,7 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
     });
   }
   if (restPosts.length) {
-    sections.push(`\nOTHER PAST POSTS (additional voice samples):`);
+    sections.push(`\nOTHER PAST POSTS (additional voice samples — match this rhythm too):`);
     restPosts.forEach((p, i) => sections.push(`${i + 1}. ${p.content.substring(0, 220)}`));
   }
   if (comments.length) {
@@ -562,7 +816,7 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 
 You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
-${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
+${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
@@ -738,32 +992,89 @@ Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_st
   }
 }
 
-function detectFabrication(content: string): string | null {
-  const checks: Array<[RegExp, string]> = [
-    // Fake customer testimonials
-    [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
-    [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-    [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
-    [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
-    // Fake statistics
-    [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving)/i, 'invented percentage statistic'],
-    [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
-    [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
-    [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
-    // Fake urgency / countdowns / events without source
-    [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
-    [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
-  ];
-  for (const [pattern, reason] of checks) {
+// Module-scoped fabrication patterns. Hot path — called 1-2× per generated
+// post (Smart Schedule batches up to 21 posts), so we don't want to recompile
+// the array on every invocation. Each entry: [regex, human-readable reason].
+const FAB_CHECKS: Array<[RegExp, string]> = [
+  // Fake customer testimonials
+  [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
+  [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
+  // Invented quote: matches `<subject> says: "..."` but excludes rhetorical
+  // anthropomorphizing like `It says: "..."`, `the stock photo says: "..."`
+  // — those are figures of speech, not fake testimonials. Real fabrications
+  // attribute to a human/customer/brand entity: `John says:`, `our customer
+  // raved:`, `Sarah told us:`.
+  [/\b(?<!\b(?:it|this|that|one|nothing|everything|message|photo|image|caption|post|content|feed|story|stock|generic|ad|advert|brand|tagline)\s)(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
+  [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
+  // Fake statistics — match "45% increase" AND "by 45%" / "up to 45%" / "of 45%"
+  // shapes. The "by" variant came up in real Penny Wise posts ("Boost
+  // engagement by 45% with our new feature") and the original narrow regex
+  // missed it.
+  [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving|higher|lower|faster)/i, 'invented percentage statistic'],
+  [/\b(?:by|of|up\s+to|reach(?:ing|ed)?|gain(?:ing|ed)?|boost(?:ing|ed)?\s+\w+\s+by)\s+\d{1,3}(?:\.\d+)?%/i, 'invented percentage statistic ("by X%" form)'],
+  [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
+  [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
+  [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
+  // 2026-05 audit additions: invented frequency/cadence claims (real Penny
+  // Wise post: "Small business owners in Rockhampton are already posting
+  // 7-14 times per week on autopilot")
+  [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
+  [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
+  // 2026-05 SaaS follow-up: "generates 7-14 posts per week" / "writes 30
+  // captions a month" — the marketing-claim verb form. Distinct from the
+  // "posting NN times" shape above. The literal "7-14 posts/week" survives
+  // (brand-guide preferred form) — only the verb-driven sentence form trips.
+  [/\b(?:generates?|writes?|produces?|delivers?|creates?|cranks?\s+out)\s+\d+(?:[-–]\d+)?\s+(?:posts?|captions?|articles?|videos?|reels?)\s+(?:per|a|each)\s+(?:day|week|month)/i, 'invented content-generation cadence claim'],
+  // 2026-05 audit additions: leading questions with implied stat (real Penny
+  // Wise post: "How many hours could you reclaim this week?")
+  [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
+  // Fake urgency / countdowns / events without source
+  [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
+  [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
+];
+
+export function detectFabrication(content: string): string | null {
+  for (const [pattern, reason] of FAB_CHECKS) {
     const match = content.match(pattern);
     if (match) return `${reason} ("${match[0]}")`;
+  }
+  // 2026-05 audit: structural cadence detector. Three or more consecutive
+  // short declarative sentences (≤6 words each) is the AI rhythm signature
+  // — exactly what produced "Nobody sees it. Timing is everything." Posts
+  // can have one or two short sentences for emphasis but a string of them
+  // reads as AI-generated. We flag here so the post regenerates with looser
+  // pacing; if it still fails after retries, _needsReview surfaces it.
+  const sentences = content.split(/[.!?]\s+/).filter(s => s.trim().length > 0);
+  let consecutiveShort = 0;
+  let maxRun = 0;
+  for (const s of sentences) {
+    const wordCount = s.trim().split(/\s+/).length;
+    if (wordCount <= 6) {
+      consecutiveShort++;
+      if (consecutiveShort > maxRun) maxRun = consecutiveShort;
+    } else {
+      consecutiveShort = 0;
+    }
+  }
+  if (maxRun >= 3) {
+    return `AI cadence — ${maxRun} consecutive short sentences (≤6 words). Reads like a tech blog, not a small business.`;
   }
   return null;
 }
 
 // Catch banned phrases that slipped past the prompt. Replace with neutral
 // alternatives or strip outright. Logs on every hit so quality can be tracked.
+//
+// 2026-05 deep audit: extended with patterns observed in real generated
+// posts. The original list only caught explicit cliché phrases ("Want to
+// boost your..."). The new patterns target the structural AI cadence —
+// three-beat declarative rhythm, "No more X-ing at a Y" hypothetical,
+// "Every X. Every Y. Every Z." anaphora, "Your best post goes live at 3 AM"
+// AI-tutorial opener, and the buzzword soup ("channeled creative energy",
+// "bespoke digital platforms"). These structural patterns are what makes
+// posts read like AI even when no individual word is wrong.
 const BANNED_PATTERNS: Array<[RegExp, string]> = [
+  // ── Original list (explicit cliché phrases) ──
   [/\bWant to boost your [^?.!]+[?.!]/gi, ''],
   [/\bEngage with your audience!?/gi, ''],
   [/\bCheck out our website[^.!?]*[.!?]/gi, ''],
@@ -775,13 +1086,88 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   [/\bTake your [^.!?]+ to the next level!?/gi, ''],
   [/\bExciting news!\s*/gi, ''],
   [/\bWe('?re| are) thrilled to announce[^.!?]*[.!?]\s*/gi, ''],
+  // ── 2026-05 audit additions (structural AI cadence) ──
+  // "Your best/top/favourite X goes live at 3 AM on a Tuesday. Nobody sees it."
+  [/\bYour\s+(?:best|top|favourite|favorite)\s+\w+\s+goes\s+live\s+at\s+\d[^.!?]*[.!?]\s*(?:Nobody\s+sees\s+it[.!?]\s*)?/gi, ''],
+  // "Nobody sees it. Timing is everything." — three-beat declarative rhythm
+  [/\bNobody\s+sees\s+(it|them)[.!?]\s*Timing\s+is\s+everything[.!?]\s*/gi, ''],
+  // "No more staring at a blank screen" / "No more wondering what to write"
+  [/\bNo more (staring at a blank screen|wondering what to (write|post|say)|guessing|worrying about [^.!?]+)[^.!?]*[.!?]\s*/gi, ''],
+  // "Every website coded. Every app custom-built. Every AI tool tailored." — anaphora.
+  // Uses \S+ (any non-whitespace) so hyphenated words like "custom-built"
+  // don't break the chain. \s* (zero-or-more) at the end so the trailing
+  // sentence with no following space still gets stripped.
+  [/(?:\bEvery\s+\S+(?:\s+\S+){0,3}[.!]\s*){2,}/gi, ''],
+  // Buzzword soup: "channeled significant creative energy into bespoke digital platforms"
+  [/\b(?:channell?ed|leveraged|elevated|curated|crafted)\s+(?:significant|considerable|substantial|incredible|powerful)\s+\w+(?:\s+\w+){0,2}\s+(?:into|to|towards)\s+(?:designing|building|creating|developing)\s+(?:bespoke|tailored|custom|cutting-edge|innovative)\s+\w+/gi, ''],
+  // "bespoke digital platforms" / "bespoke AI solutions" — agency-pitch noun phrases
+  [/\bbespoke\s+(digital\s+platforms?|ai\s+(?:tools?|solutions?|platforms?)|software\s+solutions?|web\s+experiences?)/gi, 'custom builds'],
+  // "small business owners often/usually/post/struggle..." — generalising opener.
+  // Widened 2026-05 follow-up: SocialAI's own self-promo posts used the bare
+  // present-tense verb ("Small business owners post inconsistently because…")
+  // which the older adverb-only regex missed. Sentence-anchored so it doesn't
+  // chomp legitimate mid-sentence mentions like "we welcome small business owners".
+  [/(?:^|[.!?]\s+)Small business owners\s+(?:often|usually|typically|always|never|rarely|post|struggle|find|don'?t|can'?t|miss|forget|wish|need|want|hate|love)\b[^.!?]+[.!?]\s*/gim, ''],
+  // "Timing is everything." / "Consistency is everything." — empty epigram closers
+  [/\b(Timing|Consistency|Authenticity|Quality|Strategy)\s+is\s+everything[.!?]\s*/gi, ''],
+  // "X is the gap we close." / "That's the gap we close." — agency-speak
+  [/\bThat'?s\s+the\s+gap\s+we\s+close[.!?]\s*/gi, ''],
+  // "Making real differences." / "Making a real difference." — vague platitude
+  [/\bMaking\s+(real|a\s+real)\s+difference[s]?[.!?]\s*/gi, ''],
+
+  // ── 2026-05 SaaS-genre additions (observed in SocialAI Studio self-promo) ──
+  // These target the agency-selling-SaaS marketing genre. Distinct from the
+  // local-business cliches above. Brand-guide tension: $X/mo and 7-14
+  // posts/week ARE legitimate brand facts — we strip only the trope
+  // CONSTRUCTION around them, not the values themselves.
+
+  // "Staring at a blank caption for 20 minutes?" — hyperbolic-stat opener
+  [/\bStaring at (?:a|the|your) (?:blank|empty) \S+(?:\s+\S+){0,2} for \d+ (?:seconds?|minutes?|hours?)\b[^.!?]*[.!?]?\s*/gi, ''],
+  // "Ready to reclaim those hours?" / "Ready to automate?" — rhetorical SaaS-CTA closer.
+  // Closed verb list keeps legitimate openers like "Ready to order?" / "Ready to eat?"
+  // safe. Sentence-anchored + case-sensitive `Ready` so mid-sentence lowercase
+  // "are you ready to automate" doesn't false-positive — that smoke test bit me.
+  [/(?:^|[.!?]\s+)Ready to (?:reclaim|automate|scale|simplify|streamline|transform|elevate|level\s+up|unlock|supercharge)\b[^.!?]*\?\s*/gm, ''],
+  // "..., no lock-in" / "..., cancel anytime" — strips the SaaS pitch fragment
+  // while preserving the price itself (which the brand guide tells the AI to use)
+  [/\s*,\s*no\s+(?:lock-?in|contracts?|commitments?|credit\s+card\s+required|setup\s+fees?|hidden\s+fees?)\b[.!]?\s*/gi, ''],
+  // "Your social media on autopilot" — abstract "X on autopilot" cliché.
+  // Critical: the product is named "AI Content Autopilot" so we anchor on the
+  // possessive "Your X on autopilot" shape, NOT bare "autopilot".
+  [/\bYour\s+(?:social\s+media|business|marketing|content|growth|sales)\s+on\s+autopilot\b[.!]?\s*/gi, ''],
+  // "Consistency without the burnout" / "Growth without the grind" — X-without-Y antipattern
+  [/\b(?:Consistency|Growth|Scale|Success|Results|Quality|Productivity|Reach|Visibility)\s+without\s+(?:the\s+)?(?:burnout|chaos|stress|overwhelm|effort|work|grind|hassle|headache|complexity)\b[.!?]?\s*/gi, ''],
+  // "Scale your agency without scaling your workload" — pun/wordplay marketing
+  [/\b(?:Scale|Grow|Expand)\s+(?:your\s+\S+(?:\s+\S+){0,2}\s+)?without\s+scaling\b[^.!?]*[.!?]?\s*/gi, ''],
+  // "That's not laziness—that's reality" — em-dash/hyphen parallel construction.
+  // \S+ for hyphenated words; matches em-dash, en-dash, or plain hyphen.
+  [/\bThat'?s\s+not\s+\S+(?:\s+\S+){0,3}\s*[—–-]\s*that'?s\s+\S+(?:\s+\S+){0,3}[.!?]\s*/gi, ''],
+  // "Multi-client management, white-label client portals, centralized analytics" —
+  // comma-separated SaaS feature list. Requires TWO of the list items to start
+  // with a SaaS-flavour prefix so a normal "Monday, Wednesday, Friday" or
+  // "burgers, salads, shakes" list can't accidentally trigger.
+  [/\b(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:and\s+)?\S+/gi, ''],
+  // "Managing multiple client social accounts?" — rhetorical opener with quantifier.
+  // Requires a quantifier (multiple/several/all your/etc.) so we don't strip
+  // legitimate sentences like "Managing your booking is easy."
+  [/(?:^|[.!?]\s+)(?:Managing|Juggling|Handling|Running|Tracking|Wrangling)\s+(?:multiple|several|all\s+your|countless|too\s+many)\s+\S+(?:\s+\S+){0,3}\?\s*/gim, ''],
+  // "Link in bio." / "Learn more—link in bio." — Facebook-inappropriate CTA
+  // that's actually an Instagram cargo-culted phrase. Prompt-level guidance
+  // already discourages this but doesn't always work; this is the safety net.
+  [/\b(?:Learn\s+more\s*[—–-]\s*)?(?:Click\s+(?:the\s+)?)?link\s+in\s+bio\b[.!]?\s*(?=$|[.!?\s])/gim, ''],
 ];
-function scrubBannedPhrases(content: string): string {
+export function scrubBannedPhrases(content: string): string {
   let out = content;
   for (const [pattern, replacement] of BANNED_PATTERNS) {
-    if (pattern.test(out)) {
+    // Single pass: replace() with a /g regex always scans from index 0, so we
+    // skip the prior `test() then replace()` two-pass and just diff references
+    // to know whether anything matched. Avoids both wasted work AND the
+    // lastIndex-state footgun that comes with sharing /g regexes across
+    // test()/replace() callsites.
+    const next = out.replace(pattern, replacement);
+    if (next !== out) {
       console.warn(`[gemini] scrubbing banned phrase: ${pattern}`);
-      out = out.replace(pattern, replacement);
+      out = next;
     }
   }
   // Tidy double-spaces and stray punctuation left after deletions.
@@ -809,38 +1195,11 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     } catch { return null; }
   };
 
-  // Validate the AI's image prompt — reject titles, pillar names, and vague descriptions
-  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
-  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
-  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
-  // For SaaS/promo/pricing topics the AI sometimes interprets the brief as
-  // "render the pricing UI" — producing a blurry pricing-table mockup that
-  // sells nothing. Reject any prompt that's primarily describing a digital
-  // interface, chart, infographic, or comparison grid. NB: keep this in sync
-  // with generateMarketingImageUrl below — duplicated for now.
-  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
-
-  // If the AI wrote a title instead of a visual description, generate a type-specific fallback
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
-    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
-    : prompt;
-
-  // Strip people/portrait/human descriptions — AI images of people always look fake
-  const cleanPrompt = effectivePrompt
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Structure: subject first, then style, then negative — per prompt engineering best practices
-  // Suffix tuned for "looks like a real small-business iPhone photo", not a
-  // stock-photo ad. The previous suffix used "product photography, shallow
-  // depth of field, overhead angle, clean composition" which combined with
-  // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
-  // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
-  // the specific AI tells that show up most often on food/wellness shots.
-  // Added: UI/chart/table/infographic/dashboard negatives — promo/pricing
-  // topics were rendering as blurry pricing-table mockups (Penny Wise post).
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+  // Single source of truth for the safety pipeline (validation + abstract-UI
+  // detection + people-strip + canonical negative + fail-closed). Returns
+  // null when the post should publish text-only.
+  const safe = buildSafeImagePromptClient(prompt, businessType);
+  if (!safe) return null;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
@@ -848,7 +1207,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: imagePrompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) {
@@ -887,38 +1246,16 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
  * instead of base64. Used by Accept All to persist images to D1.
  */
 export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
-  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt.trim()) || /^(N\/A|none|null|undefined)$/i.test(prompt.trim());
-  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt.trim()) && prompt.trim().split(' ').length <= 5;
-  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
-  // Mirror of guardrail in generateMarketingImage above. Reject UI/chart/
-  // pricing-table prompts so promo/SaaS posts can't render as blurry
-  // marketing-graphic mockups (Penny Wise pricing-table regression).
-  const isAbstractUI = /\b(pricing|tier|plan|comparison|dashboard|UI|interface|app screen|infographic|diagram|chart|graph|table|mockup|wireframe|column|grid|landing page|website screenshot|screenshot|logo design|3D render|illustration)\b/i.test(prompt);
-
-  const effectivePrompt = (isBadPrompt || looksLikeTitle || tooVague || isAbstractUI)
-    ? getImagePromptExamples(businessType).replace(/^e\.g\. '/, '').replace(/' or '.*/, '').replace(/'$/, '')
-    : prompt;
-
-  const cleanPrompt = effectivePrompt
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Suffix tuned for "looks like a real small-business iPhone photo", not a
-  // stock-photo ad. The previous suffix used "product photography, shallow
-  // depth of field, overhead angle, clean composition" which combined with
-  // FLUX's defaults produced the screaming-AI look (excessive steam, glossy
-  // plastic glaze, perfectly symmetric flat-lay). The negatives below kill
-  // the specific AI tells that show up most often on food/wellness shots.
-  // Added: UI/chart/table/infographic/dashboard negatives — promo/pricing
-  // topics were rendering as blurry pricing-table mockups.
-  const imagePrompt = `${cleanPrompt || effectivePrompt}, candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format, no studio lighting, no over-styled food, no excessive steam or smoke, no glossy plastic reflections, no text, no watermarks, no people, no faces, no hands, no UI, no app screens, no dashboards, no charts, no graphs, no tables, no infographics, no diagrams, no pricing tiers, no comparison grids, no landing pages, no marketing graphics, no logo, no illustration`;
+  // Same shared safety pipeline as generateMarketingImage above — returns
+  // null when the post should publish text-only (fail-closed).
+  const safe = buildSafeImagePromptClient(prompt, businessType);
+  if (!safe) return null;
 
   try {
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: imagePrompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) return data.imageUrl;
@@ -1005,9 +1342,36 @@ Return ONLY raw JSON, no markdown:
   "thumbnailPrompt": "A 15-20 word vivid description of the perfect FIRST FRAME of this video. Must be visually striking, set the scene, and be specific to this business. Describe: subject, action, setting, lighting, colors, camera angle.",
   "videoPrompt": "A 20-30 word cinematic motion description for AI video generation. Describe: what moves, camera motion (pan/zoom/track), lighting changes, the key visual transition. Must match the first shot and be specific to this business topic."
 }`;
-    const raw = (await callAI(prompt, { temperature: 0.85, responseFormat: 'json' })).trim();
+    // 2026-05 audit: temp 0.85→0.55. Reels were drifting into invented
+    // testimonials and oddly hot adjectives because of the high temp. 0.55
+    // keeps creative variety without letting Claude fabricate stats/quotes.
+    const raw = (await callAI(prompt, { temperature: 0.55, responseFormat: 'json' })).trim();
     const parsed = parseAiJson(raw);
-    return parsed ? { ...DEFAULT_VIDEO_SCRIPT, ...parsed } : { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
+    if (!parsed) return { ...DEFAULT_VIDEO_SCRIPT, script: 'Error generating brief.' };
+
+    // Post-flight scrub: even with the ANTI-GENERIC RULES in the prompt, the
+    // model occasionally smuggles people/hands/staff into shots and still
+    // emits banned marketing tropes ("boost your brand!", "thrilled to
+    // announce", etc.) into the spoken script. Run the same regex pass on
+    // every text field of the brief so the downstream Kling i2v call doesn't
+    // get a "person walking through café" prompt that produces an uncanny
+    // human and so the spoken script doesn't read like a 2014 sales email.
+    const stripPeople = (s: string) => s
+      .replace(PEOPLE_REGEX_VIDEO, '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s+([,.!?])/g, '$1')
+      .trim();
+
+    const cleaned: VideoScript = {
+      ...DEFAULT_VIDEO_SCRIPT,
+      ...parsed,
+      hook: scrubBannedPhrases(parsed.hook || ''),
+      script: scrubBannedPhrases(parsed.script || ''),
+      shots: Array.isArray(parsed.shots) ? parsed.shots.map((s: string) => stripPeople(scrubBannedPhrases(s || ''))) : [],
+      thumbnailPrompt: stripPeople(parsed.thumbnailPrompt || ''),
+      videoPrompt: stripPeople(parsed.videoPrompt || ''),
+    };
+    return cleaned;
   } catch (error: any) {
     return { ...DEFAULT_VIDEO_SCRIPT, script: `AI Error: ${error?.message?.substring(0, 100) || 'Unknown'}` };
   }
@@ -1029,7 +1393,12 @@ Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
     const raw = (await callAI(prompt, { temperature: 0.8, responseFormat: 'json' })).trim();
-    return parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
+    const parsed = parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
+    // 2026-05 audit: the rewrite endpoint was unguarded — Smart Schedule's
+    // generated posts go through scrubBannedPhrases (line 1802ish) but a
+    // user-triggered Rewrite did not. Same banned-tropes pipeline now applies.
+    if (parsed.content) parsed.content = scrubBannedPhrases(parsed.content);
+    return parsed;
   } catch (error: any) {
     const msg = error?.message || String(error);
     return { content: `AI Error: ${msg.substring(0, 120)}`, hashtags: [] };
@@ -1405,12 +1774,27 @@ export const generateSmartSchedule = async (
     ].filter(Boolean).join('\n');
 
     // Derive a more specific business type when the stored value is too generic (e.g. "small business")
-    // Uses description and productsServices to infer the actual industry for better benchmark data and prompting
+    // Uses description and productsServices to infer the actual industry for better benchmark data and prompting.
+    //
+    // 2026-05 deep audit: removed the SaaS / "social media management" branch.
+    // A customer USING our social-media tool will naturally type "we use a
+    // social media management platform" in their description — the old branch
+    // would silently rewrite their businessType to "SaaS & software", from
+    // which the research call invented SaaS pillars ("Feature Showcase",
+    // "Tips & Education for Small Business") and AI-marketing tropes. Real
+    // SaaS companies should set businessType explicitly in onboarding.
     const effectiveBusinessType = (() => {
       const genericTerms = ['small business', 'business', 'company', 'service provider', 'local business'];
       if (!genericTerms.includes(businessType.toLowerCase().trim())) return businessType;
       const combined = ((safeProfile?.description || '') + ' ' + (safeProfile?.productsServices || '')).toLowerCase();
-      if (combined.includes('saas') || combined.includes('software platform') || combined.includes('ai platform') || combined.includes('social media platform') || combined.includes('social media tool') || combined.includes('social media management')) return 'SaaS & software';
+      // Customer-language guard: if the description talks about SERVING
+      // customers, having a physical location, or trading hours, it's a
+      // bricks-and-mortar SMB even if the description mentions software/AI
+      // tools they use. Skip ALL inference branches in that case.
+      const hasCustomerLanguage = /\b(our customers|we serve|drop in|come visit|trading hours|opening hours|in store|in-store|shopfront|located in|at our|find us|visit us|located at)\b/i.test(combined);
+      if (hasCustomerLanguage) return businessType;
+      // The PRODUCT-built branches stay — these only fire when the user is
+      // ACTIVELY DESCRIBING what they sell, not what they use:
       if (combined.includes('web design') || combined.includes('web development') || combined.includes('website builder')) return 'web design & development';
       if (combined.includes('food') || combined.includes('restaurant') || combined.includes('cafe') || combined.includes('bbq') || combined.includes('catering')) return 'food & hospitality';
       if (combined.includes('fitness') || combined.includes('gym') || combined.includes('wellness') || combined.includes('health')) return 'health & wellness';
@@ -1418,6 +1802,10 @@ export const generateSmartSchedule = async (
       if (combined.includes('trade') || combined.includes('plumb') || combined.includes('electric') || combined.includes('construct') || combined.includes('build')) return 'trades & construction';
       if (combined.includes('real estate') || combined.includes('property')) return 'real estate';
       if (combined.includes('retail') || combined.includes('shop') || combined.includes('store') || combined.includes('boutique')) return 'retail';
+      // The OLD SaaS branch lived here. Removed per 2026-05 audit — the false
+      // positives (customers being reclassified as SaaS because they
+      // mentioned using a social-media tool) outweighed the rare correct
+      // catch (an actual SaaS that left businessType=generic).
       return businessType;
     })();
 
@@ -1639,12 +2027,14 @@ MODE: QUICK 24HR BURST — Current time is ${nowTimeStr} on ${now.toISOString().
     const highlightsExtra = isHighlights ? `
 MODE: HIGHLIGHTS ONLY — schedule posts ONLY at the absolute top 3 researched time slots across the 14-day window. Quality over quantity. Each post must be polished, pillar-defining, and perfectly timed. No filler — every post must be your single best recommendation for that pillar.` : '';
 
+    const regionalVoiceBlock = buildRegionalVoiceBlock(location);
+
     const prompt = saturationMode ? `
 You are an elite social media growth operator running a SATURATION CAMPAIGN for "${businessName}", a ${effectiveBusinessType}.
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
+${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. EVERY post MUST be postType="image" — never "text". Image posts get 2-3x more Facebook reach than text-only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
@@ -1696,7 +2086,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
+${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results — never generic marketing advice that could apply to any business. Do NOT invent campaigns, countdown language, or stats that are not in the business context above.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)

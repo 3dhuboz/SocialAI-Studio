@@ -1,0 +1,27 @@
+-- SocialAI Studio — D1 schema migration v10
+-- Regen attempt counter + publish-time quality guard.
+--
+-- Two related quality-system additions:
+--
+-- 1. runBacklogRegen previously had no attempt cap. A post whose caption is
+--    hard for FLUX to render concretely (e.g. abstract wellness/coaching
+--    captions where FLUX defaults to generic stock-photo aesthetics) gets
+--    re-scored low every tick, regenerated, scored low again, looped
+--    forever. At ~$0.04 per FLUX call × 12 ticks/hour, a single stuck post
+--    burns ~$1/hour until it publishes or someone intervenes.
+--
+-- 2. The publish cron didn't check image_critique_score before claiming —
+--    so a post stuck at score 2 would publish anyway with the bad image.
+--    Defeats the whole quality gate.
+--
+-- This migration adds image_regen_count to posts. The worker now:
+--   - In runBacklogRegen: WHERE COALESCE(image_regen_count,0) < 3, and
+--     bumps the counter after each attempt regardless of outcome.
+--   - In publish-missed: marks Scheduled posts with score <= 3 AND
+--     regen_count >= 3 as Missed before claiming, with a clear reason so
+--     the owner gets the failure email and can hand-fix.
+--
+-- Idempotent ALTER. Run via:
+--   npx wrangler d1 execute socialai-db --file=workers/api/schema_v10.sql --remote
+
+ALTER TABLE posts ADD COLUMN image_regen_count INTEGER DEFAULT 0;

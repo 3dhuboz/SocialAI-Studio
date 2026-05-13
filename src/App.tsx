@@ -8,6 +8,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { useDb } from './hooks/useDb';
+import { mapDbPostToSocialPost } from './services/db';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 import { PricingTable } from './components/PricingTable';
@@ -17,7 +18,7 @@ import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -560,15 +561,7 @@ const Dashboard: React.FC = () => {
         // Load posts for own workspace — skip in portal mode (client workspace effect handles posts)
         if (authMode !== 'portal') {
           const loadedPosts = await db.getPosts();
-          const loaded: SocialPost[] = loadedPosts.map(p => ({
-            id: p.id, content: p.content, platform: p.platform as SocialPost['platform'],
-            status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '',
-            hashtags: Array.isArray(p.hashtags) ? p.hashtags : [],
-            image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined,
-            imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined,
-            postType: p.post_type as SocialPost['postType'] ?? undefined,
-            videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined,
-          }));
+          const loaded: SocialPost[] = loadedPosts.map(mapDbPostToSocialPost);
           setPosts(loaded);
           localStorage.setItem('sai_posts', JSON.stringify(loaded));
         }
@@ -725,7 +718,7 @@ const Dashboard: React.FC = () => {
           setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
         } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
         const clientPosts = await db.getPosts(activeClientId);
-        setPosts(clientPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined })));
+        setPosts(clientPosts.map(mapDbPostToSocialPost));
         // Load campaigns for this client workspace
         try {
           const loadedCampaigns = await db.getCampaigns(activeClientId);
@@ -760,6 +753,97 @@ const Dashboard: React.FC = () => {
     }
   }, [activeClientId, clients]);
 
+  // ── Business Archetype loader (2026-05 Phase 1) ──────────────────────────
+  //
+  // On user load and on substantial profile changes, fetch the cached
+  // archetype (POST /api/business-archetype). If not yet classified, kick off
+  // the Haiku classifier with the user's current business profile and cache
+  // the verdict server-side. Activating the archetype here tells gemini.ts
+  // which image-prompt + voice-cue bank to use for downstream generations.
+  //
+  // Debounced 1.5s so typing in the onboarding wizard doesn't fire on every
+  // keystroke. Only runs once profile.description is meaningful (≥50 chars)
+  // — below that there isn't enough signal for the classifier to do better
+  // than the synchronous keyword match in gemini.ts.
+  //
+  // For multi-client (agency) users, the archetype is currently user-level
+  // only. Per-client archetypes are a Phase 1B follow-up — for now, client
+  // workspaces fall back to the synchronous keyword match against the
+  // workspace's businessType (no LLM call, instant). See gemini.ts
+  // setActiveArchetype docstring.
+  useEffect(() => {
+    if (!user) return;
+    // Need ENOUGH signal to classify accurately. Bail only if all three
+    // free-text fields are empty / too short — otherwise we trust the
+    // classifier (which weighs businessType + description + productsServices
+    // + contentTopics) to pick the right archetype.
+    //
+    // 2026-05-11 fix: previously only `description >= 50 chars` was checked,
+    // which silently disabled classification for profiles where the owner
+    // wrote a long products/services list but skipped the description.
+    // Result: image-gen fell back to keyword match against businessType,
+    // which mis-classified SaaS/agency businesses as food-leaning.
+    //
+    // 2026-05-12 fix: extends to client workspaces. Schema v9 added
+    // clients.archetype_slug so each client gets its own classification.
+    // Previously the useEffect cleared activeArchetypeSlug on client
+    // workspaces and let gemini.ts keyword-match against businessType —
+    // which mis-classified niche clients (e.g. "Smokehouse" → bbq-smokehouse
+    // is right, but "Picklenick" → food-restaurant misses the deli specialty).
+    const desc = (profile.description || '').trim();
+    const ps = (profile.productsServices || '').trim();
+    const ct = (profile.contentTopics || '').trim();
+    const hasContext = desc.length >= 50 || ps.length >= 30 || ct.length >= 30;
+    if (!hasContext) {
+      // Silent bail used to mask the root cause for workspaces whose
+      // profile text was always too thin (e.g. signups that skipped the
+      // wizard's description field). Log it so it's visible during
+      // onboarding — worker-side POST /api/db/posts has a safety-net
+      // classifier that picks up these cases on first post creation.
+      console.log(`[archetype] insufficient context to classify — desc=${desc.length} ps=${ps.length} ct=${ct.length} (need desc≥50 or ps≥30 or ct≥30)`);
+      setActiveArchetype(null);
+      return;
+    }
+    console.log(`[archetype] classifier scheduled in 1.5s — desc=${desc.length} ps=${ps.length} ct=${ct.length}${activeClientId ? ` (client=${activeClientId})` : ''}`);
+    const timer = setTimeout(async () => {
+      try {
+        if (activeClientId) {
+          // Client workspace — classify against the CLIENT'S profile, persist
+          // on clients.archetype_slug, so the worker's image-gen guardrails
+          // see the right archetype when generating for this client.
+          const classified = await db.classifyClientBusiness(activeClientId, {
+            businessType: profile.type,
+            description: profile.description,
+            productsServices: profile.productsServices,
+            contentTopics: profile.contentTopics,
+          });
+          setActiveArchetype(classified.archetype.slug);
+          console.log(`[archetype] client ${activeClientId} classified as "${classified.archetype.slug}" (confidence ${classified.confidence})`);
+          return;
+        }
+        // Own workspace — user-level archetype
+        const cached = await db.getBusinessArchetype();
+        if (cached) {
+          setActiveArchetype(cached.archetype.slug);
+          console.log(`[archetype] using cached "${cached.archetype.slug}" (confidence ${cached.confidence})`);
+          return;
+        }
+        const classified = await db.classifyBusiness({
+          businessType: profile.type,
+          description: profile.description,
+          productsServices: profile.productsServices,
+          contentTopics: profile.contentTopics,
+        });
+        setActiveArchetype(classified.archetype.slug);
+        console.log(`[archetype] classified as "${classified.archetype.slug}" (confidence ${classified.confidence}) — ${classified.reasoning}`);
+      } catch (e: any) {
+        // Non-fatal — gemini.ts falls back to synchronous keyword match
+        console.warn('[archetype] load/classify failed:', e?.message || e);
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [user?.uid, activeClientId, profile.type, profile.description, profile.productsServices, profile.contentTopics]);
+
   // Restore own workspace (profile, posts, tokens) when switching back from a client
   useEffect(() => {
     if (!user || activeClientId !== null || authMode === 'portal') return;
@@ -790,7 +874,7 @@ const Dashboard: React.FC = () => {
         setSocialTokens(rawTokens && Object.keys(rawTokens).length ? { ...DEFAULT_SOCIAL_TOKENS, ...rawTokens } as SocialTokens : DEFAULT_SOCIAL_TOKENS);
       } catch { setSocialTokens(DEFAULT_SOCIAL_TOKENS); }
       const ownPosts = await db.getPosts();
-      const loaded: SocialPost[] = ownPosts.map(p => ({ id: p.id, content: p.content, platform: p.platform as SocialPost['platform'], status: p.status as SocialPost['status'], scheduledFor: p.scheduled_for ?? '', hashtags: Array.isArray(p.hashtags) ? p.hashtags : [], image: p.image_url ?? undefined, topic: p.topic ?? undefined, pillar: p.pillar as SocialPost['pillar'] | undefined, imagePrompt: p.image_prompt ?? undefined, reasoning: p.reasoning ?? undefined, postType: p.post_type as SocialPost['postType'] ?? undefined, videoScript: p.video_script ?? undefined, videoShots: p.video_shots ?? undefined, videoMood: p.video_mood ?? undefined }));
+      const loaded: SocialPost[] = ownPosts.map(mapDbPostToSocialPost);
       setPosts(loaded);
       localStorage.setItem('sai_posts', JSON.stringify(loaded));
       // Load campaigns for own workspace
@@ -2145,14 +2229,42 @@ const Dashboard: React.FC = () => {
                               shotsStr.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
                             ].filter(Boolean).join(' — ').slice(0, 300) || videoScriptModal.hookText;
 
-                            // Use the post's generated image as the input frame if available
-                            const inputImage = videoScriptModal.imageUrl || '';
+                            // Kling i2v REQUIRES a starting frame — without one
+                            // the proxy returns "promptImage is required" and
+                            // the user is dead-ended. If the post hasn't been
+                            // image-generated yet (imageUrl missing) we run a
+                            // FLUX call here on the post's imagePrompt (or the
+                            // hook text as a last-resort) so the reel button
+                            // self-heals instead of erroring.
+                            let inputImage = videoScriptModal.imageUrl || '';
+                            if (!inputImage) {
+                              const seedPrompt = (videoScriptModal.imagePrompt || videoScriptModal.hookText || '').trim();
+                              if (!seedPrompt) {
+                                throw new Error('No image and no prompt to seed one — open the post and add an image first.');
+                              }
+                              // Reserve 0–25% of the progress bar for the
+                              // starting-frame step so the user sees motion
+                              // immediately rather than a stalled bar.
+                              setVideoModalProgress(0.05);
+                              // Pass profile.type so the safety pipeline picks
+                              // an industry-matched fallback if the seed prompt
+                              // turns out vague/abstract (post-audit 2026-05).
+                              const genResult = await FalService.generateImage(seedPrompt, profile.type, activeClientId);
+                              inputImage = genResult.url;
+                              if (genResult.referencesUsed > 0) console.log(`[image] brand-grounded via ${genResult.model} with ${genResult.referencesUsed} references`);
+                              setVideoModalProgress(0.25);
+                            }
 
                             const url = await FalService.generateVideo(
                               motionPrompt,
                               inputImage,
                               5,
-                              (p) => setVideoModalProgress(p),
+                              // Remap Kling's 0–1 progress into 0.25–1.0 if we
+                              // already burned the first quarter on FLUX, else
+                              // pass through unchanged.
+                              videoScriptModal.imageUrl
+                                ? (p) => setVideoModalProgress(p)
+                                : (p) => setVideoModalProgress(0.25 + p * 0.75),
                             );
                             setVideoModalUrl(url);
                           } catch (e: any) {
@@ -3916,6 +4028,7 @@ const Dashboard: React.FC = () => {
                       {/* Image / Video area */}
                       {isVideo ? (
                         <AnimatedReelPreview
+                          imageUrl={smartPostImages[i] || (sp as any).image}
                           hookText={
                             (sp as any).videoScript
                               ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim()
