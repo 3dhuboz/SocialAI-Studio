@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
@@ -37,6 +37,13 @@ import {
   Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
+import { BrandKitProvider } from './contexts/BrandKitContext';
+
+// Lazy-load PosterManager so the ~480kB poster module (canvas compositor +
+// qrcode lib + drag handles) doesn't ship in the main bundle for users who
+// never open the Posters tab. Matches how heavier admin tools usually get
+// loaded across the React app pattern.
+const PosterManager = lazy(() => import('./pages/PosterManager'));
 
 /** Expandable campaign card — extracted so useState works correctly inside .map() */
 const CampaignCard: React.FC<{
@@ -279,9 +286,9 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
+  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients' | 'customers'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients' | 'customers' | 'posters'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -2081,6 +2088,7 @@ const Dashboard: React.FC = () => {
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
     ...(!CLIENT.clientMode && isAdminMode ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
+    { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -2148,6 +2156,12 @@ const Dashboard: React.FC = () => {
   }
 
   return (
+    // BrandKitProvider gives the PosterManager subtree the active workspace's
+    // poster brand kit. Re-fetches on activeClientId change so Agency-plan
+    // workspace switches retheme the poster maker without a reload. authMode
+    // flows through so portal deploys (white-label client portals) use the
+    // Portal-token auth path instead of Clerk JWT.
+    <BrandKitProvider getToken={getApiToken} clientId={activeClientId} authMode={authMode}>
     <div className="min-h-full bg-[#0a0a0f] flex flex-col">
       {/* Video Script Lightbox */}
       {videoScriptModal && (
@@ -3514,6 +3528,22 @@ const Dashboard: React.FC = () => {
               onGoSettings={() => setActiveTab('settings')}
             />
           </div>
+        )}
+
+        {/* ═══ POSTERS TAB ═══
+            Lazy-loaded — the poster module (canvas compositor + qrcode +
+            drag handles) is ~480kB and would bloat the main bundle for
+            users who never open this tab. The Suspense fallback is the
+            same shimmer-loader feel as the rest of the dashboard. */}
+        {activeTab === 'posters' && (
+          <Suspense fallback={
+            <div className="flex items-center justify-center py-16 text-white/40">
+              <Loader2 size={28} className="animate-spin text-amber-400 mr-3" />
+              <span className="text-sm">Loading Poster Maker…</span>
+            </div>
+          }>
+            <PosterManager activeClientId={activeClientId} authMode={authMode} />
+          </Suspense>
         )}
 
         {/* ═══ SMART AI TAB ═══ */}
@@ -5643,6 +5673,7 @@ const Dashboard: React.FC = () => {
         </div>
       </footer>
     </div>
+    </BrandKitProvider>
   );
 };
 
