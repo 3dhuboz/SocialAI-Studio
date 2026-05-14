@@ -25,23 +25,36 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
-import { POSTER_QUOTA_PER_MONTH } from '../lib/pricing';
+import { POSTER_QUOTA_PER_MONTH, PLAN_INCLUDES_POSTERS } from '../lib/pricing';
 
 const uuid = () => crypto.randomUUID();
 
 const POSTER_MAX_BYTES = 5 * 1024 * 1024;
 const POSTER_BRAND_KIT_MAX_BYTES = 64 * 1024;
 
-// Fallback when the user row has no plan set (legacy users, in-trial sign-ups
-// before billing settles). Treat as the floor tier — matches reel-credit
-// behaviour for un-paid accounts.
-const DEFAULT_PLAN_FOR_QUOTA = 'starter';
-
 /** Normalise the workspace id read from ?clientId= or body — '' means own. */
 function normalizeClientId(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = String(raw).trim();
   return trimmed ? trimmed : null;
+}
+
+/**
+ * Plan-tier gate for poster mutations. Frontend hides the tab via
+ * CLIENT.plans[].includes.posters; this is the matching server-side guard so
+ * a curl'd request from a trial / non-included plan still gets rejected.
+ *
+ * Read-only endpoints (gallery, image stream, usage) intentionally don't gate
+ * here — a user who downgrades after creating posters can still see/delete
+ * what they already made. Only CREATE actions are blocked.
+ */
+async function readUserPlan(db: D1Database, uid: string): Promise<string | null> {
+  const row = await db.prepare('SELECT plan FROM users WHERE id = ?').bind(uid).first<{ plan: string | null }>();
+  return row?.plan || null;
+}
+async function planIncludesPosters(db: D1Database, uid: string): Promise<boolean> {
+  const plan = await readUserPlan(db, uid);
+  return !!plan && PLAN_INCLUDES_POSTERS.has(plan);
 }
 
 /**
@@ -65,8 +78,12 @@ async function getPosterUsage(db: D1Database, userId: string): Promise<{
     .prepare('SELECT plan FROM users WHERE id = ?')
     .bind(userId)
     .first<{ plan: string | null }>();
-  const plan = userRow?.plan || DEFAULT_PLAN_FOR_QUOTA;
-  const quota = POSTER_QUOTA_PER_MONTH[plan] ?? POSTER_QUOTA_PER_MONTH[DEFAULT_PLAN_FOR_QUOTA];
+  // No fallback to starter here — a trial user (plan IS NULL) or a user on a
+  // plan that doesn't include posters gets quota=0, which surfaces as a
+  // first-class "upgrade required" state in the usage endpoint instead of
+  // silently giving them 3 free posters/month.
+  const plan = userRow?.plan || 'none';
+  const quota = PLAN_INCLUDES_POSTERS.has(plan) ? POSTER_QUOTA_PER_MONTH[plan] : 0;
 
   const usageRow = await db
     .prepare(
@@ -150,6 +167,13 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/db/posters', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+    // Plan-tier gate — fail closed before we even touch the form data. Frontend
+    // hides the tab via CLIENT.plans[].includes.posters; this catches direct
+    // curls + handles the race where a user downgrades mid-session.
+    if (!await planIncludesPosters(c.env.DB, uid)) {
+      return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
+    }
 
     // Quota gate — count-based, anchored to UTC start-of-month. Fails closed
     // before we burn an R2 upload on a request the user can't redeem. 429
@@ -394,6 +418,9 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   app.put('/api/db/poster-brand-kit', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (!await planIncludesPosters(c.env.DB, uid)) {
+      return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
+    }
 
     const clientId = normalizeClientId(c.req.query('clientId')) ?? '';
 
@@ -443,6 +470,9 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (!await planIncludesPosters(c.env.DB, uid)) {
+      return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
+    }
 
     // Image gen is more expensive than text — lower rate-limit ceiling (10/min
     // per user) so a held-down Generate button can't burn through credits.

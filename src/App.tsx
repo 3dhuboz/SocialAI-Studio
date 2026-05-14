@@ -2081,7 +2081,13 @@ const Dashboard: React.FC = () => {
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
-    { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
+    // Posters tab — gated on plan-tier feature flag. Plans declare
+    // `includes: { posters: true }` in client.config.ts; white-label client
+    // configs (Macca's portal etc.) leave `includes` undefined so the tab is
+    // hidden entirely. Admins always see it for support/QA.
+    ...((CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters || isAdminMode)
+      ? [{ id: 'posters' as const, label: 'Posters', icon: ImageIcon }]
+      : []),
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
@@ -4459,8 +4465,10 @@ const Dashboard: React.FC = () => {
 
         {/* ═══ POSTERS TAB ═══ — Poster Maker. Lazy-loaded module + its own
             R2-backed gallery + per-workspace brand kit. Auth/workspace flow
-            inherited via BrandKitProvider higher up the tree. */}
-        {activeTab === 'posters' && (
+            inherited via BrandKitProvider higher up the tree.
+            Same plan-tier gate as the tab item — keeps the render defensive
+            against stale activeTab state if a user downgrades mid-session. */}
+        {activeTab === 'posters' && (CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters || isAdminMode) && (
           <Suspense fallback={
             <div className="flex items-center justify-center py-24 text-white/30">
               <Loader2 size={28} className="animate-spin text-amber-400" />
