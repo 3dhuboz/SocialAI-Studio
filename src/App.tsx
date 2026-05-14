@@ -34,7 +34,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film
+  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
 import { BrandKitProvider } from './contexts/BrandKitContext';
@@ -2081,13 +2081,11 @@ const Dashboard: React.FC = () => {
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
-    // Posters tab — gated on plan-tier feature flag. Plans declare
-    // `includes: { posters: true }` in client.config.ts; white-label client
-    // configs (Macca's portal etc.) leave `includes` undefined so the tab is
-    // hidden entirely. Admins always see it for support/QA.
-    ...((CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters || isAdminMode)
-      ? [{ id: 'posters' as const, label: 'Posters', icon: ImageIcon }]
-      : []),
+    // Posters tab — visible to everyone (including trial users with no plan)
+    // so Poster Maker shows up as a discoverable feature; the tab itself
+    // renders an upsell pitch when the user's plan doesn't include posters,
+    // and the worker still 403s mutating endpoints as defence-in-depth.
+    { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
@@ -4466,18 +4464,99 @@ const Dashboard: React.FC = () => {
         {/* ═══ POSTERS TAB ═══ — Poster Maker. Lazy-loaded module + its own
             R2-backed gallery + per-workspace brand kit. Auth/workspace flow
             inherited via BrandKitProvider higher up the tree.
-            Same plan-tier gate as the tab item — keeps the render defensive
-            against stale activeTab state if a user downgrades mid-session. */}
-        {activeTab === 'posters' && (CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters || isAdminMode) && (
-          <Suspense fallback={
-            <div className="flex items-center justify-center py-24 text-white/30">
-              <Loader2 size={28} className="animate-spin text-amber-400" />
-              <span className="ml-3 text-sm">Loading Poster Maker…</span>
+            Tab is visible to everyone (discoverability); the render here
+            branches between the real PosterManager and an upsell pitch based
+            on whether the user's plan includes posters. Worker still 403s
+            mutating endpoints as defence-in-depth. */}
+        {activeTab === 'posters' && (() => {
+          const hasAccess = !!CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters || isAdminMode;
+          if (hasAccess) {
+            return (
+              <Suspense fallback={
+                <div className="flex items-center justify-center py-24 text-white/30">
+                  <Loader2 size={28} className="animate-spin text-amber-400" />
+                  <span className="ml-3 text-sm">Loading Poster Maker…</span>
+                </div>
+              }>
+                <PosterManager activeClientId={activeClientId} authMode={authMode} />
+              </Suspense>
+            );
+          }
+          // Upsell pitch — find the cheapest plan that DOES include posters and
+          // pre-select it for the upgrade CTA so a click goes straight to the
+          // right plan card in the pricing modal. Same setPricingDefaultPlan
+          // pattern the trial-paywall uses.
+          const upsellTarget = CLIENT.plans.find(p => p.includes?.posters)?.id ?? null;
+          const targetPlanCfg = upsellTarget ? CLIENT.plans.find(p => p.id === upsellTarget) : null;
+          return (
+            <div className="max-w-3xl mx-auto pt-8 pb-16 space-y-8">
+              <div className="text-center space-y-3">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30">
+                  <ImageIcon size={26} className="text-amber-400" />
+                </div>
+                <h2 className="text-3xl font-black text-white">Poster Maker</h2>
+                <p className="text-sm text-white/45 max-w-lg mx-auto leading-relaxed">
+                  AI-generated poster artwork with your brand kit baked in — flyers, event posters, promo tiles. Save to a gallery, download or schedule alongside your social posts.
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-amber-500/25 bg-gradient-to-br from-amber-500/10 via-orange-500/8 to-transparent p-6 sm:p-8">
+                <div className="flex items-start gap-3 mb-5">
+                  <Lock size={18} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <h3 className="text-base font-bold text-white">Not included on your current plan</h3>
+                    <p className="text-xs text-white/50 mt-1">
+                      {activePlan
+                        ? <>You're on <span className="text-white/80 font-semibold capitalize">{activePlan}</span>. Upgrade to {targetPlanCfg?.name ?? 'a poster-included plan'} to unlock the editor.</>
+                        : <>Pick a plan to start using Poster Maker.</>}
+                    </p>
+                  </div>
+                </div>
+
+                {targetPlanCfg && (
+                  <ul className="space-y-2 mb-6 text-xs text-white/60">
+                    {(targetPlanCfg.features || [])
+                      .filter((f: string) => /poster/i.test(f))
+                      .slice(0, 1)
+                      .map((f: string, i: number) => (
+                        <li key={i} className="flex items-center gap-2">
+                          <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    <li className="flex items-center gap-2">
+                      <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                      <span>Brand kit editor — palette, voice, presets, QR defaults</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                      <span>AI poster artwork (1:1, 9:16, 16:9)</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                      <span>Schedule posters alongside your social calendar</span>
+                    </li>
+                  </ul>
+                )}
+
+                <button
+                  onClick={() => {
+                    if (upsellTarget) setPricingDefaultPlan(upsellTarget);
+                    setShowPricing(true);
+                  }}
+                  className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
+                >
+                  {targetPlanCfg ? `Upgrade to ${targetPlanCfg.name}` : 'See plans'}
+                  <ArrowRight size={16} />
+                </button>
+              </div>
+
+              <p className="text-center text-xs text-white/30">
+                Already on a plan that should include posters? <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/70 hover:text-amber-400 transition">Contact support</a>
+              </p>
             </div>
-          }>
-            <PosterManager activeClientId={activeClientId} authMode={authMode} />
-          </Suspense>
-        )}
+          );
+        })()}
 
         {/* ═══ CLIENTS TAB ═══ */}
         {activeTab === 'clients' && (
