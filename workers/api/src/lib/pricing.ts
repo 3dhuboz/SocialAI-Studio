@@ -28,3 +28,12 @@ export const POSTER_QUOTA_PER_MONTH: Record<string, number> = {
   pro: 30,
   agency: 100,
 };
+
+// Whether each plan tier includes Poster Maker access at all (vs. just a
+// monthly count). Today every paid plan does, but trial users (plan IS NULL
+// in D1) and any unrecognised plan are blocked. Frontend mirrors this with
+// CLIENT.plans[].includes.posters in src/client.config.ts — keep them in
+// sync. Used by routes/posters.ts to 403 before any work happens.
+export const PLAN_INCLUDES_POSTERS: ReadonlySet<string> = new Set(
+  Object.keys(POSTER_QUOTA_PER_MONTH),
+);
