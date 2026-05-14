@@ -42,6 +42,126 @@ import { BrandKitProvider } from './contexts/BrandKitContext';
 // the user actually clicks the Posters tab — keeps the home/calendar bundle small.
 const PosterManager = lazy(() => import('./pages/PosterManager').then(m => ({ default: m.default ?? (m as any).PosterManager })));
 
+/**
+ * RecommendationActionButton — renders the contextual 1-click action for
+ * an Insights recommendation. The AI proposes the action type + payload
+ * inside the rec; this component dispatches it to the right handler.
+ *
+ * Action types:
+ *   generate-post   — prefill Quick Post with topic + angle
+ *   shift-pillars   — save new content pillars to profile, go to Smart Schedule
+ *   view-checklist  — inline-expand the checklist items (no AI involved)
+ *   edit-profile    — switch to Settings tab + nudge the right field
+ *   generate-test   — prefill Quick Post with a test-style topic for A/B
+ *
+ * Falls back to a generic "Create Post" button for legacy reports persisted
+ * before the action field existed (rec.action == null).
+ */
+const RecommendationActionButton: React.FC<{
+  rec: { title: string; detail: string; action?: { type: string; label: string; payload?: any } };
+  onGeneratePost: (topic: string, angle?: string) => void;
+  onShiftPillars: (newPillars: string[], replacing?: string[]) => void;
+  onEditProfile: (field: string, hint?: string) => void;
+  onGenerateTest: (topic: string, style: string) => void;
+}> = ({ rec, onGeneratePost, onShiftPillars, onEditProfile, onGenerateTest }) => {
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const action = rec.action;
+
+  // Legacy fallback — rec was generated before the action schema. Keep the
+  // experience working: generic "Create Post" matches old behaviour.
+  if (!action || !action.type) {
+    return (
+      <button
+        onClick={() => onGeneratePost(`${rec.title}: ${rec.detail}`)}
+        className="flex items-center gap-1.5 text-xs font-bold text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-xl transition"
+      >
+        <Wand2 size={11} /> Create Post
+      </button>
+    );
+  }
+
+  const baseBtn = "flex items-center gap-1.5 text-xs font-bold transition px-3 py-1.5 rounded-xl";
+  const primary = `${baseBtn} text-amber-300 hover:text-amber-200 bg-amber-500/12 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/30`;
+
+  switch (action.type) {
+    case 'generate-post': {
+      const p = action.payload || {};
+      return (
+        <button onClick={() => onGeneratePost(p.topic || rec.title, p.angle)} className={primary}>
+          <Wand2 size={11} /> {action.label || 'Generate sample post'}
+        </button>
+      );
+    }
+    case 'shift-pillars': {
+      const p = action.payload || {};
+      const newPillars: string[] = Array.isArray(p.newPillars) ? p.newPillars : [];
+      const replacing: string[] = Array.isArray(p.replacing) ? p.replacing : [];
+      return (
+        <div className="space-y-2">
+          {newPillars.length > 0 && (
+            <p className="text-[10px] text-white/35">
+              Will set focus to: <span className="text-amber-300/80">{newPillars.join(' · ')}</span>
+              {replacing.length > 0 && <> (replacing <span className="text-white/45">{replacing.join(', ')}</span>)</>}
+            </p>
+          )}
+          <button onClick={() => onShiftPillars(newPillars, replacing)} className={primary}>
+            <Target size={11} /> {action.label || 'Apply new content focus'}
+          </button>
+        </div>
+      );
+    }
+    case 'view-checklist': {
+      const p = action.payload || {};
+      const items: string[] = Array.isArray(p.items) ? p.items : [];
+      return (
+        <div className="space-y-2">
+          <button onClick={() => setChecklistOpen(o => !o)} className={primary}>
+            <ClipboardList size={11} /> {action.label || 'Open checklist'} ({items.length})
+            <ChevronRight size={11} className={`transition-transform ${checklistOpen ? 'rotate-90' : ''}`} />
+          </button>
+          {checklistOpen && items.length > 0 && (
+            <ol className="bg-black/25 border border-white/8 rounded-xl p-3 space-y-1.5 list-decimal list-inside">
+              {items.map((item, i) => (
+                <li key={i} className="text-xs text-white/65 leading-relaxed">{item}</li>
+              ))}
+            </ol>
+          )}
+        </div>
+      );
+    }
+    case 'edit-profile': {
+      const p = action.payload || {};
+      const field = String(p.field || 'description');
+      return (
+        <button onClick={() => onEditProfile(field, p.hint)} className={primary}>
+          <Settings size={11} /> {action.label || `Edit ${field}`}
+        </button>
+      );
+    }
+    case 'generate-test': {
+      const p = action.payload || {};
+      return (
+        <button
+          onClick={() => onGenerateTest(p.topic || rec.title, p.style || 'experimental')}
+          className={primary}
+        >
+          <Sparkles size={11} /> {action.label || 'Schedule a test post'}
+        </button>
+      );
+    }
+    default:
+      // Unknown action type → fall through to legacy behaviour gracefully.
+      return (
+        <button
+          onClick={() => onGeneratePost(`${rec.title}: ${rec.detail}`)}
+          className={primary}
+        >
+          <Wand2 size={11} /> {action.label || 'Create Post'}
+        </button>
+      );
+  }
+};
+
 /** Expandable campaign card — extracted so useState works correctly inside .map() */
 const CampaignCard: React.FC<{
   campaign: Campaign;
@@ -4431,7 +4551,12 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* Recommendations */}
+                {/* Recommendations — each rec carries an AI-proposed 1-click
+                    action (schema: type + label + payload) that dispatches to
+                    a contextual handler instead of the old generic "Create
+                    Post / Schedule" buttons. Falls back to the legacy buttons
+                    for older insight reports persisted before the action field
+                    was added. */}
                 <div className="space-y-2.5">
                   <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Recommendations</h3>
                   {insightReport.recommendations.map((rec, i) => {
@@ -4448,27 +4573,36 @@ const Dashboard: React.FC = () => {
                             <p className="text-xs text-white/45 mt-0.5 leading-relaxed">{rec.detail}</p>
                           </div>
                         </div>
-                        <div className="flex gap-2 mt-3 ml-10">
-                          <button
-                            onClick={() => {
-                              setTopic(`${rec.title}: ${rec.detail}`);
+                        <div className="ml-10 mt-3">
+                          <RecommendationActionButton
+                            rec={rec}
+                            onGeneratePost={(topic, angle) => {
+                              setTopic(angle ? `${topic} — angle: ${angle}` : topic);
                               setActiveTab('smart'); setSmartSubMode('quickpost');
-                              toast('Recommendation loaded — hit Generate in Quick Post!', 'success');
+                              toast('Loaded into Quick Post — hit Generate to write it.', 'success');
                             }}
-                            className="flex items-center gap-1.5 text-xs font-bold text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-xl transition"
-                          >
-                            <Wand2 size={11} /> Create Post
-                          </button>
-                          <button
-                            onClick={() => {
-                              setTopic(`${rec.title}: ${rec.detail}`);
+                            onShiftPillars={(newPillars, replacing) => {
+                              const existing = (profile.contentTopics || '').split(',').map(s => s.trim()).filter(Boolean);
+                              const removed = (replacing || []).map(r => r.toLowerCase());
+                              const kept = existing.filter(p => !removed.some(r => p.toLowerCase().includes(r) || r.includes(p.toLowerCase())));
+                              const merged = Array.from(new Set([...newPillars, ...kept])).slice(0, 8);
+                              const next = { ...profile, contentTopics: merged.join(', ') };
+                              setProfile(next);
+                              localStorage.setItem('sai_profile', JSON.stringify(next));
+                              db.upsertUser({ profile: next }).catch(() => {});
+                              setActiveTab('smart');
+                              toast(`Content focus updated to ${merged.length} pillars — run Smart Schedule to apply.`, 'success');
+                            }}
+                            onEditProfile={(field, hint) => {
+                              setActiveTab('settings');
+                              toast(`Open the ${field} field in Settings — suggested change: ${hint || rec.detail}`, 'info');
+                            }}
+                            onGenerateTest={(topic, style) => {
+                              setTopic(`${topic} — style: ${style}. Test post for engagement A/B.`);
                               setActiveTab('smart'); setSmartSubMode('quickpost');
-                              toast('Recommendation loaded — generate and schedule your post!', 'success');
+                              toast(`Test post loaded (${style}) — generate and schedule.`, 'success');
                             }}
-                            className="flex items-center gap-1.5 text-xs font-bold text-amber-300/70 hover:text-amber-300 bg-amber-500/8 hover:bg-amber-500/15 border border-amber-500/15 hover:border-amber-500/25 px-3 py-1.5 rounded-xl transition"
-                          >
-                            <Calendar size={11} /> Schedule
-                          </button>
+                          />
                         </div>
                       </div>
                     );
