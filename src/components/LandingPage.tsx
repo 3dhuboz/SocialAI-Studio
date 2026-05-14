@@ -494,9 +494,24 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                           <span className="text-[10px] font-bold tracking-[0.22em] text-white/85 uppercase">Sat · 7pm</span>
                         </div>
 
-                        {/* Photo area placeholder — gradient + soft halftone */}
-                        <div className="relative flex-1 rounded-lg bg-[radial-gradient(ellipse_at_70%_30%,rgba(255,255,255,0.18),transparent_50%),linear-gradient(135deg,#1f0a04,#3d1606_60%,#1a0805)] mb-4 overflow-hidden">
-                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_40%,rgba(255,200,120,0.35),transparent_45%)]" />
+                        {/* Photo area — real hero image when CLIENT.samplePosterImageUrl
+                            is set (the Unsplash default sells the mockup as a real
+                            poster output instead of a wireframe). Soft gradient
+                            scrim at the bottom helps the white headline below
+                            stay readable when the image is bright. Fallback
+                            gradient mirrors the previous look so an unavailable
+                            image / empty config still renders cleanly. */}
+                        <div className="relative flex-1 rounded-lg bg-[linear-gradient(135deg,#1f0a04,#3d1606_60%,#1a0805)] mb-4 overflow-hidden">
+                          {CLIENT.samplePosterImageUrl && (
+                            <img
+                              src={CLIENT.samplePosterImageUrl}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                              className="absolute inset-0 w-full h-full object-cover"
+                            />
+                          )}
                           <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/40 to-transparent" />
                           <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-md rounded-full px-2 py-0.5">
                             <ImageIcon size={9} className="text-white/90" />
