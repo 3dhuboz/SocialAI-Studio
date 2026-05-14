@@ -1473,10 +1473,45 @@ export const generateRecommendations = async (businessName: string, businessType
   }
 };
 
+/** A 1-click action attached to a recommendation. The Insights UI renders a
+ *  contextual button per action type and dispatches to the matching handler.
+ *
+ *  Action types (extend cautiously — frontend handler must exist):
+ *    'generate-post'   — prefill Quick Post with topic + angle, take user there.
+ *    'shift-pillars'   — propose a content-pillar update, save to profile, then
+ *                        run a fresh Smart Schedule.
+ *    'view-checklist'  — open an inline checklist modal (no AI). For non-AI
+ *                        recs like "audit page visibility".
+ *    'edit-profile'    — switch to Settings + scroll to a specific field.
+ *    'generate-test'   — generate one experimental post in a different style
+ *                        as a discrete A/B test, schedule for next slot.
+ *
+ *  payload shape varies per type — kept loose to avoid a versioning mess. */
+export interface RecommendationAction {
+  type: 'generate-post' | 'shift-pillars' | 'view-checklist' | 'edit-profile' | 'generate-test';
+  label: string; // e.g. "Generate sample post" — drives the button label
+  /** Loose payload. Examples per type:
+   *    generate-post:   { topic: string, angle: string }
+   *    shift-pillars:   { newPillars: string[], replacing?: string[] }
+   *    view-checklist:  { items: string[] }
+   *    edit-profile:    { field: 'description' | 'targetAudience' | 'productsServices' | 'tone', hint?: string }
+   *    generate-test:   { topic: string, style: string } */
+  payload?: Record<string, unknown>;
+}
+
+export interface InsightRecommendation {
+  title: string;
+  detail: string;
+  priority: 'high' | 'medium' | 'low';
+  /** schema_v? — actionable 1-click. Optional for backward-compat with older
+   *  insight reports persisted before the action field was added. */
+  action?: RecommendationAction;
+}
+
 export interface InsightReport {
   summary: string;
   score: number;
-  recommendations: Array<{ title: string; detail: string; priority: 'high' | 'medium' | 'low' }>;
+  recommendations: InsightRecommendation[];
   bestTimes: Array<{ platform: string; slots: string[] }>;
   contentFocus: Array<{ topic: string; reason: string }>;
   quickWin: string;
@@ -1510,23 +1545,43 @@ Return ONLY this exact JSON structure, no markdown:
   "summary": "2-3 sentence plain-English overview of their current social media health and biggest opportunity",
   "score": <integer 1-100 representing overall social media health>,
   "recommendations": [
-    { "title": "short action title", "detail": "1-2 sentence specific explanation", "priority": "high" },
-    { "title": "...", "detail": "...", "priority": "medium" },
-    { "title": "...", "detail": "...", "priority": "low" }
+    {
+      "title": "short action title",
+      "detail": "1-2 sentence specific explanation",
+      "priority": "high",
+      "action": { /* see ACTION SCHEMA below — REQUIRED on every rec */ }
+    }
   ],
   "bestTimes": [
     { "platform": "Facebook", "slots": ["Tuesday 12–1pm", "Thursday 7–8pm", "Sunday 9–10am"] },
     { "platform": "Instagram", "slots": ["Wednesday 11am–12pm", "Friday 5–6pm", "Saturday 8–9am"] }
   ],
   "contentFocus": [
-    { "topic": "topic name", "reason": "why this will perform well for this business" },
-    { "topic": "...", "reason": "..." },
-    { "topic": "...", "reason": "..." }
+    { "topic": "topic name", "reason": "why this will perform well for this business" }
   ],
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
-}`;
+}
 
-    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 1500, responseFormat: 'json' });
+ACTION SCHEMA (every recommendation MUST include an "action" object — pick the type that best fits the recommendation):
+
+  { "type": "generate-post",   "label": "Generate sample post", "payload": { "topic": "<one-line topic>", "angle": "<the specific reframe / hook the rec proposes>" } }
+    Use when the rec is "write a post about X" or "shift content to Y angle".
+
+  { "type": "shift-pillars",   "label": "Apply new content focus", "payload": { "newPillars": ["pillar 1", "pillar 2", "pillar 3"], "replacing": ["pillar A", "pillar B"] } }
+    Use when the rec is structural (e.g. "stop posting about features, post about outcomes"). The button SAVES new pillars to the business profile.
+
+  { "type": "view-checklist",  "label": "Open audit checklist", "payload": { "items": ["step 1 — concrete action", "step 2 — concrete action", "step 3"] } }
+    Use when the rec needs the human to do something OFFLINE (audit page settings, contact a customer, set up a tool). 3-7 concrete steps.
+
+  { "type": "edit-profile",    "label": "Update business description", "payload": { "field": "description" | "targetAudience" | "productsServices" | "tone", "hint": "<one-line suggested change>" } }
+    Use when the rec is fundamentally a profile / positioning fix.
+
+  { "type": "generate-test",   "label": "Schedule a test post", "payload": { "topic": "<topic>", "style": "<style descriptor: question, micro-story, behind-the-scenes, customer-pain, etc.>" } }
+    Use when the rec is "try a different style" — generates one experimental post for A/B comparison.
+
+Pick the action type that ACTUALLY MAKES THE REC ACTIONABLE — don't default to checklists. If the rec is "write more pain-point posts", use generate-post with a concrete topic/angle; don't use a checklist that says "think about pain points".`;
+
+    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 2000, responseFormat: 'json' });
     return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
@@ -1575,23 +1630,43 @@ Return ONLY this exact JSON, no markdown:
   "summary": "2-3 sentence plain-English overview of their actual social media performance based on the real data, mentioning specific numbers",
   "score": <integer 1-100 representing overall social media health based on real engagement>,
   "recommendations": [
-    { "title": "short action title based on real patterns found", "detail": "specific 1-2 sentence advice citing the actual data", "priority": "high" },
-    { "title": "...", "detail": "...", "priority": "medium" },
-    { "title": "...", "detail": "...", "priority": "low" }
+    {
+      "title": "short action title based on real patterns found",
+      "detail": "specific 1-2 sentence advice citing the actual data",
+      "priority": "high",
+      "action": { "type": "<one of: generate-post|shift-pillars|view-checklist|edit-profile|generate-test>", "label": "<button label>", "payload": { /* type-specific — see ACTION SCHEMA below */ } }
+    }
   ],
   "bestTimes": [
     { "platform": "Facebook", "slots": ["inferred from post timestamps of top performing posts"] },
     { "platform": "Instagram", "slots": ["recommended times based on their audience patterns"] }
   ],
   "contentFocus": [
-    { "topic": "topic pattern found in top posts", "reason": "why this is working for this business based on the data" },
-    { "topic": "...", "reason": "..." },
-    { "topic": "...", "reason": "..." }
+    { "topic": "topic pattern found in top posts", "reason": "why this is working for this business based on the data" }
   ],
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
-}`;
+}
 
-    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 1500, responseFormat: 'json' });
+ACTION SCHEMA (every recommendation MUST include an "action" object — pick the type that best fits):
+
+  { "type": "generate-post",   "label": "Generate sample post", "payload": { "topic": "<one-line topic>", "angle": "<the specific reframe / hook the rec proposes>" } }
+    Use when the rec is "write a post about X" or "shift content to Y angle".
+
+  { "type": "shift-pillars",   "label": "Apply new content focus", "payload": { "newPillars": ["pillar 1", "pillar 2", "pillar 3"], "replacing": ["pillar A", "pillar B"] } }
+    Use when the rec is structural (e.g. "stop posting about features, post about outcomes"). The button SAVES new pillars to the business profile.
+
+  { "type": "view-checklist",  "label": "Open audit checklist", "payload": { "items": ["step 1 — concrete action", "step 2", "step 3"] } }
+    Use when the rec needs the human to do something OFFLINE (audit page settings, contact a customer, etc.). 3-7 concrete steps.
+
+  { "type": "edit-profile",    "label": "Update business description", "payload": { "field": "description" | "targetAudience" | "productsServices" | "tone", "hint": "<one-line suggested change>" } }
+    Use when the rec is fundamentally a profile / positioning fix.
+
+  { "type": "generate-test",   "label": "Schedule a test post", "payload": { "topic": "<topic>", "style": "<style descriptor>" } }
+    Use when the rec is "try a different style" — generates one experimental post for A/B comparison.
+
+Pick the type that ACTUALLY MAKES THE REC ACTIONABLE. If the rec is "write more pain-point posts", use generate-post with a concrete topic/angle; don't use a checklist.`;
+
+    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 2000, responseFormat: 'json' });
     return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
