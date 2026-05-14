@@ -502,27 +502,24 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                   <div className="relative flex justify-center md:justify-start order-2 md:order-1">
                     <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_50%,rgba(245,158,11,0.18),transparent_65%)] blur-2xl" />
 
-                    <div className="relative w-[260px] sm:w-[300px] aspect-[4/5] rounded-2xl rotate-[-3deg] hover:rotate-0 transition-transform duration-500 shadow-[0_30px_80px_-20px_rgba(245,158,11,0.35)]">
-                      {/* Poster body — amber-to-rose gradient with subtle paper-grain. */}
-                      <div className="relative w-full h-full rounded-2xl overflow-hidden bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500 p-5 flex flex-col">
+                    <div className="relative w-[260px] sm:w-[300px] aspect-[4/5] rounded-2xl rotate-[-3deg] hover:rotate-0 transition-transform duration-500 shadow-[0_40px_90px_-25px_rgba(245,158,11,0.45),0_0_0_1px_rgba(255,255,255,0.08)]">
+                      {/* Poster body — refined warm gradient with paper grain.
+                          Photo dominates the upper ~60% full-bleed, headline
+                          band sits over the gradient scrim at the bottom. */}
+                      <div className="relative w-full h-full rounded-2xl overflow-hidden bg-gradient-to-br from-amber-400 via-orange-500 to-rose-600">
 
-                        {/* Brand corner */}
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="inline-flex items-center gap-1.5 bg-black/30 backdrop-blur-sm rounded-full px-2.5 py-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                            <span className="text-[9px] font-bold tracking-[0.18em] text-white/95 uppercase">Tonight</span>
-                          </div>
-                          <span className="text-[10px] font-bold tracking-[0.22em] text-white/85 uppercase">Sat · 7pm</span>
-                        </div>
+                        {/* Subtle paper-grain — SVG noise gives the poster a
+                            printed-on-stock feel instead of flat digital. Sits
+                            on top of everything at very low opacity. */}
+                        <div
+                          className="absolute inset-0 opacity-[0.12] mix-blend-overlay pointer-events-none z-30"
+                          style={{
+                            backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")`,
+                          }}
+                        />
 
-                        {/* Photo area — real hero image when CLIENT.samplePosterImageUrl
-                            is set (the Unsplash default sells the mockup as a real
-                            poster output instead of a wireframe). Soft gradient
-                            scrim at the bottom helps the white headline below
-                            stay readable when the image is bright. Fallback
-                            gradient mirrors the previous look so an unavailable
-                            image / empty config still renders cleanly. */}
-                        <div className="relative flex-1 rounded-lg bg-[linear-gradient(135deg,#1f0a04,#3d1606_60%,#1a0805)] mb-4 overflow-hidden">
+                        {/* Photo block — top ~58% of the poster, full-bleed. */}
+                        <div className="relative w-full h-[58%] overflow-hidden">
                           {CLIENT.samplePosterImageUrl && (
                             <img
                               src={CLIENT.samplePosterImageUrl}
@@ -534,32 +531,133 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                               className="absolute inset-0 w-full h-full object-cover"
                             />
                           )}
-                          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/40 to-transparent" />
-                          <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-md rounded-full px-2 py-0.5">
-                            <ImageIcon size={9} className="text-white/90" />
-                            <span className="text-[9px] font-bold text-white/90 tracking-wide">AI image</span>
-                          </div>
+                          {/* Photo-to-poster gradient blend — fades the
+                              bottom edge of the photo into the warm base so
+                              the headline area below feels intentional. */}
+                          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-orange-500 via-orange-500/30 to-transparent" />
+                          {/* Soft top-edge vignette for the brand-mark chip */}
+                          <div className="absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-black/30 via-black/10 to-transparent" />
                         </div>
 
-                        {/* Headline + sub */}
-                        <h3 className="text-2xl sm:text-[26px] font-black text-white leading-[0.95] tracking-tight mb-1">
-                          LIVE<br />MUSIC
-                        </h3>
-                        <p className="text-[11px] font-semibold text-white/85 mb-3 tracking-wide">
-                          Free entry · Kitchen open till late
-                        </p>
-
-                        {/* Footer — brand + QR */}
-                        <div className="flex items-end justify-between pt-3 border-t border-white/25">
-                          <div>
-                            <p className="text-[9px] font-bold tracking-[0.18em] text-white/70 uppercase">Your Venue</p>
-                            <p className="text-[10px] text-white/90 font-medium">123 Main St · Rockhampton</p>
+                        {/* Top bar — brand mark + date stamp, sits over photo */}
+                        <div className="absolute top-0 inset-x-0 px-5 pt-5 flex items-center justify-between z-10">
+                          <div className="inline-flex items-center gap-1.5 bg-black/45 backdrop-blur-md rounded-full px-2.5 py-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse" />
+                            <span className="text-[9px] font-bold tracking-[0.22em] text-white uppercase">Tonight</span>
                           </div>
-                          {/* QR placeholder — 4×4 grid of squares */}
-                          <div className="w-12 h-12 rounded-md bg-white p-1 grid grid-cols-4 grid-rows-4 gap-[1px]">
-                            {[1,1,1,0,0,1,0,1,1,0,1,0,1,0,1,1].map((b, i) => (
-                              <div key={i} className={b ? 'bg-black' : 'bg-white'} />
-                            ))}
+                          <span className="text-[10px] font-bold tracking-[0.22em] text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] uppercase">
+                            Sat · 7pm
+                          </span>
+                        </div>
+
+                        {/* AI image badge — small chip identifying the hero
+                            as AI-generated. Sits just below the brand bar. */}
+                        <div className="absolute top-[42px] left-5 inline-flex items-center gap-1.5 bg-white/25 backdrop-blur-md rounded-full px-2 py-0.5 z-10">
+                          <ImageIcon size={9} className="text-white" />
+                          <span className="text-[8px] font-bold text-white tracking-[0.15em] uppercase">AI image</span>
+                        </div>
+
+                        {/* Bottom content band — overlaps the photo edge, sits
+                            over the warm gradient. */}
+                        <div className="absolute inset-x-0 bottom-0 px-5 pb-5 pt-3 z-10">
+                          {/* Italic "presents" accent line */}
+                          <p className="text-[9px] italic font-serif text-white/80 mb-1 tracking-wide">
+                            your venue presents
+                          </p>
+                          {/* Headline — display weight, dramatic drop shadow */}
+                          <h3 className="text-[28px] sm:text-[32px] font-black text-white leading-[0.88] tracking-[-0.025em] mb-1.5 drop-shadow-[0_2px_10px_rgba(0,0,0,0.4)]">
+                            LIVE<br />MUSIC
+                          </h3>
+                          <p className="text-[10px] font-semibold text-white/90 mb-3 tracking-wide">
+                            Free entry · Kitchen open till late
+                          </p>
+
+                          {/* Footer — brand + venue + real-looking QR.
+                              Thin top divider in cream, not white, for warmth. */}
+                          <div className="flex items-end justify-between pt-2.5 border-t border-amber-100/40">
+                            <div>
+                              <p className="text-[8.5px] font-bold tracking-[0.22em] text-white/75 uppercase mb-0.5">Your Venue</p>
+                              <p className="text-[10px] text-white font-medium">123 Main St · Rockhampton</p>
+                            </div>
+                            {/* QR — inline SVG with the three corner finder
+                                patterns + scattered data modules. Reads as a
+                                real QR code at a glance instead of a 4x4 dot
+                                grid placeholder. */}
+                            <div className="w-12 h-12 rounded-md bg-white p-[2px] shadow-[0_2px_6px_rgba(0,0,0,0.25)]">
+                              <svg viewBox="0 0 21 21" className="w-full h-full" shapeRendering="crispEdges">
+                                {/* Background */}
+                                <rect width="21" height="21" fill="white" />
+                                {/* TL finder */}
+                                <rect x="0" y="0" width="7" height="7" fill="black" />
+                                <rect x="1" y="1" width="5" height="5" fill="white" />
+                                <rect x="2" y="2" width="3" height="3" fill="black" />
+                                {/* TR finder */}
+                                <rect x="14" y="0" width="7" height="7" fill="black" />
+                                <rect x="15" y="1" width="5" height="5" fill="white" />
+                                <rect x="16" y="2" width="3" height="3" fill="black" />
+                                {/* BL finder */}
+                                <rect x="0" y="14" width="7" height="7" fill="black" />
+                                <rect x="1" y="15" width="5" height="5" fill="white" />
+                                <rect x="2" y="16" width="3" height="3" fill="black" />
+                                {/* Timing patterns (row 6 + col 6) */}
+                                <rect x="8" y="6" width="1" height="1" fill="black" />
+                                <rect x="10" y="6" width="1" height="1" fill="black" />
+                                <rect x="12" y="6" width="1" height="1" fill="black" />
+                                <rect x="6" y="8" width="1" height="1" fill="black" />
+                                <rect x="6" y="10" width="1" height="1" fill="black" />
+                                <rect x="6" y="12" width="1" height="1" fill="black" />
+                                {/* Data modules — believable scatter */}
+                                <rect x="8" y="8" width="2" height="1" fill="black" />
+                                <rect x="11" y="8" width="1" height="2" fill="black" />
+                                <rect x="13" y="8" width="1" height="1" fill="black" />
+                                <rect x="9" y="9" width="1" height="1" fill="black" />
+                                <rect x="14" y="9" width="2" height="1" fill="black" />
+                                <rect x="17" y="9" width="1" height="2" fill="black" />
+                                <rect x="8" y="10" width="1" height="1" fill="black" />
+                                <rect x="10" y="10" width="1" height="2" fill="black" />
+                                <rect x="12" y="10" width="2" height="1" fill="black" />
+                                <rect x="19" y="10" width="1" height="1" fill="black" />
+                                <rect x="9" y="11" width="1" height="1" fill="black" />
+                                <rect x="13" y="11" width="1" height="2" fill="black" />
+                                <rect x="15" y="11" width="2" height="1" fill="black" />
+                                <rect x="8" y="12" width="2" height="1" fill="black" />
+                                <rect x="11" y="12" width="1" height="1" fill="black" />
+                                <rect x="14" y="12" width="1" height="2" fill="black" />
+                                <rect x="16" y="12" width="1" height="1" fill="black" />
+                                <rect x="18" y="12" width="2" height="1" fill="black" />
+                                <rect x="8" y="14" width="1" height="2" fill="black" />
+                                <rect x="10" y="14" width="2" height="1" fill="black" />
+                                <rect x="13" y="14" width="1" height="1" fill="black" />
+                                <rect x="15" y="14" width="1" height="2" fill="black" />
+                                <rect x="17" y="14" width="1" height="1" fill="black" />
+                                <rect x="19" y="14" width="2" height="1" fill="black" />
+                                <rect x="9" y="15" width="1" height="1" fill="black" />
+                                <rect x="11" y="15" width="2" height="1" fill="black" />
+                                <rect x="14" y="15" width="1" height="2" fill="black" />
+                                <rect x="18" y="15" width="1" height="2" fill="black" />
+                                <rect x="8" y="16" width="2" height="1" fill="black" />
+                                <rect x="13" y="16" width="1" height="1" fill="black" />
+                                <rect x="16" y="16" width="1" height="2" fill="black" />
+                                <rect x="20" y="16" width="1" height="1" fill="black" />
+                                <rect x="9" y="17" width="2" height="1" fill="black" />
+                                <rect x="12" y="17" width="1" height="2" fill="black" />
+                                <rect x="15" y="17" width="2" height="1" fill="black" />
+                                <rect x="19" y="17" width="1" height="2" fill="black" />
+                                <rect x="8" y="18" width="1" height="2" fill="black" />
+                                <rect x="11" y="18" width="1" height="1" fill="black" />
+                                <rect x="13" y="18" width="2" height="1" fill="black" />
+                                <rect x="17" y="18" width="1" height="2" fill="black" />
+                                <rect x="20" y="18" width="1" height="2" fill="black" />
+                                <rect x="9" y="19" width="2" height="1" fill="black" />
+                                <rect x="12" y="19" width="1" height="1" fill="black" />
+                                <rect x="14" y="19" width="1" height="1" fill="black" />
+                                <rect x="16" y="19" width="1" height="1" fill="black" />
+                                <rect x="19" y="19" width="1" height="1" fill="black" />
+                                <rect x="11" y="20" width="1" height="1" fill="black" />
+                                <rect x="13" y="20" width="2" height="1" fill="black" />
+                                <rect x="18" y="20" width="1" height="1" fill="black" />
+                              </svg>
+                            </div>
                           </div>
                         </div>
                       </div>
