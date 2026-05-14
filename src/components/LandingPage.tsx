@@ -527,8 +527,9 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                             <img
                               src={CLIENT.samplePosterImageUrl}
                               alt=""
-                              loading="lazy"
+                              loading="eager"
                               decoding="async"
+                              referrerPolicy="no-referrer"
                               onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
                               className="absolute inset-0 w-full h-full object-cover"
                             />
