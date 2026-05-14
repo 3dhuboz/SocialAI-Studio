@@ -20,6 +20,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithBrandRefs } from '../lib/image-gen';
 import { sendResendEmail } from '../lib/email';
+import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 
 // Translate raw FB Graph errors into a human sentence the user can act on.
@@ -277,6 +278,28 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
 
   for (const post of posts) {
     try {
+      // ── Owner-declared exclusion guard (defense layer 5) ────────────────
+      // Final safety net before auto-publish. The gen prompts (layers 1+2)
+      // and vision critique (layer 4) should already have caught any
+      // forbidden subject — this is the regex-scan belt-and-braces that
+      // bites even if the upstream layers missed something. The post gets
+      // marked NeedsReview instead of publishing, and the owner is notified.
+      const denylist = await loadForbiddenSubjects(env, (post as any).user_id as string);
+      if (denylist.length > 0) {
+        const captionHit = scanForForbidden((post as any).content as string, denylist);
+        const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);
+        const hit = captionHit || promptHit;
+        if (hit) {
+          const where = captionHit ? 'caption' : 'image_prompt';
+          const reason = `Auto-publish blocked: post ${where} mentions "${hit}" which the business has flagged as a forbidden subject. Edit the post or update the denylist in Settings.`;
+          console.warn(`[CRON] Post ${(post as any).id} blocked by forbiddenSubjects guard: "${hit}" in ${where}`);
+          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind('NeedsReview', reason, (post as any).id).run();
+          await notifyOwnerOnPublishFailure(env, post as any, reason);
+          continue;
+        }
+      }
+
       // Get social tokens for this workspace
       const tokensRaw = (post as any).client_id
         ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind((post as any).client_id).first<{ social_tokens: string | null }>()

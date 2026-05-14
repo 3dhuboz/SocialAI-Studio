@@ -20,6 +20,7 @@ import { generateImageWithBrandRefs } from '../lib/image-gen';
 import { resolveArchetypeSlug } from '../lib/archetypes';
 import { sniffArchetypeFromCaption } from '../lib/image-safety';
 import { critiqueImageInternal } from '../lib/critique';
+import { loadForbiddenSubjects } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 
 export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }> {
@@ -106,10 +107,17 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
           }
         }
 
+        // Owner-declared denylist passed through so the vision model can
+        // bite on intra-domain mismatches (e.g. pork shot for a brisket-
+        // only BBQ) — the cross-domain hard rules in critique.ts won't
+        // catch this on their own.
+        const forbiddenSubjects = await loadForbiddenSubjects(env, userId);
+
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
           caption,
           archetypeSlug,
+          forbiddenSubjects,
         });
         if (critique) {
           console.log(`[CRON prewarm] post ${postId} critique score=${critique.score} match=${critique.match} — ${critique.reasoning}`);
@@ -127,6 +135,7 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
                 imageUrl: retry.imageUrl,
                 caption,
                 archetypeSlug,
+                forbiddenSubjects,
               });
               if (retryCritique) {
                 finalCritique = retryCritique;

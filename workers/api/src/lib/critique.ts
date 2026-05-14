@@ -32,10 +32,42 @@ import { callAnthropicVision } from './anthropic';
 // caption itself rather than falling back to a generic "small business"
 // default — without this clause, food-on-SaaS critiques scored at 6-8 because
 // Haiku had no anchor to flag cross-domain mismatches.
-export function buildCritiqueSystemPrompt(archetypeSlug: string | null): string {
+/**
+ * Build the system prompt for the vision-grounded image-caption mismatch
+ * detector.
+ *
+ * Inputs:
+ *   - archetypeSlug      — classified business archetype, or null when
+ *                          unclassified (model infers from caption then).
+ *   - forbiddenSubjects  — owner-declared denylist (e.g. ["pork","chicken"]
+ *                          for a brisket-only BBQ). When non-empty, an
+ *                          INTRA-DOMAIN HARD RULE is injected so the vision
+ *                          model fails any image showing a banned subject
+ *                          even when the caption + archetype "fit". This is
+ *                          the safety net for the Seamus failure mode.
+ */
+export function buildCritiqueSystemPrompt(
+  archetypeSlug: string | null,
+  forbiddenSubjects: string[] = [],
+): string {
   const archetypeLine = archetypeSlug
     ? `Business archetype context: ${archetypeSlug}.`
     : `Business archetype: UNCLASSIFIED. Infer the actual business type from the caption itself before scoring — read the caption carefully for product mentions, industry verbs, and audience signals. A caption mentioning "AI Content Autopilot", "SaaS", "agency dashboard", "marketing automation", "platform" is a tech/SaaS business, NOT a food business, regardless of any other context.`;
+
+  // Layered HARD RULE — only injected when the business actually has a
+  // denylist. Empty owners skip this entire block so the system prompt
+  // stays compact for the 99% of cases where no denylist is configured.
+  const denylistRule = forbiddenSubjects.length > 0
+    ? `
+
+INTRA-DOMAIN HARD RULE — owner-declared exclusions for this business:
+  Forbidden subjects: ${forbiddenSubjects.join(', ')}.
+  If the image visibly contains ANY of these subjects (as the main subject,
+  as a side element, or even in the background), score 1-2 with match="no"
+  and reasoning that names the specific forbidden subject. This rule fires
+  REGARDLESS of whether the caption "matches" — the owner has explicitly
+  told us they do not sell these and never want them depicted, full stop.`
+    : '';
 
   return `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
 
@@ -58,7 +90,7 @@ HARD RULES — any of these conditions force a score of 1-2, no exceptions:
   shows laptops, dashboards, app screens, or office settings → score 1-2.
 - Caption is about a butcher, farm, BBQ joint, or any food-adjacent business
   AND the image shows gym equipment, yoga mats, dashboards, or office UI →
-  score 1-2.
+  score 1-2.${denylistRule}
 
 Other failure modes (typically score 2-4 depending on severity):
 - Generic stock-photo aesthetic (laptop on desk) on a specific local-business post
@@ -72,19 +104,28 @@ Return JSON ONLY, no prose. Schema:
 
 export async function critiqueImageInternal(
   env: Env,
-  params: { imageUrl: string; caption: string; archetypeSlug: string | null; businessType?: string },
+  params: {
+    imageUrl: string;
+    caption: string;
+    archetypeSlug: string | null;
+    businessType?: string;
+    /** Owner-declared "never depict" subjects from BusinessProfile.forbiddenSubjects.
+     *  Passed through to buildCritiqueSystemPrompt as the intra-domain HARD
+     *  RULE that fails any image visibly containing a banned subject. */
+    forbiddenSubjects?: string[];
+  },
 ): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
   // Need at least one provider key — Anthropic direct preferred, OpenRouter
   // as fallback. Return null if neither is set so the caller ships the
   // image untouched instead of blocking the publish pipeline.
   if (!env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY) return null;
-  const { imageUrl, caption, archetypeSlug } = params;
+  const { imageUrl, caption, archetypeSlug, forbiddenSubjects } = params;
   // businessType param kept on the type for backward compat with HTTP callers
   // but no longer used — when archetypeSlug is null the system prompt
   // instructs the vision model to derive business type from the caption
   // itself, which is a stronger signal than a stored default.
 
-  const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug);
+  const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug, forbiddenSubjects ?? []);
 
   const userPrompt = `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?`;
   let raw = '';

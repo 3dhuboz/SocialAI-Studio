@@ -182,6 +182,37 @@ export function setActiveArchetype(slug: string | null) {
  *  Provides 6-10 DIFFERENT compositions per archetype so the AI doesn't fall
  *  back to the same template every post. Each call returns ALL examples
  *  OR-joined so the AI has variety. */
+/**
+ * Filter the archetype's image-prompt examples against an owner-declared
+ * forbiddenSubjects denylist. Solves the Seamus failure mode: archetype
+ * examples include generic items the specific business doesn't sell
+ * (BBQ archetype includes pork/chicken; Seamus is brisket-only).
+ *
+ * Splits the OR-joined string back into individual examples, drops any
+ * containing a banned word, and re-joins. Returns the original string
+ * unchanged when the denylist is empty (zero-cost no-op for owners who
+ * haven't configured it yet).
+ *
+ * Falls back to the FIRST surviving example if all but one are dropped, or
+ * a generic "scene typical of the business" if EVERY example is denylisted
+ * (vanishingly unlikely — the owner would need to denylist their own type).
+ */
+function filterImagePromptExamples(joined: string, forbiddenSubjects?: string | null): string {
+  const denylist = parseForbiddenSubjects(forbiddenSubjects);
+  if (denylist.length === 0) return joined;
+  // Examples are joined with ' OR ' and each is quoted. Split conservatively.
+  const examples = joined.split(/\s+OR\s+/);
+  const survivors = examples.filter((ex) => {
+    const lower = ex.toLowerCase();
+    for (const banned of denylist) if (lower.includes(banned)) return false;
+    return true;
+  });
+  if (survivors.length === 0) {
+    return "'a scene typical of this business, no people, no faces, bright daylight'";
+  }
+  return survivors.join(' OR ');
+}
+
 const getImagePromptExamples = (businessType: string): string => {
   // Layer 1: use the user's classified archetype if available
   if (activeArchetypeSlug) {
@@ -371,6 +402,60 @@ function pickExampleScene(joinedExamples: string): string {
  * infographic, etc.) still match bare. KEEP IN SYNC with the worker's copy
  * of this regex in workers/api/src/index.ts (buildSafeImagePrompt).
  */
+/**
+ * Tokenise BusinessProfile.forbiddenSubjects into a clean lowercase array.
+ * Accepts comma- and/or newline-separated input ("pork, chicken\nlamb, fish")
+ * and returns ["pork", "chicken", "lamb", "fish"]. Empty / falsy input → [].
+ *
+ * Used at every guardrail layer (prompt injection, image-prompt allowlist,
+ * vision critique, cron pre-publish scan) so each layer enforces the same
+ * normalised list — no drift from "Pork" vs "pork" vs " pork  ".
+ *
+ * Why a dedicated helper: the field is owner-typed free text and we'd rather
+ * lose 5 µs splitting it 4× than risk one path misreading "Pork, Chicken"
+ * as a single token. The Seamus incident already cost a client relationship;
+ * this defends against the next near-miss.
+ */
+export function parseForbiddenSubjects(raw?: string | null): string[] {
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split(/[,\n;]/)
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0 && s.length < 60); // sanity cap on word length
+}
+
+/**
+ * Build the list of acceptable image-prompt subjects from the owner's actual
+ * productsServices, with the forbiddenSubjects denylist subtracted. This is
+ * what the AI MUST draw from when picking an imagePrompt subject — replaces
+ * the old generic `getImagePromptExamples(businessType)` fallback that was
+ * archetype-keyed and caused the Seamus pork-on-brisket-business incident.
+ *
+ * Returns empty array when products are unset or when every product matches
+ * a denylist entry (shouldn't happen if the owner set things up sanely).
+ * Callers should fall back to the archetype examples in that case.
+ */
+export function buildProductAllowlist(
+  productsServices: string | undefined | null,
+  forbiddenSubjects: string | undefined | null,
+): string[] {
+  if (!productsServices || typeof productsServices !== 'string') return [];
+  const denylist = new Set(parseForbiddenSubjects(forbiddenSubjects));
+  return productsServices
+    .split(/[,\n;]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length < 80)
+    .filter((s) => {
+      const lower = s.toLowerCase();
+      // Reject any product that contains a forbidden token as a word boundary
+      // match. "smoked pork ribs" with "pork" in the denylist → rejected;
+      // "porkbelly platter" → also rejected (substring match is intentional —
+      // the owner asked us NEVER to mention this subject).
+      for (const banned of denylist) if (lower.includes(banned)) return false;
+      return true;
+    });
+}
+
 export function isAbstractUIPrompt(prompt: string): boolean {
   // Tier 1 — terms that are ALWAYS bad regardless of context
   if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
@@ -713,6 +798,11 @@ export const generateSocialPost = async (
     targetAudience?: string;
     uniqueValue?: string;
     productsServices?: string;
+    /** Owner-declared "never depict, never mention" subjects. See
+     *  BusinessProfile.forbiddenSubjects in src/types.ts for the rationale
+     *  (Seamus incident: brisket-only BBQ getting pork/chicken image prompts).
+     *  Comma- or newline-separated. Lowercased + tokenised at the boundary. */
+    forbiddenSubjects?: string;
     socialGoal?: string;
     location?: string;
     contentTopics?: string;
@@ -750,6 +840,15 @@ export const generateSocialPost = async (
     safeProfile.location && `Location: ${safeProfile.location}`,
     safeProfile.contentTopics && `Content topics & themes to focus on: ${safeProfile.contentTopics}`,
   ].filter(Boolean).join('\n') : '';
+
+  // Owner-declared HARD exclusions. Built from BusinessProfile.forbiddenSubjects
+  // — the brisket-only-BBQ-getting-pork-images failure mode. Surfaced as an
+  // absolute mandate, NOT a soft suggestion, so the model doesn't down-weight
+  // it against the "pick from these compositions" examples list.
+  const forbiddenList = parseForbiddenSubjects(safeProfile?.forbiddenSubjects);
+  const exclusionMandate = forbiddenList.length > 0
+    ? `\n\nEXCLUSION MANDATE — absolute, no exceptions: this business does NOT sell, depict, or reference ${forbiddenList.join(', ')}. Do NOT mention these in the caption. Do NOT use these in the imagePrompt. Do NOT imply them in any way. If your imagePrompt or caption would name any of these, REWRITE before responding. Treat as forbidden as faces or hands.`
+    : '';
 
   // Pick a random content angle so repeated generations feel fresh
   const angles = [
@@ -845,7 +944,7 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 
 You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
-${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}
+${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}${exclusionMandate}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
@@ -864,7 +963,7 @@ STRICT ANTI-GENERIC RULES (forbidden tokens — DO NOT WRITE under any condition
 - Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name ONE real, tangible, photographable scene from the physical world — pick from: ${getImagePromptExamples(businessType)}. NEVER say 'produce', 'items', 'food', 'goods', 'pricing', 'plans', 'features', 'comparison', 'tiers' — name the specific item. NO people, NO hands, NO faces. NO UI mockups, NO app screens, NO dashboards, NO charts, NO graphs, NO tables, NO infographics, NO diagrams, NO pricing tiers, NO comparison grids, NO landing pages, NO marketing graphics — even if the topic is about software, pricing, or subscriptions, the image MUST depict a real-world physical scene (an object, a place, a moment), NEVER a screen or chart."}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Name ONE real, tangible, photographable scene from the physical world — pick from: ${filterImagePromptExamples(getImagePromptExamples(businessType), safeProfile?.forbiddenSubjects)}. NEVER say 'produce', 'items', 'food', 'goods', 'pricing', 'plans', 'features', 'comparison', 'tiers' — name the specific item. NO people, NO hands, NO faces. NO UI mockups, NO app screens, NO dashboards, NO charts, NO graphs, NO tables, NO infographics, NO diagrams, NO pricing tiers, NO comparison grids, NO landing pages, NO marketing graphics — even if the topic is about software, pricing, or subscriptions, the image MUST depict a real-world physical scene (an object, a place, a moment), NEVER a screen or chart."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
@@ -1336,6 +1435,8 @@ export const generateVideoScript = async (
     targetAudience?: string;
     uniqueValue?: string;
     productsServices?: string;
+    /** Owner-declared "never depict" subjects — see BusinessProfile.forbiddenSubjects. */
+    forbiddenSubjects?: string;
     socialGoal?: string;
     contentTopics?: string;
     location?: string;
@@ -1353,13 +1454,20 @@ export const generateVideoScript = async (
   if (profile?.location) profileLines.push(`Location: ${profile.location}`);
   if (profile?.contentTopics) profileLines.push(`Content topics & themes: ${profile.contentTopics}`);
   const profileContext = profileLines.length > 0 ? `\nBUSINESS CONTEXT:\n${profileLines.join('\n')}` : '';
+  // Same EXCLUSION MANDATE pattern as generateSocialPost — keep both prompt
+  // paths product-safe so a brisket-only BBQ doesn't get pork shots in its
+  // Reel either.
+  const videoForbidden = parseForbiddenSubjects(profile?.forbiddenSubjects);
+  const videoExclusion = videoForbidden.length > 0
+    ? `\n\nEXCLUSION MANDATE — absolute: this business does NOT sell, depict, or reference ${videoForbidden.join(', ')}. The shots, the script, the thumbnail, the video prompt — none of them may include these subjects, even as background detail.`
+    : '';
   const hashtagContext = hashtags?.length ? `\nHashtags for this post: ${hashtags.join(', ')}` : '';
   const formatContext = contentFormat && contentFormat !== 'standard' ? `\nPost style: ${contentFormat} (match the video energy to this style)` : '';
 
   try {
     const prompt = `You are a senior video content strategist and creative director for "${businessName}", a ${businessType}.
 Your job: create a COMPELLING short-form video brief for a ${platform} Reel that will stop the scroll and drive engagement.
-${profileContext}
+${profileContext}${videoExclusion}
 
 TOPIC: "${topic}"
 ACCOMPANYING CAPTION: "${caption}"
@@ -1378,7 +1486,7 @@ ANTI-GENERIC RULES:
 - No stock-video-looking scenes. Every shot must feature a SPECIFIC product or item from this business
 - The hook must provoke curiosity or emotion — not just state the topic
 - Shots should show close-ups of products, smooth camera moves over scenes, timelapses, or screen recordings — NOT talking heads or people working
-- ${getImagePromptExamples(businessType)} — use similar subjects for video shots
+- ${filterImagePromptExamples(getImagePromptExamples(businessType), profile?.forbiddenSubjects)} — use similar subjects for video shots
 
 Return ONLY raw JSON, no markdown:
 {
@@ -1831,6 +1939,8 @@ export const generateSmartSchedule = async (
     targetAudience?: string;
     uniqueValue?: string;
     productsServices?: string;
+    /** Owner-declared "never depict" subjects — see BusinessProfile.forbiddenSubjects. */
+    forbiddenSubjects?: string;
     socialGoal?: string;
     contentTopics?: string;
   },
@@ -1901,6 +2011,14 @@ export const generateSmartSchedule = async (
       safeProfile?.contentTopics && `Preferred content topics: ${safeProfile.contentTopics}`,
       campaignBlock && `\n${campaignBlock}\nIMPORTANT: Weave the active campaign themes into your posts. Use countdown language where appropriate ("X days to go!", "Only X days left!", "Coming soon!"). At least 30% of posts should reference the campaign.`,
     ].filter(Boolean).join('\n');
+
+    // Owner-declared EXCLUSION MANDATE for bulk-gen too — same wording as
+    // single-post generator so the model sees a consistent absolute rule
+    // regardless of which path it's running. Empty when no denylist set.
+    const bulkForbidden = parseForbiddenSubjects(safeProfile?.forbiddenSubjects);
+    const bulkExclusion = bulkForbidden.length > 0
+      ? `\n\nEXCLUSION MANDATE — absolute, no exceptions: this business does NOT sell, depict, or reference ${bulkForbidden.join(', ')}. Across ALL ${effectivePosts} posts in this batch: do NOT mention these in any caption, do NOT use them in any imagePrompt, do NOT imply them in any way. If a post draft would name any of these, REWRITE before responding. Treat as forbidden as faces or hands.`
+      : '';
 
     // Derive a more specific business type when the stored value is too generic (e.g. "small business")
     // Uses description and productsServices to infer the actual industry for better benchmark data and prompting.
@@ -2178,7 +2296,7 @@ You are an elite social media growth operator running a SATURATION CAMPAIGN for 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Campaign window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]} (${windowDays} days).
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}
+${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${bulkExclusion}${structuredCampaignBlock}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results. Do NOT invent campaigns, countdown language, or stats not in the business context.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. EVERY post MUST be postType="image" — never "text". Image posts get 2-3x more Facebook reach than text-only.' : ''}
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
@@ -2199,7 +2317,7 @@ ABSOLUTE RULES:
 4. Each day: different pillars AND different post styles. Rotate through these styles across posts: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion.
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
-7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${filterImagePromptExamples(getImagePromptExamples(effectiveBusinessType), safeProfile?.forbiddenSubjects)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (DEFAULT to bright daylight; only pick golden hour / moody / soft window when the post tone explicitly calls for it). If you catch yourself reaching for the same fallback (notepad on a desk, laptop on a desk, coffee cup beside a planner, generic workspace flatlay) for ANY post in this batch, STOP and pick a totally different scene — outdoor, in-situ, in-action — from the examples above.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 9. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service, (b) a specific measurable outcome, or (c) a location reference. Vague posts must be rewritten.
@@ -2231,7 +2349,7 @@ You are an elite social media strategist writing a data-driven content calendar 
 Tone: ${tone}. Location: ${location}. Current date/time: ${now.toISOString().split('T')[0]} ${nowTimeStr} — do NOT schedule any post before this time today.
 Schedule window: ${now.toISOString().split('T')[0]} to ${windowEnd.toISOString().split('T')[0]}.
 Audience stats: ${stats.followers} followers, ${stats.engagement}% engagement, ${stats.reach} monthly reach.
-${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
+${regionalVoiceBlock}${groundTruthBlock}${profileBlock ? `\nBUSINESS CONTEXT (use these specifics — do not invent details not listed here):\n${profileBlock}\n` : ''}${bulkExclusion}${structuredCampaignBlock}${quick24hExtra}${highlightsExtra}
 CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "${businessName}" as listed in the business context above. Use real product names, real features, real results — never generic marketing advice that could apply to any business. Do NOT invent campaigns, countdown language, or stats that are not in the business context above.${!includeVideos ? '\nIMPORTANT: Do NOT generate any video/Reel posts. All posts must be "image" or "text" type only. Set "postType" to "image" or "text" — never "video".' : ''}
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
@@ -2252,7 +2370,7 @@ RULES:
 4. VARY POST STYLES: Rotate through these across the calendar: question, quick-tip, micro-story, behind-the-scenes, poll/this-or-that, list/carousel, soft-promo, bold-opinion. No two consecutive posts should use the same style.
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
-7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
+7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${filterImagePromptExamples(getImagePromptExamples(effectiveBusinessType), safeProfile?.forbiddenSubjects)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
 7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (DEFAULT to bright daylight; only pick golden hour / moody / soft window when the post tone explicitly calls for it). If you catch yourself reaching for the same fallback (notepad on a desk, laptop on a desk, coffee cup beside a planner, generic workspace flatlay) for ANY post in this batch, STOP and pick a totally different scene — outdoor, in-situ, in-action — from the examples above.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
