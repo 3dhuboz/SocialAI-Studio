@@ -104,6 +104,20 @@ export const CLIENT = {
   sampleReelUrl: (import.meta as any).env?.VITE_SAMPLE_REEL_URL
     ?? 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
 
+  /**
+   * LANDING PAGE AI REELS SAMPLE CAPTION:
+   * Short caption rendered at the bottom of the AI Reels phone-frame
+   * mockup, overlaid on a gradient strip just above the waveform. Should
+   * match the visual content of `sampleReelUrl` so the mockup feels
+   * coherent (caption ↔ video). Override via VITE_SAMPLE_REEL_CAPTION
+   * whenever you change the sample video.
+   *
+   * Default pairs with the MDN flower clip — change BOTH together when
+   * you swap in a real generated reel for the deploy.
+   */
+  sampleReelCaption: (import.meta as any).env?.VITE_SAMPLE_REEL_CAPTION
+    ?? 'Spring blooms in store — free local delivery this week. 🌸',
+
   /** Where clients purchase plans */
   salesUrl: 'https://pennywiseit.com.au',
 

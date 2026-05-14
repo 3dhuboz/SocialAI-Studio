@@ -450,7 +450,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                         {/* bottom caption strip — same overlay treatment */}
                         <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/70 via-black/30 to-transparent z-10">
                           <p className="text-[11px] font-semibold text-white/85 mb-1.5 leading-snug">
-                            Fresh sourdough, in by 7am. Tag a mate who needs one. ☕
+                            {CLIENT.sampleReelCaption}
                           </p>
                           {/* faux waveform — eight bars on staggered animations */}
                           <div className="flex items-end gap-[3px] h-5">
