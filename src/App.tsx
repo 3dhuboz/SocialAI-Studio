@@ -1427,7 +1427,19 @@ const Dashboard: React.FC = () => {
   const isTrialExhausted = isOnFreeTrial && trialPostsRemaining <= 0;
 
   // Live Facebook Stats
-  interface LiveFbStats { fanCount: number; followersCount: number; reach28d: number; engagedUsers28d: number; engagementRate: number; }
+  interface LiveFbStats {
+    fanCount: number;
+    followersCount: number;
+    reach28d: number;
+    /** Total likes+comments+shares across the last 28 days of posts. Surfaced
+     *  in place of reach when source='posts' (Insights gated by App Review). */
+    interactions28d: number;
+    engagedUsers28d: number;
+    engagementRate: number;
+    /** 'insights' = Page Insights API gave us reach/engaged_users.
+     *  'posts'    = Insights blocked, engagement derived from public post metrics. */
+    source: 'insights' | 'posts';
+  }
   const [liveStats, setLiveStats] = useState<LiveFbStats | null>(null);
   const [isPullingStats, setIsPullingStats] = useState(false);
   const [lastPulled, setLastPulled] = useState<Date | null>(null);
@@ -2865,8 +2877,12 @@ const Dashboard: React.FC = () => {
           <div className="border-t border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-md">
             <div className="max-w-6xl mx-auto px-4 py-2 flex items-center gap-6 text-xs overflow-x-auto">
               <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap"><Users size={11} className="text-blue-400" /> <span className="text-white font-bold">{liveStats.followersCount.toLocaleString()}</span> followers</span>
-              <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap"><Activity size={11} className="text-purple-400" /> <span className="text-white font-bold">{liveStats.reach28d.toLocaleString()}</span> reach (28d)</span>
-              <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap"><TrendingUp size={11} className="text-amber-400" /> <span className="text-white font-bold">{liveStats.engagementRate}%</span> engagement</span>
+              {liveStats.source === 'insights' ? (
+                <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap"><Activity size={11} className="text-purple-400" /> <span className="text-white font-bold">{liveStats.reach28d.toLocaleString()}</span> reach (28d)</span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap" title="Sum of likes + comments + shares across your last 28 days of posts. Page-level reach needs Facebook App Review."><Activity size={11} className="text-purple-400" /> <span className="text-white font-bold">{liveStats.interactions28d.toLocaleString()}</span> interactions (28d)</span>
+              )}
+              <span className="flex items-center gap-1.5 text-gray-400 whitespace-nowrap" title={liveStats.source === 'posts' ? 'Engagement rate = total post interactions ÷ followers × 100.' : 'Engagement rate = engaged users ÷ reach × 100.'}><TrendingUp size={11} className="text-amber-400" /> <span className="text-white font-bold">{liveStats.engagementRate}%</span> engagement{liveStats.source === 'posts' && <span className="text-gray-600 text-[10px]"> · from posts</span>}</span>
               {lastPulled && <span className="text-gray-600 whitespace-nowrap">Updated {lastPulled.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
             </div>
           </div>

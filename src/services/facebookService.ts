@@ -136,8 +136,17 @@ export const FacebookService = {
     fanCount: number;
     followersCount: number;
     reach28d: number;
+    /** Total likes+comments+shares across posts in the last 28 days. Always
+     *  available (no App Review needed) so this is the fallback signal when
+     *  Insights is gated. Equal to 0 when no recent posts found. */
+    interactions28d: number;
     engagedUsers28d: number;
     engagementRate: number;
+    /** 'insights' when reach/engaged_users came from the Graph Insights API,
+     *  'posts' when we fell back to deriving engagement from the last 28 days
+     *  of post metrics. The UI uses this to switch the middle stat label from
+     *  "reach" → "interactions" and surface a small "from posts" hint. */
+    source: 'insights' | 'posts';
   }> => {
     const base = 'https://graph.facebook.com/v21.0';
     const pageRes = await fetch(`${base}/${pageId}?fields=fan_count,followers_count&access_token=${pageAccessToken}`);
@@ -146,10 +155,13 @@ export const FacebookService = {
     if (pageData.error) {
       const code = pageData.error.code;
       if (code === 10 || code === 200 || code === 190) {
-        return { fanCount: 0, followersCount: 0, reach28d: 0, engagedUsers28d: 0, engagementRate: 0 };
+        return { fanCount: 0, followersCount: 0, reach28d: 0, interactions28d: 0, engagedUsers28d: 0, engagementRate: 0, source: 'insights' };
       }
       throw new Error(pageData.error.message);
     }
+
+    const fanCount = pageData.fan_count || 0;
+    const followersCount = pageData.followers_count || fanCount || 0;
 
     // Insights require read_insights permission (needs Facebook App Review).
     // Gracefully degrade to zeros if unavailable rather than surfacing an error.
@@ -171,14 +183,51 @@ export const FacebookService = {
       // Insights unavailable — continue with zeros
     }
 
-    const engagementRate = reach28d > 0 ? Math.round((engagedUsers28d / reach28d) * 1000) / 10 : 0;
+    // App-Review-free fallback: when Insights returns nothing useful, derive
+    // engagement from public post metrics. Sum likes+comments+shares across
+    // the last 25 posts that fall inside the 28-day window, then express as
+    // (interactions / followers) × 100. The number is post-derived rather than
+    // reach-derived (different denominator from FB's official engagement
+    // rate), but it gives SMBs an honest signal of audience action.
+    let interactions28d = 0;
+    let source: 'insights' | 'posts' = 'insights';
+
+    if (reach28d === 0 && engagedUsers28d === 0) {
+      try {
+        const fields = 'created_time,likes.summary(true),comments.summary(true),shares';
+        const postsRes = await fetch(
+          `${base}/${pageId}/posts?fields=${fields}&limit=25&access_token=${pageAccessToken}`
+        );
+        const postsData = await postsRes.json();
+        if (postsData.data && !postsData.error) {
+          const cutoff = Date.now() - 28 * 86_400_000;
+          for (const p of postsData.data as any[]) {
+            const t = p.created_time ? new Date(p.created_time).getTime() : 0;
+            if (t < cutoff) continue;
+            interactions28d += (p.likes?.summary?.total_count || 0)
+                             + (p.comments?.summary?.total_count || 0)
+                             + (p.shares?.count || 0);
+          }
+          source = 'posts';
+        }
+      } catch {
+        // Posts endpoint failed — leave interactions at 0, source stays
+        // 'insights' so the UI doesn't claim post-derived data we don't have.
+      }
+    }
+
+    const engagementRate = source === 'insights'
+      ? (reach28d > 0 ? Math.round((engagedUsers28d / reach28d) * 1000) / 10 : 0)
+      : (followersCount > 0 ? Math.round((interactions28d / followersCount) * 1000) / 10 : 0);
 
     return {
-      fanCount: pageData.fan_count || 0,
-      followersCount: pageData.followers_count || pageData.fan_count || 0,
+      fanCount,
+      followersCount,
       reach28d,
+      interactions28d,
       engagedUsers28d,
       engagementRate,
+      source,
     };
   },
 
