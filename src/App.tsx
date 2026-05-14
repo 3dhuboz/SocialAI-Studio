@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
@@ -37,6 +37,10 @@ import {
   Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
+import { BrandKitProvider } from './contexts/BrandKitContext';
+// PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
+// the user actually clicks the Posters tab — keeps the home/calendar bundle small.
+const PosterManager = lazy(() => import('./pages/PosterManager').then(m => ({ default: m.default ?? (m as any).PosterManager })));
 
 /** Expandable campaign card — extracted so useState works correctly inside .map() */
 const CampaignCard: React.FC<{
@@ -279,9 +283,9 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
+  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients' | 'customers'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -2077,6 +2081,7 @@ const Dashboard: React.FC = () => {
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
+    { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
@@ -2148,6 +2153,13 @@ const Dashboard: React.FC = () => {
   }
 
   return (
+    // BrandKitProvider scopes the poster brand kit to the active workspace
+    // (NULL = own workspace, clientId = an Agency-plan client). The Posters
+    // tab and any consumer of useBrandKit() reads from this context, so the
+    // editor's overrides follow whichever workspace Steve has switched into.
+    // authMode='clerk' on the main site; portal-token auth path is wired the
+    // same way for white-label client portals.
+    <BrandKitProvider getToken={getApiToken} clientId={activeClientId} authMode={authMode}>
     <div className="min-h-full bg-[#0a0a0f] flex flex-col">
       {/* Video Script Lightbox */}
       {videoScriptModal && (
@@ -4445,6 +4457,20 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
+        {/* ═══ POSTERS TAB ═══ — Poster Maker. Lazy-loaded module + its own
+            R2-backed gallery + per-workspace brand kit. Auth/workspace flow
+            inherited via BrandKitProvider higher up the tree. */}
+        {activeTab === 'posters' && (
+          <Suspense fallback={
+            <div className="flex items-center justify-center py-24 text-white/30">
+              <Loader2 size={28} className="animate-spin text-amber-400" />
+              <span className="ml-3 text-sm">Loading Poster Maker…</span>
+            </div>
+          }>
+            <PosterManager activeClientId={activeClientId} authMode={authMode} />
+          </Suspense>
+        )}
+
         {/* ═══ CLIENTS TAB ═══ */}
         {activeTab === 'clients' && (
           <div className="space-y-6">
@@ -5643,6 +5669,7 @@ const Dashboard: React.FC = () => {
         </div>
       </footer>
     </div>
+    </BrandKitProvider>
   );
 };
 
