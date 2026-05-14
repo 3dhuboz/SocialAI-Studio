@@ -1476,7 +1476,30 @@ const Dashboard: React.FC = () => {
     setIsPullingStats(false);
   };
 
-  // Stats are fetched manually via Refresh Stats button only — auto-fetch removed (was firing on every workspace switch)
+  // Auto-fetch FB stats once on initial mount (and once per workspace switch)
+  // so the dashboard counters show real numbers instead of empty dashes for a
+  // visitor who hasn't tapped "Refresh Stats" yet. Previously this was removed
+  // because it fired on every render (socialTokens object identity churn);
+  // the fix is to scope deps to JUST the page-id + access-token strings and to
+  // gate behind a ref so a failed call doesn't loop. Manual refresh still
+  // works as before.
+  const initialStatsAttempted = useRef(false);
+  useEffect(() => {
+    // Reset on workspace switch — clears the previous workspace's numbers
+    // from the bar and allows the auto-fetch effect below to re-fire for the
+    // new workspace's tokens.
+    setLiveStats(null);
+    setLastPulled(null);
+    initialStatsAttempted.current = false;
+  }, [activeClientId]);
+  useEffect(() => {
+    if (initialStatsAttempted.current) return;
+    if (!fbConnected) return;
+    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) return;
+    initialStatsAttempted.current = true;
+    handlePullStats(true).catch(() => { /* silent — counter stays at dashes */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbConnected, socialTokens.facebookPageId, socialTokens.facebookPageAccessToken]);
 
   const handlePublishDirect = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {

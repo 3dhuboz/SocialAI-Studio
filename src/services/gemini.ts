@@ -2403,6 +2403,31 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       return { ...post, scheduledFor: toLocalISO(bumped) };
     });
 
+    // Reasoning ↔ scheduledFor consistency pass. The AI is instructed to
+    // "cite the exact research finding that informed this post's day" — and
+    // it tends to write boilerplate like "Friday is tier-1 best day" even
+    // when the post is actually scheduled for Saturday (because Friday was
+    // already taken, or the date range started after Friday, or it just
+    // hallucinated). Rewriting that claim post-hoc keeps the reasoning
+    // honest without throwing away the rest of the explanation (hook style,
+    // body, CTA reasoning) that's usually still valuable.
+    const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    posts = posts.map((post) => {
+      if (!post.scheduledFor || typeof post.reasoning !== 'string' || !post.reasoning) return post;
+      const t = new Date(post.scheduledFor.replace('Z', ''));
+      if (isNaN(t.getTime())) return post;
+      const actualDay = DAY_NAMES[t.getDay()];
+      // Pattern matches "Friday is tier-1 best day", "Friday is the best day",
+      // "Friday is tier 2 day", etc. — flexible enough to catch the usual
+      // template variations without false-matching unrelated copy.
+      const dayClaim = /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+is\s+(?:the\s+)?(?:tier-?\s?\d\s+)?(?:best\s+)?day\b\.?/gi;
+      const reasoning = post.reasoning.replace(dayClaim, (full, claimedDay: string) => {
+        if (claimedDay.toLowerCase() === actualDay.toLowerCase()) return full;
+        return `${actualDay} chosen for posting.`;
+      });
+      return reasoning === post.reasoning ? post : { ...post, reasoning };
+    });
+
     return { posts, strategy: data.strategy || '' };
   } catch (error: any) {
     console.error("Smart Schedule Error:", error);
