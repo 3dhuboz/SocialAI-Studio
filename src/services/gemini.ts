@@ -433,12 +433,18 @@ Write like an actual local, not like a Sydney agency or a US tech blog.
 // the model sees "hands" as a strong contextual cue). Hence the steaming
 // pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
 // `negative_prompt` and respects it properly when guidance_scale ≥ 5.
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene';
 
 // Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
 // negatives live in the dedicated field. The worker's tripwire still checks
 // for "candid iPhone" so we keep that token; the rest is style direction.
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+//
+// Lighting bias: defaults to BRIGHT natural daylight after a customer flagged
+// outputs trending too dark/moody. AI-picked moody lighting is fine for tone-
+// specific campaigns (countdown, scarcity) but the default pull should be
+// bright + airy so feeds stay scrollable. The negative-prompt list also calls
+// out "dark", "underexposed", "shadows" to push back at the diffusion bias.
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
 
 // People-mention regex — defense-in-depth scrub of positive prompts.
 // The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
@@ -818,6 +824,22 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 4. EVERY POST MUST NAME A REAL THING from BRAND CONTEXT — an actual
    product, service, or location explicitly listed below. If you can't
    tie the post to something specific in BRAND CONTEXT, the post is wrong.
+
+5. NEVER NAME UNDERLYING TECH, VENDORS, OR PROVIDERS.
+   The customer doesn't need to know — and explicitly does not want to
+   know — what powers the product behind the scenes. NEVER write phrases
+   like:
+     ✗ "powered by fal.ai FLUX"
+     ✗ "(powered by Anthropic / OpenAI / Claude / GPT / Gemini)"
+     ✗ "uses OpenRouter / Stable Diffusion / DALL-E / Midjourney"
+     ✗ "built on Cloudflare Workers / D1 / R2"
+     ✗ "our LLM / our model / our neural network"
+   Even if the BRAND CONTEXT mentions an underlying vendor, STRIP it from
+   the post. Speak about the FEATURE the customer experiences, not the
+   plumbing under it.
+     ✓ "AI image generation tailored to your caption" — fine
+     ✗ "AI image generation (powered by fal.ai FLUX)" — forbidden
+   Same rule for vendor parenthetical asides — drop them entirely.
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -2082,10 +2104,11 @@ ABSOLUTE RULES:
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
 7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
-7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself writing "laptop on desk" for the third time, STOP and pick a totally different scene from the examples above.
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (DEFAULT to bright daylight; only pick golden hour / moody / soft window when the post tone explicitly calls for it). If you catch yourself reaching for the same fallback (notepad on a desk, laptop on a desk, coffee cup beside a planner, generic workspace flatlay) for ANY post in this batch, STOP and pick a totally different scene — outdoor, in-situ, in-action — from the examples above.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 9. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service, (b) a specific measurable outcome, or (c) a location reference. Vague posts must be rewritten.
 10. BANNED PHRASES — never use: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition". Rewrite with concrete specifics.
+10b. NEVER NAME TECH VENDORS, MODELS, OR INFRASTRUCTURE the customer doesn't need to see. Forbidden: "fal.ai", "FLUX", "OpenAI", "GPT", "Claude", "Anthropic", "Gemini", "DALL-E", "Midjourney", "Stable Diffusion", "OpenRouter", "Cloudflare Workers", "D1", "R2", "our LLM", "our model", "powered by [vendor]". Even if the brand context mentions them, STRIP them from the post — speak about the FEATURE the customer experiences, not the plumbing. Vendor parentheticals like "(powered by …)" are forbidden in all forms.
 11. NO FAKE URGENCY — Only use countdown language if a real ACTIVE CAMPAIGN with specific dates was listed above. Never invent campaigns or deadlines.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
@@ -2134,11 +2157,12 @@ RULES:
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
 7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
-7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself reusing the same scene, STOP and pick a totally different one from the examples above.
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (DEFAULT to bright daylight; only pick golden hour / moody / soft window when the post tone explicitly calls for it). If you catch yourself reaching for the same fallback (notepad on a desk, laptop on a desk, coffee cup beside a planner, generic workspace flatlay) for ANY post in this batch, STOP and pick a totally different scene — outdoor, in-situ, in-action — from the examples above.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 10. SPECIFICITY MANDATE: Each post MUST name a real product/service/feature from the business context above, OR reference the business's actual location. Generic sentences that could apply to any business must be rewritten or cut. DO NOT invent statistics — only cite numbers if they appear verbatim in the business context.
 11. BANNED PHRASES — never use any of these: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "We're excited to announce". If you catch yourself writing these, stop and rewrite with a concrete specific detail instead.
+11b. NEVER NAME TECH VENDORS, MODELS, OR INFRASTRUCTURE the customer doesn't need to see. Forbidden: "fal.ai", "FLUX", "OpenAI", "GPT", "Claude", "Anthropic", "Gemini", "DALL-E", "Midjourney", "Stable Diffusion", "OpenRouter", "Cloudflare Workers", "D1", "R2", "our LLM", "our model", "powered by [vendor]". Even if the brand context mentions them, STRIP them from the post — speak about the FEATURE the customer experiences, not the plumbing. Vendor parentheticals like "(powered by …)" are forbidden in all forms.
 12. NO FAKE URGENCY — Only use countdown language ("Only X days left!", "X days to go!") if a real ACTIVE CAMPAIGN with specific start/end dates was listed in the business context above. Never invent campaigns, deadlines, or limited-time offers.
 13. NO INVENTED CUSTOMERS — You have ZERO testimonials, reviews, or customer stories. NEVER write phrases like "A local cafe in [city] said...", "Rockhampton owner saw...", "One of our happy clients...", "A customer told us...", or any fake testimonial signature like "Sarah J., Brisbane". You don't have these — don't make them up.
 14. NO INVENTED STATISTICS — You have ZERO analytics data. NEVER write "increased by X%", "saved X hours", "X% boost", "Xx more leads", "over X clients", or any other invented number. Every number you write must already appear in the business context above. When in doubt, write the qualitative benefit instead ("helps you post consistently" not "increases engagement by 30%").
