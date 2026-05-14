@@ -8,7 +8,7 @@ import type { MagicOnboardingResponse } from '../services/db';
 import {
   CheckCircle, ArrowRight, Sparkles, Loader2,
   Building2, MapPin, Facebook, Instagram, PartyPopper, X,
-  Wand2, HelpCircle, Calendar,
+  Wand2, HelpCircle, Calendar, AlertCircle,
 } from 'lucide-react';
 
 interface Props {
@@ -271,6 +271,30 @@ export const OnboardingWizard: React.FC<Props> = ({
                     {productsLen >= 30
                       ? '✓ Got it — the AI knows what to put in images and posts.'
                       : `${30 - productsLen} more characters. List your top products or services, comma-separated is fine.`}
+                  </p>
+                </div>
+
+                {/* Forbidden subjects — the Seamus / hugheseysque guard.
+                    Captured at signup so every new account makes a conscious
+                    decision about exclusions before any post is generated.
+                    OPTIONAL field: leave blank if not applicable, but the
+                    question is asked so the owner explicitly considers it
+                    (not buried in Settings later). Red border + warning
+                    icon signal the absolute-rule nature. Enforced across
+                    four layers — see workers/api/src/lib/profile-guards.ts. */}
+                <div>
+                  <label className="text-xs font-bold text-red-400/85 uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
+                    <AlertCircle size={11} /> Anything you DON'T want mentioned or shown?
+                  </label>
+                  <textarea
+                    value={profile.forbiddenSubjects ?? ''}
+                    onChange={e => onUpdateProfile({ forbiddenSubjects: e.target.value })}
+                    placeholder="e.g. pork, chicken, lamb, seafood — products competitors might sell but you don't. Or topics you avoid (politics, religion). Comma-separated. Leave blank if nothing applies."
+                    rows={2}
+                    className="w-full bg-black/40 border border-red-500/25 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-red-500/55 resize-none leading-relaxed"
+                  />
+                  <p className="text-[11px] mt-1.5 text-white/45 leading-snug">
+                    The AI will <strong className="text-white/65">never</strong> mention these in captions, <strong className="text-white/65">never</strong> include them in image prompts, and any auto-publish where they slip through gets blocked for your review. Optional — but a few seconds here can save a hard conversation with a customer later.
                   </p>
                 </div>
 
