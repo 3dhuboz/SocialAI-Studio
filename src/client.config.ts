@@ -87,18 +87,22 @@ export const CLIENT = {
    * section's 9:16 phone frame. The browser autoplays it muted + looped, so
    * the visitor sees a real example instead of the CSS placeholder.
    *
-   * Set via VITE_SAMPLE_REEL_URL env var on Cloudflare Pages. Three ways
-   * to populate it:
+   * Defaults to Mozilla's CC0 flower video (well-known stable URL, used in
+   * MDN's own documentation examples). Override via VITE_SAMPLE_REEL_URL on
+   * Cloudflare Pages with a portrait-oriented MP4 once you have one — three
+   * ways to source it:
    *   1. Drop a 5–10s portrait MP4 at public/samples/reel-demo.mp4 and set
-   *      this to '/samples/reel-demo.mp4'.
+   *      the env var to '/samples/reel-demo.mp4'.
    *   2. Generate a reel in the app, wait for the prewarm cron to persist
-   *      it to R2, then copy that durable URL here (e.g.
+   *      it to R2, then copy that durable URL (e.g.
    *      https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev/reels/<id>.mp4).
    *   3. Use any other public CDN-hosted portrait MP4.
    *
-   * Leave empty to fall back to the animated CSS placeholder.
+   * Set explicitly to empty string ('') to fall back to the animated CSS
+   * placeholder. Set to anything else to override the default.
    */
-  sampleReelUrl: (import.meta as any).env?.VITE_SAMPLE_REEL_URL || '',
+  sampleReelUrl: (import.meta as any).env?.VITE_SAMPLE_REEL_URL
+    ?? 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',
 
   /** Where clients purchase plans */
   salesUrl: 'https://pennywiseit.com.au',
