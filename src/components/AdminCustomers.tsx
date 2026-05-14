@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
-  AdminStats, AdminCustomer, PaymentEvent,
+  AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
 
@@ -309,6 +309,190 @@ const StatCard: React.FC<{
 // Lazy-loads /api/admin/payments?email=… on first expand only.
 // ──────────────────────────────────────────────────────────────────────────────
 
+/**
+ * AddonsPanel — per-user add-on overrides + credit grants. Lives inside the
+ * expanded customer row in CustomerRow. Lazy-fetches on first expand.
+ *
+ * Three things admin can do here:
+ *   1. Toggle Posters access (grant / revoke / inherit-from-plan)
+ *   2. Set or delta the poster credit balance
+ *   3. Set or delta the reel credit balance
+ *
+ * Credit edits use DELTA buttons (+5 / -1) for the common "gift more" flow,
+ * with an absolute-set input as the precise option. Resolution rules + side
+ * effects live in workers/api/src/lib/pricing.ts and routes/posters.ts.
+ */
+const AddonsPanel: React.FC<{ userId: string }> = ({ userId }) => {
+  const db = useDb();
+  const [data, setData] = useState<AdminUserAddons | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  // Local input state for the "set absolute" inputs — separate from `data`
+  // so the user can type without mid-edit reconciliation noise.
+  const [posterAbs, setPosterAbs] = useState('');
+  const [reelAbs, setReelAbs] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    db.getAdminUserAddons(userId)
+      .then(d => { if (!cancelled) { setData(d); setPosterAbs(String(d.posterCredits)); setReelAbs(String(d.reelCredits)); } })
+      .catch(e => { if (!cancelled) setError(e?.message || 'Failed to load add-ons'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [userId, db]);
+
+  const apply = async (patch: Parameters<typeof db.setAdminUserAddons>[1]) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await db.setAdminUserAddons(userId, patch);
+      setData(updated);
+      setPosterAbs(String(updated.posterCredits));
+      setReelAbs(String(updated.reelCredits));
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="mt-4 pt-4 border-t border-white/[0.04] flex items-center gap-2 text-white/40 text-sm">
+        <Loader2 size={14} className="animate-spin" /> Loading add-ons…
+      </div>
+    );
+  }
+  if (error || !data) {
+    return (
+      <div className="mt-4 pt-4 border-t border-white/[0.04] text-sm text-red-300/80">
+        {error || 'No add-on data.'}
+      </div>
+    );
+  }
+
+  // Tri-state for the Posters override: undefined = inherit-from-plan,
+  // true = explicit grant, false = explicit revoke.
+  const postersOverride = (data.addonFeatures.posters === true) ? 'grant'
+    : (data.addonFeatures.posters === false) ? 'revoke'
+    : 'inherit';
+
+  return (
+    <div className="mt-4 pt-4 border-t border-white/[0.04] space-y-4">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-bold text-white/70 uppercase tracking-wider">Add-ons & Credits</h4>
+        {saving && <Loader2 size={12} className="animate-spin text-amber-400" />}
+      </div>
+
+      {/* ── Posters feature override ──────────────────────────────────── */}
+      <div className="bg-black/20 border border-white/[0.06] rounded-xl p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-white">Posters access</p>
+            <p className="text-[10px] text-white/35">
+              Plan default: <span className="text-white/55">{data.plan && ['starter','growth','pro','agency'].includes(data.plan) ? 'included' : 'not included'}</span>
+            </p>
+          </div>
+          <div className="flex items-center gap-1 bg-black/30 rounded-lg p-0.5">
+            {(['inherit', 'grant', 'revoke'] as const).map(opt => (
+              <button
+                key={opt}
+                disabled={saving}
+                onClick={() => apply({
+                  addonFeatures: { posters: opt === 'inherit' ? null : opt === 'grant' },
+                })}
+                className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-md transition ${
+                  postersOverride === opt
+                    ? (opt === 'grant' ? 'bg-emerald-500/25 text-emerald-200' : opt === 'revoke' ? 'bg-rose-500/25 text-rose-200' : 'bg-white/15 text-white')
+                    : 'text-white/40 hover:text-white/70 hover:bg-white/5'
+                }`}
+              >
+                {opt === 'inherit' ? 'Inherit' : opt === 'grant' ? 'Grant' : 'Revoke'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Poster credits ─────────────────────────────────────────────── */}
+      <CreditRow
+        label="Poster credits"
+        balance={data.posterCredits}
+        absInput={posterAbs}
+        setAbsInput={setPosterAbs}
+        onDelta={(d) => apply({ posterCreditsDelta: d })}
+        onSet={(n) => apply({ posterCredits: n })}
+        saving={saving}
+        helpText="Lifetime balance, additive on top of plan monthly quota. Decremented when a customer creates a poster after their monthly allowance is exhausted."
+      />
+
+      {/* ── Reel credits ────────────────────────────────────────────────── */}
+      <CreditRow
+        label="Reel credits"
+        balance={data.reelCredits}
+        absInput={reelAbs}
+        setAbsInput={setReelAbs}
+        onDelta={(d) => apply({ reelCreditsDelta: d })}
+        onSet={(n) => apply({ reelCredits: n })}
+        saving={saving}
+        helpText="Used by AI Reels generation. Same lifetime-balance model as poster credits."
+      />
+    </div>
+  );
+};
+
+const CreditRow: React.FC<{
+  label: string;
+  balance: number;
+  absInput: string;
+  setAbsInput: (v: string) => void;
+  onDelta: (delta: number) => void;
+  onSet: (absolute: number) => void;
+  saving: boolean;
+  helpText: string;
+}> = ({ label, balance, absInput, setAbsInput, onDelta, onSet, saving, helpText }) => (
+  <div className="bg-black/20 border border-white/[0.06] rounded-xl p-3 space-y-2">
+    <div className="flex items-center justify-between flex-wrap gap-2">
+      <div>
+        <p className="text-xs font-semibold text-white">{label}</p>
+        <p className="text-[10px] text-white/35">Current balance: <span className="text-amber-300 font-bold tabular-nums">{balance}</span></p>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {[-5, -1, +1, +5].map(d => (
+          <button
+            key={d}
+            disabled={saving}
+            onClick={() => onDelta(d)}
+            className="text-[10px] font-bold tabular-nums px-2 py-1 rounded-md bg-white/5 hover:bg-amber-500/15 hover:text-amber-200 text-white/60 border border-white/10 hover:border-amber-500/30 transition disabled:opacity-40"
+          >
+            {d > 0 ? `+${d}` : `${d}`}
+          </button>
+        ))}
+        <div className="flex items-center gap-1 ml-2">
+          <input
+            type="number"
+            value={absInput}
+            onChange={(e) => setAbsInput(e.target.value)}
+            min="0"
+            className="w-14 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-[11px] text-white text-right tabular-nums focus:border-amber-500/40 focus:outline-none"
+          />
+          <button
+            disabled={saving || Number(absInput) === balance}
+            onClick={() => onSet(Math.max(0, Math.floor(Number(absInput) || 0)))}
+            className="text-[10px] font-bold px-2 py-1 rounded-md bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-amber-500/20 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Set
+          </button>
+        </div>
+      </div>
+    </div>
+    <p className="text-[10px] text-white/30 leading-snug">{helpText}</p>
+  </div>
+);
+
 const CustomerRow: React.FC<{
   customer: AdminCustomer;
   isExpanded: boolean;
@@ -422,6 +606,9 @@ const CustomerRow: React.FC<{
               </a>
             </div>
           )}
+
+          {/* Per-user add-on overrides + credit grants (schema_v13). */}
+          {c.id && <AddonsPanel userId={c.id} />}
         </div>
       )}
     </li>

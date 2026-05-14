@@ -469,4 +469,135 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
       dimensions: describe.dimensions,
     });
   });
+
+  // ── Per-user add-on overrides + credit grants (schema_v13) ──────────────
+  //
+  // Lets Steve manually configure what an individual user has access to and
+  // gift / sell credits on top of the plan quota. Resolution rules live in
+  // lib/pricing.ts userHasFeature(); this endpoint is just the admin write
+  // path. Read path is the existing /api/admin/customers list.
+
+  /** GET /api/admin/users/:id/addons
+   *  Returns { plan, addonFeatures, posterCredits, reelCredits } so the
+   *  admin UI can render the current state before editing. Admin-gated. */
+  app.get('/api/admin/users/:id/addons', async (c) => {
+    const auth = await requireAdmin(c);
+    if (auth instanceof Response) return auth;
+    const targetId = c.req.param('id');
+    const row = await c.env.DB
+      .prepare('SELECT id, email, plan, addon_features, poster_credits, reel_credits FROM users WHERE id = ?')
+      .bind(targetId)
+      .first<any>();
+    if (!row) return c.json({ error: 'User not found.' }, 404);
+    let addonFeatures: Record<string, boolean> = {};
+    try { addonFeatures = JSON.parse(row.addon_features || '{}'); } catch { /* corrupt → empty */ }
+    return c.json({
+      id: row.id,
+      email: row.email,
+      plan: row.plan,
+      addonFeatures,
+      posterCredits: Number(row.poster_credits ?? 0),
+      reelCredits: Number(row.reel_credits ?? 0),
+    });
+  });
+
+  /** PATCH /api/admin/users/:id/addons
+   *  Body: { addonFeatures?: { posters?: boolean|null, reels?: boolean|null },
+   *          posterCredits?: number, reelCredits?: number,
+   *          posterCreditsDelta?: number, reelCreditsDelta?: number }
+   *
+   *  - addonFeatures: if a key is `null`, REMOVE it (so it falls through to
+   *    plan default). If `true`/`false`, set explicit grant/revoke.
+   *  - posterCredits / reelCredits: SET absolute balance.
+   *  - posterCreditsDelta / reelCreditsDelta: ADD (can be negative — clamped
+   *    at 0). Admin's "gift 5 more posters" workflow uses delta. Setting
+   *    absolute is for "give them exactly 10 this month".
+   *
+   *  Both delta and absolute on the same field is invalid (400).
+   *  Admin-gated. Returns the same shape the GET endpoint emits. */
+  app.patch('/api/admin/users/:id/addons', async (c) => {
+    const auth = await requireAdmin(c);
+    if (auth instanceof Response) return auth;
+    const targetId = c.req.param('id');
+
+    let body: {
+      addonFeatures?: Record<string, boolean | null>;
+      posterCredits?: number;
+      reelCredits?: number;
+      posterCreditsDelta?: number;
+      reelCreditsDelta?: number;
+    };
+    try { body = await c.req.json(); }
+    catch { return c.json({ error: 'Invalid JSON body.' }, 400); }
+
+    if (body.posterCredits !== undefined && body.posterCreditsDelta !== undefined) {
+      return c.json({ error: 'Pass posterCredits OR posterCreditsDelta, not both.' }, 400);
+    }
+    if (body.reelCredits !== undefined && body.reelCreditsDelta !== undefined) {
+      return c.json({ error: 'Pass reelCredits OR reelCreditsDelta, not both.' }, 400);
+    }
+
+    // Read current row so we can merge the addon_features JSON (admin sends
+    // partial — we don't want to wipe other features by accident).
+    const current = await c.env.DB
+      .prepare('SELECT addon_features FROM users WHERE id = ?')
+      .bind(targetId)
+      .first<{ addon_features: string | null }>();
+    if (!current) return c.json({ error: 'User not found.' }, 404);
+
+    let addons: Record<string, boolean> = {};
+    try { addons = JSON.parse(current.addon_features || '{}'); } catch { /* corrupt → empty */ }
+
+    if (body.addonFeatures && typeof body.addonFeatures === 'object') {
+      for (const [key, value] of Object.entries(body.addonFeatures)) {
+        if (value === null) delete addons[key];
+        else if (value === true || value === false) addons[key] = value;
+        // ignore garbage values silently
+      }
+    }
+
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+
+    sets.push('addon_features = ?');
+    vals.push(JSON.stringify(addons));
+
+    if (body.posterCredits !== undefined) {
+      sets.push('poster_credits = ?');
+      vals.push(Math.max(0, Math.floor(Number(body.posterCredits) || 0)));
+    } else if (body.posterCreditsDelta !== undefined) {
+      sets.push('poster_credits = MAX(0, COALESCE(poster_credits, 0) + ?)');
+      vals.push(Math.floor(Number(body.posterCreditsDelta) || 0));
+    }
+
+    if (body.reelCredits !== undefined) {
+      sets.push('reel_credits = ?');
+      vals.push(Math.max(0, Math.floor(Number(body.reelCredits) || 0)));
+    } else if (body.reelCreditsDelta !== undefined) {
+      sets.push('reel_credits = MAX(0, COALESCE(reel_credits, 0) + ?)');
+      vals.push(Math.floor(Number(body.reelCreditsDelta) || 0));
+    }
+
+    vals.push(targetId);
+    await c.env.DB
+      .prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`)
+      .bind(...vals)
+      .run();
+
+    // Read back so the response carries the canonical state.
+    const updated = await c.env.DB
+      .prepare('SELECT id, email, plan, addon_features, poster_credits, reel_credits FROM users WHERE id = ?')
+      .bind(targetId)
+      .first<any>();
+    let addonFeaturesOut: Record<string, boolean> = {};
+    try { addonFeaturesOut = JSON.parse(updated?.addon_features || '{}'); } catch { /* */ }
+    return c.json({
+      id: updated?.id,
+      email: updated?.email,
+      plan: updated?.plan,
+      addonFeatures: addonFeaturesOut,
+      posterCredits: Number(updated?.poster_credits ?? 0),
+      reelCredits: Number(updated?.reel_credits ?? 0),
+    });
+  });
 }

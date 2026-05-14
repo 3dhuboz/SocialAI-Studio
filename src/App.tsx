@@ -481,6 +481,17 @@ const Dashboard: React.FC = () => {
             agencyBillingUrl: row.agency_billing_url,
             insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
             reelCredits: typeof row.reel_credits === 'number' ? row.reel_credits : 0,
+            // schema_v13 — per-user feature overrides + add-on credit balance.
+            // addonFeatures parses tolerantly; never throws on corrupt rows.
+            addonFeatures: (() => {
+              try {
+                const raw = row.addon_features;
+                if (!raw) return {};
+                if (typeof raw === 'object') return raw as Record<string, boolean>;
+                return JSON.parse(raw as string) as Record<string, boolean>;
+              } catch { return {}; }
+            })(),
+            posterCredits: typeof row.poster_credits === 'number' ? row.poster_credits : 0,
           };
           // In portal mode, skip user-level profile/stats/tokens — the client workspace effect handles those
           if (authMode !== 'portal') {
@@ -513,6 +524,9 @@ const Dashboard: React.FC = () => {
           // invoice.paid; purchased credit packs land via the one-off product
           // webhook. Reel generation decrements. Never expires.
           if (typeof d.reelCredits === 'number') setUserReelCredits(d.reelCredits);
+          // schema_v13 — addon overrides + poster credit balance.
+          if (d.addonFeatures && typeof d.addonFeatures === 'object') setUserAddonFeatures(d.addonFeatures);
+          if (typeof d.posterCredits === 'number') setUserPosterCredits(d.posterCredits);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
@@ -1233,6 +1247,16 @@ const Dashboard: React.FC = () => {
   // those live on activeClientWorkspace.reelCredits). The "effective" balance
   // below picks the right one based on whether a client workspace is active.
   const [userReelCredits, setUserReelCredits] = useState<number>(0);
+  // schema_v13 — per-user feature overrides. Keyed by feature name; values:
+  //   true  = explicit grant (overrides plan default)
+  //   false = explicit revoke (overrides plan default)
+  //   missing key → fall through to CLIENT.plans[].includes default
+  // Set by admin via /api/admin/users/:id/addons; consumed by the Posters
+  // tab gate below + (eventually) other addon-eligible feature gates.
+  const [userAddonFeatures, setUserAddonFeatures] = useState<Record<string, boolean>>({});
+  // Lifetime add-on credits (admin-gifted or future purchased credit packs),
+  // additive on top of the plan's monthly poster quota.
+  const [userPosterCredits, setUserPosterCredits] = useState<number>(0);
   // Modal state — opened from the Settings video toggle / Plan & Billing tab
   // to let any user (Starter through Agency) buy a one-off credit pack.
   const [showCreditPackModal, setShowCreditPackModal] = useState(false);
@@ -4526,7 +4550,18 @@ const Dashboard: React.FC = () => {
             on whether the user's plan includes posters. Worker still 403s
             mutating endpoints as defence-in-depth. */}
         {activeTab === 'posters' && (() => {
-          const hasAccess = !!CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters || isAdminMode;
+          // Resolution order (must match worker lib/pricing.ts userHasFeature):
+          //   1. Per-user override grants posters → ALLOW
+          //   2. Per-user override revokes posters → DENY
+          //   3. Else → plan tier default
+          //   4. Admin always sees the editor (for support / QA)
+          //   5. Per-user lifetime credits also unlock (e.g. Street Meatz on
+          //      Starter with 5 admin-gifted credits — even if Starter normally
+          //      had no posters, the gifted credits should let them in).
+          const overrideGrant = userAddonFeatures.posters === true;
+          const overrideRevoke = userAddonFeatures.posters === false;
+          const planDefault = !!CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters;
+          const hasAccess = (overrideGrant || (planDefault && !overrideRevoke) || userPosterCredits > 0 || isAdminMode);
           if (hasAccess) {
             return (
               <Suspense fallback={
