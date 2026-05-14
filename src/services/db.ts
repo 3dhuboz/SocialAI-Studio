@@ -51,6 +51,14 @@ export interface DbUserData {
   /** v5 — single reel credits balance. Plan grants + purchased credits both
    *  accrue here. Reel generation decrements by 1. Never expires. */
   reel_credits?: number;
+  /** v13 — per-user feature overrides (admin grants/revokes that override
+   *  plan tier defaults). JSON string from D1 — parse before reading.
+   *  Shape: `{"posters": true}` grants, `{"posters": false}` revokes,
+   *  missing keys fall through to CLIENT.plans[].includes defaults. */
+  addon_features?: string | null;
+  /** v13 — admin-gifted/purchased poster credits. Lifetime balance,
+   *  additive on top of plan monthly quota. Same model as reel_credits. */
+  poster_credits?: number;
   /** v6 — 'monthly' | 'yearly'. Drives the renewal-grant multiplier (×1 or ×12)
    *  in the PayPal PAYMENT.SALE.COMPLETED webhook handler. */
   billing_cycle?: string | null;
@@ -160,6 +168,28 @@ export interface DbCampaign {
   briefStatus?: 'idle' | 'researching' | 'ready' | 'failed';
   briefUpdatedAt?: string;
   briefSources?: Array<{ url: string; ok: boolean; title?: string; status?: number; error?: string }>;
+}
+
+/** Per-user add-on overrides + credit balances (admin GET shape, schema_v13). */
+export interface AdminUserAddons {
+  id: string;
+  email: string | null;
+  plan: string | null;
+  /** `{ posters: true }` = grant, `{ posters: false }` = revoke, missing = plan default. */
+  addonFeatures: Record<string, boolean>;
+  posterCredits: number;
+  reelCredits: number;
+}
+
+/** Patch shape for admin add-on edit. Pass either absolute SET or relative DELTA
+ *  for each credit balance — never both. addonFeatures is a partial: pass `null`
+ *  for a key to REMOVE the override (fall through to plan default). */
+export interface AdminUserAddonsPatch {
+  addonFeatures?: Record<string, boolean | null>;
+  posterCredits?: number;
+  reelCredits?: number;
+  posterCreditsDelta?: number;
+  reelCreditsDelta?: number;
 }
 
 // ── DB factory ────────────────────────────────────────────────────────────────
@@ -373,6 +403,23 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       parts.push(`limit=${limit}`);
       const res = await f(`/api/admin/payments?${parts.join('&')}`);
       return res.json() as Promise<{ payments: PaymentEvent[] }>;
+    },
+
+    /** Per-user add-on overrides + credit balances (schema_v13). Admin-gated.
+     *  GET returns the current state so the admin UI can render it before
+     *  editing. PATCH supports both absolute SET and relative DELTA on credit
+     *  balances (admin "gift 5 more" workflow). */
+    async getAdminUserAddons(userId: string): Promise<AdminUserAddons> {
+      const res = await f(`/api/admin/users/${encodeURIComponent(userId)}/addons`);
+      return res.json() as Promise<AdminUserAddons>;
+    },
+
+    async setAdminUserAddons(userId: string, body: AdminUserAddonsPatch): Promise<AdminUserAddons> {
+      const res = await f(`/api/admin/users/${encodeURIComponent(userId)}/addons`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      return res.json() as Promise<AdminUserAddons>;
     },
 
     /**
