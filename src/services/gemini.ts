@@ -1763,7 +1763,13 @@ export const generateSmartSchedule = async (
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
   onPhase?: (phase: 'researching' | 'writing') => void,
   campaignFocus?: string,
-  activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[],
+  activeCampaigns?: {
+    name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number;
+    // Persisted agentic-research brief (schema_v12). When present, the
+    // post-writer uses this directly — skip the live researchCampaignFocus
+    // call which was silently returning empty (worker route was missing).
+    brief?: string; briefSummary?: string;
+  }[],
   /** When provided, AI is restricted to citing only these scraped FB facts. */
   clientId?: string | null,
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
@@ -1979,6 +1985,21 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
         safeProfile?.description, safeProfile?.productsServices
       );
       console.log('[Campaign Research] Brief generated:', campaignBrief.substring(0, 200));
+    }
+
+    // If activeCampaigns carry pre-computed briefs (agentic-campaigns
+    // schema_v12), prefer those over the live researchCampaignFocus call.
+    // Concatenate so multiple overlapping campaigns each contribute their
+    // angles. This is the durable, deterministic path — the live call above
+    // stays as a fallback for the legacy single-string `campaignFocus` arg.
+    if (!campaignBrief && activeCampaigns?.length) {
+      const persistedBriefs = activeCampaigns
+        .filter(c => c.brief && c.brief.trim().length > 50)
+        .map(c => `## Campaign: ${c.name}\n${c.briefSummary ? `> ${c.briefSummary}\n\n` : ''}${c.brief}`);
+      if (persistedBriefs.length) {
+        campaignBrief = persistedBriefs.join('\n\n────────\n\n');
+        console.log('[Campaign Research] Using', persistedBriefs.length, 'persisted brief(s) — total chars:', campaignBrief.length);
+      }
     }
 
     // ── Build structured campaign rules block (from Campaigns feature) ──

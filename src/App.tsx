@@ -398,6 +398,14 @@ const Dashboard: React.FC = () => {
   const [isScanningPosts, setIsScanningPosts] = useState(false);
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  // Tracks which campaign id is currently being researched by the agent
+  // (POST /api/db/campaigns/:id/research). UI uses it to show the spinner
+  // on the right card without mutating campaigns[].briefStatus locally.
+  // Cleared in the finally block whether the research succeeded or failed.
+  const [researchingCampaignId, setResearchingCampaignId] = useState<string | null>(null);
+  // Per-campaign UI flag for the collapsible "View brief" panel. Map keyed
+  // by campaign id; absent = collapsed, true = expanded.
+  const [expandedBrief, setExpandedBrief] = useState<Record<string, boolean>>({});
   const [portalContent, setPortalContent] = useState<{ hero_title: string; hero_subtitle: string; hero_cta_text: string }>({ hero_title: '', hero_subtitle: '', hero_cta_text: '' });
 
   // Cache agency profile name for display
@@ -582,9 +590,11 @@ const Dashboard: React.FC = () => {
             const loadedCampaigns = await db.getCampaigns(null);
             setCampaigns(loadedCampaigns.map(c => ({
               id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-              startDate: c.start_date || '', endDate: c.end_date || '',
-              rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-              enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+              startDate: c.startDate || '', endDate: c.endDate || '',
+              rules: c.rules || '', imageNotes: c.imageNotes || '', postsPerDay: c.postsPerDay || 1,
+              enabled: !!c.enabled, createdAt: c.createdAt || new Date().toISOString(),
+              brief: c.brief, briefSummary: c.briefSummary, briefStatus: c.briefStatus,
+              briefUpdatedAt: c.briefUpdatedAt, briefSources: c.briefSources,
             })));
           } catch { /* campaigns will remain empty */ }
         }
@@ -728,9 +738,11 @@ const Dashboard: React.FC = () => {
           const loadedCampaigns = await db.getCampaigns(activeClientId);
           setCampaigns(loadedCampaigns.map(c => ({
             id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-            startDate: c.start_date || '', endDate: c.end_date || '',
-            rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-            enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+            startDate: c.startDate || '', endDate: c.endDate || '',
+            rules: c.rules || '', imageNotes: c.imageNotes || '', postsPerDay: c.postsPerDay || 1,
+            enabled: !!c.enabled, createdAt: c.createdAt || new Date().toISOString(),
+            brief: c.brief, briefSummary: c.briefSummary, briefStatus: c.briefStatus,
+            briefUpdatedAt: c.briefUpdatedAt, briefSources: c.briefSources,
           })));
         } catch { setCampaigns([]); }
       } catch (e) {
@@ -886,9 +898,11 @@ const Dashboard: React.FC = () => {
         const loadedCampaigns = await db.getCampaigns(null);
         setCampaigns(loadedCampaigns.map(c => ({
           id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-          startDate: c.start_date || '', endDate: c.end_date || '',
-          rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-          enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+          startDate: c.startDate || '', endDate: c.endDate || '',
+          rules: c.rules || '', imageNotes: c.imageNotes || '', postsPerDay: c.postsPerDay || 1,
+          enabled: !!c.enabled, createdAt: c.createdAt || new Date().toISOString(),
+          brief: c.brief, briefSummary: c.briefSummary, briefStatus: c.briefStatus,
+          briefUpdatedAt: c.briefUpdatedAt, briefSources: c.briefSources,
         })));
       } catch { setCampaigns([]); }
     };
@@ -1603,7 +1617,14 @@ const Dashboard: React.FC = () => {
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
         undefined,
-        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay })),
+        activeCampaigns.map(c => ({
+          name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate,
+          rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay,
+          // Persisted research brief (schema_v12 + agentic-campaigns). When
+          // present, generateSmartSchedule consumes this directly instead of
+          // re-running the (broken) live web-fetch every time.
+          brief: c.brief, briefSummary: c.briefSummary,
+        })),
         activeClientId,
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
@@ -1945,6 +1966,42 @@ const Dashboard: React.FC = () => {
       }
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  /**
+   * Kick off the agentic-campaign research pass.
+   *
+   * Called from the textarea onBlur AND from the explicit "Re-research"
+   * button. Idempotent — if rules is empty or whitespace, no-ops (the worker
+   * also rejects but we save a round trip). Sets researchingCampaignId so the
+   * UI can show the spinner on the right card, then drops the worker's
+   * returned brief straight into campaigns[] state.
+   *
+   * Uses optimistic local status='researching' so the UI doesn't blink even
+   * if the network is slow to start.
+   */
+  const runCampaignResearch = async (campaignId: string) => {
+    const c = campaigns.find(x => x.id === campaignId);
+    if (!c || !c.rules?.trim()) return;
+    setResearchingCampaignId(campaignId);
+    setCampaigns(prev => prev.map(x => x.id === campaignId ? { ...x, briefStatus: 'researching' } : x));
+    try {
+      const updated = await db.researchCampaign(campaignId);
+      setCampaigns(prev => prev.map(x => x.id === campaignId ? {
+        ...x,
+        brief: updated.brief,
+        briefSummary: updated.briefSummary,
+        briefStatus: updated.briefStatus,
+        briefUpdatedAt: updated.briefUpdatedAt,
+        briefSources: updated.briefSources,
+      } : x));
+    } catch (e: any) {
+      console.warn('[campaign-research] request failed:', e?.message || e);
+      setCampaigns(prev => prev.map(x => x.id === campaignId ? { ...x, briefStatus: 'failed' } : x));
+      toast('Campaign research failed — try again in a moment.', 'error');
+    } finally {
+      setResearchingCampaignId(null);
     }
   };
 
@@ -5419,30 +5476,30 @@ const Dashboard: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-white">What's a Campaign?</p>
                   <p className="text-xs text-white/45 mt-1 leading-relaxed">
-                    A campaign is a <strong className="text-white/70">date range with a goal</strong>. Once you add one,
-                    every post the AI writes between those dates will weave that goal in automatically — countdowns,
-                    themes, calls-to-action — without you needing to write it yourself.
+                    A campaign is a <strong className="text-white/70">date range with a goal</strong> — and a small AI agent
+                    that researches it for you. Drop in a URL or describe what you want promoted; the agent reads the page,
+                    figures out the angles, and weaves them into every scheduled post in the window automatically.
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pl-12">
                 <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                  <p className="text-[10px] font-bold text-amber-300/80">Promote a website</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Promote pennywiseit.com.au — focus on the new AI tools page."</p>
+                </div>
+                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Run a sale</p>
-                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"20% off all sessions May 15–25 — use urgent language as we count down."</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"20% off all sessions May 15–25 — urgent tone as we count down."</p>
                 </div>
                 <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Promote an event</p>
                   <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Sunshine Coast workshop on June 14 — drive bookings, mention limited spots."</p>
                 </div>
-                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
-                  <p className="text-[10px] font-bold text-amber-300/80">Seasonal push</p>
-                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Mother's Day gift voucher — May 1–12, gentle nostalgic tone."</p>
-                </div>
               </div>
               <p className="text-[10px] text-white/25 pl-12 leading-relaxed">
-                <strong className="text-white/40">How it works:</strong> click "Add Campaign", set a start &amp; end date,
-                write a sentence telling the AI what to focus on. That's it — your next batch of scheduled posts will
-                pick it up. Add as many campaigns as you want; if dates overlap, the AI blends them.
+                <strong className="text-white/40">How it works:</strong> click "Add Campaign", set the dates, and write a
+                sentence (drop in a URL if you have one). The agent will reply with what it found and how it'll position
+                the campaign. Add as many as you want — overlapping windows blend.
               </p>
             </div>
 
@@ -5495,15 +5552,94 @@ const Dashboard: React.FC = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] text-white/30 block mb-1">Campaign Rules / Instructions for AI</label>
+                    <label className="text-[10px] text-white/30 block mb-1">What should the AI agent focus on?</label>
                     <textarea
                       value={c.rules}
-                      onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value } : x))}
-                      onBlur={async () => { await db.updateCampaign(c.id, { rules: c.rules }); }}
-                      placeholder="e.g. Mention our grand opening event, use festive language, include countdown..."
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/20 resize-none h-16"
+                      onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value, briefStatus: x.briefStatus === 'ready' ? 'idle' : x.briefStatus } : x))}
+                      onBlur={async () => {
+                        const trimmed = c.rules?.trim() || '';
+                        await db.updateCampaign(c.id, { rules: c.rules });
+                        // Auto-trigger research if there's enough text and we
+                        // haven't already researched this exact rules. The
+                        // worker also dedupes via brief_status='researching'
+                        // optimism but this saves a round-trip.
+                        if (trimmed.length >= 10 && c.briefStatus !== 'researching' && c.briefStatus !== 'ready') {
+                          runCampaignResearch(c.id);
+                        }
+                      }}
+                      placeholder="e.g. Promote pennywiseit.com.au — focus on the new AI tools page. Or: 20% off May 15–25, urgent countdown tone."
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/20 resize-none h-20"
                     />
                   </div>
+
+                  {/* Research panel — agentic-campaign reply. Renders one of:
+                       researching | ready | failed | idle (with rules)
+                       Hidden entirely if rules is empty (nothing to research). */}
+                  {c.rules?.trim().length >= 10 && (
+                    <div className="bg-black/20 border border-amber-500/15 rounded-xl p-3 space-y-2">
+                      {c.briefStatus === 'researching' || researchingCampaignId === c.id ? (
+                        <div className="flex items-center gap-2 text-xs text-amber-300/80">
+                          <Loader2 size={12} className="animate-spin" />
+                          <span>Reading your brief, fetching any URLs, building the angle…</span>
+                        </div>
+                      ) : c.briefStatus === 'ready' ? (
+                        <>
+                          <div className="flex items-start gap-2">
+                            <Sparkles size={12} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-white/70 leading-relaxed">{c.briefSummary || 'Brief ready.'}</p>
+                              {(c.briefSources?.length ?? 0) > 0 && (
+                                <p className="text-[10px] text-white/30 mt-1 truncate">
+                                  Read: {c.briefSources!.map(s => s.ok ? (s.title || new URL(s.url).hostname) : `${new URL(s.url).hostname} (failed)`).join(' · ')}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={() => setExpandedBrief(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                              className="text-[10px] text-amber-400/70 hover:text-amber-400 transition flex items-center gap-1"
+                            >
+                              <ChevronRight size={10} className={`transition-transform ${expandedBrief[c.id] ? 'rotate-90' : ''}`} />
+                              {expandedBrief[c.id] ? 'Hide brief' : 'View full brief'}
+                            </button>
+                            <button
+                              onClick={() => runCampaignResearch(c.id)}
+                              className="text-[10px] text-white/30 hover:text-amber-400 transition flex items-center gap-1"
+                            >
+                              <RefreshCw size={10} /> Re-research
+                            </button>
+                          </div>
+                          {expandedBrief[c.id] && c.brief && (
+                            <pre className="text-[10px] text-white/55 whitespace-pre-wrap font-sans bg-black/30 border border-white/5 rounded-lg p-3 max-h-64 overflow-y-auto leading-relaxed">{c.brief}</pre>
+                          )}
+                        </>
+                      ) : c.briefStatus === 'failed' ? (
+                        <div className="flex items-start gap-2">
+                          <AlertCircle size={12} className="text-red-400 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-red-300/80">Research failed — the agent couldn't reach the URL or hit a snag.</p>
+                            <button
+                              onClick={() => runCampaignResearch(c.id)}
+                              className="text-[10px] text-amber-400/70 hover:text-amber-400 transition mt-1 flex items-center gap-1"
+                            >
+                              <RefreshCw size={10} /> Try again
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-white/30">Agent hasn't researched this yet.</p>
+                          <button
+                            onClick={() => runCampaignResearch(c.id)}
+                            className="text-[10px] text-amber-400/80 hover:text-amber-400 transition flex items-center gap-1"
+                          >
+                            <Sparkles size={10} /> Run research
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               <button

@@ -126,4 +126,13 @@ export interface Campaign {
   postsPerDay: number;
   enabled: boolean;
   createdAt: string;
+  // Research brief (schema_v12 — agentic campaigns). Populated by
+  // POST /api/db/campaigns/:id/research and consumed by the post-writer.
+  // brief is the full markdown brief, briefSummary is the 1-2 sentence
+  // confirmation line shown in the UI ("Checked example.com — found …").
+  brief?: string;
+  briefSummary?: string;
+  briefStatus?: 'idle' | 'researching' | 'ready' | 'failed';
+  briefUpdatedAt?: string;
+  briefSources?: Array<{ url: string; ok: boolean; title?: string; status?: number; error?: string }>;
 }
