@@ -139,18 +139,27 @@ export interface DbClient {
   reel_credits?: number;
 }
 
+/** API shape for a campaign row — matches the worker's rowToApi output
+ *  exactly, so callers can drop the result straight into `Campaign` state.
+ *  As of schema_v12 includes the agentic-research brief fields. */
 export interface DbCampaign {
   id: string;
-  user_id?: string;
-  client_id?: string | null;
+  clientId?: string | null;
   name: string;
   type?: string;
-  start_date?: string | null;
-  end_date?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
   rules?: string;
-  posts_per_day?: number;
-  enabled?: number;
-  created_at?: string;
+  imageNotes?: string;
+  postsPerDay?: number;
+  enabled?: boolean;
+  createdAt?: string;
+  // Agentic research (schema_v12).
+  brief?: string;
+  briefSummary?: string;
+  briefStatus?: 'idle' | 'researching' | 'ready' | 'failed';
+  briefUpdatedAt?: string;
+  briefSources?: Array<{ url: string; ok: boolean; title?: string; status?: number; error?: string }>;
 }
 
 // ── DB factory ────────────────────────────────────────────────────────────────
@@ -256,6 +265,17 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async deleteCampaign(id: string): Promise<void> {
       await f(`/api/db/campaigns/${id}`, del());
+    },
+
+    /** Run/re-run the agentic research pass on a campaign. Synchronous —
+     *  the worker fetches any URLs in the rules text, calls Haiku in JSON
+     *  mode, persists { brief, summary, sources, status } to the row, then
+     *  returns the updated DbCampaign. ~5–10s round-trip; UI should show a
+     *  spinner. Throws on transport / 4xx / 5xx — caller catches to show
+     *  the failure state. */
+    async researchCampaign(id: string): Promise<DbCampaign> {
+      const res = await f(`/api/db/campaigns/${id}/research`, j({}));
+      return await res.json() as DbCampaign;
     },
 
     // ── Portal ────────────────────────────────────────────────────────────────
