@@ -1,0 +1,47 @@
+-- ─────────────────────────────────────────────────────────────────────
+--  schema_v13.sql — Per-user feature overrides + add-on credits
+--
+--  Lets Steve manually configure what an individual user has access to
+--  (vs. plan-tier defaults from CLIENT.plans[].includes), and grant /
+--  gift one-shot credits on top of the monthly plan quota.
+--
+--  Use cases:
+--    - Street Meatz on Starter (no poster quota by tier) → admin grants
+--      5 poster credits this month.
+--    - Steve gifts a customer 3 reel credits as goodwill.
+--    - Ad-hoc beta: enable Posters for an individual customer on a plan
+--      that doesn't normally include it (without changing the plan).
+--    - Ad-hoc revoke: explicitly DENY posters for one user even though
+--      their plan includes it (e.g. abuse).
+--
+--  Schema additions:
+--    addon_features  — JSON `{"posters": true}` overrides plan default
+--                      `{"posters": false}` explicitly revokes
+--                       missing key → fall through to PLAN_INCLUDES_POSTERS
+--    poster_credits  — INTEGER. One-shot lifetime credit balance,
+--                       additive on top of the plan's monthly quota.
+--                       Decremented when a user creates a poster after
+--                       their monthly plan allowance is exhausted.
+--                       reel_credits already exists (schema_v6) — same
+--                       model, mirrored here for consistency.
+--
+--  Apply with:
+--    cd workers/api
+--    npx wrangler d1 execute socialai-db --file=schema_v13.sql --remote
+-- ─────────────────────────────────────────────────────────────────────
+
+ALTER TABLE users ADD COLUMN addon_features TEXT DEFAULT '{}';
+ALTER TABLE users ADD COLUMN poster_credits INTEGER DEFAULT 0;
+
+-- Resolution order in worker code (lib/pricing.ts):
+--   userHasFeature(plan, addons, 'posters'):
+--     if addons.posters === true  → GRANTED  (explicit override)
+--     if addons.posters === false → REVOKED  (explicit revoke)
+--     else                         → fall back to PLAN_INCLUDES_POSTERS
+--
+--   canCreatePoster(uid):
+--     if !userHasFeature(...) → 403 (feature not granted)
+--     usedThisMonth          ≥ planQuota AND poster_credits == 0 → 429
+--     usedThisMonth          ≥ planQuota AND poster_credits > 0  → ok,
+--                                                                  decrement credit
+--     usedThisMonth          < planQuota                         → ok

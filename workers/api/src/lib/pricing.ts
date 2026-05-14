@@ -28,3 +28,70 @@ export const POSTER_QUOTA_PER_MONTH: Record<string, number> = {
   pro: 30,
   agency: 100,
 };
+
+// Whether each plan tier includes Poster Maker access at all (vs. just a
+// monthly count). Today every paid plan does, but trial users (plan IS NULL
+// in D1) and any unrecognised plan are blocked. Frontend mirrors this with
+// CLIENT.plans[].includes.posters in src/client.config.ts — keep them in
+// sync. Used by routes/posters.ts to 403 before any work happens.
+export const PLAN_INCLUDES_POSTERS: ReadonlySet<string> = new Set(
+  Object.keys(POSTER_QUOTA_PER_MONTH),
+);
+
+// ── Per-user feature & credit overrides (schema_v13) ──────────────────────
+//
+// Lets Steve override what an individual user has access to (vs. the plan
+// tier default) and grant one-shot credits on top of the monthly plan quota.
+// Use cases: Street Meatz on Starter + 5 admin-gifted poster credits;
+// gifting reel credits as goodwill; ad-hoc beta access to a feature their
+// plan doesn't include.
+
+/** Feature names the addon system can override. Keep in sync with the
+ *  CLIENT.plans[].includes.* keys on the frontend. */
+export type AddonFeature = 'posters' | 'reels';
+
+/** Shape of users.addon_features JSON.
+ *    true  = explicit grant (overrides plan default)
+ *    false = explicit revoke (overrides plan default)
+ *    missing = fall through to plan tier default
+ *  Stored as a JSON object so future addons can be added without a schema
+ *  migration each time. */
+export type AddonFeaturesBlob = Partial<Record<AddonFeature, boolean>>;
+
+/** Safely parse the addon_features JSON column. Tolerant of NULL / corrupt
+ *  rows — never throws. */
+export function parseAddonFeatures(raw: string | null | undefined): AddonFeaturesBlob {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch { /* fall through */ }
+  return {};
+}
+
+/** Resolve whether a user has a given feature, considering both their plan
+ *  tier default AND any per-user override.
+ *
+ *  Resolution order:
+ *    1. addons.<feature> === true  → GRANTED
+ *    2. addons.<feature> === false → REVOKED
+ *    3. else → plan tier default (PLAN_INCLUDES_POSTERS for posters)
+ *
+ *  Why explicit false vs. missing: lets admin REVOKE a feature for a
+ *  problematic user without downgrading their whole plan. Missing key is
+ *  the common case (no override) and falls through to plan defaults.
+ */
+export function userHasFeature(
+  feature: AddonFeature,
+  plan: string | null | undefined,
+  addonsRaw: string | null | undefined,
+): boolean {
+  const addons = parseAddonFeatures(addonsRaw);
+  if (feature in addons) return addons[feature] === true;
+  // Plan defaults — extend as new addon-eligible features appear.
+  if (feature === 'posters') return !!plan && PLAN_INCLUDES_POSTERS.has(plan);
+  // 'reels' currently has no plan-tier gate (all paid plans get reel
+  // credits via the existing `reel_credits` column). If we add one later,
+  // the plan-default branch goes here.
+  return !!plan;
+}

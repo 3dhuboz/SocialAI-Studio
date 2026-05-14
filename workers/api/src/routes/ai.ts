@@ -16,6 +16,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect } from '../lib/anthropic';
+import { fetchUrlText } from '../lib/web-fetch';
 
 export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
   /**
@@ -166,6 +167,36 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const text = data.choices?.[0]?.message?.content ?? '';
     return c.json({ text, _meta: { route: 'openrouter' } });
+  });
+
+  /**
+   * POST /api/ai/web-fetch
+   * Body: { url: string }
+   *
+   * Worker-side proxy for the campaign-research agent (and any future feature
+   * that wants to read a webpage as text). CORS-bypassed, output sanitised
+   * (scripts/styles/nav stripped), capped at 30KB returned text. Auth +
+   * rate-limited (20/min/user) to keep this from being weaponised as an open
+   * proxy.
+   *
+   * Response: { ok, url, finalUrl?, status?, contentType?, title?, text?,
+   *             chars?, error? } — see fetchUrlText return type.
+   */
+  app.post('/api/ai/web-fetch', async (c) => {
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (await isRateLimited(c.env.DB, `web-fetch:${uid}`, 20)) {
+      return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+    }
+
+    let body: { url?: string };
+    try { body = await c.req.json(); }
+    catch { return c.json({ error: 'Invalid JSON body.' }, 400); }
+    const url = (body.url || '').trim();
+    if (!url) return c.json({ error: 'url is required.' }, 400);
+
+    const result = await fetchUrlText(url);
+    return c.json(result);
   });
 
   // OpenRouter key + credit telemetry for the admin AI-Stats panel. Read-only

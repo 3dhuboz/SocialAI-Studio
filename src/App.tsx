@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
@@ -34,9 +34,133 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film
+  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
+import { BrandKitProvider } from './contexts/BrandKitContext';
+// PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
+// the user actually clicks the Posters tab — keeps the home/calendar bundle small.
+const PosterManager = lazy(() => import('./pages/PosterManager').then(m => ({ default: m.default ?? (m as any).PosterManager })));
+
+/**
+ * RecommendationActionButton — renders the contextual 1-click action for
+ * an Insights recommendation. The AI proposes the action type + payload
+ * inside the rec; this component dispatches it to the right handler.
+ *
+ * Action types:
+ *   generate-post   — prefill Quick Post with topic + angle
+ *   shift-pillars   — save new content pillars to profile, go to Smart Schedule
+ *   view-checklist  — inline-expand the checklist items (no AI involved)
+ *   edit-profile    — switch to Settings tab + nudge the right field
+ *   generate-test   — prefill Quick Post with a test-style topic for A/B
+ *
+ * Falls back to a generic "Create Post" button for legacy reports persisted
+ * before the action field existed (rec.action == null).
+ */
+const RecommendationActionButton: React.FC<{
+  rec: { title: string; detail: string; action?: { type: string; label: string; payload?: any } };
+  onGeneratePost: (topic: string, angle?: string) => void;
+  onShiftPillars: (newPillars: string[], replacing?: string[]) => void;
+  onEditProfile: (field: string, hint?: string) => void;
+  onGenerateTest: (topic: string, style: string) => void;
+}> = ({ rec, onGeneratePost, onShiftPillars, onEditProfile, onGenerateTest }) => {
+  const [checklistOpen, setChecklistOpen] = useState(false);
+  const action = rec.action;
+
+  // Legacy fallback — rec was generated before the action schema. Keep the
+  // experience working: generic "Create Post" matches old behaviour.
+  if (!action || !action.type) {
+    return (
+      <button
+        onClick={() => onGeneratePost(`${rec.title}: ${rec.detail}`)}
+        className="flex items-center gap-1.5 text-xs font-bold text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-xl transition"
+      >
+        <Wand2 size={11} /> Create Post
+      </button>
+    );
+  }
+
+  const baseBtn = "flex items-center gap-1.5 text-xs font-bold transition px-3 py-1.5 rounded-xl";
+  const primary = `${baseBtn} text-amber-300 hover:text-amber-200 bg-amber-500/12 hover:bg-amber-500/20 border border-amber-500/20 hover:border-amber-500/30`;
+
+  switch (action.type) {
+    case 'generate-post': {
+      const p = action.payload || {};
+      return (
+        <button onClick={() => onGeneratePost(p.topic || rec.title, p.angle)} className={primary}>
+          <Wand2 size={11} /> {action.label || 'Generate sample post'}
+        </button>
+      );
+    }
+    case 'shift-pillars': {
+      const p = action.payload || {};
+      const newPillars: string[] = Array.isArray(p.newPillars) ? p.newPillars : [];
+      const replacing: string[] = Array.isArray(p.replacing) ? p.replacing : [];
+      return (
+        <div className="space-y-2">
+          {newPillars.length > 0 && (
+            <p className="text-[10px] text-white/35">
+              Will set focus to: <span className="text-amber-300/80">{newPillars.join(' · ')}</span>
+              {replacing.length > 0 && <> (replacing <span className="text-white/45">{replacing.join(', ')}</span>)</>}
+            </p>
+          )}
+          <button onClick={() => onShiftPillars(newPillars, replacing)} className={primary}>
+            <Target size={11} /> {action.label || 'Apply new content focus'}
+          </button>
+        </div>
+      );
+    }
+    case 'view-checklist': {
+      const p = action.payload || {};
+      const items: string[] = Array.isArray(p.items) ? p.items : [];
+      return (
+        <div className="space-y-2">
+          <button onClick={() => setChecklistOpen(o => !o)} className={primary}>
+            <ClipboardList size={11} /> {action.label || 'Open checklist'} ({items.length})
+            <ChevronRight size={11} className={`transition-transform ${checklistOpen ? 'rotate-90' : ''}`} />
+          </button>
+          {checklistOpen && items.length > 0 && (
+            <ol className="bg-black/25 border border-white/8 rounded-xl p-3 space-y-1.5 list-decimal list-inside">
+              {items.map((item, i) => (
+                <li key={i} className="text-xs text-white/65 leading-relaxed">{item}</li>
+              ))}
+            </ol>
+          )}
+        </div>
+      );
+    }
+    case 'edit-profile': {
+      const p = action.payload || {};
+      const field = String(p.field || 'description');
+      return (
+        <button onClick={() => onEditProfile(field, p.hint)} className={primary}>
+          <Settings size={11} /> {action.label || `Edit ${field}`}
+        </button>
+      );
+    }
+    case 'generate-test': {
+      const p = action.payload || {};
+      return (
+        <button
+          onClick={() => onGenerateTest(p.topic || rec.title, p.style || 'experimental')}
+          className={primary}
+        >
+          <Sparkles size={11} /> {action.label || 'Schedule a test post'}
+        </button>
+      );
+    }
+    default:
+      // Unknown action type → fall through to legacy behaviour gracefully.
+      return (
+        <button
+          onClick={() => onGeneratePost(`${rec.title}: ${rec.detail}`)}
+          className={primary}
+        >
+          <Wand2 size={11} /> {action.label || 'Create Post'}
+        </button>
+      );
+  }
+};
 
 /** Expandable campaign card — extracted so useState works correctly inside .map() */
 const CampaignCard: React.FC<{
@@ -279,9 +403,9 @@ type AutopilotMode = 'smart' | 'saturation' | 'quick24h' | 'highlights';
 // ── Main Dashboard ──────────────────────────────────────
 const Dashboard: React.FC = () => {
   const { toast } = useToast();
-  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId } = useAuth();
+  const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'settings' | 'clients' | 'customers'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -394,6 +518,14 @@ const Dashboard: React.FC = () => {
   const [isScanningPosts, setIsScanningPosts] = useState(false);
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  // Tracks which campaign id is currently being researched by the agent
+  // (POST /api/db/campaigns/:id/research). UI uses it to show the spinner
+  // on the right card without mutating campaigns[].briefStatus locally.
+  // Cleared in the finally block whether the research succeeded or failed.
+  const [researchingCampaignId, setResearchingCampaignId] = useState<string | null>(null);
+  // Per-campaign UI flag for the collapsible "View brief" panel. Map keyed
+  // by campaign id; absent = collapsed, true = expanded.
+  const [expandedBrief, setExpandedBrief] = useState<Record<string, boolean>>({});
   const [portalContent, setPortalContent] = useState<{ hero_title: string; hero_subtitle: string; hero_cta_text: string }>({ hero_title: '', hero_subtitle: '', hero_cta_text: '' });
 
   // Cache agency profile name for display
@@ -469,6 +601,17 @@ const Dashboard: React.FC = () => {
             agencyBillingUrl: row.agency_billing_url,
             insightReport: row.insight_report ? (typeof row.insight_report === 'string' ? JSON.parse(row.insight_report as string) : row.insight_report) : null,
             reelCredits: typeof row.reel_credits === 'number' ? row.reel_credits : 0,
+            // schema_v13 — per-user feature overrides + add-on credit balance.
+            // addonFeatures parses tolerantly; never throws on corrupt rows.
+            addonFeatures: (() => {
+              try {
+                const raw = row.addon_features;
+                if (!raw) return {};
+                if (typeof raw === 'object') return raw as Record<string, boolean>;
+                return JSON.parse(raw as string) as Record<string, boolean>;
+              } catch { return {}; }
+            })(),
+            posterCredits: typeof row.poster_credits === 'number' ? row.poster_credits : 0,
           };
           // In portal mode, skip user-level profile/stats/tokens — the client workspace effect handles those
           if (authMode !== 'portal') {
@@ -501,6 +644,9 @@ const Dashboard: React.FC = () => {
           // invoice.paid; purchased credit packs land via the one-off product
           // webhook. Reel generation decrements. Never expires.
           if (typeof d.reelCredits === 'number') setUserReelCredits(d.reelCredits);
+          // schema_v13 — addon overrides + poster credit balance.
+          if (d.addonFeatures && typeof d.addonFeatures === 'object') setUserAddonFeatures(d.addonFeatures);
+          if (typeof d.posterCredits === 'number') setUserPosterCredits(d.posterCredits);
           if (d.falApiKey) { localStorage.setItem('sai_fal_key', d.falApiKey); setFalApiKey(d.falApiKey); }
           if (d.isAdmin) localStorage.setItem('sai_admin', '1');
           if (d.onboardingDone) localStorage.setItem('sai_onboarding_done', '1');
@@ -578,9 +724,11 @@ const Dashboard: React.FC = () => {
             const loadedCampaigns = await db.getCampaigns(null);
             setCampaigns(loadedCampaigns.map(c => ({
               id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-              startDate: c.start_date || '', endDate: c.end_date || '',
-              rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-              enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+              startDate: c.startDate || '', endDate: c.endDate || '',
+              rules: c.rules || '', imageNotes: c.imageNotes || '', postsPerDay: c.postsPerDay || 1,
+              enabled: !!c.enabled, createdAt: c.createdAt || new Date().toISOString(),
+              brief: c.brief, briefSummary: c.briefSummary, briefStatus: c.briefStatus,
+              briefUpdatedAt: c.briefUpdatedAt, briefSources: c.briefSources,
             })));
           } catch { /* campaigns will remain empty */ }
         }
@@ -724,9 +872,11 @@ const Dashboard: React.FC = () => {
           const loadedCampaigns = await db.getCampaigns(activeClientId);
           setCampaigns(loadedCampaigns.map(c => ({
             id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-            startDate: c.start_date || '', endDate: c.end_date || '',
-            rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-            enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+            startDate: c.startDate || '', endDate: c.endDate || '',
+            rules: c.rules || '', imageNotes: c.imageNotes || '', postsPerDay: c.postsPerDay || 1,
+            enabled: !!c.enabled, createdAt: c.createdAt || new Date().toISOString(),
+            brief: c.brief, briefSummary: c.briefSummary, briefStatus: c.briefStatus,
+            briefUpdatedAt: c.briefUpdatedAt, briefSources: c.briefSources,
           })));
         } catch { setCampaigns([]); }
       } catch (e) {
@@ -882,9 +1032,11 @@ const Dashboard: React.FC = () => {
         const loadedCampaigns = await db.getCampaigns(null);
         setCampaigns(loadedCampaigns.map(c => ({
           id: c.id, name: c.name, type: (c.type || 'custom') as Campaign['type'],
-          startDate: c.start_date || '', endDate: c.end_date || '',
-          rules: c.rules || '', imageNotes: (c as any).image_notes || '', postsPerDay: c.posts_per_day || 1,
-          enabled: !!c.enabled, createdAt: c.created_at || new Date().toISOString(),
+          startDate: c.startDate || '', endDate: c.endDate || '',
+          rules: c.rules || '', imageNotes: c.imageNotes || '', postsPerDay: c.postsPerDay || 1,
+          enabled: !!c.enabled, createdAt: c.createdAt || new Date().toISOString(),
+          brief: c.brief, briefSummary: c.briefSummary, briefStatus: c.briefStatus,
+          briefUpdatedAt: c.briefUpdatedAt, briefSources: c.briefSources,
         })));
       } catch { setCampaigns([]); }
     };
@@ -1215,6 +1367,16 @@ const Dashboard: React.FC = () => {
   // those live on activeClientWorkspace.reelCredits). The "effective" balance
   // below picks the right one based on whether a client workspace is active.
   const [userReelCredits, setUserReelCredits] = useState<number>(0);
+  // schema_v13 — per-user feature overrides. Keyed by feature name; values:
+  //   true  = explicit grant (overrides plan default)
+  //   false = explicit revoke (overrides plan default)
+  //   missing key → fall through to CLIENT.plans[].includes default
+  // Set by admin via /api/admin/users/:id/addons; consumed by the Posters
+  // tab gate below + (eventually) other addon-eligible feature gates.
+  const [userAddonFeatures, setUserAddonFeatures] = useState<Record<string, boolean>>({});
+  // Lifetime add-on credits (admin-gifted or future purchased credit packs),
+  // additive on top of the plan's monthly poster quota.
+  const [userPosterCredits, setUserPosterCredits] = useState<number>(0);
   // Modal state — opened from the Settings video toggle / Plan & Billing tab
   // to let any user (Starter through Agency) buy a one-off credit pack.
   const [showCreditPackModal, setShowCreditPackModal] = useState(false);
@@ -1599,7 +1761,14 @@ const Dashboard: React.FC = () => {
         autopilotMode,
         (phase) => setSmartGenPhase(phase),
         undefined,
-        activeCampaigns.map(c => ({ name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate, rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay })),
+        activeCampaigns.map(c => ({
+          name: c.name, type: c.type, startDate: c.startDate, endDate: c.endDate,
+          rules: c.rules, imageNotes: c.imageNotes, postsPerDay: c.postsPerDay,
+          // Persisted research brief (schema_v12 + agentic-campaigns). When
+          // present, generateSmartSchedule consumes this directly instead of
+          // re-running the (broken) live web-fetch every time.
+          brief: c.brief, briefSummary: c.briefSummary,
+        })),
         activeClientId,
       );
       if (result.posts.length === 0 && result.strategy.startsWith('Error:')) {
@@ -1944,6 +2113,42 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  /**
+   * Kick off the agentic-campaign research pass.
+   *
+   * Called from the textarea onBlur AND from the explicit "Re-research"
+   * button. Idempotent — if rules is empty or whitespace, no-ops (the worker
+   * also rejects but we save a round trip). Sets researchingCampaignId so the
+   * UI can show the spinner on the right card, then drops the worker's
+   * returned brief straight into campaigns[] state.
+   *
+   * Uses optimistic local status='researching' so the UI doesn't blink even
+   * if the network is slow to start.
+   */
+  const runCampaignResearch = async (campaignId: string) => {
+    const c = campaigns.find(x => x.id === campaignId);
+    if (!c || !c.rules?.trim()) return;
+    setResearchingCampaignId(campaignId);
+    setCampaigns(prev => prev.map(x => x.id === campaignId ? { ...x, briefStatus: 'researching' } : x));
+    try {
+      const updated = await db.researchCampaign(campaignId);
+      setCampaigns(prev => prev.map(x => x.id === campaignId ? {
+        ...x,
+        brief: updated.brief,
+        briefSummary: updated.briefSummary,
+        briefStatus: updated.briefStatus,
+        briefUpdatedAt: updated.briefUpdatedAt,
+        briefSources: updated.briefSources,
+      } : x));
+    } catch (e: any) {
+      console.warn('[campaign-research] request failed:', e?.message || e);
+      setCampaigns(prev => prev.map(x => x.id === campaignId ? { ...x, briefStatus: 'failed' } : x));
+      toast('Campaign research failed — try again in a moment.', 'error');
+    } finally {
+      setResearchingCampaignId(null);
+    }
+  };
+
   const handleScanPastPosts = async () => {
     if (!hasApiKey) { return; } // hasApiKey is always true; kept for type-safety
     setIsScanningPosts(true);
@@ -2077,6 +2282,11 @@ const Dashboard: React.FC = () => {
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
+    // Posters tab — visible to everyone (including trial users with no plan)
+    // so Poster Maker shows up as a discoverable feature; the tab itself
+    // renders an upsell pitch when the user's plan doesn't include posters,
+    // and the worker still 403s mutating endpoints as defence-in-depth.
+    { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
@@ -2148,6 +2358,13 @@ const Dashboard: React.FC = () => {
   }
 
   return (
+    // BrandKitProvider scopes the poster brand kit to the active workspace
+    // (NULL = own workspace, clientId = an Agency-plan client). The Posters
+    // tab and any consumer of useBrandKit() reads from this context, so the
+    // editor's overrides follow whichever workspace Steve has switched into.
+    // authMode='clerk' on the main site; portal-token auth path is wired the
+    // same way for white-label client portals.
+    <BrandKitProvider getToken={getApiToken} clientId={activeClientId} authMode={authMode}>
     <div className="min-h-full bg-[#0a0a0f] flex flex-col">
       {/* Video Script Lightbox */}
       {videoScriptModal && (
@@ -4334,7 +4551,12 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
 
-                {/* Recommendations */}
+                {/* Recommendations — each rec carries an AI-proposed 1-click
+                    action (schema: type + label + payload) that dispatches to
+                    a contextual handler instead of the old generic "Create
+                    Post / Schedule" buttons. Falls back to the legacy buttons
+                    for older insight reports persisted before the action field
+                    was added. */}
                 <div className="space-y-2.5">
                   <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Recommendations</h3>
                   {insightReport.recommendations.map((rec, i) => {
@@ -4351,27 +4573,36 @@ const Dashboard: React.FC = () => {
                             <p className="text-xs text-white/45 mt-0.5 leading-relaxed">{rec.detail}</p>
                           </div>
                         </div>
-                        <div className="flex gap-2 mt-3 ml-10">
-                          <button
-                            onClick={() => {
-                              setTopic(`${rec.title}: ${rec.detail}`);
+                        <div className="ml-10 mt-3">
+                          <RecommendationActionButton
+                            rec={rec}
+                            onGeneratePost={(topic, angle) => {
+                              setTopic(angle ? `${topic} — angle: ${angle}` : topic);
                               setActiveTab('smart'); setSmartSubMode('quickpost');
-                              toast('Recommendation loaded — hit Generate in Quick Post!', 'success');
+                              toast('Loaded into Quick Post — hit Generate to write it.', 'success');
                             }}
-                            className="flex items-center gap-1.5 text-xs font-bold text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-xl transition"
-                          >
-                            <Wand2 size={11} /> Create Post
-                          </button>
-                          <button
-                            onClick={() => {
-                              setTopic(`${rec.title}: ${rec.detail}`);
+                            onShiftPillars={(newPillars, replacing) => {
+                              const existing = (profile.contentTopics || '').split(',').map(s => s.trim()).filter(Boolean);
+                              const removed = (replacing || []).map(r => r.toLowerCase());
+                              const kept = existing.filter(p => !removed.some(r => p.toLowerCase().includes(r) || r.includes(p.toLowerCase())));
+                              const merged = Array.from(new Set([...newPillars, ...kept])).slice(0, 8);
+                              const next = { ...profile, contentTopics: merged.join(', ') };
+                              setProfile(next);
+                              localStorage.setItem('sai_profile', JSON.stringify(next));
+                              db.upsertUser({ profile: next }).catch(() => {});
+                              setActiveTab('smart');
+                              toast(`Content focus updated to ${merged.length} pillars — run Smart Schedule to apply.`, 'success');
+                            }}
+                            onEditProfile={(field, hint) => {
+                              setActiveTab('settings');
+                              toast(`Open the ${field} field in Settings — suggested change: ${hint || rec.detail}`, 'info');
+                            }}
+                            onGenerateTest={(topic, style) => {
+                              setTopic(`${topic} — style: ${style}. Test post for engagement A/B.`);
                               setActiveTab('smart'); setSmartSubMode('quickpost');
-                              toast('Recommendation loaded — generate and schedule your post!', 'success');
+                              toast(`Test post loaded (${style}) — generate and schedule.`, 'success');
                             }}
-                            className="flex items-center gap-1.5 text-xs font-bold text-amber-300/70 hover:text-amber-300 bg-amber-500/8 hover:bg-amber-500/15 border border-amber-500/15 hover:border-amber-500/25 px-3 py-1.5 rounded-xl transition"
-                          >
-                            <Calendar size={11} /> Schedule
-                          </button>
+                          />
                         </div>
                       </div>
                     );
@@ -4444,6 +4675,114 @@ const Dashboard: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* ═══ POSTERS TAB ═══ — Poster Maker. Lazy-loaded module + its own
+            R2-backed gallery + per-workspace brand kit. Auth/workspace flow
+            inherited via BrandKitProvider higher up the tree.
+            Tab is visible to everyone (discoverability); the render here
+            branches between the real PosterManager and an upsell pitch based
+            on whether the user's plan includes posters. Worker still 403s
+            mutating endpoints as defence-in-depth. */}
+        {activeTab === 'posters' && (() => {
+          // Resolution order (must match worker lib/pricing.ts userHasFeature):
+          //   1. Per-user override grants posters → ALLOW
+          //   2. Per-user override revokes posters → DENY
+          //   3. Else → plan tier default
+          //   4. Admin always sees the editor (for support / QA)
+          //   5. Per-user lifetime credits also unlock (e.g. Street Meatz on
+          //      Starter with 5 admin-gifted credits — even if Starter normally
+          //      had no posters, the gifted credits should let them in).
+          const overrideGrant = userAddonFeatures.posters === true;
+          const overrideRevoke = userAddonFeatures.posters === false;
+          const planDefault = !!CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters;
+          const hasAccess = (overrideGrant || (planDefault && !overrideRevoke) || userPosterCredits > 0 || isAdminMode);
+          if (hasAccess) {
+            return (
+              <Suspense fallback={
+                <div className="flex items-center justify-center py-24 text-white/30">
+                  <Loader2 size={28} className="animate-spin text-amber-400" />
+                  <span className="ml-3 text-sm">Loading Poster Maker…</span>
+                </div>
+              }>
+                <PosterManager activeClientId={activeClientId} authMode={authMode} />
+              </Suspense>
+            );
+          }
+          // Upsell pitch — find the cheapest plan that DOES include posters and
+          // pre-select it for the upgrade CTA so a click goes straight to the
+          // right plan card in the pricing modal. Same setPricingDefaultPlan
+          // pattern the trial-paywall uses.
+          const upsellTarget = CLIENT.plans.find(p => p.includes?.posters)?.id ?? null;
+          const targetPlanCfg = upsellTarget ? CLIENT.plans.find(p => p.id === upsellTarget) : null;
+          return (
+            <div className="max-w-3xl mx-auto pt-8 pb-16 space-y-8">
+              <div className="text-center space-y-3">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30">
+                  <ImageIcon size={26} className="text-amber-400" />
+                </div>
+                <h2 className="text-3xl font-black text-white">Poster Maker</h2>
+                <p className="text-sm text-white/45 max-w-lg mx-auto leading-relaxed">
+                  AI-generated poster artwork with your brand kit baked in — flyers, event posters, promo tiles. Save to a gallery, download or schedule alongside your social posts.
+                </p>
+              </div>
+
+              <div className="rounded-3xl border border-amber-500/25 bg-gradient-to-br from-amber-500/10 via-orange-500/8 to-transparent p-6 sm:p-8">
+                <div className="flex items-start gap-3 mb-5">
+                  <Lock size={18} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <h3 className="text-base font-bold text-white">Not included on your current plan</h3>
+                    <p className="text-xs text-white/50 mt-1">
+                      {activePlan
+                        ? <>You're on <span className="text-white/80 font-semibold capitalize">{activePlan}</span>. Upgrade to {targetPlanCfg?.name ?? 'a poster-included plan'} to unlock the editor.</>
+                        : <>Pick a plan to start using Poster Maker.</>}
+                    </p>
+                  </div>
+                </div>
+
+                {targetPlanCfg && (
+                  <ul className="space-y-2 mb-6 text-xs text-white/60">
+                    {(targetPlanCfg.features || [])
+                      .filter((f: string) => /poster/i.test(f))
+                      .slice(0, 1)
+                      .map((f: string, i: number) => (
+                        <li key={i} className="flex items-center gap-2">
+                          <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    <li className="flex items-center gap-2">
+                      <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                      <span>Brand kit editor — palette, voice, presets, QR defaults</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                      <span>AI poster artwork (1:1, 9:16, 16:9)</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle size={13} className="text-amber-400 flex-shrink-0" />
+                      <span>Schedule posters alongside your social calendar</span>
+                    </li>
+                  </ul>
+                )}
+
+                <button
+                  onClick={() => {
+                    if (upsellTarget) setPricingDefaultPlan(upsellTarget);
+                    setShowPricing(true);
+                  }}
+                  className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
+                >
+                  {targetPlanCfg ? `Upgrade to ${targetPlanCfg.name}` : 'See plans'}
+                  <ArrowRight size={16} />
+                </button>
+              </div>
+
+              <p className="text-center text-xs text-white/30">
+                Already on a plan that should include posters? <a href={`mailto:${CLIENT.supportEmail}`} className="text-amber-400/70 hover:text-amber-400 transition">Contact support</a>
+              </p>
+            </div>
+          );
+        })()}
 
         {/* ═══ CLIENTS TAB ═══ */}
         {activeTab === 'clients' && (
@@ -5306,30 +5645,30 @@ const Dashboard: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-white">What's a Campaign?</p>
                   <p className="text-xs text-white/45 mt-1 leading-relaxed">
-                    A campaign is a <strong className="text-white/70">date range with a goal</strong>. Once you add one,
-                    every post the AI writes between those dates will weave that goal in automatically — countdowns,
-                    themes, calls-to-action — without you needing to write it yourself.
+                    A campaign is a <strong className="text-white/70">date range with a goal</strong> — and a small AI agent
+                    that researches it for you. Drop in a URL or describe what you want promoted; the agent reads the page,
+                    figures out the angles, and weaves them into every scheduled post in the window automatically.
                   </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pl-12">
                 <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                  <p className="text-[10px] font-bold text-amber-300/80">Promote a website</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Promote pennywiseit.com.au — focus on the new AI tools page."</p>
+                </div>
+                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Run a sale</p>
-                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"20% off all sessions May 15–25 — use urgent language as we count down."</p>
+                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"20% off all sessions May 15–25 — urgent tone as we count down."</p>
                 </div>
                 <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Promote an event</p>
                   <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Sunshine Coast workshop on June 14 — drive bookings, mention limited spots."</p>
                 </div>
-                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
-                  <p className="text-[10px] font-bold text-amber-300/80">Seasonal push</p>
-                  <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Mother's Day gift voucher — May 1–12, gentle nostalgic tone."</p>
-                </div>
               </div>
               <p className="text-[10px] text-white/25 pl-12 leading-relaxed">
-                <strong className="text-white/40">How it works:</strong> click "Add Campaign", set a start &amp; end date,
-                write a sentence telling the AI what to focus on. That's it — your next batch of scheduled posts will
-                pick it up. Add as many campaigns as you want; if dates overlap, the AI blends them.
+                <strong className="text-white/40">How it works:</strong> click "Add Campaign", set the dates, and write a
+                sentence (drop in a URL if you have one). The agent will reply with what it found and how it'll position
+                the campaign. Add as many as you want — overlapping windows blend.
               </p>
             </div>
 
@@ -5382,15 +5721,94 @@ const Dashboard: React.FC = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] text-white/30 block mb-1">Campaign Rules / Instructions for AI</label>
+                    <label className="text-[10px] text-white/30 block mb-1">What should the AI agent focus on?</label>
                     <textarea
                       value={c.rules}
-                      onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value } : x))}
-                      onBlur={async () => { await db.updateCampaign(c.id, { rules: c.rules }); }}
-                      placeholder="e.g. Mention our grand opening event, use festive language, include countdown..."
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/20 resize-none h-16"
+                      onChange={(e) => setCampaigns(prev => prev.map(x => x.id === c.id ? { ...x, rules: e.target.value, briefStatus: x.briefStatus === 'ready' ? 'idle' : x.briefStatus } : x))}
+                      onBlur={async () => {
+                        const trimmed = c.rules?.trim() || '';
+                        await db.updateCampaign(c.id, { rules: c.rules });
+                        // Auto-trigger research if there's enough text and we
+                        // haven't already researched this exact rules. The
+                        // worker also dedupes via brief_status='researching'
+                        // optimism but this saves a round-trip.
+                        if (trimmed.length >= 10 && c.briefStatus !== 'researching' && c.briefStatus !== 'ready') {
+                          runCampaignResearch(c.id);
+                        }
+                      }}
+                      placeholder="e.g. Promote pennywiseit.com.au — focus on the new AI tools page. Or: 20% off May 15–25, urgent countdown tone."
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/20 resize-none h-20"
                     />
                   </div>
+
+                  {/* Research panel — agentic-campaign reply. Renders one of:
+                       researching | ready | failed | idle (with rules)
+                       Hidden entirely if rules is empty (nothing to research). */}
+                  {c.rules?.trim().length >= 10 && (
+                    <div className="bg-black/20 border border-amber-500/15 rounded-xl p-3 space-y-2">
+                      {c.briefStatus === 'researching' || researchingCampaignId === c.id ? (
+                        <div className="flex items-center gap-2 text-xs text-amber-300/80">
+                          <Loader2 size={12} className="animate-spin" />
+                          <span>Reading your brief, fetching any URLs, building the angle…</span>
+                        </div>
+                      ) : c.briefStatus === 'ready' ? (
+                        <>
+                          <div className="flex items-start gap-2">
+                            <Sparkles size={12} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-white/70 leading-relaxed">{c.briefSummary || 'Brief ready.'}</p>
+                              {(c.briefSources?.length ?? 0) > 0 && (
+                                <p className="text-[10px] text-white/30 mt-1 truncate">
+                                  Read: {c.briefSources!.map(s => s.ok ? (s.title || new URL(s.url).hostname) : `${new URL(s.url).hostname} (failed)`).join(' · ')}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={() => setExpandedBrief(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                              className="text-[10px] text-amber-400/70 hover:text-amber-400 transition flex items-center gap-1"
+                            >
+                              <ChevronRight size={10} className={`transition-transform ${expandedBrief[c.id] ? 'rotate-90' : ''}`} />
+                              {expandedBrief[c.id] ? 'Hide brief' : 'View full brief'}
+                            </button>
+                            <button
+                              onClick={() => runCampaignResearch(c.id)}
+                              className="text-[10px] text-white/30 hover:text-amber-400 transition flex items-center gap-1"
+                            >
+                              <RefreshCw size={10} /> Re-research
+                            </button>
+                          </div>
+                          {expandedBrief[c.id] && c.brief && (
+                            <pre className="text-[10px] text-white/55 whitespace-pre-wrap font-sans bg-black/30 border border-white/5 rounded-lg p-3 max-h-64 overflow-y-auto leading-relaxed">{c.brief}</pre>
+                          )}
+                        </>
+                      ) : c.briefStatus === 'failed' ? (
+                        <div className="flex items-start gap-2">
+                          <AlertCircle size={12} className="text-red-400 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-red-300/80">Research failed — the agent couldn't reach the URL or hit a snag.</p>
+                            <button
+                              onClick={() => runCampaignResearch(c.id)}
+                              className="text-[10px] text-amber-400/70 hover:text-amber-400 transition mt-1 flex items-center gap-1"
+                            >
+                              <RefreshCw size={10} /> Try again
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-white/30">Agent hasn't researched this yet.</p>
+                          <button
+                            onClick={() => runCampaignResearch(c.id)}
+                            className="text-[10px] text-amber-400/80 hover:text-amber-400 transition flex items-center gap-1"
+                          >
+                            <Sparkles size={10} /> Run research
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               <button
@@ -5643,6 +6061,7 @@ const Dashboard: React.FC = () => {
         </div>
       </footer>
     </div>
+    </BrandKitProvider>
   );
 };
 

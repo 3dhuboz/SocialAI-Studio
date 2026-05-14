@@ -259,6 +259,12 @@ export const CLIENT = {
       limitations: ['Text posts only — no AI images'],
       color: 'from-blue-500 to-indigo-600',
       badge: null,
+      // Per-plan feature gates. Drives sidebar tab visibility (e.g. the Posters
+      // tab only renders when includes.posters is true) and the worker's
+      // poster routes use the same source-of-truth via PLAN_INCLUDES_POSTERS.
+      // White-label client configs in src/client.configs/* omit this field
+      // entirely so their portals don't surface SocialAI-only features.
+      includes: { posters: true },
     },
     {
       id: 'growth' as const,
@@ -279,6 +285,7 @@ export const CLIENT = {
       limitations: [],
       color: 'from-amber-500 to-orange-500',
       badge: 'Most Popular',
+      includes: { posters: true },
     },
     {
       id: 'pro' as const,
@@ -303,6 +310,7 @@ export const CLIENT = {
       // Pro and Agency are unbadged so the eye picks one Most Popular plan
       // instead of bouncing between competing badges (decoy effect — Ariely).
       badge: null,
+      includes: { posters: true },
     },
     {
       id: 'agency' as const,
@@ -325,6 +333,7 @@ export const CLIENT = {
       limitations: [],
       color: 'from-emerald-500 to-teal-600',
       badge: 'For Agencies',
+      includes: { posters: true },
     },
   ],
 };

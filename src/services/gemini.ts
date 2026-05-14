@@ -433,12 +433,18 @@ Write like an actual local, not like a Sydney agency or a US tech blog.
 // the model sees "hands" as a strong contextual cue). Hence the steaming
 // pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
 // `negative_prompt` and respects it properly when guidance_scale ≥ 5.
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene';
 
 // Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
 // negatives live in the dedicated field. The worker's tripwire still checks
 // for "candid iPhone" so we keep that token; the rest is style direction.
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+//
+// Lighting bias: defaults to BRIGHT natural daylight after a customer flagged
+// outputs trending too dark/moody. AI-picked moody lighting is fine for tone-
+// specific campaigns (countdown, scarcity) but the default pull should be
+// bright + airy so feeds stay scrollable. The negative-prompt list also calls
+// out "dark", "underexposed", "shadows" to push back at the diffusion bias.
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
 
 // People-mention regex — defense-in-depth scrub of positive prompts.
 // The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
@@ -818,6 +824,22 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 4. EVERY POST MUST NAME A REAL THING from BRAND CONTEXT — an actual
    product, service, or location explicitly listed below. If you can't
    tie the post to something specific in BRAND CONTEXT, the post is wrong.
+
+5. NEVER NAME UNDERLYING TECH, VENDORS, OR PROVIDERS.
+   The customer doesn't need to know — and explicitly does not want to
+   know — what powers the product behind the scenes. NEVER write phrases
+   like:
+     ✗ "powered by fal.ai FLUX"
+     ✗ "(powered by Anthropic / OpenAI / Claude / GPT / Gemini)"
+     ✗ "uses OpenRouter / Stable Diffusion / DALL-E / Midjourney"
+     ✗ "built on Cloudflare Workers / D1 / R2"
+     ✗ "our LLM / our model / our neural network"
+   Even if the BRAND CONTEXT mentions an underlying vendor, STRIP it from
+   the post. Speak about the FEATURE the customer experiences, not the
+   plumbing under it.
+     ✓ "AI image generation tailored to your caption" — fine
+     ✗ "AI image generation (powered by fal.ai FLUX)" — forbidden
+   Same rule for vendor parenthetical asides — drop them entirely.
 
 ═══════════════════════════════════════════════════════════════════
 
@@ -1451,10 +1473,45 @@ export const generateRecommendations = async (businessName: string, businessType
   }
 };
 
+/** A 1-click action attached to a recommendation. The Insights UI renders a
+ *  contextual button per action type and dispatches to the matching handler.
+ *
+ *  Action types (extend cautiously — frontend handler must exist):
+ *    'generate-post'   — prefill Quick Post with topic + angle, take user there.
+ *    'shift-pillars'   — propose a content-pillar update, save to profile, then
+ *                        run a fresh Smart Schedule.
+ *    'view-checklist'  — open an inline checklist modal (no AI). For non-AI
+ *                        recs like "audit page visibility".
+ *    'edit-profile'    — switch to Settings + scroll to a specific field.
+ *    'generate-test'   — generate one experimental post in a different style
+ *                        as a discrete A/B test, schedule for next slot.
+ *
+ *  payload shape varies per type — kept loose to avoid a versioning mess. */
+export interface RecommendationAction {
+  type: 'generate-post' | 'shift-pillars' | 'view-checklist' | 'edit-profile' | 'generate-test';
+  label: string; // e.g. "Generate sample post" — drives the button label
+  /** Loose payload. Examples per type:
+   *    generate-post:   { topic: string, angle: string }
+   *    shift-pillars:   { newPillars: string[], replacing?: string[] }
+   *    view-checklist:  { items: string[] }
+   *    edit-profile:    { field: 'description' | 'targetAudience' | 'productsServices' | 'tone', hint?: string }
+   *    generate-test:   { topic: string, style: string } */
+  payload?: Record<string, unknown>;
+}
+
+export interface InsightRecommendation {
+  title: string;
+  detail: string;
+  priority: 'high' | 'medium' | 'low';
+  /** schema_v? — actionable 1-click. Optional for backward-compat with older
+   *  insight reports persisted before the action field was added. */
+  action?: RecommendationAction;
+}
+
 export interface InsightReport {
   summary: string;
   score: number;
-  recommendations: Array<{ title: string; detail: string; priority: 'high' | 'medium' | 'low' }>;
+  recommendations: InsightRecommendation[];
   bestTimes: Array<{ platform: string; slots: string[] }>;
   contentFocus: Array<{ topic: string; reason: string }>;
   quickWin: string;
@@ -1488,23 +1545,43 @@ Return ONLY this exact JSON structure, no markdown:
   "summary": "2-3 sentence plain-English overview of their current social media health and biggest opportunity",
   "score": <integer 1-100 representing overall social media health>,
   "recommendations": [
-    { "title": "short action title", "detail": "1-2 sentence specific explanation", "priority": "high" },
-    { "title": "...", "detail": "...", "priority": "medium" },
-    { "title": "...", "detail": "...", "priority": "low" }
+    {
+      "title": "short action title",
+      "detail": "1-2 sentence specific explanation",
+      "priority": "high",
+      "action": { /* see ACTION SCHEMA below — REQUIRED on every rec */ }
+    }
   ],
   "bestTimes": [
     { "platform": "Facebook", "slots": ["Tuesday 12–1pm", "Thursday 7–8pm", "Sunday 9–10am"] },
     { "platform": "Instagram", "slots": ["Wednesday 11am–12pm", "Friday 5–6pm", "Saturday 8–9am"] }
   ],
   "contentFocus": [
-    { "topic": "topic name", "reason": "why this will perform well for this business" },
-    { "topic": "...", "reason": "..." },
-    { "topic": "...", "reason": "..." }
+    { "topic": "topic name", "reason": "why this will perform well for this business" }
   ],
   "quickWin": "One single action they can do TODAY to immediately improve engagement"
-}`;
+}
 
-    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 1500, responseFormat: 'json' });
+ACTION SCHEMA (every recommendation MUST include an "action" object — pick the type that best fits the recommendation):
+
+  { "type": "generate-post",   "label": "Generate sample post", "payload": { "topic": "<one-line topic>", "angle": "<the specific reframe / hook the rec proposes>" } }
+    Use when the rec is "write a post about X" or "shift content to Y angle".
+
+  { "type": "shift-pillars",   "label": "Apply new content focus", "payload": { "newPillars": ["pillar 1", "pillar 2", "pillar 3"], "replacing": ["pillar A", "pillar B"] } }
+    Use when the rec is structural (e.g. "stop posting about features, post about outcomes"). The button SAVES new pillars to the business profile.
+
+  { "type": "view-checklist",  "label": "Open audit checklist", "payload": { "items": ["step 1 — concrete action", "step 2 — concrete action", "step 3"] } }
+    Use when the rec needs the human to do something OFFLINE (audit page settings, contact a customer, set up a tool). 3-7 concrete steps.
+
+  { "type": "edit-profile",    "label": "Update business description", "payload": { "field": "description" | "targetAudience" | "productsServices" | "tone", "hint": "<one-line suggested change>" } }
+    Use when the rec is fundamentally a profile / positioning fix.
+
+  { "type": "generate-test",   "label": "Schedule a test post", "payload": { "topic": "<topic>", "style": "<style descriptor: question, micro-story, behind-the-scenes, customer-pain, etc.>" } }
+    Use when the rec is "try a different style" — generates one experimental post for A/B comparison.
+
+Pick the action type that ACTUALLY MAKES THE REC ACTIONABLE — don't default to checklists. If the rec is "write more pain-point posts", use generate-post with a concrete topic/angle; don't use a checklist that says "think about pain points".`;
+
+    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 2000, responseFormat: 'json' });
     return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
@@ -1553,23 +1630,43 @@ Return ONLY this exact JSON, no markdown:
   "summary": "2-3 sentence plain-English overview of their actual social media performance based on the real data, mentioning specific numbers",
   "score": <integer 1-100 representing overall social media health based on real engagement>,
   "recommendations": [
-    { "title": "short action title based on real patterns found", "detail": "specific 1-2 sentence advice citing the actual data", "priority": "high" },
-    { "title": "...", "detail": "...", "priority": "medium" },
-    { "title": "...", "detail": "...", "priority": "low" }
+    {
+      "title": "short action title based on real patterns found",
+      "detail": "specific 1-2 sentence advice citing the actual data",
+      "priority": "high",
+      "action": { "type": "<one of: generate-post|shift-pillars|view-checklist|edit-profile|generate-test>", "label": "<button label>", "payload": { /* type-specific — see ACTION SCHEMA below */ } }
+    }
   ],
   "bestTimes": [
     { "platform": "Facebook", "slots": ["inferred from post timestamps of top performing posts"] },
     { "platform": "Instagram", "slots": ["recommended times based on their audience patterns"] }
   ],
   "contentFocus": [
-    { "topic": "topic pattern found in top posts", "reason": "why this is working for this business based on the data" },
-    { "topic": "...", "reason": "..." },
-    { "topic": "...", "reason": "..." }
+    { "topic": "topic pattern found in top posts", "reason": "why this is working for this business based on the data" }
   ],
   "quickWin": "One specific action based on the data patterns — e.g. replicate the approach of the top post"
-}`;
+}
 
-    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 1500, responseFormat: 'json' });
+ACTION SCHEMA (every recommendation MUST include an "action" object — pick the type that best fits):
+
+  { "type": "generate-post",   "label": "Generate sample post", "payload": { "topic": "<one-line topic>", "angle": "<the specific reframe / hook the rec proposes>" } }
+    Use when the rec is "write a post about X" or "shift content to Y angle".
+
+  { "type": "shift-pillars",   "label": "Apply new content focus", "payload": { "newPillars": ["pillar 1", "pillar 2", "pillar 3"], "replacing": ["pillar A", "pillar B"] } }
+    Use when the rec is structural (e.g. "stop posting about features, post about outcomes"). The button SAVES new pillars to the business profile.
+
+  { "type": "view-checklist",  "label": "Open audit checklist", "payload": { "items": ["step 1 — concrete action", "step 2", "step 3"] } }
+    Use when the rec needs the human to do something OFFLINE (audit page settings, contact a customer, etc.). 3-7 concrete steps.
+
+  { "type": "edit-profile",    "label": "Update business description", "payload": { "field": "description" | "targetAudience" | "productsServices" | "tone", "hint": "<one-line suggested change>" } }
+    Use when the rec is fundamentally a profile / positioning fix.
+
+  { "type": "generate-test",   "label": "Schedule a test post", "payload": { "topic": "<topic>", "style": "<style descriptor>" } }
+    Use when the rec is "try a different style" — generates one experimental post for A/B comparison.
+
+Pick the type that ACTUALLY MAKES THE REC ACTIONABLE. If the rec is "write more pain-point posts", use generate-post with a concrete topic/angle; don't use a checklist.`;
+
+    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 2000, responseFormat: 'json' });
     return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
@@ -1741,7 +1838,13 @@ export const generateSmartSchedule = async (
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
   onPhase?: (phase: 'researching' | 'writing') => void,
   campaignFocus?: string,
-  activeCampaigns?: { name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number }[],
+  activeCampaigns?: {
+    name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number;
+    // Persisted agentic-research brief (schema_v12). When present, the
+    // post-writer uses this directly — skip the live researchCampaignFocus
+    // call which was silently returning empty (worker route was missing).
+    brief?: string; briefSummary?: string;
+  }[],
   /** When provided, AI is restricted to citing only these scraped FB facts. */
   clientId?: string | null,
 ): Promise<{ posts: SmartScheduledPost[]; strategy: string }> => {
@@ -1959,6 +2062,21 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
       console.log('[Campaign Research] Brief generated:', campaignBrief.substring(0, 200));
     }
 
+    // If activeCampaigns carry pre-computed briefs (agentic-campaigns
+    // schema_v12), prefer those over the live researchCampaignFocus call.
+    // Concatenate so multiple overlapping campaigns each contribute their
+    // angles. This is the durable, deterministic path — the live call above
+    // stays as a fallback for the legacy single-string `campaignFocus` arg.
+    if (!campaignBrief && activeCampaigns?.length) {
+      const persistedBriefs = activeCampaigns
+        .filter(c => c.brief && c.brief.trim().length > 50)
+        .map(c => `## Campaign: ${c.name}\n${c.briefSummary ? `> ${c.briefSummary}\n\n` : ''}${c.brief}`);
+      if (persistedBriefs.length) {
+        campaignBrief = persistedBriefs.join('\n\n────────\n\n');
+        console.log('[Campaign Research] Using', persistedBriefs.length, 'persisted brief(s) — total chars:', campaignBrief.length);
+      }
+    }
+
     // ── Build structured campaign rules block (from Campaigns feature) ──
     let structuredCampaignBlock = '';
     if (activeCampaigns && activeCampaigns.length > 0) {
@@ -2082,10 +2200,11 @@ ABSOLUTE RULES:
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
 7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
-7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself writing "laptop on desk" for the third time, STOP and pick a totally different scene from the examples above.
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (DEFAULT to bright daylight; only pick golden hour / moody / soft window when the post tone explicitly calls for it). If you catch yourself reaching for the same fallback (notepad on a desk, laptop on a desk, coffee cup beside a planner, generic workspace flatlay) for ANY post in this batch, STOP and pick a totally different scene — outdoor, in-situ, in-action — from the examples above.
 8. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, location, or audience. Write like a human, not a press release.
 9. SPECIFICITY MANDATE: Each post MUST contain at least ONE of: (a) a named product/service, (b) a specific measurable outcome, or (c) a location reference. Vague posts must be rewritten.
 10. BANNED PHRASES — never use: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition". Rewrite with concrete specifics.
+10b. NEVER NAME TECH VENDORS, MODELS, OR INFRASTRUCTURE the customer doesn't need to see. Forbidden: "fal.ai", "FLUX", "OpenAI", "GPT", "Claude", "Anthropic", "Gemini", "DALL-E", "Midjourney", "Stable Diffusion", "OpenRouter", "Cloudflare Workers", "D1", "R2", "our LLM", "our model", "powered by [vendor]". Even if the brand context mentions them, STRIP them from the post — speak about the FEATURE the customer experiences, not the plumbing. Vendor parentheticals like "(powered by …)" are forbidden in all forms.
 11. NO FAKE URGENCY — Only use countdown language if a real ACTIVE CAMPAIGN with specific dates was listed above. Never invent campaigns or deadlines.
 
 Respond with ONLY a valid JSON object — no markdown, no code fences:
@@ -2134,11 +2253,12 @@ RULES:
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
 7. imagePrompt: MUST name the EXACT product from this post — pick from these compositions: ${getImagePromptExamples(effectiveBusinessType)}. Format: "[exact product name] on [specific surface], [lighting], [camera angle]". NEVER use vague words like "produce", "items", "products", "goods", "delicious food". NEVER include people, hands, faces. ${bd.imagePromptAvoid}
-7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (golden hour, moody, bright daylight, neon, soft window). If you catch yourself reusing the same scene, STOP and pick a totally different one from the examples above.
+7b. VISUAL VARIETY MANDATE — across this batch of ${postsToGenerate} posts, NO TWO imagePrompts may share the same composition, subject framing, or setting. Rotate through DIFFERENT camera angles (overhead, side, macro, wide, action), DIFFERENT subjects (single item, group, environment, detail, abstract), and DIFFERENT lighting (DEFAULT to bright daylight; only pick golden hour / moody / soft window when the post tone explicitly calls for it). If you catch yourself reaching for the same fallback (notepad on a desk, laptop on a desk, coffee cup beside a planner, generic workspace flatlay) for ANY post in this batch, STOP and pick a totally different scene — outdoor, in-situ, in-action — from the examples above.
 8. reasoning: cite the exact research finding that informed this post's time, day, pillar, and format choice.
 9. ANTI-GENERIC: Every sentence must earn its place. Reference specific products, services, location details, or audience insights. Write like a real human talking to friends, not a corporate press release.
 10. SPECIFICITY MANDATE: Each post MUST name a real product/service/feature from the business context above, OR reference the business's actual location. Generic sentences that could apply to any business must be rewritten or cut. DO NOT invent statistics — only cite numbers if they appear verbatim in the business context.
 11. BANNED PHRASES — never use any of these: "Engage with your audience!", "Check out our website!", "Want to boost your [anything]?", "Visit our website for more tips!", "Let [product] handle the rest!", "In today's digital age", "As a business owner", "Stay ahead of the competition", "Take your [X] to the next level", "We're excited to announce". If you catch yourself writing these, stop and rewrite with a concrete specific detail instead.
+11b. NEVER NAME TECH VENDORS, MODELS, OR INFRASTRUCTURE the customer doesn't need to see. Forbidden: "fal.ai", "FLUX", "OpenAI", "GPT", "Claude", "Anthropic", "Gemini", "DALL-E", "Midjourney", "Stable Diffusion", "OpenRouter", "Cloudflare Workers", "D1", "R2", "our LLM", "our model", "powered by [vendor]". Even if the brand context mentions them, STRIP them from the post — speak about the FEATURE the customer experiences, not the plumbing. Vendor parentheticals like "(powered by …)" are forbidden in all forms.
 12. NO FAKE URGENCY — Only use countdown language ("Only X days left!", "X days to go!") if a real ACTIVE CAMPAIGN with specific start/end dates was listed in the business context above. Never invent campaigns, deadlines, or limited-time offers.
 13. NO INVENTED CUSTOMERS — You have ZERO testimonials, reviews, or customer stories. NEVER write phrases like "A local cafe in [city] said...", "Rockhampton owner saw...", "One of our happy clients...", "A customer told us...", or any fake testimonial signature like "Sarah J., Brisbane". You don't have these — don't make them up.
 14. NO INVENTED STATISTICS — You have ZERO analytics data. NEVER write "increased by X%", "saved X hours", "X% boost", "Xx more leads", "over X clients", or any other invented number. Every number you write must already appear in the business context above. When in doubt, write the qualitative benefit instead ("helps you post consistently" not "increases engagement by 30%").

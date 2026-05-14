@@ -25,23 +25,52 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
-import { POSTER_QUOTA_PER_MONTH } from '../lib/pricing';
+import { POSTER_QUOTA_PER_MONTH, PLAN_INCLUDES_POSTERS, userHasFeature } from '../lib/pricing';
 
 const uuid = () => crypto.randomUUID();
 
 const POSTER_MAX_BYTES = 5 * 1024 * 1024;
 const POSTER_BRAND_KIT_MAX_BYTES = 64 * 1024;
 
-// Fallback when the user row has no plan set (legacy users, in-trial sign-ups
-// before billing settles). Treat as the floor tier — matches reel-credit
-// behaviour for un-paid accounts.
-const DEFAULT_PLAN_FOR_QUOTA = 'starter';
-
 /** Normalise the workspace id read from ?clientId= or body — '' means own. */
 function normalizeClientId(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const trimmed = String(raw).trim();
   return trimmed ? trimmed : null;
+}
+
+/**
+ * Plan-tier + per-user override gate for poster mutations. Frontend hides
+ * the tab via CLIENT.plans[].includes.posters PLUS the per-user override;
+ * this is the matching server-side guard so a curl'd request from a trial /
+ * non-included plan still gets rejected.
+ *
+ * Resolution order (see lib/pricing.ts userHasFeature):
+ *   1. users.addon_features.posters === true  → GRANTED
+ *   2. users.addon_features.posters === false → REVOKED
+ *   3. else → plan tier default (PLAN_INCLUDES_POSTERS)
+ *
+ * Read-only endpoints (gallery, image stream, usage) intentionally don't gate
+ * here — a user who downgrades after creating posters can still see/delete
+ * what they already made. Only CREATE actions are blocked.
+ */
+async function readUserPlanAndAddons(
+  db: D1Database,
+  uid: string,
+): Promise<{ plan: string | null; addonFeatures: string | null; posterCredits: number }> {
+  const row = await db
+    .prepare('SELECT plan, addon_features, poster_credits FROM users WHERE id = ?')
+    .bind(uid)
+    .first<{ plan: string | null; addon_features: string | null; poster_credits: number | null }>();
+  return {
+    plan: row?.plan || null,
+    addonFeatures: row?.addon_features || null,
+    posterCredits: Number(row?.poster_credits ?? 0),
+  };
+}
+async function userMayUsePosters(db: D1Database, uid: string): Promise<boolean> {
+  const { plan, addonFeatures } = await readUserPlanAndAddons(db, uid);
+  return userHasFeature('posters', plan, addonFeatures);
 }
 
 /**
@@ -59,14 +88,23 @@ async function getPosterUsage(db: D1Database, userId: string): Promise<{
   used: number;
   quota: number;
   plan: string;
+  /** Lifetime admin-gifted/purchased credits, additive on top of plan quota. */
+  credits: number;
+  /** Whether the per-user override is granting posters (plan tier might not). */
+  hasAccess: boolean;
+  /** Plan-quota-only remaining (does NOT count credits). */
   remaining: number;
+  /** Total remaining including credits — what the UI should display. */
+  totalRemaining: number;
 }> {
-  const userRow = await db
-    .prepare('SELECT plan FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ plan: string | null }>();
-  const plan = userRow?.plan || DEFAULT_PLAN_FOR_QUOTA;
-  const quota = POSTER_QUOTA_PER_MONTH[plan] ?? POSTER_QUOTA_PER_MONTH[DEFAULT_PLAN_FOR_QUOTA];
+  const { plan, addonFeatures, posterCredits } = await readUserPlanAndAddons(db, userId);
+  // No fallback to starter here — a trial user (plan IS NULL) or a user on a
+  // plan that doesn't include posters gets quota=0, which surfaces as a
+  // first-class "upgrade required" state in the usage endpoint instead of
+  // silently giving them 3 free posters/month.
+  const planSafe = plan || 'none';
+  const planQuota = PLAN_INCLUDES_POSTERS.has(planSafe) ? POSTER_QUOTA_PER_MONTH[planSafe] : 0;
+  const hasAccess = userHasFeature('posters', plan, addonFeatures);
 
   const usageRow = await db
     .prepare(
@@ -76,8 +114,17 @@ async function getPosterUsage(db: D1Database, userId: string): Promise<{
     .bind(userId)
     .first<{ used: number }>();
   const used = Number(usageRow?.used ?? 0);
+  const remaining = Math.max(0, planQuota - used);
 
-  return { used, quota, plan, remaining: Math.max(0, quota - used) };
+  return {
+    used,
+    quota: planQuota,
+    plan: planSafe,
+    credits: posterCredits,
+    hasAccess,
+    remaining,
+    totalRemaining: remaining + posterCredits,
+  };
 }
 
 /** Row → API shape conversion. snake_case to camelCase + JSON-parse content. */
@@ -151,18 +198,29 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
-    // Quota gate — count-based, anchored to UTC start-of-month. Fails closed
-    // before we burn an R2 upload on a request the user can't redeem. 429
-    // (Too Many Requests) is semantically the closest standard code for
-    // "you've hit your plan ceiling, try next month or upgrade".
+    // Feature gate — fails closed before we touch the form data. Resolves
+    // plan tier default + per-user override (admin can grant/revoke posters
+    // independent of plan). Frontend mirrors this resolution.
+    if (!await userMayUsePosters(c.env.DB, uid)) {
+      return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
+    }
+
+    // Quota gate — anchored to UTC start-of-month. Plan quota first, then
+    // fall through to admin-gifted/purchased credits (lifetime carry-over).
+    // 429 (Too Many Requests) for the no-headroom case; the response carries
+    // both balances so the UI can show "0 monthly + 0 credits — upgrade".
     const usage = await getPosterUsage(c.env.DB, uid);
-    if (usage.used >= usage.quota) {
+    const usingCredit = usage.used >= usage.quota;
+    if (usingCredit && usage.credits === 0) {
       return c.json(
         {
-          error: `Monthly poster limit reached (${usage.used} of ${usage.quota} on the ${usage.plan} plan). Upgrade for more.`,
+          error: usage.quota > 0
+            ? `Monthly poster limit reached (${usage.used} of ${usage.quota} on the ${usage.plan} plan), and no add-on credits available. Upgrade or buy a credit pack.`
+            : `Your plan doesn't include posters and you have no add-on credits. Upgrade or ask your admin for credits.`,
           used: usage.used,
           quota: usage.quota,
           plan: usage.plan,
+          credits: usage.credits,
           remaining: 0,
         },
         429,
@@ -255,6 +313,18 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
       try { await c.env.POSTER_ASSETS.delete(r2Key); } catch { /* ignore */ }
       console.error('[posters] D1 insert failed:', e?.message || e);
       return c.json({ error: `D1 insert failed: ${e?.message || 'unknown'}` }, 500);
+    }
+
+    // Decrement add-on credit balance if this poster was paid for from
+    // credits rather than the monthly plan quota. SQLite doesn't have a
+    // CHECK on poster_credits ≥ 0 — we already gated above on `credits > 0`,
+    // and the GREATEST clamp here is belt-and-braces against a race where
+    // two concurrent posts both saw credits=1.
+    if (usingCredit) {
+      await c.env.DB
+        .prepare('UPDATE users SET poster_credits = MAX(0, poster_credits - 1) WHERE id = ?')
+        .bind(uid)
+        .run();
     }
 
     // Read back the row so the response carries the canonical created_at the DB
@@ -394,6 +464,9 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   app.put('/api/db/poster-brand-kit', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (!await userMayUsePosters(c.env.DB, uid)) {
+      return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
+    }
 
     const clientId = normalizeClientId(c.req.query('clientId')) ?? '';
 
@@ -443,6 +516,9 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (!await userMayUsePosters(c.env.DB, uid)) {
+      return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
+    }
 
     // Image gen is more expensive than text — lower rate-limit ceiling (10/min
     // per user) so a held-down Generate button can't burn through credits.
