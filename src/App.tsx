@@ -250,6 +250,7 @@ const DEFAULT_PROFILE: BusinessProfile = {
   targetAudience: '',
   uniqueValue: '',
   productsServices: '',
+  forbiddenSubjects: '',
   socialGoal: '',
   contentTopics: '',
   videoEnabled: false,
@@ -5400,6 +5401,25 @@ const Dashboard: React.FC = () => {
                     placeholder="Sourdough loaves, croissants, seasonal pastries, specialty coffee, breakfast plates, and custom celebration cakes by order."
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
+                </div>
+
+                {/* Q7b — Forbidden subjects denylist. Critical for businesses
+                    in a category with adjacent products they don't sell
+                    (e.g. brisket-only BBQ that never wants pork or chicken
+                    depicted). Defends across 4 layers: prompt injection,
+                    image-prompt example filter, vision critique HARD RULE,
+                    cron pre-publish word scan. See BusinessProfile docs. */}
+                <div>
+                  <label className="text-xs font-bold text-red-400/85 uppercase tracking-wider block mb-1">7b. Never depict / never mention (denylist)</label>
+                  <textarea
+                    value={profile.forbiddenSubjects || ''}
+                    onChange={e => setProfile(prev => ({ ...prev, forbiddenSubjects: e.target.value }))}
+                    placeholder="pork, chicken, lamb, seafood — subjects competitors might sell that you don't. Comma- or newline-separated."
+                    className="w-full bg-black/40 border border-red-500/20 rounded-xl px-3 py-3 text-white text-sm min-h-[58px] resize-none placeholder:text-white/20 focus:outline-none focus:border-red-500/50"
+                  />
+                  <p className="text-[10.5px] text-white/40 mt-1.5 leading-snug">
+                    Absolute exclusions. The AI will never mention these in captions, never include them in image prompts, and the cron will block any auto-publish where they slip through. Leave blank if not applicable.
+                  </p>
                 </div>
 
                 {/* Q8 — Social Goal pill selector */}

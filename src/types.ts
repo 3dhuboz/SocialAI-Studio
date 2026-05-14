@@ -83,6 +83,22 @@ export interface BusinessProfile {
   targetAudience: string;
   uniqueValue: string;
   productsServices: string;
+  /**
+   * Absolute "never depict, never mention" list — comma-separated subjects
+   * the AI must NOT include in captions, image prompts, or generated images
+   * for this business. Use for products competitors might sell that this
+   * business doesn't (e.g. a brisket-only BBQ writing "pork, chicken,
+   * lamb, seafood" here), or any subject that's been flagged by the owner
+   * as off-brand.
+   *
+   * Enforced at four layers: (1) caption gen prompt has an EXCLUSION
+   * MANDATE clause built from this list, (2) image-prompt gen is
+   * constrained to draw from productsServices instead of generic archetype
+   * examples, (3) vision critique gets the denylist as a HARD RULE that
+   * scores any forbidden subject 1-2, (4) pre-publish cron does a final
+   * regex scan and flags the post for review before going live.
+   */
+  forbiddenSubjects: string;
   socialGoal: string;
   contentTopics: string;
   videoEnabled: boolean;
