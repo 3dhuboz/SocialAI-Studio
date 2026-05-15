@@ -115,7 +115,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
               {filtered.map(post => {
                 const badge = statusBadge[post.status || 'Draft'] || statusBadge.Draft;
                 return (
-                  <div key={post.id} className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden hover:border-white/15 transition">
+                  <div key={post.id} className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden hover:border-white/15 transition-all card-hover">
                     {post.image_url ? (
                       <img src={post.image_url} alt="" className="w-full h-32 object-cover" />
                     ) : (
