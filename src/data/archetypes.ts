@@ -119,18 +119,23 @@ export const ARCHETYPES: Archetype[] = [
     description: 'Software products, marketing/social/creative agencies, IT consultancies, web designers, automation services, AI tools. Sells digital services or subscriptions. NO physical venue. Risk: AI defaults to SaaS-marketing tropes ("Ready to automate?", "Scale without scaling"); voice and imagery need active anchoring to the specific tool/service.',
     keywords: ['saas', 'software', 'tech', 'agency', 'marketing agency', 'social media agency', 'social media studio', 'creative studio', 'creative agency', 'web design', 'web designer', 'digital agency', 'consultancy', 'consulting', 'automation', 'it services', 'i.t.', 'ai tools', 'platform'],
     imageExamples: [
-      'matte black smartphone face-down on marble surface beside espresso cup, top-down, morning light',
-      'mechanical keyboard with backlit keys on a dark moody desk, candid close-up, no person',
-      'rack of glowing server hardware, abstract tech atmosphere, neon accents',
-      'aerial view of clean desk with notebook, pen, plant and closed laptop, beige aesthetic',
-      'coffee shop counter scene with laptop, latte and notebook, warm afternoon light, no person',
-      'creative wall of post-it notes in a bright office, daylight from window, candid texture',
-      'multi-screen agency desk with calendar view glowing softly, late evening, no person',
-      'whiteboard wall with kanban sticky-notes, daylight, creative studio atmosphere',
-      'abstract close-up of glowing fibre cables in dark room, blue+orange contrast',
-      'home office windowsill with plant, mug and a closed notebook at sunrise',
+      // Automation / hands-off theme — the tool works while nobody is watching
+      'matte black smartphone face-down beside a flat white coffee on a white marble surface, bright top-down daylight, no person',
+      'single closed notebook centred on a clean white desk, sharp morning light from the left, nothing else on the surface',
+      // Content planning / scheduling — organised posts, calendars, pillars
+      'weekly content planner spread open on a light desk with handwritten topics in each day box, bright overhead daylight, no person',
+      'corkboard filled with printed content cards pinned in columns, sticky-note dates, colour-coded labels, bright office light',
+      'printed monthly calendar page pinned flat on a desk with several dates circled in red marker, crisp overhead light',
+      // Small business context — the target customer, not a tech company
+      'small retail shop counter with a potted succulent and a closed notebook beside a takeaway coffee, warm daylight through a shopfront window',
+      'café bench at opening time — clean surface, single ceramic mug, blurred menu chalkboard in background, bright natural light',
+      // Brainstorm / strategy / ideas
+      'whiteboard with handwritten content pillar columns in coloured marker, clean bright studio, no person in frame',
+      'overhead flatlay of open notebook with handwritten brainstorm clusters, uncapped pen, and coffee mug, soft natural daylight',
+      // Output / consistency — the tangible result of automated posting
+      'neat stack of printed square social media post layouts on a white desk, overhead bright light, clean composition',
     ],
-    imageAvoidNotes: 'NEVER render UI mockups, dashboards, pricing tables, app screenshots, wireframes, or marketing graphics — these defeat the entire point of using FLUX (use real screenshots if you need UI). NEVER include people typing or "founders at whiteboard" — even hands break the aesthetic.',
+    imageAvoidNotes: 'NEVER render UI mockups, dashboards, pricing tables, app screenshots, wireframes, or marketing graphics. NEVER use dark, moody, neon, or underexposed lighting — every scene must be bright natural daylight. NEVER include people, hands, or faces. NEVER use server racks, fibre optic cables, or data-centre imagery — they look like infrastructure, not social media or small business. NO glowing screens or monitors.',
     voiceCues: 'Specific. Name the actual tool, the actual integration, the actual feature. Resist the urge to say "transform your business" — say what your tool does in the next 30 seconds. Pricing should be concrete, not "from competitive rates".',
     contentPillars: ['Feature Showcase', 'Workflow Tutorial', 'Customer Story (verified)', 'Behind the Build', 'Industry Take'],
     // SaaS-genre tropes that the global BANNED_PATTERNS already covers, but

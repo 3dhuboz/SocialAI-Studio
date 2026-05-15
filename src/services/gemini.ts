@@ -290,16 +290,16 @@ const getImagePromptExamples = (businessType: string): string => {
     // failures to the user. Replaced with brighter alternatives in the same
     // visual category (workspace / tech materials) so the pool stays varied
     // but every random pick produces a legible draft thumbnail.
-    "'matte black smartphone face-down on marble surface beside espresso cup, top-down, morning light'",
-    "'mechanical keyboard with white keycaps on a bright minimalist desk, candid close-up, no person'",
-    "'rows of glossy server tower casings against a clean white wall, soft daylight, no person'",
-    "'aerial view of clean desk with notebook, pen, plant and closed laptop, beige aesthetic'",
-    "'coffee shop counter scene with laptop, latte and notebook, warm afternoon light, no person'",
-    "'creative wall of post-it notes in a bright office, daylight from window, candid texture'",
-    "'macro of fibre optic cables coiled on a white surface, sharp focus, bright top-down studio light'",
-    "'home office windowsill with plant, mug and a closed notebook at sunrise'",
-    "'multi-screen agency desk with calendar view, soft morning daylight through window, no person'",
-    "'whiteboard wall with kanban sticky-notes, daylight, creative studio atmosphere'",
+    "'matte black smartphone face-down beside a flat white coffee on a white marble surface, bright top-down daylight, no person'",
+    "'single closed notebook centred on a clean white desk, sharp morning light from the left, nothing else on the surface'",
+    "'weekly content planner spread open on a light desk with handwritten topics in each day box, bright overhead daylight, no person'",
+    "'corkboard filled with printed content cards pinned in columns, sticky-note dates, colour-coded labels, bright office light'",
+    "'printed monthly calendar page pinned flat on a desk with several dates circled in red marker, crisp overhead light'",
+    "'small retail shop counter with a potted succulent and a closed notebook beside a takeaway coffee, warm daylight through a shopfront window'",
+    "'café bench at opening time — clean surface, single ceramic mug, blurred menu chalkboard in background, bright natural light'",
+    "'whiteboard with handwritten content pillar columns in coloured marker, clean bright studio, no person in frame'",
+    "'overhead flatlay of open notebook with handwritten brainstorm clusters, uncapped pen, and coffee mug, soft natural daylight'",
+    "'neat stack of printed square social media post layouts on a white desk, overhead bright light, clean composition'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('festival', 'event')) return [
