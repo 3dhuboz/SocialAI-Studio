@@ -113,7 +113,7 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
           return (
             <div
               key={agent.name}
-              className={`relative bg-white/3 border ${agent.border} rounded-2xl p-4 overflow-hidden group hover:bg-white/5 transition-all duration-300`}
+              className={`relative glass-card border ${agent.border} rounded-2xl p-4 overflow-hidden group card-hover transition-all duration-300`}
               style={{ boxShadow: `0 0 24px ${agent.glow}` }}
             >
               {/* Glow bg */}
@@ -136,7 +136,7 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
 
                 {/* Name + badge */}
                 <p className="text-sm font-black text-white leading-tight mb-0.5">{agent.name}</p>
-                <span className={`inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full border ${agent.badgeColor} mb-2`}>
+                <span className={`inline-flex text-[10px] font-bold px-2 py-0.5 rounded-xl border ${agent.badgeColor} mb-2`}>
                   {agent.badge}
                 </span>
 
@@ -162,14 +162,14 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
 
       {/* ── Live OpenRouter Stats (super-admin only) ── */}
       {isSuperAdmin && (
-        <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+        <div className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden">
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-white/6">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
             <div className="flex items-center gap-2.5">
               <div className={`w-2 h-2 rounded-full ${stats?.ok ? 'bg-green-400' : 'bg-red-400'} ${pulse ? 'scale-125' : ''} transition-transform`} />
               <p className="text-sm font-black text-white">OpenRouter Live Stats</p>
               {stats?.model && (
-                <span className="text-[10px] font-mono text-white/25 bg-white/5 px-2 py-0.5 rounded-full">{stats.model}</span>
+                <span className="text-[10px] font-mono text-white/25 bg-white/[0.05] px-2 py-0.5 rounded-lg">{stats.model}</span>
               )}
             </div>
             <div className="flex items-center gap-3">
@@ -209,7 +209,7 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
                   <span className="text-xs font-semibold text-green-300">API Key Active</span>
                 </div>
                 {stats.label && (
-                  <span className="text-[11px] text-white/30 bg-white/5 px-2 py-0.5 rounded-full font-mono">{stats.label}</span>
+                  <span className="text-[11px] text-white/30 bg-white/[0.05] px-2 py-0.5 rounded-lg font-mono">{stats.label}</span>
                 )}
                 {stats.isFreeTier && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25">
@@ -231,7 +231,7 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
                     </div>
                   </div>
                   {usedPct != null && (
-                    <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-white/[0.08] rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full transition-all duration-700"
                         style={{ width: `${usedPct}%` }}
@@ -288,7 +288,7 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
 const StatTile: React.FC<{ label: string; value: string; icon: React.ReactNode; sub?: string }> = ({
   label, value, icon, sub,
 }) => (
-  <div className="bg-white/4 border border-white/8 rounded-xl p-3">
+  <div className="glass-card border border-white/[0.08] rounded-xl p-3">
     <div className="flex items-center gap-1.5 mb-1.5">
       {icon}
       <span className="text-[10px] text-white/30 uppercase tracking-wider font-semibold">{label}</span>

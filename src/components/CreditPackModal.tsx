@@ -126,10 +126,10 @@ export const CreditPackModal: React.FC<Props> = ({ onClose, onPurchased, clientI
               <button
                 key={pack.id}
                 onClick={() => { setSelected(pack); setError(null); }}
-                className={`relative rounded-3xl border p-6 text-left transition-all ${
+                className={`relative rounded-3xl border p-6 text-left transition-all press ${
                   isSelected
                     ? 'border-purple-500/50 bg-purple-500/8 shadow-2xl ring-2 ring-purple-500/30'
-                    : 'border-white/10 bg-white/3 hover:border-white/20 hover:bg-white/5'
+                    : 'border-white/[0.08] glass-card hover:border-white/20 hover:bg-white/[0.06]'
                 }`}
               >
                 {pack.id === 'medium' && (

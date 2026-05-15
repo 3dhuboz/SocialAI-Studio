@@ -71,10 +71,10 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
           <p className="text-xs text-white/30">{allPosts.length} posts across {clients.length + 1} workspaces</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setTab('posts')} className={`text-xs font-bold px-4 py-2 rounded-xl border transition ${tab === 'posts' ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-white/3 border-white/10 text-white/40'}`}>
+          <button onClick={() => setTab('posts')} className={`text-xs font-bold px-4 py-2 rounded-xl border transition ${tab === 'posts' ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'glass-card border-white/[0.08] text-white/40'}`}>
             Posts
           </button>
-          <button onClick={() => setTab('connections')} className={`text-xs font-bold px-4 py-2 rounded-xl border transition ${tab === 'connections' ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-white/3 border-white/10 text-white/40'}`}>
+          <button onClick={() => setTab('connections')} className={`text-xs font-bold px-4 py-2 rounded-xl border transition ${tab === 'connections' ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'glass-card border-white/[0.08] text-white/40'}`}>
             Connections
           </button>
           <button onClick={onRefresh} disabled={isLoading} className="text-xs bg-white/5 border border-white/10 text-white/40 hover:text-white/60 px-3 py-2 rounded-xl transition flex items-center gap-1.5">
@@ -91,7 +91,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
             <Filter size={12} className="text-white/20" />
             {(['all', 'Scheduled', 'Posted', 'Missed'] as StatusFilter[]).map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
-                className={`text-[10px] font-bold px-2.5 py-1 rounded-full border transition ${statusFilter === s ? 'bg-amber-500/20 border-amber-500/30 text-amber-300' : 'bg-white/3 border-white/8 text-white/30 hover:text-white/50'}`}>
+                className={`text-[10px] font-bold px-2.5 py-1 rounded-full border transition ${statusFilter === s ? 'bg-amber-500/20 border-amber-500/30 text-amber-300' : 'glass-card border-white/[0.08] text-white/30 hover:text-white/50'}`}>
                 {s === 'all' ? `All (${counts.all})` : `${s} (${counts[s] || 0})`}
               </button>
             ))}
@@ -115,7 +115,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
               {filtered.map(post => {
                 const badge = statusBadge[post.status || 'Draft'] || statusBadge.Draft;
                 return (
-                  <div key={post.id} className="bg-[#111118] border border-white/8 rounded-2xl overflow-hidden hover:border-white/15 transition">
+                  <div key={post.id} className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden hover:border-white/15 transition">
                     {post.image_url ? (
                       <img src={post.image_url} alt="" className="w-full h-32 object-cover" />
                     ) : (
@@ -174,7 +174,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
           {[{ id: null, name: 'Own Workspace (Agency)', businessType: 'Agency', facebookConnected: ownWorkspace?.facebookConnected, facebookPageName: ownWorkspace?.facebookPageName }, ...clients].map((client: any) => {
             const isConnected = !!client.facebookConnected;
             return (
-              <div key={client.id || 'own'} className="bg-[#111118] border border-white/8 rounded-2xl p-4 space-y-3">
+              <div key={client.id || 'own'} className="glass-card border border-white/[0.08] rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-white">{client.name}</p>
