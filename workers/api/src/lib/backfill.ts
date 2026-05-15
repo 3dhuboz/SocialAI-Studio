@@ -17,6 +17,7 @@ import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
 import { generateImageWithBrandRefs } from './image-gen';
 import { callAnthropicVision } from './anthropic';
+import { loadForbiddenSubjects } from './profile-guards';
 
 export async function backfillImagesForUser(env: Env, uid: string) {
   const apiKey = env.FAL_API_KEY;
@@ -43,7 +44,10 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 
   // Schema v9: archetype is per-(user OR client). Cache by client_id within
   // this run so we don't hit the DB once per post for the same workspace.
+  // Same cache key shape is reused for the per-(user, client) denylist —
+  // the lookup is two D1 reads per workspace, cached across the batch.
   const archetypeCache = new Map<string, string | null>();
+  const denylistCache = new Map<string, string[]>();
 
   for (const post of posts) {
     try {
@@ -59,11 +63,20 @@ export async function backfillImagesForUser(env: Env, uid: string) {
         archetypeCache.set(cacheKey, await resolveArchetypeSlug(env, uid, clientId));
       }
       const archetypeSlug = archetypeCache.get(cacheKey) || null;
+      // Owner-declared denylist with per-client tier (CRITICAL #3 from the
+      // audit). Pre-fix this call was hardcoded to uid only, so an agency-
+      // managed client's own forbiddenSubjects was silently ignored at
+      // backfill time even though the prewarm cron honoured it. Now both
+      // tiers are union-ed and threaded through critiqueImageInternal.
+      if (!denylistCache.has(cacheKey)) {
+        denylistCache.set(cacheKey, await loadForbiddenSubjects(env, uid, clientId));
+      }
+      const forbiddenSubjects = denylistCache.get(cacheKey) || [];
 
       // 2026-05 image-stack upgrade: brand-grounded via FLUX Pro Kontext
       // when the workspace has scraped FB photos available, FLUX-dev when
       // it doesn't. See generateImageWithBrandRefs in lib/image-gen.ts.
-      const gen = await generateImageWithBrandRefs(env, uid, clientId, safe);
+      const gen = await generateImageWithBrandRefs(env, uid, clientId, safe, { caption });
       let finalUrl = gen.imageUrl;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
@@ -76,12 +89,13 @@ export async function backfillImagesForUser(env: Env, uid: string) {
           imageUrl: finalUrl,
           caption,
           archetypeSlug,
+          forbiddenSubjects,
         });
         if (critique) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
           finalCritique = critique;
           if (critique.score <= 3) {
-            const retry = await generateImageWithBrandRefs(env, uid, clientId, safe, { forceFallback: true });
+            const retry = await generateImageWithBrandRefs(env, uid, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
@@ -89,6 +103,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
                 imageUrl: retry.imageUrl,
                 caption,
                 archetypeSlug,
+                forbiddenSubjects,
               });
               if (retryCritique) finalCritique = retryCritique;
             }
@@ -187,8 +202,9 @@ export async function runBacklogCritique(
   let scored = 0;
   let lowScores = 0;
   let failed = 0;
-  // Cache archetype lookups within a tick — posts often share a workspace.
+  // Cache archetype + denylist lookups within a tick — posts often share a workspace.
   const archetypeCache = new Map<string, string | null>();
+  const denylistCache = new Map<string, string[]>();
 
   for (const post of posts) {
     let errorMsg: string | null = null;
@@ -200,15 +216,34 @@ export async function runBacklogCritique(
         archetypeCache.set(cacheKey, await resolveArchetypeSlug(env, post.user_id, post.client_id));
       }
       const archetypeSlug = archetypeCache.get(cacheKey) || null;
+      if (!denylistCache.has(cacheKey)) {
+        denylistCache.set(cacheKey, await loadForbiddenSubjects(env, post.user_id, post.client_id));
+      }
+      const forbiddenSubjects = denylistCache.get(cacheKey) || [];
 
       // We inline the Anthropic/OpenRouter calls (rather than delegating to
       // critiqueImageInternal) so each post can stamp the exact provider
       // error string into image_critique_reasoning — useful for diagnosing
       // backlog stalls via SELECT instead of `wrangler tail`. The system
       // prompt comes from the shared builder so the HARD RULES gate matches
-      // the user-initiated path; only the error-capture differs.
-      const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug);
+      // the user-initiated path; only the error-capture differs. Denylist
+      // threaded through so backlog rescore picks up the same intra-domain
+      // exclusions as the prewarm path.
+      const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug, forbiddenSubjects);
       const userPrompt = `Caption that will be published with this image:\n\n"${post.content.slice(0, 800)}"\n\nDoes the image match?`;
+
+      // Strict JSON validator — same rules as critiqueImageInternal. Returns
+      // null if any required field is missing/malformed so we don't synthesize
+      // fake 5/partial defaults that bypass the quality gate.
+      const validateCritique = (raw: any) => {
+        const score = raw?.score;
+        const match = raw?.match;
+        const reasoning = (raw?.reasoning ?? '').toString().trim();
+        if (typeof score !== 'number' || !isFinite(score)) return null;
+        if (!(['yes', 'partial', 'no'] as const).includes(match)) return null;
+        if (!reasoning) return null;
+        return { score: Math.max(0, Math.min(10, score)), match, reasoning: reasoning.slice(0, 300) };
+      };
 
       // Path A: Anthropic direct (only when key is set).
       if (env.ANTHROPIC_API_KEY) {
@@ -224,11 +259,12 @@ export async function runBacklogCritique(
             responseFormat: 'json',
           });
           const parsed = JSON.parse(text);
-          critique = {
-            score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
-            match: (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial',
-            reasoning: (parsed.reasoning || '').toString().slice(0, 300),
-          };
+          const validated = validateCritique(parsed);
+          if (validated) {
+            critique = validated;
+          } else {
+            errorMsg = `Anthropic: response missing required fields — ${text.slice(0, 180)}`;
+          }
         } catch (e: any) {
           errorMsg = `Anthropic: ${(e?.message || 'unknown').slice(0, 180)}`;
         }
@@ -276,11 +312,13 @@ export async function runBacklogCritique(
               .replace(/\s*```$/i, '')
               .trim();
             const parsed = JSON.parse(stripped);
-            critique = {
-              score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
-              match: (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial',
-              reasoning: (parsed.reasoning || '').toString().slice(0, 300),
-            };
+            const validated = validateCritique(parsed);
+            if (validated) {
+              critique = validated;
+            } else {
+              const orErr = `OpenRouter: response missing required fields — ${stripped.slice(0, 150)}`;
+              errorMsg = errorMsg ? `${errorMsg} | ${orErr}` : orErr;
+            }
           }
         } catch (e: any) {
           const orErr = `OpenRouter threw: ${(e?.message || 'unknown').slice(0, 150)}`;
@@ -392,13 +430,17 @@ export async function runBacklogRegen(
       if (!gen.imageUrl) { failed++; continue; }
 
       // Re-critique so the new score persists. Same archetype-sniff fallback
-      // as prewarm: DB → caption sniff → null.
+      // as prewarm: DB → caption sniff → null. Forbidden subjects threaded
+      // through so the regen verdict is held to the same intra-domain rule
+      // as the prewarm-time critique.
       let archetypeSlug = await resolveArchetypeSlug(env, post.user_id, post.client_id);
       if (!archetypeSlug) archetypeSlug = sniffArchetypeFromCaption(post.content);
+      const forbiddenSubjects = await loadForbiddenSubjects(env, post.user_id, post.client_id);
       const critique = await critiqueImageInternal(env, {
         imageUrl: gen.imageUrl,
         caption: post.content,
         archetypeSlug,
+        forbiddenSubjects,
       });
 
       if (critique) {

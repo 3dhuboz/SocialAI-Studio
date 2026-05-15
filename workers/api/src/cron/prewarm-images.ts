@@ -107,11 +107,13 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
           }
         }
 
-        // Owner-declared denylist passed through so the vision model can
-        // bite on intra-domain mismatches (e.g. pork shot for a brisket-
-        // only BBQ) — the cross-domain hard rules in critique.ts won't
-        // catch this on their own.
-        const forbiddenSubjects = await loadForbiddenSubjects(env, userId);
+        // Owner-declared denylist passed through with per-CLIENT tier
+        // (CRITICAL #3 fix). Previously this called loadForbiddenSubjects
+        // with userId only, which silently no-opped for agency-managed
+        // clients whose denylist lives on clients.profile — the exact
+        // Seamus brisket failure mode. The helper now unions user + client
+        // tiers so both surfaces apply.
+        const forbiddenSubjects = await loadForbiddenSubjects(env, userId, clientId);
 
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
@@ -143,6 +145,15 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
               }
             }
           }
+        } else if (env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY) {
+          // CRITICAL #9 — degraded mode logging. Critique provider was
+          // configured but every attempt returned null (provider outage,
+          // malformed response from upstream, etc.). Pre-fix this silently
+          // shipped the image with no gate. Now we leave score=NULL and
+          // stamp a clear reason so runBacklogCritique can re-attempt and
+          // an admin grepping image_critique_reasoning sees the outage.
+          console.warn(`[CRON prewarm] post ${postId} critique unavailable — providers configured but returned no verdict. Image will ship, backlog will rescore.`);
+          finalCritique = null; // explicit — fall through to the no-critique persist path below with outage reasoning
         }
       }
 
@@ -152,6 +163,16 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
             `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
              WHERE id = ?`
           ).bind(finalUrl, finalCritique.score, finalCritique.reasoning, new Date().toISOString(), postId).run();
+        } else if ((env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY) && caption.length > 20) {
+          // Critique was attempted but every provider returned null. Persist
+          // the outage marker into image_critique_reasoning so it surfaces
+          // in PostModal and admin tooling. image_critique_at intentionally
+          // stays NULL so runBacklogCritique still picks the post up on its
+          // next */5 sweep — this is the auto-recovery loop for the
+          // 3am-outage scenario.
+          await env.DB.prepare(
+            `UPDATE posts SET image_url = ?, image_critique_reasoning = ? WHERE id = ?`
+          ).bind(finalUrl, 'Critique provider unavailable at gen time — backlog will rescore', postId).run();
         } else {
           await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
             .bind(finalUrl, postId).run();

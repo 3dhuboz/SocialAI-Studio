@@ -24,6 +24,7 @@ import { generateImageWithBrandRefs } from '../lib/image-gen';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from '../lib/image-safety';
 import { tryCreateClerkUser, tryCreateCFPagesProject } from '../lib/provisioning';
 import { refreshFactsForWorkspace } from '../lib/facebook-facts';
+import { loadForbiddenSubjects } from '../lib/profile-guards';
 
 export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   // Backfill images for any Scheduled post that has an image_prompt but no image_url.
@@ -88,6 +89,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     let lowScores = 0;
     let failed = 0;
     const archetypeCache = new Map<string, string | null>();
+    const denylistCache = new Map<string, string[]>();
 
     for (const post of posts) {
       try {
@@ -96,11 +98,16 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
           archetypeCache.set(cacheKey, await resolveArchetypeSlug(c.env, uid, post.client_id));
         }
         const archetypeSlug = archetypeCache.get(cacheKey) || null;
+        if (!denylistCache.has(cacheKey)) {
+          denylistCache.set(cacheKey, await loadForbiddenSubjects(c.env, uid, post.client_id));
+        }
+        const forbiddenSubjects = denylistCache.get(cacheKey) || [];
 
         const critique = await critiqueImageInternal(c.env, {
           imageUrl: post.image_url,
           caption: post.content,
           archetypeSlug,
+          forbiddenSubjects,
         });
 
         if (critique) {
@@ -198,12 +205,16 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
 
         // Re-critique the new image so the persisted score reflects reality.
         // Same archetype-sniff fallback as prewarm: DB → caption → null.
+        // Forbidden subjects threaded through so the regen verdict honours
+        // intra-domain exclusions (Seamus brisket-only failure mode).
         let archetypeSlug = await resolveArchetypeSlug(c.env, uid, post.client_id);
         if (!archetypeSlug) archetypeSlug = sniffArchetypeFromCaption(post.content);
+        const forbiddenSubjects = await loadForbiddenSubjects(c.env, uid, post.client_id);
         const critique = await critiqueImageInternal(c.env, {
           imageUrl: gen.imageUrl,
           caption: post.content,
           archetypeSlug,
+          forbiddenSubjects,
         });
 
         if (critique) {
