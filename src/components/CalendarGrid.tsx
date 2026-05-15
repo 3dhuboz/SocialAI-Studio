@@ -150,7 +150,7 @@ export const CalendarGrid: React.FC<Props> = ({
               <button
                 key={idx}
                 onClick={() => setSelectedDay(date)}
-                className={`min-h-[64px] sm:min-h-[80px] p-1 sm:p-2 text-left border-b border-r border-white/5 transition relative
+                className={`min-h-[64px] sm:min-h-[80px] p-1 sm:p-2 text-left border-b border-r border-white/[0.05] transition relative
                   ${idx % 7 === 6 ? 'border-r-0' : ''}
                   ${idx >= 35 ? 'border-b-0' : ''}
                   ${isSelected ? 'bg-amber-500/8 border-amber-500/20 shadow-[inset_0_0_30px_rgba(245,158,11,0.05)]' : isCurrentMonth ? 'hover:bg-white/[0.04] hover:shadow-[inset_0_0_20px_rgba(255,255,255,0.02)]' : 'hover:bg-white/2'}
