@@ -716,6 +716,9 @@ export interface AdminCustomer {
   post_count: number;
   total_paid_cents: number;
   total_refunded_cents: number;
+  /** Raw addon_features JSON string — presence of explicit grants/revokes
+   *  shown as a chip on the customer row without needing to expand it. */
+  addon_features?: string | null;
 }
 
 export interface FlaggedPost {

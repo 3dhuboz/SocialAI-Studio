@@ -374,11 +374,19 @@ const AddonsPanel: React.FC<{ userId: string }> = ({ userId }) => {
     );
   }
 
-  // Tri-state for the Posters override: undefined = inherit-from-plan,
+  // Tri-state for feature overrides: undefined = inherit-from-plan,
   // true = explicit grant, false = explicit revoke.
   const postersOverride = (data.addonFeatures.posters === true) ? 'grant'
     : (data.addonFeatures.posters === false) ? 'revoke'
     : 'inherit';
+  const reelsOverride = (data.addonFeatures.reels === true) ? 'grant'
+    : (data.addonFeatures.reels === false) ? 'revoke'
+    : 'inherit';
+
+  // Plan defaults mirroring userHasFeature() in pricing.ts:
+  //   posters → all paid plans include it
+  //   reels   → all paid plans include it (no plan-tier gate yet)
+  const isPaidPlan = !!data.plan && ['starter','growth','pro','agency'].includes(data.plan);
 
   return (
     <div className="mt-4 pt-4 border-t border-white/[0.04] space-y-4">
@@ -387,34 +395,24 @@ const AddonsPanel: React.FC<{ userId: string }> = ({ userId }) => {
         {saving && <Loader2 size={12} className="animate-spin text-amber-400" />}
       </div>
 
-      {/* ── Posters feature override ──────────────────────────────────── */}
-      <div className="bg-black/20 border border-white/[0.06] rounded-xl p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-white">Posters access</p>
-            <p className="text-[10px] text-white/35">
-              Plan default: <span className="text-white/55">{data.plan && ['starter','growth','pro','agency'].includes(data.plan) ? 'included' : 'not included'}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-1 bg-black/30 rounded-lg p-0.5">
-            {(['inherit', 'grant', 'revoke'] as const).map(opt => (
-              <button
-                key={opt}
-                disabled={saving}
-                onClick={() => apply({
-                  addonFeatures: { posters: opt === 'inherit' ? null : opt === 'grant' },
-                })}
-                className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-md transition ${
-                  postersOverride === opt
-                    ? (opt === 'grant' ? 'bg-emerald-500/25 text-emerald-200' : opt === 'revoke' ? 'bg-rose-500/25 text-rose-200' : 'bg-white/15 text-white')
-                    : 'text-white/40 hover:text-white/70 hover:bg-white/5'
-                }`}
-              >
-                {opt === 'inherit' ? 'Inherit' : opt === 'grant' ? 'Grant' : 'Revoke'}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* ── Feature access overrides ─────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {/* Posters */}
+        <FeatureToggle
+          label="Posters access"
+          planDefault={isPaidPlan ? 'included' : 'not included'}
+          override={postersOverride}
+          saving={saving}
+          onChange={(opt) => apply({ addonFeatures: { posters: opt === 'inherit' ? null : opt === 'grant' } })}
+        />
+        {/* Reels */}
+        <FeatureToggle
+          label="Reels access"
+          planDefault={isPaidPlan ? 'included' : 'not included'}
+          override={reelsOverride}
+          saving={saving}
+          onChange={(opt) => apply({ addonFeatures: { reels: opt === 'inherit' ? null : opt === 'grant' } })}
+        />
       </div>
 
       {/* ── Poster credits ─────────────────────────────────────────────── */}
@@ -443,6 +441,46 @@ const AddonsPanel: React.FC<{ userId: string }> = ({ userId }) => {
     </div>
   );
 };
+
+// ──────────────────────────────────────────────────────────────────────────────
+// FeatureToggle — tri-state Inherit / Grant / Revoke control for a single
+// feature. Used for both Posters and Reels in the AddonsPanel.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const FeatureToggle: React.FC<{
+  label: string;
+  planDefault: string;
+  override: 'inherit' | 'grant' | 'revoke';
+  saving: boolean;
+  onChange: (opt: 'inherit' | 'grant' | 'revoke') => void;
+}> = ({ label, planDefault, override, saving, onChange }) => (
+  <div className="bg-black/20 border border-white/[0.06] rounded-xl p-3 space-y-2">
+    <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div>
+        <p className="text-xs font-semibold text-white">{label}</p>
+        <p className="text-[10px] text-white/35">
+          Plan default: <span className="text-white/55">{planDefault}</span>
+        </p>
+      </div>
+      <div className="flex items-center gap-1 bg-black/30 rounded-lg p-0.5 flex-shrink-0">
+        {(['inherit', 'grant', 'revoke'] as const).map(opt => (
+          <button
+            key={opt}
+            disabled={saving}
+            onClick={() => onChange(opt)}
+            className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-md transition ${
+              override === opt
+                ? (opt === 'grant' ? 'bg-emerald-500/25 text-emerald-200' : opt === 'revoke' ? 'bg-rose-500/25 text-rose-200' : 'bg-white/15 text-white')
+                : 'text-white/40 hover:text-white/70 hover:bg-white/5'
+            }`}
+          >
+            {opt === 'inherit' ? 'Inherit' : opt === 'grant' ? 'Grant' : 'Revoke'}
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
+);
 
 const CreditRow: React.FC<{
   label: string;
@@ -533,12 +571,25 @@ const CustomerRow: React.FC<{
           )}
         </div>
 
-        {/* Plan chip + status */}
+        {/* Plan chip + status + addon grant badges */}
         <div className="flex items-center md:items-start gap-2 md:gap-1.5 md:flex-col">
           <PlanChip label={planLabel} tone={planTone} />
           {c.setup_status && c.setup_status !== 'live' && (
             <span className="text-[10px] text-white/35 truncate">{c.setup_status}</span>
           )}
+          {/* Show small chips for any explicit feature overrides so Steve can
+              spot custom grants without expanding every row. */}
+          {(() => {
+            try {
+              const addons = c.addon_features ? JSON.parse(c.addon_features) : {};
+              const chips: React.ReactNode[] = [];
+              if (addons.posters === true)  chips.push(<span key="p" className="text-[9px] font-bold bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-full px-1.5 py-0.5">+Posters</span>);
+              if (addons.posters === false) chips.push(<span key="p" className="text-[9px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full px-1.5 py-0.5">–Posters</span>);
+              if (addons.reels === true)    chips.push(<span key="r" className="text-[9px] font-bold bg-violet-500/15 text-violet-300 border border-violet-500/25 rounded-full px-1.5 py-0.5">+Reels</span>);
+              if (addons.reels === false)   chips.push(<span key="r" className="text-[9px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full px-1.5 py-0.5">–Reels</span>);
+              return chips.length ? <div className="flex flex-wrap gap-1">{chips}</div> : null;
+            } catch { return null; }
+          })()}
         </div>
 
         {/* Signed up */}

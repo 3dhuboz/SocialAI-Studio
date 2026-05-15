@@ -182,6 +182,7 @@ export function registerAdminStatsRoutes(app: Hono<{ Bindings: Env }>): void {
           u.paypal_subscription_id,
           u.created_at,
           u.onboarding_done,
+          u.addon_features,
           (SELECT MAX(created_at) FROM posts WHERE user_id = u.id)            AS last_post_at,
           (SELECT COUNT(*)        FROM posts WHERE user_id = u.id)            AS post_count,
           (SELECT COALESCE(SUM(amount_cents),0)
