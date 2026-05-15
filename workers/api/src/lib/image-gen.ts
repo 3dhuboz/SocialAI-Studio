@@ -1,4 +1,4 @@
-// Brand-grounded image generation for fal.ai FLUX endpoints.
+// Image generation for fal.ai FLUX endpoints.
 //
 // Extracted from src/index.ts as Phase B step 7 of the route-module split
 // (see WORKER_SPLIT_PLAN.md). The single chokepoint that all internal
@@ -8,20 +8,19 @@
 //   1. resolveArchetypeSlug → look up workspace's classified archetype
 //   2. applyArchetypeGuardrails (or forced fallback) → ensure subject
 //      matches archetype before sending to FLUX
-//   3. Fetch top-N scraped FB photos for brand-grounded refs
-//   4. FLUX Pro Kontext (with refs) → falls back to FLUX-dev
+//   3. FLUX-dev (square_hd, 35 steps, guidance 7.0) → primary
 //
-// Routing logic:
-//   - If ≥1 photo: route to FLUX Pro Kontext with refs ($0.04/image,
-//     4 refs max). Generated image inherits brand colour palette,
-//     lighting, composition style — drops "every customer's images look
-//     identical because FLUX-dev defaults" failure mode.
-//   - If no photos (fresh workspace, no FB connection yet): fall back to
-//     FLUX-dev ($0.025/MP, no refs) — preserves current behaviour.
+// Why FLUX-dev and not FLUX Pro Kontext:
+//   Kontext is a multi-image EDITING model — it blends/edits the reference
+//   photos rather than generating from the text prompt. With guidance_scale
+//   3.5, the brand-ref FB photos dominated the output, producing blurry
+//   composites that looked like edited versions of random Facebook posts.
+//   The text prompt (and therefore the post topic) had almost zero influence.
+//   FLUX-dev is the correct text-to-image model: clear subject, bright and
+//   well-exposed output, full negative_prompt support, strong prompt adherence
+//   at guidance_scale 7.0.
 //
-// Returns { imageUrl, modelUsed, referencesUsed } so cron logs can audit
-// cost + verify the brand-grounded path actually fires for users who
-// should get it.
+// Returns { imageUrl, modelUsed, referencesUsed } so cron logs can audit.
 
 import type { Env } from '../env';
 import {
@@ -52,21 +51,7 @@ export async function generateImageWithBrandRefs(
 ): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
-  // Both DB reads are independent — run in parallel to cut one sequential
-  // round-trip per image-gen call. archetypeSlug → prompt guardrail;
-  // photoRows → brand-ref URLs for FLUX Pro Kontext.
-  const [archetypeSlugRaw, photoRowsResult] = await Promise.all([
-    resolveArchetypeSlug(env, userId, clientId),
-    env.DB.prepare(
-      `SELECT metadata FROM client_facts
-       WHERE user_id = ? AND COALESCE(client_id, '') = ? AND fact_type = 'photo'
-       ORDER BY engagement_score DESC, verified_at DESC
-       LIMIT 4`
-    ).bind(userId, clientId || '').all<{ metadata: string }>().catch((e: unknown) => {
-      console.warn(`[image-gen] brand-ref fetch failed for uid=${userId}:`, e);
-      return { results: [] };
-    }),
-  ]);
+  const archetypeSlugRaw = await resolveArchetypeSlug(env, userId, clientId);
 
   // Schema v9: prefers clients.archetype_slug when clientId set, falls back
   // to users.archetype_slug. If both are NULL (workspace never classified),
@@ -105,43 +90,16 @@ export async function generateImageWithBrandRefs(
     }
   }
 
-  const referenceImageUrls: string[] = [];
-  for (const row of photoRowsResult.results || []) {
-    try {
-      const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-      if (meta?.url && typeof meta.url === 'string') referenceImageUrls.push(meta.url);
-    } catch { /* skip malformed metadata */ }
-  }
-
-  if (referenceImageUrls.length > 0) {
-    const res = await fetch('https://fal.run/fal-ai/flux-pro/kontext', {
-      method: 'POST', headers: authHeader,
-      body: JSON.stringify({
-        prompt: guarded.prompt,
-        image_urls: referenceImageUrls.slice(0, 4),
-        aspect_ratio: '1:1',
-        num_images: 1,
-        guidance_scale: 3.5,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json() as any;
-      const imageUrl = data?.images?.[0]?.url || null;
-      if (imageUrl) return { imageUrl, modelUsed: 'flux-pro-kontext', referencesUsed: referenceImageUrls.length, archetypeSlug };
-    }
-    console.warn(`[image-gen] flux-pro-kontext failed (status ${res.status}), falling back to flux-dev`);
-  }
-
   const res = await fetch('https://fal.run/fal-ai/flux/dev', {
     method: 'POST', headers: authHeader,
     body: JSON.stringify({
       prompt: guarded.prompt,
       negative_prompt: guarded.negativePrompt,
       image_size: 'square_hd',
-      num_inference_steps: 28,
+      num_inference_steps: 35,
       num_images: 1,
       enable_safety_checker: true,
-      guidance_scale: 5.0,
+      guidance_scale: 7.0,
     }),
   });
   const data = await res.json() as any;

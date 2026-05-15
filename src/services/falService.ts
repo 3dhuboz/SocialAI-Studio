@@ -62,24 +62,14 @@ export const FalService = {
   },
 
   /**
-   * Generate a marketing image via fal.ai. Returns a public image URL.
+   * Generate a marketing image via fal.ai FLUX Dev. Returns a public image URL.
    *
-   * 2026-05 image-stack upgrade: the worker auto-pulls the top scraped
-   * Facebook photos for the active workspace (from client_facts) and uses
-   * them as brand-reference images on FLUX Pro Kontext / Nano Banana Pro.
-   * Result: generated images share the business's actual visual style
-   * (lighting, palette, composition) instead of looking like stock photos.
+   * Routes through the worker's fal-proxy which applies archetype guardrails,
+   * negative-prompt safety, and full FLUX-dev quality settings (square_hd,
+   * 35 inference steps, guidance_scale 7.0).
    *
-   * Falls back to FLUX-dev when no scraped photos exist (fresh workspace,
-   * no FB connection yet) so the path is non-regressive.
-   *
-   * Optional clientId scopes the reference photos to that workspace —
-   * agency users generating for a specific client get THAT client's
-   * brand, not the agency's.
-   *
-   * The returned object also surfaces which model was used (`model_used`)
-   * and how many references were applied (`references_used`) so the UI
-   * can show a "brand-grounded ✓" badge when the upgrade path fires.
+   * Optional clientId scopes archetype detection to a specific client
+   * workspace — agency users get the correct per-client archetype guardrails.
    */
   generateImage: async (
     prompt: string,

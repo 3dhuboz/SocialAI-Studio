@@ -59,10 +59,9 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         // unclassified workspaces and cross-domain images ship unchecked.
         caption?: string | null;
         // forceModel: optional override for testing/UX. Acceptable values:
-        //   'flux-dev'           — original cheap baseline (no brand refs)
-        //   'flux-pro-kontext'   — brand-grounded ($0.04/img, max 4 refs)
-        //   'nano-banana-pro'    — premium brand-grounded ($0.15/img, max 14 refs)
-        forceModel?: 'flux-dev' | 'flux-pro-kontext' | 'nano-banana-pro';
+        //   'flux-dev'       — FLUX Dev baseline (default path, square_hd, 35 steps)
+        //   'nano-banana-pro' — Gemini 3 Pro Image with up to 14 brand refs ($0.15/img)
+        forceModel?: 'flux-dev' | 'nano-banana-pro';
       };
       if (!prompt) return c.json({ error: 'prompt is required' }, 400);
       if (!/candid iPhone/i.test(prompt)) {
