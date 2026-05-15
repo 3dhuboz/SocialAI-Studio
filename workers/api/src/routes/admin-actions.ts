@@ -293,10 +293,13 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
       'INSERT INTO clients (id, user_id, name, business_type, created_at, plan) VALUES (?,?,?,?,?,?)'
     ).bind(clientId, body.ownerUserId, body.businessName, body.businessType ?? null, new Date().toISOString(), plan).run();
 
+    // 30-day expiry on initial issuance — admin can re-issue indefinitely
+    // via PUT /api/db/portal/:slug to refresh the window (see portal.ts).
+    const portalExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     await c.env.DB.prepare(
-      `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id)
-       VALUES (?,?,?,?,?,?)`
-    ).bind(slug, body.autoLoginEmail, portalSecret, portalToken, body.ownerUserId, clientId).run();
+      `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id, expires_at)
+       VALUES (?,?,?,?,?,?,?)`
+    ).bind(slug, body.autoLoginEmail, portalSecret, portalToken, body.ownerUserId, clientId, portalExpiresAt).run();
 
     // Try to create the Clerk auto-login user. We already have CLERK_SECRET_KEY
     // configured (it's used everywhere for JWT verification) and the Backend

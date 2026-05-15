@@ -20,6 +20,7 @@
 // Plus the ArchetypeRow type for the business_archetypes table.
 
 import type { Env } from '../env';
+import { UNTRUSTED_CONTENT_DIRECTIVE } from './prompt-safety';
 
 export interface ArchetypeRow {
   slug: string;
@@ -151,7 +152,9 @@ Respond ONLY with valid JSON matching this exact shape:
   "archetype_slug": "<one of the slugs above>",
   "confidence": <number between 0 and 1>,
   "reasoning": "<one sentence>"
-}`;
+}
+
+${UNTRUSTED_CONTENT_DIRECTIVE}`;
 
     const orResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',

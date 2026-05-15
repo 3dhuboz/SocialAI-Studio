@@ -10,6 +10,12 @@ import { verifyToken } from '@clerk/backend';
 import type { Env } from './env';
 
 // ── Auth helper — verifies Clerk JWT or Portal token and returns userId ──
+//
+// Portal tokens (schema_v14, 2026-05): tokens carry expires_at / revoked_at /
+// last_used_at. A token authenticates only when expires_at is NULL (legacy)
+// or strictly in the future, AND revoked_at is NULL. last_used_at is
+// updated opportunistically (~1% sample rate) on each successful auth so we
+// keep an audit trail without hammering D1 on every request.
 export async function getAuthUserId(
   req: Request,
   secretKey: string,
@@ -23,8 +29,41 @@ export async function getAuthUserId(
   if (auth.startsWith('Portal ') && db) {
     const portalToken = auth.slice(7);
     try {
-      const row = await db.prepare('SELECT user_id FROM portal WHERE portal_token = ?').bind(portalToken).first<{ user_id: string }>();
-      return row?.user_id ?? null;
+      const row = await db.prepare(
+        `SELECT user_id, expires_at, revoked_at
+         FROM portal
+         WHERE portal_token = ?`
+      ).bind(portalToken).first<{
+        user_id: string;
+        expires_at: string | null;
+        revoked_at: string | null;
+      }>();
+      if (!row) return null;
+      // Revoked tokens are dead immediately — even if expires_at is in the future.
+      if (row.revoked_at) {
+        console.warn('[auth] portal token rejected: revoked');
+        return null;
+      }
+      // Expired tokens (set on issuance, schema_v14+). NULL = legacy pre-v14
+      // token; we accept those rather than locking existing portals out.
+      if (row.expires_at) {
+        const expiry = Date.parse(row.expires_at);
+        if (!isNaN(expiry) && expiry <= Date.now()) {
+          console.warn('[auth] portal token rejected: expired');
+          return null;
+        }
+      }
+      // Opportunistic audit write — ~1% sample to keep hot-path light. The
+      // first request after expiry/renewal will reliably update because the
+      // route that re-issued the token wrote last_used_at on issuance.
+      if (Math.random() < 0.01) {
+        try {
+          await db.prepare(
+            `UPDATE portal SET last_used_at = ? WHERE portal_token = ?`
+          ).bind(new Date().toISOString(), portalToken).run();
+        } catch { /* audit-only — never fail auth on this */ }
+      }
+      return row.user_id ?? null;
     } catch (e) {
       console.error('[auth] portal token lookup failed:', String(e));
       return null;
