@@ -49,21 +49,29 @@ export async function generateImageWithBrandRefs(
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
   options: { forceFallback?: boolean; caption?: string | null } = {},
-): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number }> {
+): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
-  // Archetype guardrail: look up the (client OR user) archetype and rewrite
-  // the prompt if it contains subjects forbidden for that archetype (e.g. a
-  // SaaS business's image_prompt drifted to "plated food on rustic wood
-  // board"). Schema v9: prefers clients.archetype_slug when clientId set,
-  // falls back to users.archetype_slug — so an agency owner running a food
-  // client gets food guardrails on that client's posts, not tech guardrails.
-  //
-  // If both the client and user have NULL archetype_slug (workspace never
-  // classified), fall back to sniffing the caption itself. This was the
-  // exact failure mode that produced food-on-SaaS posts in May 2026 —
-  // archetype was NULL, guardrails no-opped, retry no-opped, food shipped.
-  let archetypeSlug = await resolveArchetypeSlug(env, userId, clientId);
+  // Both DB reads are independent — run in parallel to cut one sequential
+  // round-trip per image-gen call. archetypeSlug → prompt guardrail;
+  // photoRows → brand-ref URLs for FLUX Pro Kontext.
+  const [archetypeSlugRaw, photoRowsResult] = await Promise.all([
+    resolveArchetypeSlug(env, userId, clientId),
+    env.DB.prepare(
+      `SELECT metadata FROM client_facts
+       WHERE user_id = ? AND COALESCE(client_id, '') = ? AND fact_type = 'photo'
+       ORDER BY engagement_score DESC, verified_at DESC
+       LIMIT 4`
+    ).bind(userId, clientId || '').all<{ metadata: string }>().catch((e: unknown) => {
+      console.warn(`[image-gen] brand-ref fetch failed for uid=${userId}:`, e);
+      return { results: [] };
+    }),
+  ]);
+
+  // Schema v9: prefers clients.archetype_slug when clientId set, falls back
+  // to users.archetype_slug. If both are NULL (workspace never classified),
+  // sniff from caption — prevents food-on-SaaS posts when archetype is unset.
+  let archetypeSlug = archetypeSlugRaw;
   if (!archetypeSlug && options.caption) {
     archetypeSlug = sniffArchetypeFromCaption(options.caption);
     if (archetypeSlug) {
@@ -74,8 +82,7 @@ export async function generateImageWithBrandRefs(
   let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };
   if (options.forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {
     // Critique-retry mode: skip the LLM prompt entirely, force a curated
-    // archetype scene. This is the last-resort path when the original gen
-    // failed vision critique.
+    // archetype scene. Last-resort path when the original gen failed critique.
     const fallback = ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug];
     if (!fallback.fallbackScenes || fallback.fallbackScenes.length === 0) {
       // Archetype registered but no fallback scenes defined — fall through to
@@ -98,22 +105,12 @@ export async function generateImageWithBrandRefs(
     }
   }
 
-  let referenceImageUrls: string[] = [];
-  try {
-    const photoRows = await env.DB.prepare(
-      `SELECT metadata FROM client_facts
-       WHERE user_id = ? AND COALESCE(client_id, '') = ? AND fact_type = 'photo'
-       ORDER BY engagement_score DESC, verified_at DESC
-       LIMIT 4`
-    ).bind(userId, clientId || '').all<{ metadata: string }>();
-    for (const row of photoRows.results || []) {
-      try {
-        const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
-        if (meta?.url && typeof meta.url === 'string') referenceImageUrls.push(meta.url);
-      } catch { /* skip */ }
-    }
-  } catch (e) {
-    console.warn(`[image-gen] brand-ref fetch failed for uid=${userId}:`, e);
+  const referenceImageUrls: string[] = [];
+  for (const row of photoRowsResult.results || []) {
+    try {
+      const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+      if (meta?.url && typeof meta.url === 'string') referenceImageUrls.push(meta.url);
+    } catch { /* skip malformed metadata */ }
   }
 
   if (referenceImageUrls.length > 0) {
@@ -130,7 +127,7 @@ export async function generateImageWithBrandRefs(
     if (res.ok) {
       const data = await res.json() as any;
       const imageUrl = data?.images?.[0]?.url || null;
-      if (imageUrl) return { imageUrl, modelUsed: 'flux-pro-kontext', referencesUsed: referenceImageUrls.length };
+      if (imageUrl) return { imageUrl, modelUsed: 'flux-pro-kontext', referencesUsed: referenceImageUrls.length, archetypeSlug };
     }
     console.warn(`[image-gen] flux-pro-kontext failed (status ${res.status}), falling back to flux-dev`);
   }
@@ -150,7 +147,7 @@ export async function generateImageWithBrandRefs(
   const data = await res.json() as any;
   if (!res.ok) {
     console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
-    return { imageUrl: null, modelUsed: 'flux-dev', referencesUsed: 0 };
+    return { imageUrl: null, modelUsed: 'flux-dev', referencesUsed: 0, archetypeSlug };
   }
-  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', referencesUsed: 0 };
+  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', referencesUsed: 0, archetypeSlug };
 }
