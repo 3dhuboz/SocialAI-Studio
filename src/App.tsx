@@ -2824,7 +2824,7 @@ const Dashboard: React.FC = () => {
           logo + nav clear the safe area; the dark backdrop fills the
           notch. Below it, the Tab Nav uses calc(env+64) to stick BELOW
           this header when scrolled. */}
-      <header id="app-header" className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/80 backdrop-blur-xl sticky top-0 z-40 noise" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <header id="app-header" className="bg-[var(--color-surface-0)]/95 backdrop-blur-2xl sticky top-0 z-40 border-b border-white/[0.05]" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
           <div className="flex items-center gap-3 min-w-0">
             {CLIENT.clientMode ? (
@@ -2865,22 +2865,22 @@ const Dashboard: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 text-xs flex-shrink-0">
             {fbConnected ? (
-              <span className="flex items-center gap-1.5 text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full border border-blue-500/20 whitespace-nowrap">
+              <span className="flex items-center gap-1.5 text-blue-400 bg-blue-500/10 px-2 py-1 rounded-xl border border-blue-500/20 whitespace-nowrap">
                 <Link2 size={12} /> {CLIENT.clientMode ? 'Connected' : 'Facebook Connected'}
               </span>
             ) : (
-              <span className="flex items-center gap-1.5 text-gray-500 bg-white/5 px-2.5 py-1 rounded-full border border-white/10 whitespace-nowrap">
+              <span className="flex items-center gap-1.5 text-gray-500 bg-white/5 px-2 py-1 rounded-xl border border-white/10 whitespace-nowrap">
                 <Link2Off size={12} /> {CLIENT.clientMode ? 'Not Connected' : 'Facebook Not Connected'}
               </span>
             )}
             {!CLIENT.clientMode && (
               <>
                 {hasApiKey ? (
-                  <span className="flex items-center gap-1.5 text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full border border-green-500/20 whitespace-nowrap">
+                  <span className="flex items-center gap-1.5 text-green-400 bg-green-500/10 px-2 py-1 rounded-xl border border-green-500/20 whitespace-nowrap">
                     <CheckCircle size={12} /> AI Active
                   </span>
                 ) : (
-                  <span className="text-yellow-400 bg-yellow-500/10 px-2.5 py-1 rounded-full border border-yellow-500/20 whitespace-nowrap">No API Key</span>
+                  <span className="text-yellow-400 bg-yellow-500/10 px-2 py-1 rounded-xl border border-yellow-500/20 whitespace-nowrap">No API Key</span>
                 )}
               </>
             )}
@@ -2957,19 +2957,19 @@ const Dashboard: React.FC = () => {
       </header>
 
       {/* Tab Nav — sticks BELOW the header (header is 64px + safe-area inset). */}
-      <nav className="border-b border-white/[0.06] bg-[var(--color-surface-0)]/60 backdrop-blur-lg sticky z-30" style={{ top: 'calc(env(safe-area-inset-top) + 64px)' }}>
-        <div className="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
+      <nav className="bg-[var(--color-surface-0)]/90 backdrop-blur-xl sticky z-30 border-b border-white/[0.05]" style={{ top: 'calc(env(safe-area-inset-top) + 64px)' }}>
+        <div className="max-w-6xl mx-auto px-3 flex gap-0.5 overflow-x-auto py-2" style={{ scrollbarWidth: 'none' }}>
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition whitespace-nowrap press ${
+              className={`flex items-center gap-2 px-3.5 py-2 text-sm rounded-xl transition-all duration-200 whitespace-nowrap press ${
                 activeTab === tab.id
-                  ? 'border-amber-400 text-amber-400 shadow-[0_2px_8px_rgba(245,158,11,0.3)]'
-                  : 'border-transparent text-gray-400 hover:text-white'
+                  ? 'bg-amber-500/12 border border-amber-500/20 text-amber-400 font-semibold shadow-[0_0_16px_rgba(245,158,11,0.12)]'
+                  : 'border border-transparent text-white/40 hover:text-white/80 hover:bg-white/[0.04] font-medium'
               }`}
             >
-              <tab.icon size={16} />
+              <tab.icon size={15} />
               {tab.label}
             </button>
           ))}
