@@ -61,7 +61,7 @@ export const TrialPaywall: React.FC<Props> = ({ posts, freeTrialPosts, onClose, 
           </button>
 
           {/* Header — celebrate the work, then frame the choice */}
-          <div className="relative px-6 sm:px-8 pt-10 pb-6 border-b border-white/5">
+          <div className="relative px-6 sm:px-8 pt-10 pb-6 border-b border-white/[0.05]">
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(245,158,11,0.18),transparent_70%)]" />
             <div className="relative max-w-xl mx-auto text-center">
               <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-full mb-5">
@@ -83,7 +83,7 @@ export const TrialPaywall: React.FC<Props> = ({ posts, freeTrialPosts, onClose, 
               just made these. The "keep them all when you upgrade" line is
               the implicit threat (and the explicit reassurance). */}
           {trialPosts.length > 0 && (
-            <div className="px-6 sm:px-8 py-6 border-b border-white/5">
+            <div className="px-6 sm:px-8 py-6 border-b border-white/[0.05]">
               <p className="text-[10px] font-bold text-white/35 uppercase tracking-wider text-center mb-4">
                 Your {trialPosts.length} trial post{trialPosts.length === 1 ? '' : 's'} — keep them all when you upgrade
               </p>
