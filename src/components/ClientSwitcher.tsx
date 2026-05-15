@@ -80,7 +80,7 @@ export const ClientSwitcher: React.FC<Props> = ({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-2 w-80 bg-[#1a1a2e] border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden">
+          <div className="absolute left-0 top-full mt-2 w-80 glass-strong border border-white/[0.10] rounded-2xl shadow-2xl z-50 overflow-hidden">
 
             {/* Header with slot usage */}
             <div className="px-4 py-3 border-b border-white/5">
