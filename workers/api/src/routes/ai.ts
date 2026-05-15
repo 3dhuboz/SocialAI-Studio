@@ -40,6 +40,20 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
     }
 
+    // BILLING GATE — block AI generation when payment has failed. The
+    // PayPal BILLING.SUBSCRIPTION.PAYMENT.FAILED webhook sets this column;
+    // PAYMENT.SALE.COMPLETED clears it. This prevents a user with a failed
+    // card from burning provider credits we can't recover from them.
+    const billingRow = await c.env.DB.prepare(
+      'SELECT subscription_status FROM users WHERE id = ?'
+    ).bind(uid).first<{ subscription_status: string | null }>();
+    if (billingRow?.subscription_status === 'past_due') {
+      return c.json({
+        error: 'Your subscription payment has failed. Please update your billing details to continue using AI generation.',
+        code: 'PAYMENT_PAST_DUE',
+      }, 402);
+    }
+
     let body: {
       prompt?: string;
       systemPrompt?: string;

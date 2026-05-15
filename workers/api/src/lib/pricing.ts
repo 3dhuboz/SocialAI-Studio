@@ -29,6 +29,17 @@ export const POSTER_QUOTA_PER_MONTH: Record<string, number> = {
   agency: 100,
 };
 
+// Weekly post-creation quota per plan. Enforced server-side in
+// routes/posts.ts (POST /api/db/posts, non-Draft posts only). Mirrors the
+// postsPerWeek limits in src/client.config.ts — keep them in sync.
+// null plan (trial) falls back to starter quota (7/week).
+export const POSTS_PER_WEEK: Record<string, number> = {
+  starter: 7,
+  growth: 14,
+  pro: 21,
+  agency: 21,
+};
+
 // Whether each plan tier includes Poster Maker access at all (vs. just a
 // monthly count). Today every paid plan does, but trial users (plan IS NULL
 // in D1) and any unrecognised plan are blocked. Frontend mirrors this with

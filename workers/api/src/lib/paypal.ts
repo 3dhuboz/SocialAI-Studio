@@ -277,5 +277,25 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
       // Don't throw — the audit row is already in. A failed grant won't
       // double-charge the customer; admin can manually credit if needed.
     }
+    // Successful payment — clear any past_due flag so AI generation
+    // resumes. Scoped to 'past_due' so we don't stomp a NULL unnecessarily.
+    try {
+      await c.env.DB.prepare(
+        `UPDATE users SET subscription_status = NULL WHERE id = ? AND subscription_status = 'past_due'`
+      ).bind(userId).run();
+    } catch { /* non-critical — gate will clear on next successful call */ }
+  }
+
+  // Failed payment — mark the user past_due so AI generation is gated
+  // until billing is resolved. Gates in routes/ai.ts check this column.
+  if (eventType === 'BILLING.SUBSCRIPTION.PAYMENT.FAILED' && userId) {
+    try {
+      await c.env.DB.prepare(
+        `UPDATE users SET subscription_status = 'past_due' WHERE id = ?`
+      ).bind(userId).run();
+      console.log(`[billing] user ${userId} marked past_due — payment failed`);
+    } catch (e: any) {
+      console.warn(`[billing] failed to mark user ${userId} past_due:`, e?.message);
+    }
   }
 }

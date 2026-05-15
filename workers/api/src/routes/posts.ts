@@ -21,6 +21,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId } from '../auth';
 import { classifyArchetypeFromFingerprint } from '../lib/archetypes';
+import { POSTS_PER_WEEK } from '../lib/pricing';
 
 const uuid = () => crypto.randomUUID();
 
@@ -105,6 +106,32 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json<Record<string, unknown>>();
+
+    // ── Weekly post quota (CRITICAL #4 server-side enforcement) ──────────────
+    // Drafts are exempt — only count posts the user intends to publish. The
+    // null-plan (trial) case falls back to starter (7/week) so trial users
+    // can explore but can't bulk-schedule without a subscription.
+    if (body.status !== 'Draft') {
+      const planRow = await c.env.DB.prepare(
+        'SELECT plan FROM users WHERE id = ?'
+      ).bind(uid).first<{ plan: string | null }>();
+      const plan = planRow?.plan ?? null;
+      const weeklyLimit = POSTS_PER_WEEK[plan ?? ''] ?? POSTS_PER_WEEK.starter;
+      const weekRow = await c.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM posts
+         WHERE user_id = ? AND status != 'Draft' AND created_at >= datetime('now', '-7 days')`
+      ).bind(uid).first<{ cnt: number }>();
+      if ((weekRow?.cnt ?? 0) >= weeklyLimit) {
+        return c.json({
+          error: `Weekly post limit reached (${weeklyLimit}/week on the ${plan ?? 'trial'} plan). Upgrade your plan or wait until next week.`,
+          code: 'WEEKLY_LIMIT_REACHED',
+          limit: weeklyLimit,
+          used: weekRow?.cnt ?? 0,
+          plan: plan ?? 'trial',
+        }, 429);
+      }
+    }
+
     const id = uuid();
     // v5 columns (video_url, video_status, video_request_id, video_started_at,
     // video_error, r2_video_key, audio_mixed_url) added at the end so existing
