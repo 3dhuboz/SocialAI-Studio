@@ -62,6 +62,30 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/db/clients', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+
+    // ── Agency client-count gate ───────────────────────────────────────────
+    // Only Agency-plan users may create client workspaces. Admins get a
+    // higher ceiling (matches the isAdminMode ? 10 : 5 logic in App.tsx).
+    const [userRow, countRow] = await Promise.all([
+      c.env.DB.prepare('SELECT plan, is_admin FROM users WHERE id = ?')
+        .bind(uid).first<{ plan: string | null; is_admin: number | null }>(),
+      c.env.DB.prepare('SELECT COUNT(*) as cnt FROM clients WHERE user_id = ?')
+        .bind(uid).first<{ cnt: number }>(),
+    ]);
+    const plan = userRow?.plan ?? null;
+    const isAdmin = !!userRow?.is_admin;
+    if (plan !== 'agency' && !isAdmin) {
+      return c.json({ error: 'Multi-client workspaces require the Agency plan.' }, 403);
+    }
+    const limit = isAdmin ? 10 : 5;
+    if ((countRow?.cnt ?? 0) >= limit) {
+      return c.json({
+        error: `Client limit reached (${limit} clients on the ${plan ?? 'agency'} plan).`,
+        code: 'CLIENT_LIMIT_REACHED',
+        limit,
+      }, 429);
+    }
+
     const body = await c.req.json<Record<string, unknown>>();
     const id = uuid();
     await c.env.DB.prepare(

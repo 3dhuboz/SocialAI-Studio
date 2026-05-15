@@ -186,7 +186,7 @@ export const CLIENT = {
    * exactly when they're trying to extract more value. Set to 0 to
    * disable the trial entirely.
    */
-  freeTrialPosts: 3,
+  freeTrialPosts: 7,
 
   /**
    * PAYPAL SETUP:
@@ -260,7 +260,7 @@ export const CLIENT = {
   ],
 
   /** Max client workspaces per agency account */
-  agencyClientLimit: 10,
+  agencyClientLimit: 5,
 
   /**
    * CLIENT MODE: set true on white-label sites deployed for end-clients.

@@ -1774,7 +1774,9 @@ const Dashboard: React.FC = () => {
   };
 
   // ── Smart Schedule ──
-  const handleSmartSchedule = async () => {
+  // overrideCount: used by onboarding to generate exactly 3 posts without
+  // changing the user's saved smartCount preference. undefined → use state.
+  const handleSmartSchedule = async (overrideCount?: number) => {
     // AI is always available server-side
     setIsSmartGenerating(true);
     setSmartGenPhase('researching');
@@ -1785,10 +1787,11 @@ const Dashboard: React.FC = () => {
       facebook: autopilotPlatform === 'both' || autopilotPlatform === 'facebook',
       instagram: autopilotPlatform === 'both' || autopilotPlatform === 'instagram',
     };
+    const effectiveCount = overrideCount !== undefined ? overrideCount : smartCount;
     try {
       const activeCampaigns = campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date());
       const result = await generateSmartSchedule(
-        profile.name, profile.type, profile.tone, stats, smartCount,
+        profile.name, profile.type, profile.tone, stats, effectiveCount,
         profile.location || 'Australia',
         platformsObj,
         saturationMode,
@@ -2606,6 +2609,10 @@ const Dashboard: React.FC = () => {
           userEmail={user?.email ?? undefined}
           socialTokens={socialTokens}
           onSaveSocialTokens={saveSocialTokens}
+          onGenerateFirstPosts={() => handleSmartSchedule(3)}
+          isGenerating={isSmartGenerating}
+          generatedCount={smartPosts.length}
+          onAdvanceSetup={status => setSetupStatus(status as SetupStatus)}
         />
       )}
       {/* ── Publishing overlay ── */}
@@ -4133,7 +4140,7 @@ const Dashboard: React.FC = () => {
                       </button>
                     </div>
                     <button
-                      onClick={handleSmartSchedule}
+                      onClick={() => handleSmartSchedule()}
                       disabled={isSmartGenerating || !hasApiKey}
                       className={`font-black px-8 py-3 rounded-2xl transition flex items-center gap-2 text-base shadow-xl disabled:opacity-60 ${
                         saturationMode
@@ -4268,6 +4275,11 @@ const Dashboard: React.FC = () => {
                           style={{ width: `${acceptProgress}%` }}
                         />
                       </div>
+                    )}
+                    {!isAccepting && socialTokens.facebookPageName && (
+                      <p className="text-[10px] text-white/25 text-right">
+                        📘 {socialTokens.facebookPageName}{socialTokens.instagramBusinessAccountId ? ' · Instagram' : ''}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -4456,6 +4468,11 @@ const Dashboard: React.FC = () => {
                         style={{ width: `${acceptProgress}%` }}
                       />
                     </div>
+                  )}
+                  {!isAccepting && socialTokens.facebookPageName && (
+                    <p className="text-[10px] text-white/25 text-center">
+                      📘 Scheduled posts will publish to {socialTokens.facebookPageName}{socialTokens.instagramBusinessAccountId ? ' + Instagram' : ''}
+                    </p>
                   )}
                 </div>
               </div>

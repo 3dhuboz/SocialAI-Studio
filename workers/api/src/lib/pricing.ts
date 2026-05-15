@@ -29,6 +29,22 @@ export const POSTER_QUOTA_PER_MONTH: Record<string, number> = {
   agency: 100,
 };
 
+// Weekly post-creation quota per plan. Enforced server-side in
+// routes/posts.ts (POST /api/db/posts, non-Draft posts only). Mirrors the
+// postsPerWeek limits in src/client.config.ts — keep them in sync.
+export const POSTS_PER_WEEK: Record<string, number> = {
+  starter: 7,
+  growth: 14,
+  pro: 21,
+  agency: 21,
+};
+
+// Total post cap for unsubscribed (trial) users. Usage-bound, not time-bound:
+// a trial user who schedules 7 posts has used their trial regardless of when
+// those posts were created. Mirrors CLIENT.freeTrialPosts in client.config.ts.
+// Keep in sync — changing one without the other shifts the paywall.
+export const TRIAL_POST_LIMIT = 7;
+
 // Whether each plan tier includes Poster Maker access at all (vs. just a
 // monthly count). Today every paid plan does, but trial users (plan IS NULL
 // in D1) and any unrecognised plan are blocked. Frontend mirrors this with
@@ -37,6 +53,14 @@ export const POSTER_QUOTA_PER_MONTH: Record<string, number> = {
 export const PLAN_INCLUDES_POSTERS: ReadonlySet<string> = new Set(
   Object.keys(POSTER_QUOTA_PER_MONTH),
 );
+
+// Subscription lifecycle status values written by the PayPal webhook
+// (lib/paypal.ts) and read by the AI generation gate (routes/ai.ts).
+// Centralised here so a typo can't create a silent mismatch between writer
+// and reader — both import this constant instead of hardcoding the string.
+export const SUBSCRIPTION_STATUS = {
+  PAST_DUE: 'past_due',
+} as const;
 
 // ── Per-user feature & credit overrides (schema_v13) ──────────────────────
 //

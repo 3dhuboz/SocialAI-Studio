@@ -84,13 +84,19 @@ export const OnboardingWizard: React.FC<Props> = ({
   const descLen = profile.description?.trim().length ?? 0;
   const productsLen = profile.productsServices?.trim().length ?? 0;
   const topicsLen = profile.contentTopics?.trim().length ?? 0;
+  // Location is helpful context but not required to advance — online-only
+  // businesses and service businesses without a fixed address would get
+  // stuck here. The AI can still write localised posts from business name
+  // alone. All other minimums kept: description (50) and products (30)
+  // are load-bearing for image-prompt and topic-palette generation.
+  // contentTopics minimum lowered 30→20: four words ("New menu items") is
+  // genuinely enough signal for the weekly-calendar planner.
   const canAdvanceBusiness =
     profile.name.trim() && profile.name !== CLIENT.defaultBusinessName &&
     profile.type.trim() && profile.type !== CLIENT.defaultBusinessType &&
-    profile.location.trim() && profile.location !== CLIENT.defaultLocation &&
     descLen >= 50 &&
     productsLen >= 30 &&
-    topicsLen >= 30;
+    topicsLen >= 20;
 
   // ── Overlay backdrop ──────────────────────────────────
   return (
@@ -216,7 +222,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1.5">
                     <MapPin size={11} className="inline mr-1 text-amber-400/60" />
-                    Location <span className="text-red-400">*</span>
+                    Location <span className="text-white/25 font-normal normal-case tracking-normal">(optional)</span>
                   </label>
                   <input
                     value={profile.location === CLIENT.defaultLocation ? '' : profile.location}
@@ -313,10 +319,10 @@ export const OnboardingWizard: React.FC<Props> = ({
                     rows={3}
                     className="w-full bg-black/40 border border-white/8 rounded-xl px-4 py-3 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/50 resize-none leading-relaxed"
                   />
-                  <p className={`text-[11px] mt-1.5 ${topicsLen >= 30 ? 'text-emerald-400/80' : 'text-white/35'}`}>
-                    {topicsLen >= 30
+                  <p className={`text-[11px] mt-1.5 ${topicsLen >= 20 ? 'text-emerald-400/80' : 'text-white/35'}`}>
+                    {topicsLen >= 20
                       ? '✓ Solid topic mix — your calendar will stay relevant.'
-                      : `${30 - topicsLen} more characters. Think 4-6 themes the AI should rotate through.`}
+                      : `${20 - topicsLen} more characters. Think 4-6 themes the AI should rotate through.`}
                   </p>
                 </div>
 
