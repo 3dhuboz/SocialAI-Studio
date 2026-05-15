@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Heart, MessageCircle, Send, Bookmark, ThumbsUp } from 'lucide-react';
+import { Heart, MessageCircle, Send, Bookmark, ThumbsUp, Play, Volume2 } from 'lucide-react';
 
 /**
  * PostShowcase — auto-rotating stack of realistic post mockups for the hero.
@@ -27,6 +27,10 @@ interface MockPost {
   imageEmoji: string;
   platform: 'instagram' | 'facebook';
   likes: string;
+  /** When true, the card overlays a Play glyph + REEL chip + faux waveform
+      so the rotation visibly includes our new AI-Reels output, not just
+      static posts. Caption stays normal — IG/FB show captions on reels too. */
+  isReel?: boolean;
 }
 
 // Unsplash sizing: 800x800 square crop, q=72, format-auto. Mid-range size
@@ -48,6 +52,20 @@ const POSTS: MockPost[] = [
     imageEmoji: '🥐',
     platform: 'instagram',
     likes: '847',
+  },
+  // Reel #1 — café morning teaser. Sits at index 1 so a fresh visitor sees a
+  // reel within ~5s of landing (front card cycles every 4.5s). The IG-platform
+  // pairing is intentional: IG Reels are the primary discovery surface.
+  {
+    brand: "Bella's Cafe",
+    handle: 'bellascafe',
+    caption: 'Fresh sourdough, in by 7am. Tag a mate who needs one. ☕',
+    image: unsplash('1509042239860-f550ce710b93'),
+    imageGradient: 'from-amber-300 via-orange-400 to-rose-400',
+    imageEmoji: '☕',
+    platform: 'instagram',
+    likes: '2.1k',
+    isReel: true,
   },
   {
     brand: "Mike's Plumbing & Gas",
@@ -79,6 +97,19 @@ const POSTS: MockPost[] = [
     platform: 'instagram',
     likes: '932',
   },
+  // Reel #2 — real-estate cinematic. Spaced apart from reel #1 so the
+  // rotation feels mixed, not a "reel reel reel" run.
+  {
+    brand: 'Harbour Real Estate',
+    handle: 'harbourrealestate',
+    caption: 'Just listed in Manly — the view does the talking. Open Sat 11am.',
+    image: unsplash('1502672260266-1c1ef2d93688'),
+    imageGradient: 'from-blue-300 via-indigo-300 to-purple-400',
+    imageEmoji: '🏡',
+    platform: 'instagram',
+    likes: '3.2k',
+    isReel: true,
+  },
   {
     brand: 'Green Thumb Garden Centre',
     handle: 'Green Thumb Garden Centre',
@@ -88,16 +119,6 @@ const POSTS: MockPost[] = [
     imageEmoji: '🌷',
     platform: 'facebook',
     likes: '203',
-  },
-  {
-    brand: 'Harbour Real Estate',
-    handle: 'harbourrealestate',
-    caption: 'Just listed in Manly — 3 bed, 2 bath, the view does the talking. Open Saturday 11am, we\'ll see you there.',
-    image: unsplash('1568605114967-8130f3a36994'),
-    imageGradient: 'from-blue-200 via-indigo-200 to-purple-300',
-    imageEmoji: '🏡',
-    platform: 'instagram',
-    likes: '1.4k',
   },
 ];
 
@@ -157,10 +178,13 @@ export const PostShowcase: React.FC = () => {
         })}
       </div>
 
-      {/* Industry chip — labels what's currently shown. Swaps with a fade. */}
+      {/* Industry chip — labels what's currently shown. Swaps with a fade.
+          When the active card is a reel, the dot turns rose and the label
+          flips to "AI Reel · brand" so visitors clock that the AI is doing
+          video, not just static posts. */}
       <div className="mt-5 flex items-center justify-center gap-2 text-xs text-white/45">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-        <span className="font-medium">Live preview</span>
+        <span className={`inline-block w-1.5 h-1.5 rounded-full animate-pulse ${POSTS[activeIdx].isReel ? 'bg-rose-400' : 'bg-amber-400'}`} />
+        <span className="font-medium">{POSTS[activeIdx].isReel ? 'AI Reel' : 'Live preview'}</span>
         <span className="text-white/20">·</span>
         <span className="font-mono tracking-tight">{POSTS[activeIdx].brand}</span>
       </div>
@@ -201,7 +225,12 @@ const PostCard: React.FC<{ post: MockPost }> = ({ post }) => {
       {/* Media — real photo with gradient + emoji as graceful fallback.
           If the Unsplash URL ever 404s or the user is offline, the image
           element hides itself and the gradient/emoji underneath shows
-          through. The card never renders a broken-image icon. */}
+          through. The card never renders a broken-image icon.
+
+          When isReel, an overlay layer adds: top-left REEL chip, centred
+          play glyph, and a bottom waveform strip — same visual grammar IG
+          uses on a reel preview tile, so the card reads as a video at a
+          glance without us shipping any actual mp4. */}
       <div
         className={`relative w-full aspect-square bg-gradient-to-br ${post.imageGradient} flex items-center justify-center overflow-hidden`}
       >
@@ -219,6 +248,38 @@ const PostCard: React.FC<{ post: MockPost }> = ({ post }) => {
           />
         )}
         <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_30%_20%,rgba(255,255,255,0.18),transparent_60%)]" />
+
+        {/* Reel chrome — only renders for video posts. Subtle dimming + play
+            glyph telegraphs "tap to play"; the REEL chip top-left + waveform
+            strip bottom-left mirror IG's actual reel UI so the card reads
+            as a video tile, not a static photo with a sticker on it. */}
+        {post.isReel && (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-b from-black/15 via-transparent to-black/35 pointer-events-none" />
+            <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 bg-black/55 backdrop-blur-sm border border-white/15 rounded-full px-2 py-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+              <span className="text-[9px] font-black tracking-[0.18em] text-white uppercase">Reel</span>
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-14 h-14 rounded-full bg-white/15 backdrop-blur-md border border-white/30 flex items-center justify-center shadow-[0_8px_30px_-10px_rgba(0,0,0,0.45)]">
+                <Play size={20} className="text-white ml-0.5" fill="white" />
+              </div>
+            </div>
+            <div className="absolute bottom-3 left-3 right-3 flex items-end gap-2">
+              <Volume2 size={11} className="text-white/85 mb-0.5" />
+              <div className="flex items-end gap-[2px] h-3.5 flex-1">
+                {[55, 80, 45, 90, 65, 75, 50, 85, 60, 70, 40, 78].map((h, i) => (
+                  <div
+                    key={i}
+                    className="flex-1 rounded-sm bg-white/85 animate-pulse"
+                    style={{ height: `${h}%`, animationDuration: `${1.1 + (i % 3) * 0.35}s`, animationDelay: `${i * 0.07}s` }}
+                  />
+                ))}
+              </div>
+              <span className="text-[9px] font-bold text-white/85 mb-0.5 tabular-nums">0:08</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Action row */}
