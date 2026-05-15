@@ -101,7 +101,7 @@ export const InstallPrompt: React.FC = () => {
 
   return (
     <div
-      className="fixed left-4 right-4 sm:left-auto sm:right-4 sm:max-w-sm z-[60] bg-[#0e0e16] border border-amber-500/30 rounded-2xl p-4 shadow-[0_30px_80px_-20px_rgba(245,158,11,0.4)] animate-fadeSlideUp"
+      className="fixed left-4 right-4 sm:left-auto sm:right-4 sm:max-w-sm z-[60] glass-strong border border-amber-500/30 rounded-2xl p-4 shadow-[0_30px_80px_-20px_rgba(245,158,11,0.4)] animate-fadeSlideUp"
       style={{ bottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
       role="dialog"
       aria-label="Install app"
@@ -136,7 +136,7 @@ export const InstallPrompt: React.FC = () => {
               </p>
               <button
                 onClick={install}
-                className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-xs px-4 py-2 rounded-full hover:opacity-90 transition flex items-center gap-1.5"
+                className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-xs px-4 py-2 rounded-xl hover:opacity-90 transition-all flex items-center gap-1.5 press"
               >
                 <Plus size={12} /> Install
               </button>

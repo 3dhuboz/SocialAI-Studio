@@ -54,7 +54,7 @@ export const TrialPaywall: React.FC<Props> = ({ posts, freeTrialPosts, onClose, 
           {/* Dismiss — they CAN bounce. Funnel data tells us if too many do. */}
           <button
             onClick={onClose}
-            className="absolute top-5 right-5 z-10 w-9 h-9 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-white/60 hover:text-white transition"
+            className="absolute top-5 right-5 z-10 w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-white/60 hover:text-white transition-all press"
             aria-label="Close"
           >
             <X size={16} />
