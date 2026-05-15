@@ -284,3 +284,22 @@ import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 - **CORS list in `index.ts`** — when adding a new white-label domain, add it to the `allowed` array at the top of `index.ts`.
 - **`tech-saas-agency` archetype** — image examples are bright daylight desk/notebook scenes. Never revert to dark UI/server rack shots.
 - **`functions/` directory** — legacy CF Pages Functions, mostly superseded by the worker. `functions/api/late-proxy.js` is dead code (Late.dev removed Apr 2026).
+
+---
+
+## Keeping this file updated
+
+A `PostToolUse` hook (`.claude/settings.json`) fires after every `Write` call and reminds Claude to update this file when a new module lands in a tracked directory.
+
+**Update CLAUDE.md when:**
+- A new component is added to `src/components/`
+- A new service is added to `src/services/`
+- A new worker route file is added to `workers/api/src/routes/`
+- A new lib module is added to `workers/api/src/lib/`
+- A new cron job is added to `workers/api/src/cron/`
+- A new white-label client config is added to `src/client.configs/`
+- A new D1 table is added (update the Key tables section)
+- A new secret/env var is added to `env.ts`
+- A deploy quirk or pattern is discovered
+
+**Do not update for:** bug fixes, refactors, or edits to existing files where the file's purpose hasn't changed.

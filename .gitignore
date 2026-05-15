@@ -5,4 +5,5 @@ dist
 *.log
 .wrangler/
 workers/api/.wrangler/
-.claude/
+.claude/plans/
+.claude/worktrees/
