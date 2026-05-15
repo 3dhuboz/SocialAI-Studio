@@ -140,14 +140,17 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   /** POST /api/admin/bulk-regen-low-score-images
    *
    *  Regenerates images for posts where image_critique_score is ≤ the
-   *  provided threshold (default 4). Each regen uses the forced-archetype-
-   *  fallback path so the new image is guaranteed on-archetype, then
-   *  re-scores so the persisted critique reflects what now ships.
+   *  provided threshold (default 5, matches the prewarm + backlog crons).
+   *  Each regen uses the forced-archetype-fallback path so the new image
+   *  is guaranteed on-archetype, then re-scores so the persisted critique
+   *  reflects what now ships.
    *
    *  Caps at 20 posts per call (fal.ai cost: 20 × ~$0.03 = $0.60/call max
-   *  at FLUX-dev pricing + critique).
+   *  at FLUX-dev pricing + critique). For one-time cleanup after the
+   *  Kontext → FLUX-dev swap, call with `{"threshold": 6}` to also pick
+   *  up borderline images that scored 6 under the old visual criteria.
    *
-   *  Body: { threshold?: number (1-7, default 4), limit?: number (default 20) }
+   *  Body: { threshold?: number (1-7, default 5), limit?: number (default 20, max 50) }
    */
   app.post('/api/admin/bulk-regen-low-score-images', async (c) => {
     const adminCheck = await requireAdmin(c);
