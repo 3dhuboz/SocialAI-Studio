@@ -21,7 +21,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId } from '../auth';
 import { classifyArchetypeFromFingerprint } from '../lib/archetypes';
-import { POSTS_PER_WEEK } from '../lib/pricing';
+import { POSTS_PER_WEEK, TRIAL_POST_LIMIT } from '../lib/pricing';
 
 const uuid = () => crypto.randomUUID();
 
@@ -107,32 +107,49 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json<Record<string, unknown>>();
 
-    // ── Weekly post quota (CRITICAL #4 server-side enforcement) ──────────────
-    // Drafts are exempt — only count posts the user intends to publish.
-    // Unknown/future plans fall back to agency (21/week — most permissive
-    // paid tier) so a new plan tier can never be accidentally MORE restricted
-    // than starter. Trial (null plan) is capped at starter (7/week).
+    // ── Post quota enforcement ────────────────────────────────────────────────
+    // Drafts are exempt. Two separate gates:
+    //   Trial (null plan) — usage-bound total cap (TRIAL_POST_LIMIT). Not
+    //     time-bound: "7 posts total, then upgrade" regardless of when they
+    //     were scheduled. Mirrors CLIENT.freeTrialPosts in client.config.ts.
+    //   Paid plan — rolling 7-day window (POSTS_PER_WEEK). Unknown/future
+    //     plans fall back to agency (most permissive) to avoid accidentally
+    //     gating a new tier more tightly than starter.
     if (body.status !== 'Draft') {
-      const [planRow, weekRow] = await Promise.all([
-        c.env.DB.prepare('SELECT plan FROM users WHERE id = ?')
-          .bind(uid).first<{ plan: string | null }>(),
-        c.env.DB.prepare(
+      const planRow = await c.env.DB.prepare('SELECT plan FROM users WHERE id = ?')
+        .bind(uid).first<{ plan: string | null }>();
+      const plan = planRow?.plan ?? null;
+
+      if (plan === null) {
+        // Trial: count all non-draft posts ever made by this user.
+        const totalRow = await c.env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM posts WHERE user_id = ? AND status != 'Draft'`
+        ).bind(uid).first<{ cnt: number }>();
+        if ((totalRow?.cnt ?? 0) >= TRIAL_POST_LIMIT) {
+          return c.json({
+            error: `Free trial limit reached (${TRIAL_POST_LIMIT} posts). Subscribe to a plan to keep scheduling.`,
+            code: 'TRIAL_LIMIT_REACHED',
+            limit: TRIAL_POST_LIMIT,
+            used: totalRow?.cnt ?? 0,
+            plan: 'trial',
+          }, 429);
+        }
+      } else {
+        // Paid plan: rolling 7-day window.
+        const weeklyLimit = POSTS_PER_WEEK[plan] ?? POSTS_PER_WEEK.agency;
+        const weekRow = await c.env.DB.prepare(
           `SELECT COUNT(*) as cnt FROM posts
            WHERE user_id = ? AND status != 'Draft' AND created_at >= datetime('now', '-7 days')`
-        ).bind(uid).first<{ cnt: number }>(),
-      ]);
-      const plan = planRow?.plan ?? null;
-      const weeklyLimit = plan === null
-        ? POSTS_PER_WEEK.starter
-        : (POSTS_PER_WEEK[plan] ?? POSTS_PER_WEEK.agency);
-      if ((weekRow?.cnt ?? 0) >= weeklyLimit) {
-        return c.json({
-          error: `Weekly post limit reached (${weeklyLimit}/week on the ${plan ?? 'trial'} plan). Upgrade your plan or wait until next week.`,
-          code: 'WEEKLY_LIMIT_REACHED',
-          limit: weeklyLimit,
-          used: weekRow?.cnt ?? 0,
-          plan: plan ?? 'trial',
-        }, 429);
+        ).bind(uid).first<{ cnt: number }>();
+        if ((weekRow?.cnt ?? 0) >= weeklyLimit) {
+          return c.json({
+            error: `Weekly post limit reached (${weeklyLimit}/week on the ${plan} plan). Upgrade your plan or wait until next week.`,
+            code: 'WEEKLY_LIMIT_REACHED',
+            limit: weeklyLimit,
+            used: weekRow?.cnt ?? 0,
+            plan,
+          }, 429);
+        }
       }
     }
 

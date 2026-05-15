@@ -4276,6 +4276,11 @@ const Dashboard: React.FC = () => {
                         />
                       </div>
                     )}
+                    {!isAccepting && socialTokens.facebookPageName && (
+                      <p className="text-[10px] text-white/25 text-right">
+                        📘 {socialTokens.facebookPageName}{socialTokens.instagramBusinessAccountId ? ' · Instagram' : ''}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -4463,6 +4468,11 @@ const Dashboard: React.FC = () => {
                         style={{ width: `${acceptProgress}%` }}
                       />
                     </div>
+                  )}
+                  {!isAccepting && socialTokens.facebookPageName && (
+                    <p className="text-[10px] text-white/25 text-center">
+                      📘 Scheduled posts will publish to {socialTokens.facebookPageName}{socialTokens.instagramBusinessAccountId ? ' + Instagram' : ''}
+                    </p>
                   )}
                 </div>
               </div>
