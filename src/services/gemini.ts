@@ -456,18 +456,17 @@ export function buildProductAllowlist(
     });
 }
 
-export function isAbstractUIPrompt(prompt: string): boolean {
-  // Tier 1 — terms that are ALWAYS bad regardless of context
-  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
-  // Tier 2 — context-dependent: only bad when paired with a UI-type noun
-  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
-  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
-  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
-  // Tier 3 — explicit "illustration of" / "diagram of" — clear intent for
-  // abstract art rather than photographic content
-  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
-  return false;
-}
+// isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX
+// are imported + re-exported from shared/flux-prompts.ts (single source of
+// truth shared with workers/api/src/lib/image-safety.ts). Re-export here so
+// existing import paths keep working.
+import {
+  isAbstractUIPrompt,
+  FLUX_NEGATIVE_PROMPT,
+  FLUX_STYLE_SUFFIX,
+  PEOPLE_REGEX,
+} from '../../shared/flux-prompts';
+export { isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX };
 
 /**
  * Regional voice block — injected into Smart Schedule and single-post prompts
@@ -506,37 +505,6 @@ Write like an actual local, not like a Sydney agency or a US tech blog.
 ═══════════════════════════════════════════════════════════════════
 `;
 }
-
-// Canonical FLUX negative-prompt — passed as a SEPARATE parameter so the
-// diffusion model actually suppresses these concepts at sampling time.
-//
-// 2026-05 deep audit: the previous design appended these tokens onto the
-// POSITIVE prompt as "no people, no faces, no hands, …". FLUX-dev does not
-// parse inline negations — those words become positive concepts. Worse, the
-// negative tokens often pull semantically-related content INTO the image
-// (saying "no hands" near "pizza" makes a hand more likely to appear, since
-// the model sees "hands" as a strong contextual cue). Hence the steaming
-// pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
-// `negative_prompt` and respects it properly when guidance_scale ≥ 5.
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene, blurry, out of focus, motion blur, soft focus, low resolution, pixelated, grainy';
-
-// Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
-// negatives live in the dedicated field. The worker's tripwire still checks
-// for "candid iPhone" so we keep that token; the rest is style direction.
-//
-// Lighting bias: defaults to BRIGHT natural daylight after a customer flagged
-// outputs trending too dark/moody. AI-picked moody lighting is fine for tone-
-// specific campaigns (countdown, scarcity) but the default pull should be
-// bright + airy so feeds stay scrollable. The negative-prompt list also calls
-// out dark/underexposed/dim/shadowed/gloomy to push back at the diffusion bias,
-// plus blurry/out-of-focus/motion-blur/soft-focus for sharpness.
-// KEEP IN SYNC with workers/api/src/lib/image-safety.ts.
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, sharp focus, crisp detail, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
-
-// People-mention regex — defense-in-depth scrub of positive prompts.
-// The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
-// strip catches lingering subject words before they reach the diffusion model.
-const PEOPLE_REGEX = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi;
 
 // Reused by generateVideoBrief — same intent, slightly broader vocab
 // (talking head, no "looking/standing/sitting/wearing/happy" — those describe

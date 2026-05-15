@@ -6,9 +6,23 @@
 // fal-proxy) supply the raw prompt + optional archetype slug and get back
 // a sanitised { prompt, negativePrompt } pair ready for fal.ai.
 //
+// FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX, and isAbstractUIPrompt
+// live in shared/flux-prompts.ts so the frontend (gemini.ts) and worker share
+// a single source of truth. Re-exported here so existing import paths keep
+// working without churn.
+//
 // The archetype resolver (resolveArchetypeSlug) lives in index.ts because
 // it needs Env to query the DB — keeping this module pure makes it
 // trivially testable.
+
+import {
+  FLUX_NEGATIVE_PROMPT,
+  FLUX_STYLE_SUFFIX,
+  PEOPLE_REGEX,
+  isAbstractUIPrompt,
+} from '../../../../shared/flux-prompts';
+
+export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt };
 
 // ── Neutral-scene fallback bank ──────────────────────────────────────────
 // Used when isAbstractUIPrompt matches and we need to swap a UI/dashboard/
@@ -29,47 +43,8 @@ export const SAFE_FALLBACK_SCENES = [
   'cosy reading corner with stacked books, mug and a folded throw blanket, candid composition',
 ];
 
-// Server-side mirror of isAbstractUIPrompt in src/services/gemini.ts.
-//
-// Bug history (2026-05 audit): the old regex used bare-word matches on
-// common nouns (`plan|tier|table|column|grid`) which false-positived on
-// legitimate small-business prompts:
-//   - "meal plan" / "business plan" / "floor plan"  → matched "plan"
-//   - "wine tier" / "premium tier" (product line)   → matched "tier"
-//   - "tea table" / "picnic table" / "dinner table" → matched "table"
-//   - "fence grid" / "rebar grid"                   → matched "grid"
-//   - "centre column" (architectural)               → matched "column"
-// Result: cafe / wellness posts that mentioned a meal plan or wine tier got
-// silently swapped for the abstract-UI fallback scene, defeating the whole
-// point of business-specific imagery.
-//
-// New regex requires a UI-context noun (pricing|comparison|feature|bar|pie|
-// line|architecture…) before the ambiguous word. Always-bad terms (dashboard,
-// infographic, etc.) still match bare. KEEP IN SYNC with the client copy.
-export function isAbstractUIPrompt(prompt: string): boolean {
-  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
-  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
-  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
-  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
-  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
-  return false;
-}
-
-// Canonical FLUX negative-prompt — server-side mirror of FLUX_NEGATIVE_PROMPT
-// in src/services/gemini.ts. Passed as a SEPARATE `negative_prompt` parameter
-// to fal.ai, NOT appended onto the positive prompt. (Inline negations like
-// "no hands" don't suppress concepts in diffusion models — they often pull
-// the negated subject INTO the image because the noun becomes a strong
-// contextual cue. See gemini.ts FLUX_NEGATIVE_PROMPT comment for full
-// reasoning. KEEP IN SYNC with that constant.)
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene, blurry, out of focus, motion blur, soft focus, low resolution, pixelated, grainy';
-
-// Server-side mirror of FLUX_STYLE_SUFFIX in src/services/gemini.ts.
-// The "candid iPhone" token is a worker tripwire (proxies.ts logs a warn
-// when a prompt comes in without it) — do not remove. Anti-blur and
-// anti-dark cues live in the dedicated negative_prompt above.
-// KEEP IN SYNC with the frontend constant.
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, sharp focus, crisp detail, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+// isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX are imported
+// + re-exported from shared/flux-prompts.ts at the top of this file.
 
 // ── Archetype-aware image guardrails (2026-05-11 cross-domain bleed fix) ──
 //
@@ -355,7 +330,7 @@ export function buildSafeImagePrompt(rawPrompt: string | null | undefined): { pr
   // Strip people-mentions from the POSITIVE prompt — defense-in-depth.
   // The real enforcement is FLUX_NEGATIVE_PROMPT below.
   const cleaned = safeBase
-    .replace(/\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi, '')
+    .replace(PEOPLE_REGEX, '')
     .replace(/\s+/g, ' ')
     .trim();
 
