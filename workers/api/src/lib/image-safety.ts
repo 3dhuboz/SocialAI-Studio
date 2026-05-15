@@ -62,8 +62,8 @@ export function isAbstractUIPrompt(prompt: string): boolean {
 // the negated subject INTO the image because the noun becomes a strong
 // contextual cue. See gemini.ts FLUX_NEGATIVE_PROMPT comment for full
 // reasoning. KEEP IN SYNC with that constant.)
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene, blurry, out of focus, motion blur, soft focus, low resolution, pixelated, grainy';
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, sharp focus, crisp detail, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
 
 // ── Archetype-aware image guardrails (2026-05-11 cross-domain bleed fix) ──
 //

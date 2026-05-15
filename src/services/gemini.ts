@@ -518,7 +518,7 @@ Write like an actual local, not like a Sydney agency or a US tech blog.
 // the model sees "hands" as a strong contextual cue). Hence the steaming
 // pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
 // `negative_prompt` and respects it properly when guidance_scale ≥ 5.
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene';
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene, blurry, out of focus, motion blur, soft focus, low resolution, pixelated, grainy';
 
 // Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
 // negatives live in the dedicated field. The worker's tripwire still checks
@@ -528,8 +528,10 @@ export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, port
 // outputs trending too dark/moody. AI-picked moody lighting is fine for tone-
 // specific campaigns (countdown, scarcity) but the default pull should be
 // bright + airy so feeds stay scrollable. The negative-prompt list also calls
-// out "dark", "underexposed", "shadows" to push back at the diffusion bias.
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+// out dark/underexposed/dim/shadowed/gloomy to push back at the diffusion bias,
+// plus blurry/out-of-focus/motion-blur/soft-focus for sharpness.
+// KEEP IN SYNC with workers/api/src/lib/image-safety.ts.
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, sharp focus, crisp detail, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
 
 // People-mention regex — defense-in-depth scrub of positive prompts.
 // The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
