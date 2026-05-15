@@ -125,7 +125,7 @@ export const DateTimePicker: React.FC<Props> = ({ value, onChange }) => {
       {open && (
         <div className="absolute bottom-full mb-2 left-0 z-50 w-[300px] bg-[#0e0e1c] border border-white/10 rounded-2xl shadow-2xl shadow-black/60 backdrop-blur-xl overflow-hidden select-none">
           {/* Month navigation */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-white/6">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
             <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/8 transition text-white/50 hover:text-white">
               <ChevronLeft size={15} />
             </button>
@@ -163,7 +163,7 @@ export const DateTimePicker: React.FC<Props> = ({ value, onChange }) => {
           </div>
 
           {/* Time selector */}
-          <div className="flex items-center gap-2 px-4 pb-3 border-t border-white/6 pt-3">
+          <div className="flex items-center gap-2 px-4 pb-3 border-t border-white/[0.06] pt-3">
             <Clock size={13} className="text-white/30 flex-shrink-0" />
             <span className="text-xs text-white/30">Time</span>
             <select
@@ -191,7 +191,7 @@ export const DateTimePicker: React.FC<Props> = ({ value, onChange }) => {
           <div className="flex gap-2 px-4 pb-4">
             <button
               onClick={clear}
-              className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/8 text-white/40 hover:text-white/60 text-xs font-semibold transition border border-white/6"
+              className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/8 text-white/40 hover:text-white/60 text-xs font-semibold transition border border-white/[0.06]"
             >
               Clear
             </button>

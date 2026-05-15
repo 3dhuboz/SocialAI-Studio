@@ -146,7 +146,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
                 const badge = statusBadge[post.status || 'Draft'] || statusBadge.Draft;
                 return (
                   <div key={post.id} className="flex items-center gap-4 py-3 px-2 hover:bg-white/2 transition">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/5">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/[0.05]">
                       {post.image_url ? <img src={post.image_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Calendar size={12} className="text-white/10" /></div>}
                     </div>
                     <div className="flex-1 min-w-0">

@@ -83,7 +83,7 @@ export const ClientSwitcher: React.FC<Props> = ({
           <div className="absolute left-0 top-full mt-2 w-80 glass-strong border border-white/[0.10] rounded-2xl shadow-2xl z-50 overflow-hidden">
 
             {/* Header with slot usage */}
-            <div className="px-4 py-3 border-b border-white/5">
+            <div className="px-4 py-3 border-b border-white/[0.05]">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-white/40 font-medium uppercase tracking-wider">Client Workspaces</span>
                 <span className={`text-xs font-bold ${atLimit ? 'text-red-400' : 'text-emerald-400'}`}>
@@ -115,9 +115,9 @@ export const ClientSwitcher: React.FC<Props> = ({
 
             {/* Client list */}
             {clients.length > 0 && (
-              <div className="border-t border-white/5 max-h-64 overflow-y-auto">
+              <div className="border-t border-white/[0.05] max-h-64 overflow-y-auto">
                 {clients.map(client => (
-                  <div key={client.id} className={`border-b border-white/5 last:border-b-0 ${activeClientId === client.id ? 'bg-white/5' : ''}`}>
+                  <div key={client.id} className={`border-b border-white/[0.05] last:border-b-0 ${activeClientId === client.id ? 'bg-white/5' : ''}`}>
                     {editingId === client.id ? (
                       /* ── Inline edit form ── */
                       <div className="px-4 py-3 space-y-2">
@@ -195,7 +195,7 @@ export const ClientSwitcher: React.FC<Props> = ({
             )}
 
             {/* Add client */}
-            <div className="border-t border-white/5 p-3">
+            <div className="border-t border-white/[0.05] p-3">
               {showAdd ? (
                 <div className="space-y-2">
                   <input

@@ -3130,7 +3130,7 @@ const Dashboard: React.FC = () => {
                         <ImageIcon size={14} /> Text + Image
                       </button>
                     ) : (
-                      <div title="Upgrade to Growth+ to unlock" className="flex items-center gap-2 px-4 py-2.5 text-sm border border-white/8 rounded-xl text-white/20 cursor-not-allowed">
+                      <div title="Upgrade to Growth+ to unlock" className="flex items-center gap-2 px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl text-white/20 cursor-not-allowed">
                         <ImageIcon size={14} /> Image <span className="text-[10px] ml-1 bg-white/5 px-1.5 py-0.5 rounded">Growth+</span>
                       </div>
                     )}
@@ -3140,7 +3140,7 @@ const Dashboard: React.FC = () => {
                         <Play size={14} /> Text + Video Brief
                       </button>
                     ) : (
-                      <div title="Upgrade to Pro+ to unlock" className="flex items-center gap-2 px-4 py-2.5 text-sm border border-white/8 rounded-xl text-white/20 cursor-not-allowed">
+                      <div title="Upgrade to Pro+ to unlock" className="flex items-center gap-2 px-4 py-2.5 text-sm border border-white/[0.08] rounded-xl text-white/20 cursor-not-allowed">
                         <Play size={14} /> Video <span className="text-[10px] ml-1 bg-white/5 px-1.5 py-0.5 rounded">Pro+</span>
                       </div>
                     )}
@@ -3155,7 +3155,7 @@ const Dashboard: React.FC = () => {
                   value={topic}
                   onChange={e => setTopic(e.target.value)}
                   placeholder="e.g., '25% off all items this weekend only' — or paste your own draft and AI will polish it…"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl p-4 text-white resize-none min-h-[100px] text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl p-4 text-white resize-none min-h-[100px] text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
                 />
               </div>
 
@@ -3205,7 +3205,7 @@ const Dashboard: React.FC = () => {
                     <button key={s.label}
                       onClick={() => { setTopic(s.text); setTimeout(() => { (document.querySelector('[data-auto-create]') as HTMLButtonElement)?.click(); }, 100); }}
                       disabled={isGenerating || isGeneratingImage || isGeneratingVideo}
-                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/8 bg-white/2 text-white/30 hover:text-white/60 hover:border-amber-500/30 hover:bg-amber-500/5 transition disabled:opacity-30 disabled:cursor-not-allowed">
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-white/[0.08] bg-white/2 text-white/30 hover:text-white/60 hover:border-amber-500/30 hover:bg-amber-500/5 transition disabled:opacity-30 disabled:cursor-not-allowed">
                       <span>{s.icon}</span> {s.label}
                     </button>
                   ))}
@@ -3310,7 +3310,7 @@ const Dashboard: React.FC = () => {
                 style={{ background: 'linear-gradient(145deg,rgba(245,158,11,0.06) 0%,rgba(13,13,26,0.95) 60%)' }}>
 
                 {/* Card header */}
-                <div className="flex items-center justify-between px-5 py-3 border-b border-white/6">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
                   <span className="flex items-center gap-2 text-xs font-semibold text-amber-300">
                     <Sparkles size={13} className="text-amber-400" /> Generated Post
                     {contentFormat !== 'standard' && (
@@ -3395,7 +3395,7 @@ const Dashboard: React.FC = () => {
                   {/* Caption panel */}
                   {generatedContent && (
                     <div className="flex-1 p-5 space-y-4">
-                      <div className="bg-black/25 border border-white/5 rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed min-h-[80px]">
+                      <div className="bg-black/25 border border-white/[0.05] rounded-xl p-4 text-gray-200 text-sm whitespace-pre-wrap leading-relaxed min-h-[80px]">
                         {generatedContent}
                       </div>
                       {generatedHashtags.length > 0 && (
@@ -3561,7 +3561,7 @@ const Dashboard: React.FC = () => {
                     {/* ── Expandable script ── */}
                     {showVideoBriefDetail && generatedVideoScript && (
                       <div className="border-t border-purple-500/10 pt-3 space-y-3">
-                        <div className="bg-black/30 border border-white/6 rounded-xl px-4 py-3 text-xs text-white/55 whitespace-pre-wrap leading-relaxed">{generatedVideoScript.script}</div>
+                        <div className="bg-black/30 border border-white/[0.06] rounded-xl px-4 py-3 text-xs text-white/55 whitespace-pre-wrap leading-relaxed">{generatedVideoScript.script}</div>
                         {generatedVideoScript.shots.length > 0 && (
                           <div className="space-y-1.5">
                             {generatedVideoScript.shots.map((shot, i) => (
@@ -3584,7 +3584,7 @@ const Dashboard: React.FC = () => {
                     leaves them with a folder of drafts that never go live —
                     the trial sells nothing. So during trial we promote
                     Publish to primary and keep Save as a secondary fallback. */}
-                <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/6 bg-black/15">
+                <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/[0.06] bg-black/15">
                   <DateTimePicker value={scheduleDate} onChange={setScheduleDate} />
                   {isOnFreeTrial && fbConnected && !scheduleDate ? (
                     <>
@@ -3717,7 +3717,7 @@ const Dashboard: React.FC = () => {
                   </button>
                 )}
                 {posts.length > 0 && (
-                  <span className="text-xs text-white/25 bg-white/5 border border-white/8 px-3 py-1.5 rounded-xl">
+                  <span className="text-xs text-white/25 bg-white/5 border border-white/[0.08] px-3 py-1.5 rounded-xl">
                     {posts.filter(p => p.status === 'Scheduled').length} scheduled · {posts.filter(p => p.status === 'Posted').length} posted
                   </span>
                 )}
@@ -4369,7 +4369,7 @@ const Dashboard: React.FC = () => {
                           }}
                         />
                       ) : (
-                        <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group">
+                        <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/[0.08] relative group">
                           {hasImage ? (
                             <>
                               <img src={smartPostImages[i]} alt="" className="w-full h-full object-cover" />
@@ -4430,7 +4430,7 @@ const Dashboard: React.FC = () => {
                             <span key={j} className="text-[11px] text-amber-400/70 font-medium">{t.startsWith('#') ? t : `#${t}`}</span>
                           ))}
                         </div>
-                        {sp.reasoning && <p className="text-[11px] text-white/25 italic border-t border-white/5 pt-2">{sp.reasoning}</p>}
+                        {sp.reasoning && <p className="text-[11px] text-white/25 italic border-t border-white/[0.05] pt-2">{sp.reasoning}</p>}
                       </div>
                     </div>
                     {/* Video script section */}
@@ -4629,7 +4629,7 @@ const Dashboard: React.FC = () => {
             {insightReport && (
               <>
                 {/* Score + Summary */}
-                <div className="rounded-2xl border border-white/8 overflow-hidden"
+                <div className="rounded-2xl border border-white/[0.08] overflow-hidden"
                   style={{ background: 'linear-gradient(135deg,rgba(245,158,11,0.08) 0%,rgba(10,10,20,0.95) 60%)' }}>
                   <div className="p-6 flex gap-5 items-start">
                     <div className="shrink-0 w-20 h-20 rounded-2xl flex flex-col items-center justify-center border-2 border-amber-500/30 bg-amber-500/10">
@@ -4769,7 +4769,7 @@ const Dashboard: React.FC = () => {
                         <label className="text-[10px] text-white/30 block mb-1">{s.label}</label>
                         <input type="number" value={stats[s.key]}
                           onChange={e => setStats(prev => ({ ...prev, [s.key]: Number(e.target.value) }))}
-                          className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm" />
+                          className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2 text-white text-sm" />
                       </div>
                     ))}
                   </div>
@@ -5096,7 +5096,7 @@ const Dashboard: React.FC = () => {
 
                 {/* Empty slot card */}
                 {clients.length < agencyClientLimit && (
-                  <div className="border-2 border-dashed border-white/8 rounded-2xl p-5 flex flex-col items-center justify-center gap-3 text-center min-h-[180px] hover:border-white/15 transition cursor-pointer"
+                  <div className="border-2 border-dashed border-white/[0.08] rounded-2xl p-5 flex flex-col items-center justify-center gap-3 text-center min-h-[180px] hover:border-white/15 transition cursor-pointer"
                     onClick={() => {
                       const name = prompt('Client name:');
                       const btype = name?.trim() ? (prompt('Business type (optional):') ?? '') : '';
@@ -5376,7 +5376,7 @@ const Dashboard: React.FC = () => {
                 </div>
               </button>
 
-              {profileExpanded && <div className="px-6 pb-6 space-y-6 border-t border-white/5 pt-5">
+              {profileExpanded && <div className="px-6 pb-6 space-y-6 border-t border-white/[0.05] pt-5">
               <div className="flex justify-end">
                 <button
                   onClick={handleSaveProfile}
@@ -5397,7 +5397,7 @@ const Dashboard: React.FC = () => {
                       value={profile.name}
                       onChange={e => setProfile(prev => ({ ...prev, name: e.target.value }))}
                       placeholder="e.g. Bella's Bakery"
-                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                     />
                   </div>
                   <div>
@@ -5406,7 +5406,7 @@ const Dashboard: React.FC = () => {
                       value={profile.type}
                       onChange={e => setProfile(prev => ({ ...prev, type: e.target.value }))}
                       placeholder="e.g. Artisan bakery & café"
-                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                     />
                   </div>
                 </div>
@@ -5418,7 +5418,7 @@ const Dashboard: React.FC = () => {
                     value={profile.location}
                     onChange={e => setProfile(prev => ({ ...prev, location: e.target.value }))}
                     placeholder="e.g. Bondi Beach, Sydney NSW"
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
 
@@ -5429,7 +5429,7 @@ const Dashboard: React.FC = () => {
                     value={profile.description}
                     onChange={e => setProfile(prev => ({ ...prev, description: e.target.value }))}
                     placeholder="We're a family-run bakery specialising in sourdough and pastries made fresh every morning. We serve locals, office workers, and weekend visitors looking for something a bit special with their coffee."
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
 
@@ -5440,7 +5440,7 @@ const Dashboard: React.FC = () => {
                     value={profile.targetAudience}
                     onChange={e => setProfile(prev => ({ ...prev, targetAudience: e.target.value }))}
                     placeholder="Local professionals aged 25–45 who appreciate quality food and are willing to pay a premium. Also young families on weekends and coffee enthusiasts."
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
 
@@ -5451,7 +5451,7 @@ const Dashboard: React.FC = () => {
                     value={profile.uniqueValue}
                     onChange={e => setProfile(prev => ({ ...prev, uniqueValue: e.target.value }))}
                     placeholder="We use only locally sourced ingredients, our sourdough ferments for 48 hours, and every item is made on-site. We've won the local 'Best Café' award 3 years running."
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
 
@@ -5462,7 +5462,7 @@ const Dashboard: React.FC = () => {
                     value={profile.productsServices}
                     onChange={e => setProfile(prev => ({ ...prev, productsServices: e.target.value }))}
                     placeholder="Sourdough loaves, croissants, seasonal pastries, specialty coffee, breakfast plates, and custom celebration cakes by order."
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
 
@@ -5516,7 +5516,7 @@ const Dashboard: React.FC = () => {
                       value={profile.socialGoal}
                       onChange={e => setProfile(prev => ({ ...prev, socialGoal: e.target.value }))}
                       placeholder="Or type a custom goal…"
-                      className="mt-2 w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      className="mt-2 w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                     />
                   )}
                 </div>
@@ -5556,7 +5556,7 @@ const Dashboard: React.FC = () => {
                     value={profile.tone}
                     onChange={e => setProfile(prev => ({ ...prev, tone: e.target.value }))}
                     placeholder="Or describe your tone in your own words…"
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
 
@@ -5567,7 +5567,7 @@ const Dashboard: React.FC = () => {
                     value={profile.contentTopics}
                     onChange={e => setProfile(prev => ({ ...prev, contentTopics: e.target.value }))}
                     placeholder="Behind the scenes of our baking process, seasonal specials, coffee tips, local community events, new menu items, customer shoutouts, and health benefits of sourdough."
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[70px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
                   />
                 </div>
               </div>
@@ -5598,7 +5598,7 @@ const Dashboard: React.FC = () => {
                   value={falApiKey}
                   onChange={e => setFalApiKey(e.target.value)}
                   placeholder="fal_..."
-                  className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
+                  className="flex-1 bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white font-mono text-sm placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
                 />
                 <button
                   onClick={handleSaveFalKey}
@@ -5902,7 +5902,7 @@ const Dashboard: React.FC = () => {
                             </button>
                           </div>
                           {expandedBrief[c.id] && c.brief && (
-                            <pre className="text-[10px] text-white/55 whitespace-pre-wrap font-sans bg-black/30 border border-white/5 rounded-lg p-3 max-h-64 overflow-y-auto leading-relaxed">{c.brief}</pre>
+                            <pre className="text-[10px] text-white/55 whitespace-pre-wrap font-sans bg-black/30 border border-white/[0.05] rounded-lg p-3 max-h-64 overflow-y-auto leading-relaxed">{c.brief}</pre>
                           )}
                         </>
                       ) : c.briefStatus === 'failed' ? (
@@ -6085,7 +6085,7 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
                 {/* Custom billing URL */}
-                <div className="pt-2 border-t border-white/5 space-y-2">
+                <div className="pt-2 border-t border-white/[0.05] space-y-2">
                   <label className="text-xs font-semibold text-white/40 uppercase tracking-wider block">Your client billing portal URL <span className="text-white/20 font-normal normal-case">(optional)</span></label>
                   <p className="text-xs text-white/25 leading-relaxed">Point clients to your own payment portal instead of the default. Leave blank to use the SocialAI Studio billing link.</p>
                   <div className="flex gap-2">
@@ -6094,7 +6094,7 @@ const Dashboard: React.FC = () => {
                       value={agencyBillingUrl}
                       onChange={e => setAgencyBillingUrl(e.target.value)}
                       placeholder="https://www.paypal.com/myaccount/autopay"
-                      className="flex-1 bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-emerald-500/40 transition"
+                      className="flex-1 bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-emerald-500/40 transition"
                     />
                     <button
                       onClick={async () => {
@@ -6171,7 +6171,7 @@ const Dashboard: React.FC = () => {
         )}
       </main>
 
-      <footer className="border-t border-white/5 mt-12">
+      <footer className="border-t border-white/[0.05] mt-12">
         <div className="max-w-6xl mx-auto px-4 py-5 flex items-center justify-between flex-wrap gap-3">
           <AppLogo size={44} />
           <div className="flex items-center gap-4 text-xs text-white/20">

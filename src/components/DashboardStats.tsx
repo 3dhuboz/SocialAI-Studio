@@ -154,7 +154,7 @@ export const DashboardStats: React.FC<Props> = ({
 
         {open === 'posts' && (
           <Popover onClose={() => setOpen(null)}>
-            <div className="p-4 border-b border-white/8 flex items-center justify-between">
+            <div className="p-4 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Calendar size={14} className="text-amber-400" />
                 <p className="text-sm font-black text-white">Post Queue</p>
@@ -259,7 +259,7 @@ export const DashboardStats: React.FC<Props> = ({
 
         {open === 'next' && (
           <Popover onClose={() => setOpen(null)}>
-            <div className="p-4 border-b border-white/8 flex items-center justify-between">
+            <div className="p-4 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Clock size={14} className="text-purple-400" />
                 <p className="text-sm font-black text-white">Next Scheduled Post</p>
@@ -290,7 +290,7 @@ export const DashboardStats: React.FC<Props> = ({
                 <div className="glass-card border border-white/[0.08] rounded-xl p-3 space-y-2">
                   <p className="text-xs text-white/70 leading-relaxed">{nextPost.content}</p>
                   {nextPost.hashtags?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 pt-1 border-t border-white/5">
+                    <div className="flex flex-wrap gap-1 pt-1 border-t border-white/[0.05]">
                       {nextPost.hashtags.slice(0, 5).map((h, i) => (
                         <span key={i} className="text-[10px] text-amber-400/60">{h.startsWith('#') ? h : `#${h}`}</span>
                       ))}
@@ -363,7 +363,7 @@ export const DashboardStats: React.FC<Props> = ({
 
         {open === 'engagement' && (
           <Popover onClose={() => setOpen(null)}>
-            <div className="p-4 border-b border-white/8 flex items-center justify-between">
+            <div className="p-4 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <TrendingUp size={14} className="text-emerald-400" />
                 <p className="text-sm font-black text-white">Engagement Breakdown</p>
@@ -463,7 +463,7 @@ export const DashboardStats: React.FC<Props> = ({
 
         {open === 'status' && (
           <Popover onClose={() => setOpen(null)}>
-            <div className="p-4 border-b border-white/8 flex items-center justify-between">
+            <div className="p-4 border-b border-white/[0.08] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CheckCircle size={14} className="text-blue-400" />
                 <p className="text-sm font-black text-white">System Status</p>

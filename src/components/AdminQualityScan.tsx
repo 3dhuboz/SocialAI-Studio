@@ -121,7 +121,7 @@ export const AdminQualityScan: React.FC = () => {
       </button>
 
       {expanded && (
-        <div className="border-t border-white/5 p-4 space-y-4">
+        <div className="border-t border-white/[0.05] p-4 space-y-4">
           {/* Controls */}
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider">Status:</label>
@@ -157,7 +157,7 @@ export const AdminQualityScan: React.FC = () => {
               cron's vision-critique gate. Backfill scores existing images,
               bulk regen replaces all ≤4 scores. Both are paged — re-click
               until done. */}
-          <div className="bg-black/30 border border-white/8 rounded-2xl p-3 space-y-3">
+          <div className="bg-black/30 border border-white/[0.08] rounded-2xl p-3 space-y-3">
             <div>
               <p className="text-[11px] font-bold text-white/55 uppercase tracking-wider mb-0.5">Vision critique</p>
               <p className="text-[10px] text-white/30 leading-snug">

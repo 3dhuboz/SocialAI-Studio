@@ -152,7 +152,7 @@ export const CreditPackModal: React.FC<Props> = ({ onClose, onPurchased, clientI
         {/* PayPal checkout panel */}
         {selected && (
           <div className="bg-[#0d0d18] border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
-            <div className="bg-gradient-to-r from-[#1a1a2e] to-[#0f0f1a] px-6 py-4 border-b border-white/5 flex items-center justify-between flex-wrap gap-3">
+            <div className="bg-gradient-to-r from-[#1a1a2e] to-[#0f0f1a] px-6 py-4 border-b border-white/[0.05] flex items-center justify-between flex-wrap gap-3">
               <div>
                 <div className="inline-flex items-center gap-2 bg-[#003087]/20 border border-[#003087]/30 text-[#009cde] text-xs font-bold px-3 py-1.5 rounded-full mb-1">
                   <Lock size={10} /> Secure checkout via PayPal
