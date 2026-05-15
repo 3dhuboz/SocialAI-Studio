@@ -44,6 +44,46 @@ describe('isAbstractUIPrompt', () => {
   });
 });
 
+// ── FLUX_NEGATIVE_PROMPT / FLUX_STYLE_SUFFIX content guards ──────────────
+//
+// Regression tests for 2026-05-16: the worker copy of FLUX_NEGATIVE_PROMPT
+// drifted from the frontend copy and was missing the anti-dark tokens,
+// which let cron-generated images ship dark/underexposed. These tests fail
+// loudly if either constant loses its key tokens during a future edit.
+
+describe('FLUX_NEGATIVE_PROMPT', () => {
+  it('includes anti-dark tokens (the "dark image" bug regression guard)', () => {
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bdark\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bunderexposed\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bdim\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bshadowed\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bgloomy\b/);
+  });
+  it('includes anti-blur tokens (the "blurry image" bug regression guard)', () => {
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bblurry\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/out of focus/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/motion blur/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/soft focus/);
+  });
+  it('includes people/UI suppression tokens (existing safety contract)', () => {
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bpeople\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bfaces\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/\bhands\b/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/dashboard/);
+    expect(FLUX_NEGATIVE_PROMPT).toMatch(/infographic/);
+  });
+});
+
+describe('FLUX_STYLE_SUFFIX', () => {
+  it('includes "candid iPhone" tripwire token + brightness + sharpness cues', () => {
+    expect(FLUX_STYLE_SUFFIX).toContain('candid iPhone');
+    expect(FLUX_STYLE_SUFFIX).toMatch(/BRIGHT natural daylight/);
+    expect(FLUX_STYLE_SUFFIX).toMatch(/well-exposed/);
+    expect(FLUX_STYLE_SUFFIX).toMatch(/sharp focus/);
+    expect(FLUX_STYLE_SUFFIX).toMatch(/crisp detail/);
+  });
+});
+
 // ── buildSafeImagePrompt ──────────────────────────────────────────────────
 
 describe('buildSafeImagePrompt', () => {
