@@ -147,7 +147,7 @@ export const DashboardStats: React.FC<Props> = ({
           type="button"
           onClick={() => toggle('posts')}
           aria-label="More info about scheduled posts"
-          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'posts' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+          className={`absolute top-3 right-3 p-1 rounded-lg transition-all z-10 ${open === 'posts' ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}
         >
           <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
@@ -169,7 +169,7 @@ export const DashboardStats: React.FC<Props> = ({
                   { label: 'Published', value: publishedPosts.length, color: 'text-emerald-400' },
                   { label: 'Drafts', value: draftPosts.length, color: 'text-white/50' },
                 ].map(s => (
-                  <div key={s.label} className="bg-white/4 border border-white/8 rounded-xl p-2.5 text-center">
+                  <div key={s.label} className="glass-card border border-white/[0.08] rounded-xl p-2.5 text-center">
                     <p className={`text-lg font-black ${s.color}`}>{s.value}</p>
                     <p className="text-[9px] text-white/30 mt-0.5">{s.label}</p>
                   </div>
@@ -252,7 +252,7 @@ export const DashboardStats: React.FC<Props> = ({
           type="button"
           onClick={() => toggle('next')}
           aria-label="More info about next post"
-          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'next' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+          className={`absolute top-3 right-3 p-1 rounded-lg transition-all z-10 ${open === 'next' ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}
         >
           <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
@@ -287,7 +287,7 @@ export const DashboardStats: React.FC<Props> = ({
                 </div>
 
                 {/* Content preview */}
-                <div className="bg-white/4 border border-white/8 rounded-xl p-3 space-y-2">
+                <div className="glass-card border border-white/[0.08] rounded-xl p-3 space-y-2">
                   <p className="text-xs text-white/70 leading-relaxed">{nextPost.content}</p>
                   {nextPost.hashtags?.length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-1 border-t border-white/5">
@@ -356,7 +356,7 @@ export const DashboardStats: React.FC<Props> = ({
           type="button"
           onClick={() => toggle('engagement')}
           aria-label="More info about engagement"
-          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'engagement' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+          className={`absolute top-3 right-3 p-1 rounded-lg transition-all z-10 ${open === 'engagement' ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}
         >
           <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
@@ -384,7 +384,7 @@ export const DashboardStats: React.FC<Props> = ({
                     { label: 'Posts (30d)', value: String(stats.postsLast30Days), color: 'text-amber-400', icon: BarChart3 },
                   ]),
                 ].map(s => (
-                  <div key={s.label} className="bg-white/4 border border-white/8 rounded-xl p-2.5">
+                  <div key={s.label} className="glass-card border border-white/[0.08] rounded-xl p-2.5">
                     <div className="flex items-center gap-1 mb-1">
                       <s.icon size={10} className={s.color} />
                       <p className="text-[9px] text-white/30">{s.label}</p>
@@ -403,7 +403,7 @@ export const DashboardStats: React.FC<Props> = ({
                   { label: 'Good', range: '3–5%', active: stats.engagement >= 3 && stats.engagement < 5 },
                   { label: 'Excellent', range: '5%+', active: stats.engagement >= 5 },
                 ].map(b => (
-                  <div key={b.label} className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg ${b.active ? 'bg-emerald-500/15 border border-emerald-500/25' : 'bg-white/3'}`}>
+                  <div key={b.label} className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg ${b.active ? 'bg-emerald-500/15 border border-emerald-500/25' : 'glass-card border border-white/[0.06]'}`}>
                     <span className={b.active ? 'text-emerald-300 font-bold' : 'text-white/30'}>{b.label}</span>
                     <span className={b.active ? 'text-emerald-400 font-black' : 'text-white/20'}>{b.range}</span>
                     {b.active && <CheckCircle size={11} className="text-emerald-400" />}
@@ -456,7 +456,7 @@ export const DashboardStats: React.FC<Props> = ({
           type="button"
           onClick={() => toggle('status')}
           aria-label="More info about system status"
-          className={`absolute top-3 right-3 p-1 rounded-full transition z-10 ${open === 'status' ? 'bg-white/10' : 'hover:bg-white/8'}`}
+          className={`absolute top-3 right-3 p-1 rounded-lg transition-all z-10 ${open === 'status' ? 'bg-white/10' : 'hover:bg-white/[0.06]'}`}
         >
           <Info size={11} className="text-white/30 hover:text-white/60 transition" />
         </button>
@@ -485,7 +485,7 @@ export const DashboardStats: React.FC<Props> = ({
               </div>
 
               {/* Facebook status */}
-              <div className={`flex items-start gap-3 p-3 rounded-xl border ${fbConnected ? 'bg-blue-500/8 border-blue-500/20' : 'bg-white/3 border-white/8'}`}>
+              <div className={`flex items-start gap-3 p-3 rounded-xl border ${fbConnected ? 'bg-blue-500/8 border-blue-500/20' : 'glass-card border-white/[0.08]'}`}>
                 <Facebook size={15} className={fbConnected ? 'text-blue-400 mt-0.5 flex-shrink-0' : 'text-white/20 mt-0.5 flex-shrink-0'} />
                 <div>
                   <p className={`text-xs font-black ${fbConnected ? 'text-blue-300' : 'text-white/30'}`}>

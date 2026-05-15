@@ -140,7 +140,7 @@ export const OnboardingWizard: React.FC<Props> = ({
         {step !== 'welcome' && step !== 'done' && (
           <button
             onClick={onDismiss}
-            className="absolute top-4 right-4 text-white/20 hover:text-white/50 transition p-1"
+            className="absolute top-4 right-4 text-white/20 hover:text-white/50 hover:bg-white/[0.05] transition-all rounded-lg p-1.5 press"
           >
             <X size={16} />
           </button>
@@ -162,7 +162,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   Let's take 2 minutes to set up your account so the AI can create content that sounds exactly like your business.
                 </p>
               </div>
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-left space-y-3">
+              <div className="glass-card border border-white/[0.08] rounded-2xl p-5 text-left space-y-3">
                 {[
                   { icon: Building2, label: 'Your business profile', sub: 'So the AI writes in your voice' },
                   { icon: Sparkles, label: 'AI content generation', sub: 'Included with your plan' },
@@ -468,7 +468,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Top-performing posts (your voice)</p>
                       <div className="space-y-1.5">
                         {brandDna.brand_dna.voice_samples.slice(0, 2).map((sample, i) => (
-                          <p key={i} className="text-[11px] text-white/70 leading-relaxed bg-white/3 rounded-lg px-3 py-2">
+                          <p key={i} className="text-[11px] text-white/70 leading-relaxed glass-card rounded-lg px-3 py-2">
                             <span className="text-emerald-400/70 font-mono text-[9px] mr-1.5">{sample.engagement}↑</span>
                             "{sample.content.slice(0, 140)}{sample.content.length > 140 ? '…' : ''}"
                           </p>
@@ -543,7 +543,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   <p className="text-xs text-white/35">They're ready in your calendar. You can edit or publish them anytime.</p>
                 </div>
               ) : onGenerateFirstPosts ? (
-                <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-center space-y-4">
+                <div className="glass-card border border-white/[0.08] rounded-2xl p-5 text-center space-y-4">
                   <div className="text-4xl">✨</div>
                   <p className="text-sm text-white/50">The AI will research your business type and create 3 tailored posts with images, captions, and hashtags.</p>
                   <button
@@ -559,7 +559,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   </button>
                 </div>
               ) : (
-                <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-center space-y-3">
+                <div className="glass-card border border-white/[0.08] rounded-2xl p-5 text-center space-y-3">
                   <div className="text-4xl">✨</div>
                   <p className="text-sm font-semibold text-white">You're all set!</p>
                   <p className="text-xs text-white/50 leading-relaxed">Head to <span className="text-amber-300 font-semibold">Smart Schedule</span> to auto-plan a week of AI posts, or go to <span className="text-amber-300 font-semibold">Create</span> to write a single post. The AI knows your business now.</p>
@@ -602,7 +602,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   } The AI will now create content tailored specifically for your business.
                 </p>
               </div>
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-5 text-left space-y-3">
+              <div className="glass-card border border-white/[0.08] rounded-2xl p-5 text-left space-y-3">
                 <p className="text-xs font-bold text-white/40 uppercase tracking-wider mb-3">What you can do now:</p>
                 {[
                   { label: 'Create a post', sub: 'Head to the Create tab and generate your first AI post' },

@@ -212,7 +212,7 @@ export const AccountPanel: React.FC<Props> = ({
               )}
 
               {/* Account actions */}
-              <div className="bg-white/3 border border-white/8 rounded-2xl divide-y divide-white/5 overflow-hidden">
+              <div className="glass-card border border-white/[0.08] rounded-2xl divide-y divide-white/[0.05] overflow-hidden">
                 <button
                   onClick={() => setSection('billing')}
                   className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition"
@@ -438,7 +438,7 @@ const BillingSection: React.FC<{ onBack: () => void }> = ({ onBack }) => {
       {!loading && !error && data && (
         <>
           {/* Plan summary card */}
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 mb-4">
+          <div className="rounded-2xl border border-white/[0.08] glass-card p-4 mb-4">
             <div className="text-[10px] font-bold tracking-[0.16em] text-white/35 uppercase mb-2">Current plan</div>
             <div className="flex items-baseline justify-between mb-1">
               <span className="text-xl font-black text-white">
