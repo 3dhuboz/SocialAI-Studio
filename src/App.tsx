@@ -2544,7 +2544,6 @@ const Dashboard: React.FC = () => {
                               // turns out vague/abstract (post-audit 2026-05).
                               const genResult = await FalService.generateImage(seedPrompt, profile.type, activeClientId);
                               inputImage = genResult.url;
-                              if (genResult.referencesUsed > 0) console.log(`[image] brand-grounded via ${genResult.model} with ${genResult.referencesUsed} references`);
                               setVideoModalProgress(0.25);
                             }
 

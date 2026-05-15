@@ -386,8 +386,8 @@ export const OnboardingWizard: React.FC<Props> = ({
                   // server-side scrape (about + 30 posts + 30 photos),
                   // classifies the business archetype via Haiku 4.5, and
                   // returns a Brand DNA Card. Persists archetype on the
-                  // user row so subsequent generations route through the
-                  // brand-grounded image pipeline immediately.
+                  // user row so subsequent generations route through
+                  // archetype-aware guardrails immediately.
                   setIsLearningVoice(true);
                   setVoiceLearnError(null);
                   setBrandDna(null);
