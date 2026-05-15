@@ -170,7 +170,7 @@ export const AdminCustomers: React.FC = () => {
 
       {/* Filters + search */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1.5 bg-white/[0.03] border border-white/[0.06] rounded-2xl p-1">
+        <div className="flex items-center gap-1.5 glass-card border border-white/[0.06] rounded-2xl p-1">
           {FILTERS.map(f => (
             <button
               key={f.id}

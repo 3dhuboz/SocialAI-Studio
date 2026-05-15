@@ -93,7 +93,7 @@ export const TrialPaywall: React.FC<Props> = ({ posts, freeTrialPosts, onClose, 
                 : 'grid-cols-3'
               }`}>
                 {trialPosts.map((post, i) => (
-                  <div key={i} className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-3">
+                  <div key={i} className="glass-card border border-white/[0.08] rounded-2xl p-3">
                     {post.image ? (
                       <div className="aspect-square rounded-xl overflow-hidden mb-2 bg-white/[0.02]">
                         <img src={post.image} alt="" className="w-full h-full object-cover" />
