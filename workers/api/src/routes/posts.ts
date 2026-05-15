@@ -108,19 +108,23 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const body = await c.req.json<Record<string, unknown>>();
 
     // ── Weekly post quota (CRITICAL #4 server-side enforcement) ──────────────
-    // Drafts are exempt — only count posts the user intends to publish. The
-    // null-plan (trial) case falls back to starter (7/week) so trial users
-    // can explore but can't bulk-schedule without a subscription.
+    // Drafts are exempt — only count posts the user intends to publish.
+    // Unknown/future plans fall back to agency (21/week — most permissive
+    // paid tier) so a new plan tier can never be accidentally MORE restricted
+    // than starter. Trial (null plan) is capped at starter (7/week).
     if (body.status !== 'Draft') {
-      const planRow = await c.env.DB.prepare(
-        'SELECT plan FROM users WHERE id = ?'
-      ).bind(uid).first<{ plan: string | null }>();
+      const [planRow, weekRow] = await Promise.all([
+        c.env.DB.prepare('SELECT plan FROM users WHERE id = ?')
+          .bind(uid).first<{ plan: string | null }>(),
+        c.env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM posts
+           WHERE user_id = ? AND status != 'Draft' AND created_at >= datetime('now', '-7 days')`
+        ).bind(uid).first<{ cnt: number }>(),
+      ]);
       const plan = planRow?.plan ?? null;
-      const weeklyLimit = POSTS_PER_WEEK[plan ?? ''] ?? POSTS_PER_WEEK.starter;
-      const weekRow = await c.env.DB.prepare(
-        `SELECT COUNT(*) as cnt FROM posts
-         WHERE user_id = ? AND status != 'Draft' AND created_at >= datetime('now', '-7 days')`
-      ).bind(uid).first<{ cnt: number }>();
+      const weeklyLimit = plan === null
+        ? POSTS_PER_WEEK.starter
+        : (POSTS_PER_WEEK[plan] ?? POSTS_PER_WEEK.agency);
       if ((weekRow?.cnt ?? 0) >= weeklyLimit) {
         return c.json({
           error: `Weekly post limit reached (${weeklyLimit}/week on the ${plan ?? 'trial'} plan). Upgrade your plan or wait until next week.`,

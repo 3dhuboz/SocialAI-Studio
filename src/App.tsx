@@ -1787,7 +1787,7 @@ const Dashboard: React.FC = () => {
       facebook: autopilotPlatform === 'both' || autopilotPlatform === 'facebook',
       instagram: autopilotPlatform === 'both' || autopilotPlatform === 'instagram',
     };
-    const effectiveCount = typeof overrideCount === 'number' ? overrideCount : smartCount;
+    const effectiveCount = overrideCount !== undefined ? overrideCount : smartCount;
     try {
       const activeCampaigns = campaigns.filter(c => c.enabled && new Date(c.endDate) >= new Date());
       const result = await generateSmartSchedule(

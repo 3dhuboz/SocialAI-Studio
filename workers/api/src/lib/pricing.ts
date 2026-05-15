@@ -49,6 +49,14 @@ export const PLAN_INCLUDES_POSTERS: ReadonlySet<string> = new Set(
   Object.keys(POSTER_QUOTA_PER_MONTH),
 );
 
+// Subscription lifecycle status values written by the PayPal webhook
+// (lib/paypal.ts) and read by the AI generation gate (routes/ai.ts).
+// Centralised here so a typo can't create a silent mismatch between writer
+// and reader — both import this constant instead of hardcoding the string.
+export const SUBSCRIPTION_STATUS = {
+  PAST_DUE: 'past_due',
+} as const;
+
 // ── Per-user feature & credit overrides (schema_v13) ──────────────────────
 //
 // Lets Steve override what an individual user has access to (vs. the plan

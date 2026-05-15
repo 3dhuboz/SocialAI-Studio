@@ -16,6 +16,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect } from '../lib/anthropic';
+import { SUBSCRIPTION_STATUS } from '../lib/pricing';
 import { fetchUrlText } from '../lib/web-fetch';
 
 export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
@@ -35,19 +36,20 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
-    // RATE LIMIT — 30 generations per minute per user.
-    if (await isRateLimited(c.env.DB, `ai:${uid}`, 30)) {
+    // RATE LIMIT + BILLING GATE — fire both checks concurrently since they
+    // hit different tables (rate_limit_log vs users) and neither depends on
+    // the other's result.
+    const [isLimited, billingRow] = await Promise.all([
+      isRateLimited(c.env.DB, `ai:${uid}`, 30),
+      c.env.DB.prepare('SELECT subscription_status FROM users WHERE id = ?')
+        .bind(uid).first<{ subscription_status: string | null }>(),
+    ]);
+    if (isLimited) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
     }
-
-    // BILLING GATE — block AI generation when payment has failed. The
-    // PayPal BILLING.SUBSCRIPTION.PAYMENT.FAILED webhook sets this column;
-    // PAYMENT.SALE.COMPLETED clears it. This prevents a user with a failed
-    // card from burning provider credits we can't recover from them.
-    const billingRow = await c.env.DB.prepare(
-      'SELECT subscription_status FROM users WHERE id = ?'
-    ).bind(uid).first<{ subscription_status: string | null }>();
-    if (billingRow?.subscription_status === 'past_due') {
+    // Block AI generation when payment has failed — prevents burning provider
+    // credits we can't recover. Webhook sets/clears subscription_status.
+    if (billingRow?.subscription_status === SUBSCRIPTION_STATUS.PAST_DUE) {
       return c.json({
         error: 'Your subscription payment has failed. Please update your billing details to continue using AI generation.',
         code: 'PAYMENT_PAST_DUE',

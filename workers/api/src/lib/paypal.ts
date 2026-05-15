@@ -16,6 +16,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../env';
+import { SUBSCRIPTION_STATUS } from './pricing';
 
 const uuid = () => crypto.randomUUID();
 
@@ -281,8 +282,8 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
     // resumes. Scoped to 'past_due' so we don't stomp a NULL unnecessarily.
     try {
       await c.env.DB.prepare(
-        `UPDATE users SET subscription_status = NULL WHERE id = ? AND subscription_status = 'past_due'`
-      ).bind(userId).run();
+        `UPDATE users SET subscription_status = NULL WHERE id = ? AND subscription_status = ?`
+      ).bind(userId, SUBSCRIPTION_STATUS.PAST_DUE).run();
     } catch { /* non-critical — gate will clear on next successful call */ }
   }
 
@@ -291,8 +292,8 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
   if (eventType === 'BILLING.SUBSCRIPTION.PAYMENT.FAILED' && userId) {
     try {
       await c.env.DB.prepare(
-        `UPDATE users SET subscription_status = 'past_due' WHERE id = ?`
-      ).bind(userId).run();
+        `UPDATE users SET subscription_status = ? WHERE id = ?`
+      ).bind(SUBSCRIPTION_STATUS.PAST_DUE, userId).run();
       console.log(`[billing] user ${userId} marked past_due — payment failed`);
     } catch (e: any) {
       console.warn(`[billing] failed to mark user ${userId} past_due:`, e?.message);

@@ -2493,6 +2493,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     };
 
     // Ensure no post is scheduled in the past or at unreasonable hours.
+    const msPerDay = 24 * 60 * 60 * 1000;
     const thirtyMinsFromNow = new Date(now.getTime() + 30 * 60 * 1000);
     posts = posts.map((post) => {
       if (!post.scheduledFor) return post;
@@ -2515,7 +2516,6 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
         return { ...post, scheduledFor: toLocalISO(t) };
       }
       // Keep the same HH:MM:SS but advance by whole days until it clears the threshold
-      const msPerDay = 24 * 60 * 60 * 1000;
       const daysToAdd = Math.ceil((thirtyMinsFromNow.getTime() - t.getTime()) / msPerDay);
       const bumped = new Date(t.getTime() + daysToAdd * msPerDay);
       return { ...post, scheduledFor: toLocalISO(bumped) };
@@ -2527,7 +2527,6 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     // hours-guard above produces when multiple past posts get advanced to the
     // same future date. Advance by whole days (same H:MM preserved) so the
     // reasoning day-name pass below can correct day mentions accurately.
-    const msPerDaySpread = 24 * 60 * 60 * 1000;
     const MIN_GAP_MS = 60 * 60 * 1000; // 1-hour minimum gap
     posts.sort((a, b) => {
       if (!a.scheduledFor && !b.scheduledFor) return 0;
@@ -2544,8 +2543,8 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       let currT   = new Date(curr.scheduledFor.replace('Z', '')).getTime();
       if (currT - prevT < MIN_GAP_MS) {
         let days = 1;
-        while (currT + days * msPerDaySpread - prevT < MIN_GAP_MS) days++;
-        posts[i] = { ...curr, scheduledFor: toLocalISO(new Date(currT + days * msPerDaySpread)) };
+        while (currT + days * msPerDay - prevT < MIN_GAP_MS) days++;
+        posts[i] = { ...curr, scheduledFor: toLocalISO(new Date(currT + days * msPerDay)) };
       }
     }
 
