@@ -94,7 +94,7 @@ export const AdminQualityScan: React.FC = () => {
   const scanButtonLabel = scanLoading ? 'Scanning…' : scanResult ? 'Re-scan' : 'Scan now';
 
   return (
-    <div className="bg-[#111118] border border-white/8 rounded-2xl overflow-hidden">
+    <div className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden">
       <button
         onClick={() => setExpanded(e => !e)}
         className="w-full flex items-center justify-between gap-3 p-4 hover:bg-white/3 transition text-left"
