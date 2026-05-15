@@ -123,7 +123,7 @@ export const DateTimePicker: React.FC<Props> = ({ value, onChange }) => {
 
       {/* Popover */}
       {open && (
-        <div className="absolute bottom-full mb-2 left-0 z-50 w-[300px] bg-[#0e0e1c] border border-white/10 rounded-2xl shadow-2xl shadow-black/60 backdrop-blur-xl overflow-hidden select-none">
+        <div className="absolute bottom-full mb-2 left-0 z-50 w-[300px] glass-strong border border-white/10 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden select-none">
           {/* Month navigation */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
             <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/8 transition text-white/50 hover:text-white">
