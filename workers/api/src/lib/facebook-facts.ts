@@ -68,9 +68,13 @@ export async function refreshFactsForUser(
     }
   } catch { /* skip */ }
 
-  // Photos
+  // Photos — onboarding only, limited to 6. Brand DNA Card displays the
+  // first 3 as thumbnails; the rest are slack so a stale top-3 still leaves
+  // something to show. Cron path (refreshFactsForWorkspace below) does NOT
+  // re-scrape photos because nothing reads them after onboarding — the FLUX
+  // pipeline doesn't accept reference images on the default path.
   try {
-    const r = await fetch(`${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${pageToken}`);
+    const r = await fetch(`${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=6&access_token=${pageToken}`);
     const d: any = await r.json();
     for (const ph of d?.data || []) {
       const url = ph.images?.[0]?.source;
@@ -169,23 +173,12 @@ export async function refreshFactsForWorkspace(
     } catch { /* skip this post */ }
   }
 
-  // 4. Recent photos (URLs only — for AI to reference real imagery)
-  try {
-    const r = await fetch(`${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${pageToken}`);
-    const d: any = await r.json();
-    if (d?.error) errors.push(`photos: ${d.error.message}`);
-    for (const ph of d?.data || []) {
-      const url = ph.images?.[0]?.source;
-      if (!url) continue;
-      inserts.push({
-        type: 'photo',
-        content: ph.name || 'Untitled photo',
-        meta: { url },
-        fb_id: ph.id,
-        eng: 0,
-      });
-    }
-  } catch (e: any) { errors.push(`photos: ${e.message}`); }
+  // 4. Photos — intentionally NOT scraped on the cron path. They were used
+  // by FLUX Pro Kontext (image-editing model) before it was swapped for
+  // FLUX-dev. The default image-gen path doesn't take reference images, so
+  // re-scraping photos daily was wasted FB API quota + D1 writes. The
+  // onboarding-magic path (refreshFactsForUser above) still scrapes 6 for
+  // the Brand DNA Card thumbnails.
 
   // 5. Upcoming events (real future dates AI can reference)
   try {

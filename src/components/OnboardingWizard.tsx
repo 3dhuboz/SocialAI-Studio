@@ -455,7 +455,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                   </div>
                   {brandDna.brand_dna.reference_photos.length > 0 && (
                     <div className="px-4 py-3 border-t border-emerald-500/10">
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Reference photos (will steer all generated images)</p>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2">Top brand photos from your Page</p>
                       <div className="flex gap-2">
                         {brandDna.brand_dna.reference_photos.slice(0, 3).map((url, i) => (
                           <img key={i} src={url} alt="" className="w-16 h-16 rounded-lg object-cover border border-white/10" loading="lazy" />
