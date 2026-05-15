@@ -113,7 +113,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
       <div className="bg-[#0e0e1a] border border-white/10 rounded-3xl w-full max-w-[calc(100vw-1rem)] sm:max-w-2xl shadow-2xl my-4">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-white/8">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-white/[0.08]">
           <div>
             <h2 className="text-lg font-black text-white">Complete Your Setup</h2>
             <p className="text-xs text-white/40 mt-0.5">Tell us about your business so we can connect your Facebook Page</p>
@@ -144,12 +144,12 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Full Name <span className="text-red-400">*</span></label>
                 <input value={form.contactName} onChange={set('contactName')} placeholder="e.g. Jane Smith"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Phone Number</label>
                 <input type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} placeholder="e.g. 0412 345 678"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
             </div>
           </div>
@@ -161,17 +161,17 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Business Name <span className="text-red-400">*</span></label>
                 <input value={form.businessName} onChange={set('businessName')} placeholder="e.g. Bella's Bakery"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Business Type</label>
                 <input value={form.businessType} onChange={set('businessType')} placeholder="e.g. Café & bakery"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div className="sm:col-span-2">
                 <label className="text-xs text-white/40 block mb-1.5">Location</label>
                 <input value={form.location} onChange={set('location')} placeholder="e.g. Rockhampton, QLD"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
             </div>
           </div>
@@ -184,7 +184,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
               <div className="sm:col-span-2">
                 <label className="text-xs text-white/40 block mb-1.5 flex items-center gap-1.5"><Facebook size={11} className="text-blue-400" /> Facebook Page URL <span className="text-red-400">*</span></label>
                 <input value={form.facebookPageUrl} onChange={set('facebookPageUrl')} placeholder="https://facebook.com/yourbusiness"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-blue-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-blue-500/40 transition" />
               </div>
               <div className="sm:col-span-2">
                 <label className="text-xs text-white/40 block mb-1">Facebook Page ID <span className="text-amber-400/70 font-semibold">— needed for AI analytics</span></label>
@@ -195,22 +195,22 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Facebook Page Name</label>
                 <input value={form.facebookPageName} onChange={set('facebookPageName')} placeholder="e.g. Bella's Bakery Rockhampton"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Instagram Handle</label>
                 <input value={form.instagramHandle} onChange={set('instagramHandle')} placeholder="@yourbusiness"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Approx. Current Followers</label>
                 <input value={form.followers} onChange={set('followers')} placeholder="e.g. 850"
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition" />
               </div>
               <div>
                 <label className="text-xs text-white/40 block mb-1.5">Chosen Plan</label>
                 <select value={form.chosenPlan} onChange={set('chosenPlan')}
-                  className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/40 transition">
+                  className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/40 transition">
                   {CLIENT.plans.map(p => (
                     <option key={p.id} value={p.name}>{p.name} — ${p.price}/mo</option>
                   ))}
@@ -224,12 +224,12 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
             <label className="text-xs text-white/40 block mb-1.5">Anything else we should know?</label>
             <textarea value={form.notes} onChange={set('notes')} rows={2}
               placeholder="Special requirements, preferred contact times, existing social media challenges…"
-              className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition resize-none" />
+              className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition resize-none" />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 pb-6 flex flex-wrap items-center gap-3 pt-2 border-t border-white/6">
+        <div className="px-6 pb-6 flex flex-wrap items-center gap-3 pt-2 border-t border-white/[0.06]">
           {sendError && <p className="w-full text-xs text-amber-400 text-center">{sendError}</p>}
           <button
             onClick={handleSend}

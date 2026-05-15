@@ -222,7 +222,7 @@ export const AdminCustomers: React.FC = () => {
       )}
 
       {!loading && !error && filtered.length === 0 && (
-        <div className="rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-10 text-center">
+        <div className="glass-card rounded-3xl border border-dashed border-white/10 p-10 text-center">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-white/5 mb-3">
             <Users size={20} className="text-white/35" />
           </div>
@@ -239,7 +239,7 @@ export const AdminCustomers: React.FC = () => {
 
       {/* Customer list */}
       {filtered.length > 0 && (
-        <div className="rounded-3xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
+        <div className="glass-card rounded-3xl border border-white/[0.06] overflow-hidden">
           {/* Desktop column header — hidden on mobile (cards) */}
           <div className="hidden md:grid grid-cols-[2.2fr_1fr_1fr_1fr_1fr_44px] gap-4 px-5 py-3 text-[10px] font-bold tracking-[0.14em] text-white/35 uppercase border-b border-white/[0.04]">
             <span>Customer</span>
@@ -289,7 +289,7 @@ const StatCard: React.FC<{
     rose:    'text-rose-300 bg-rose-500/10 border-rose-500/15',
   }[tone];
   return (
-    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 sm:p-5 relative overflow-hidden">
+    <div className="glass-card rounded-2xl border border-white/[0.06] p-4 sm:p-5 relative overflow-hidden">
       <div className={`inline-flex items-center justify-center w-9 h-9 rounded-xl border ${toneClass} mb-3`}>
         <Icon size={15} />
       </div>
@@ -454,7 +454,7 @@ const FeatureToggle: React.FC<{
   saving: boolean;
   onChange: (opt: 'inherit' | 'grant' | 'revoke') => void;
 }> = ({ label, planDefault, override, saving, onChange }) => (
-  <div className="bg-black/20 border border-white/[0.06] rounded-xl p-3 space-y-2">
+  <div className="glass-card border border-white/[0.06] rounded-xl p-3 space-y-2">
     <div className="flex items-center justify-between gap-2 flex-wrap">
       <div>
         <p className="text-xs font-semibold text-white">{label}</p>
@@ -492,7 +492,7 @@ const CreditRow: React.FC<{
   saving: boolean;
   helpText: string;
 }> = ({ label, balance, absInput, setAbsInput, onDelta, onSet, saving, helpText }) => (
-  <div className="bg-black/20 border border-white/[0.06] rounded-xl p-3 space-y-2">
+  <div className="glass-card border border-white/[0.06] rounded-xl p-3 space-y-2">
     <div className="flex items-center justify-between flex-wrap gap-2">
       <div>
         <p className="text-xs font-semibold text-white">{label}</p>
