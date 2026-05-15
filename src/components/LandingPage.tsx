@@ -169,7 +169,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
         </div>
 
         {/* Mobile tab row */}
-        <div className="md:hidden flex border-t border-white/5">
+        <div className="md:hidden flex border-t border-white/[0.05]">
           {NAV_TABS.map(t => (
             <button
               key={t.id}
@@ -310,7 +310,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       className={`rounded-2xl p-6 text-left border ${
                         p.anchor
                           ? 'bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border-amber-500/20'
-                          : 'bg-white/[0.03] border-white/[0.08]'
+                          : 'glass-card border-white/[0.08]'
                       }`}
                     >
                       <p.icon size={22} className={`${p.anchor ? 'text-amber-400' : 'text-white/55'} mb-3`} />
@@ -490,7 +490,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     { stat: '< 1 min', label: 'Brief to publish', sub: 'AI writes, animates, scores' },
                     { stat: '10×', label: 'More reach than static', sub: 'The IG algorithm prefers reels' },
                   ].map((p, i) => (
-                    <div key={i} className="rounded-2xl p-5 text-left border bg-white/[0.03] border-white/[0.08]">
+                    <div key={i} className="rounded-2xl p-5 text-left border glass-card border-white/[0.08]">
                       <p className="text-2xl font-black text-white mb-1 tracking-tight">{p.stat}</p>
                       <p className="font-bold text-white/85 text-sm mb-1">{p.label}</p>
                       <p className="text-xs text-white/40 leading-relaxed">{p.sub}</p>
@@ -737,7 +737,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     { stat: 'A4 + Square + Story', label: 'Every aspect ratio', sub: 'Print and socials in one go' },
                     { stat: 'Brand-locked', label: 'Your palette, your voice', sub: 'Saved once, used every time' },
                   ].map((p, i) => (
-                    <div key={i} className="rounded-2xl p-5 text-left border bg-white/[0.03] border-white/[0.08]">
+                    <div key={i} className="rounded-2xl p-5 text-left border glass-card border-white/[0.08]">
                       <p className="text-2xl font-black text-white mb-1 tracking-tight">{p.stat}</p>
                       <p className="font-bold text-white/85 text-sm mb-1">{p.label}</p>
                       <p className="text-xs text-white/40 leading-relaxed">{p.sub}</p>
@@ -841,7 +841,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     className={`rounded-2xl p-6 text-center border ${
                       s.anchor
                         ? 'bg-gradient-to-br from-amber-500/[0.10] to-amber-500/[0.02] border-amber-500/25'
-                        : 'bg-white/[0.03] border-white/[0.08]'
+                        : 'glass-card border-white/[0.08]'
                     }`}
                   >
                     <s.icon size={22} className={`${s.anchor ? 'text-amber-400' : 'text-white/55'} mx-auto mb-3`} />
@@ -952,7 +952,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                   { title: 'Live Analytics', desc: "Followers, reach, engagement — track what's working, drop what isn't." },
                   { title: 'Saturation Mode', desc: "Going on holiday? Doing a launch? Hit one button — 21 posts queued and scheduled across 3 weeks." },
                 ].map((f, i) => (
-                  <div key={i} className="border-t border-white/8 pt-5">
+                  <div key={i} className="border-t border-white/[0.08] pt-5">
                     <h3 className="text-[10px] font-bold tracking-[0.22em] text-amber-300/70 uppercase mb-2.5">
                       0{i + 3}
                     </h3>
@@ -1000,7 +1000,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                   const founder = CLIENT.founder;
                   const hasFounder = !!(founder?.firstName && founder?.photoUrl);
                   return (
-                    <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-7 space-y-5">
+                    <div className="glass-card border border-white/10 rounded-2xl p-7 space-y-5">
                       <div className="flex items-center gap-3.5">
                         {hasFounder ? (
                           <img
@@ -1232,7 +1232,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                 );
               })}
             </div>
-            <div className="mt-12 pt-8 border-t border-white/8 max-w-4xl flex flex-wrap items-center justify-between gap-4 text-[11px] text-white/40">
+            <div className="mt-12 pt-8 border-t border-white/[0.08] max-w-4xl flex flex-wrap items-center justify-between gap-4 text-[11px] text-white/40">
               <p className="font-bold tracking-[0.18em] uppercase">Standalone plans · You only pay for one</p>
               <p>No setup fee · No contract · Cancel any time</p>
             </div>
@@ -1267,7 +1267,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       value={contactForm.name}
                       onChange={e => setContactForm(p => ({ ...p, name: e.target.value }))}
                       placeholder="Jane Smith"
-                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                      className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
                     />
                   </div>
                   <div>
@@ -1277,7 +1277,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       value={contactForm.email}
                       onChange={e => setContactForm(p => ({ ...p, email: e.target.value }))}
                       placeholder="jane@yourbusiness.com.au"
-                      className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                      className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
                     />
                   </div>
                 </div>
@@ -1287,7 +1287,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     value={contactForm.phone}
                     onChange={e => setContactForm(p => ({ ...p, phone: e.target.value }))}
                     placeholder="0412 345 678"
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition"
                   />
                 </div>
                 <div>
@@ -1297,7 +1297,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     onChange={e => setContactForm(p => ({ ...p, message: e.target.value }))}
                     rows={5}
                     placeholder="Tell us about your business and what you need..."
-                    className="w-full bg-black/40 border border-white/8 rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition resize-none"
+                    className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-2.5 text-white text-sm placeholder:text-white/20 focus:outline-none focus:border-amber-500/40 transition resize-none"
                   />
                 </div>
                 <button
@@ -1310,13 +1310,13 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                     : <>Send Message <ArrowRight size={15} /></>}
                 </button>
 
-                <div className="border-t border-white/6 pt-5 space-y-3">
+                <div className="border-t border-white/[0.06] pt-5 space-y-3">
                   <p className="text-xs text-white/25 text-center">Or reach us directly:</p>
                   <div className="flex flex-wrap justify-center gap-3">
-                    <a href={`mailto:${CLIENT.supportEmail}`} className="flex items-center gap-2 text-xs text-white/40 hover:text-amber-300 border border-white/8 hover:border-amber-500/25 px-3 py-2 rounded-xl transition">
+                    <a href={`mailto:${CLIENT.supportEmail}`} className="flex items-center gap-2 text-xs text-white/40 hover:text-amber-300 border border-white/[0.08] hover:border-amber-500/25 px-3 py-2 rounded-xl transition">
                       ✉ {CLIENT.supportEmail}
                     </a>
-                    <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-white/40 hover:text-amber-300 border border-white/8 hover:border-amber-500/25 px-3 py-2 rounded-xl transition">
+                    <a href={CLIENT.salesUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-white/40 hover:text-amber-300 border border-white/[0.08] hover:border-amber-500/25 px-3 py-2 rounded-xl transition">
                       🌐 {CLIENT.salesUrl.replace('https://', '')}
                     </a>
                   </div>
@@ -1346,7 +1346,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
                       : <ChevronDown size={16} className="text-white/30 shrink-0" />}
                   </button>
                   {openFaq === i && (
-                    <div className="px-6 pb-5 text-sm text-white/50 leading-relaxed border-t border-white/5 pt-4">
+                    <div className="px-6 pb-5 text-sm text-white/50 leading-relaxed border-t border-white/[0.05] pt-4">
                       {faq.a}
                     </div>
                   )}
@@ -1368,7 +1368,7 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
       </main>
 
       {/* FOOTER */}
-      <footer className="border-t border-white/5 py-8 px-6 mt-8">
+      <footer className="border-t border-white/[0.05] py-8 px-6 mt-8">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-white/20">
           <AppLogo size={40} />
           <div className="flex items-center gap-4 flex-wrap justify-center">
