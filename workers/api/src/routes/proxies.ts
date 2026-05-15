@@ -49,10 +49,15 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const authHeader = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
 
     if (action === 'generate-image' && c.req.method === 'POST') {
-      const { prompt, negativePrompt, clientId, forceModel } = await c.req.json() as {
+      const { prompt, negativePrompt, clientId, forceModel, caption } = await c.req.json() as {
         prompt?: string;
         negativePrompt?: string;
         clientId?: string | null;
+        // caption: the post text this image will accompany. Used by
+        // generateImageWithBrandRefs for archetype sniffing when the workspace
+        // hasn't run classify-business yet — without it, guardrails no-op for
+        // unclassified workspaces and cross-domain images ship unchecked.
+        caption?: string | null;
         // forceModel: optional override for testing/UX. Acceptable values:
         //   'flux-dev'           — original cheap baseline (no brand refs)
         //   'flux-pro-kontext'   — brand-grounded ($0.04/img, max 4 refs)
@@ -122,6 +127,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const result = await generateImageWithBrandRefs(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
+        { caption: caption || null },
       );
       if (!result.imageUrl) {
         return c.json({ error: 'Image generation failed — both flux-pro-kontext and flux-dev returned no image' }, 502);

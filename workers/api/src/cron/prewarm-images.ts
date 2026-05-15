@@ -142,6 +142,13 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
               if (retryCritique) {
                 finalCritique = retryCritique;
                 console.log(`[CRON prewarm] post ${postId} retry critique score=${retryCritique.score}`);
+              } else {
+                // Re-critique failed (provider outage). Clear the old failed
+                // score so the audit trail doesn't lie — the persisted score
+                // would be from the original bad image, not the fallback that
+                // actually shipped. Backlog cron will rescore on the next tick.
+                finalCritique = null;
+                console.warn(`[CRON prewarm] post ${postId} re-critique failed after forceFallback — clearing stale score`);
               }
             }
           }

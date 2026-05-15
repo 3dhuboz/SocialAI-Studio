@@ -63,7 +63,7 @@ export function isAbstractUIPrompt(prompt: string): boolean {
 // contextual cue. See gemini.ts FLUX_NEGATIVE_PROMPT comment for full
 // reasoning. KEEP IN SYNC with that constant.)
 export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam';
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, natural daylight, slightly imperfect framing, real-world wear and texture, 1:1 square format';
+export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
 
 // ── Archetype-aware image guardrails (2026-05-11 cross-domain bleed fix) ──
 //
@@ -125,18 +125,31 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
     forbidden: /\b(?:dashboard|laptop\s+screen|spreadsheet|infographic|app\s+screen|gym|treadmill|barbell|garage|engine|wrench|tractor|paddock|livestock\s+(?:in|on)\s+a\s+paddock)\b/i,
     extraNegatives: 'dashboard, laptop screen, UI, app screen, gym, garage, office cubicle',
     fallbackScenes: [
-      'overhead shot of a plated dish on a rustic wooden table with linen napkin and water glass, warm restaurant ambient light',
-      'cosy restaurant interior corner with set tables, soft candle light and warm wooden accents',
-      'kitchen pass at golden hour with fresh herbs, a board of seasonal vegetables and warm pendant lights',
+      // Signature dish / food hero
+      'overhead shot of a beautifully plated main course on a linen-draped table, warm pendant restaurant light',
+      'close-up macro of seasonal pasta with sauce sheen and herb garnish, shallow focus, warm side light',
+      'rustic wood board with house-made bread, olive oil dipping bowl and fresh herbs, natural daylight',
+      // Venue / atmosphere
+      'cosy restaurant corner with two set tables, soft candle glow and warm wooden accents, no people',
+      'bar counter with wine glasses, a single flower stem and soft golden backlight, moody atmosphere',
+      // Process / kitchen (no people)
+      'kitchen pass at golden hour — fresh herbs, colourful seasonal vegetables on a marble board, warm pendant light',
+      'overhead flatlay of mise en place: chopped vegetables in ceramic bowls on a dark stone counter, chef overhead lighting',
     ],
   },
   'bbq-smokehouse': {
     forbidden: /\b(?:dashboard|laptop|spreadsheet|app\s+screen|gym|treadmill|salon|spa)\b/i,
     extraNegatives: 'dashboard, laptop, UI, office, gym, salon',
     fallbackScenes: [
-      'close-up of slow-smoked brisket bark on a butcher board, smoke trail behind, warm afternoon light',
-      'pulled pork mound on butcher paper with house-made slaw and pickles, candid backyard cookout style',
-      'offset smoker outside a brick smokehouse with thin blue smoke against a clear sky, late afternoon',
+      // Hero meat shots
+      'close-up of slow-smoked brisket bark resting on a butcher board, wisp of smoke, warm afternoon light',
+      'pulled pork mound piled high on butcher paper with house-made slaw and pickles, candid cookout light',
+      'rack of glazed BBQ ribs stacked on a cedar plank, glistening sauce, golden hour warm light',
+      // Pit / venue atmosphere
+      'offset smoker outside a brick smokehouse with thin blue smoke drifting against a clear afternoon sky',
+      'BBQ pit interior with glowing embers and hanging hooks, atmospheric moody side light, no people',
+      // Flatlay / spread
+      'overhead flatlay: sliced brisket, white bread, house pickles and jalapeños on red checkered paper',
     ],
   },
   'butcher-meat': {

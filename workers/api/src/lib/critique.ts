@@ -226,6 +226,10 @@ export async function critiqueImageInternal(
       console.warn(`[critique] response missing/non-numeric score — treating as no critique: ${stripped.slice(0, 200)}`);
       return null;
     }
+    if (score < 0 || score > 10) {
+      console.warn(`[critique] score ${score} out of 0-10 range — treating as no critique`);
+      return null;
+    }
     if (!(['yes', 'partial', 'no'] as const).includes(match)) {
       console.warn(`[critique] response has invalid match='${match}' — treating as no critique: ${stripped.slice(0, 200)}`);
       return null;

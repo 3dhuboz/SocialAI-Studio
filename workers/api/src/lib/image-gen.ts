@@ -77,13 +77,20 @@ export async function generateImageWithBrandRefs(
     // archetype scene. This is the last-resort path when the original gen
     // failed vision critique.
     const fallback = ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug];
-    const scene = fallback.fallbackScenes[Math.floor(Math.random() * fallback.fallbackScenes.length)];
-    guarded = {
-      prompt: `${scene}, ${FLUX_STYLE_SUFFIX}`,
-      negativePrompt: `${safePrompt.negativePrompt}, ${fallback.extraNegatives}`,
-      swappedForFallback: true,
-    };
-    console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene`);
+    if (!fallback.fallbackScenes || fallback.fallbackScenes.length === 0) {
+      // Archetype registered but no fallback scenes defined — fall through to
+      // normal guardrail path rather than generating "undefined, candid iPhone…"
+      console.warn(`[image-gen] forceFallback=true archetype=${archetypeSlug} has no fallbackScenes — using normal guardrail path`);
+      guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
+    } else {
+      const scene = fallback.fallbackScenes[Math.floor(Math.random() * fallback.fallbackScenes.length)];
+      guarded = {
+        prompt: `${scene}, ${FLUX_STYLE_SUFFIX}`,
+        negativePrompt: `${safePrompt.negativePrompt}, ${fallback.extraNegatives}`,
+        swappedForFallback: true,
+      };
+      console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene`);
+    }
   } else {
     guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
     if (guarded.swappedForFallback) {

@@ -1731,7 +1731,7 @@ const Dashboard: React.FC = () => {
         continue;
       }
       try {
-        const img = await generateImage(prompt);
+        const img = await generateImage(prompt, posts[i].content);
         if (img) setSmartPostImages(prev => ({ ...prev, [i]: img }));
       } catch { /* silently skip */ }
       setAutoGenSet(prev => { const s = new Set(prev); s.delete(i); return s; });
@@ -1918,12 +1918,12 @@ const Dashboard: React.FC = () => {
   // pricing-table mockup because the AI imagePrompt described a UI and the
   // weak preamble (Cinematic lighting, vibrant colours, ...) had no anti-UI
   // negatives. Single pipeline = single place to harden. ──
-  const generateImage = async (prompt: string): Promise<string | null> => {
+  const generateImage = async (prompt: string, caption?: string | null): Promise<string | null> => {
     const bizType = activeClientWorkspace?.businessType
       || profile?.type
       || CLIENT.defaultBusinessType
       || 'small business';
-    return generateMarketingImage(prompt, bizType);
+    return generateMarketingImage(prompt, bizType, caption);
   };
 
   // ── Auto-generate images for calendar posts that have imagePrompt but no image ──
@@ -1947,7 +1947,7 @@ const Dashboard: React.FC = () => {
         calendarAutoGenRanRef.current.add(post.id);
         setCalendarGenSet(prev => new Set(prev).add(post.id));
         try {
-          const img = await generateImage(post.imagePrompt!);
+          const img = await generateImage(post.imagePrompt!, post.content);
           if (img) {
             // CRITICAL: persist to DB. Without this the cron sees image_url=NULL
             // when scheduled_for arrives and publishes the post text-only.
