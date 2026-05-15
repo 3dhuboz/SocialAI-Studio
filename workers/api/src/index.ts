@@ -34,6 +34,7 @@ import { registerOnboardingRoutes } from './routes/onboarding';
 import { registerPostQualityRoutes } from './routes/post-quality';
 import { registerPostersRoutes } from './routes/posters';
 import { registerProxyRoutes } from './routes/proxies';
+import { registerPennybuildRoutes } from './routes/pennybuilder';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -90,6 +91,7 @@ registerOnboardingRoutes(app);
 registerPostQualityRoutes(app);
 registerPostersRoutes(app);
 registerProxyRoutes(app);
+registerPennybuildRoutes(app);
 
 export default {
   fetch: app.fetch,
