@@ -20,7 +20,7 @@
 //   well-exposed output, full negative_prompt support, strong prompt adherence
 //   at guidance_scale 7.0.
 //
-// Returns { imageUrl, modelUsed, referencesUsed } so cron logs can audit.
+// Returns { imageUrl, modelUsed, archetypeSlug } so cron logs can audit.
 
 import type { Env } from '../env';
 import {
@@ -42,13 +42,13 @@ import { resolveArchetypeSlug } from './archetypes';
 // e.g. the SocialAI Studio / Penny Wise I.T workspace that never ran
 // classify-business. Without this, every defense layer no-ops and the
 // system happily ships food imagery on SaaS posts.
-export async function generateImageWithBrandRefs(
+export async function generateImageWithGuardrails(
   env: Env,
   userId: string,
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
   options: { forceFallback?: boolean; caption?: string | null } = {},
-): Promise<{ imageUrl: string | null; modelUsed: string; referencesUsed: number; archetypeSlug: string | null }> {
+): Promise<{ imageUrl: string | null; modelUsed: string; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
   const archetypeSlugRaw = await resolveArchetypeSlug(env, userId, clientId);
@@ -105,7 +105,7 @@ export async function generateImageWithBrandRefs(
   const data = await res.json() as any;
   if (!res.ok) {
     console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
-    return { imageUrl: null, modelUsed: 'flux-dev', referencesUsed: 0, archetypeSlug };
+    return { imageUrl: null, modelUsed: 'flux-dev', archetypeSlug };
   }
-  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', referencesUsed: 0, archetypeSlug };
+  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', archetypeSlug };
 }

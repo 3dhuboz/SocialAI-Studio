@@ -18,7 +18,7 @@
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 import { sendResendEmail } from '../lib/email';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
@@ -366,10 +366,10 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       if (needsImage && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
         const safe = buildSafeImagePrompt(promptForGen);
         if (safe) try {
-          // 2026-05 image-stack upgrade: route through generateImageWithBrandRefs
+          // 2026-05 image-stack upgrade: route through generateImageWithGuardrails
           // so JIT generation gets the same brand-grounded path the manual
           // backfill + frontend use. See helper at top of this file.
-          const gen = await generateImageWithBrandRefs(
+          const gen = await generateImageWithGuardrails(
             env,
             (post as any).user_id,
             (post as any).client_id || null,
@@ -381,7 +381,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
               .bind(gen.imageUrl, (post as any).id).run();
             jitGenerated++;
-            console.log(`[CRON] JIT-generated image for post ${(post as any).id} via ${gen.modelUsed} (${gen.referencesUsed} refs, ${jitGenerated}/${MAX_JIT_IMAGES_PER_RUN})`);
+            console.log(`[CRON] JIT-generated image for post ${(post as any).id} via ${gen.modelUsed} (${jitGenerated}/${MAX_JIT_IMAGES_PER_RUN})`);
           } else {
             console.warn(`[CRON] JIT image gen returned no URL for post ${(post as any).id} via ${gen.modelUsed}`);
           }

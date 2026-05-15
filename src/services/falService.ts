@@ -75,7 +75,7 @@ export const FalService = {
     prompt: string,
     businessType: string = 'small business',
     clientId?: string | null,
-  ): Promise<{ url: string; model: string; referencesUsed: number }> => {
+  ): Promise<{ url: string; model: string }> => {
     const safe = buildSafeImagePromptClient(prompt, businessType);
     if (!safe) throw new Error('Cannot generate image: prompt is empty/abstract and no business type to seed a fallback. Open the post and add an image prompt.');
     const res = await fetch(`${PROXY}?action=generate-image`, {
@@ -86,7 +86,7 @@ export const FalService = {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');
     if (!data.imageUrl) throw new Error('No image URL returned from fal.ai');
-    return { url: data.imageUrl, model: data.model_used || 'flux-dev', referencesUsed: data.references_used || 0 };
+    return { url: data.imageUrl, model: data.model_used || 'flux-dev' };
   },
 
   isConfigured: () => true, // FAL_API_KEY is configured server-side in Cloudflare env

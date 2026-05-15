@@ -26,7 +26,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 
 export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────
@@ -103,7 +103,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
             const data = await res.json() as any;
             const imageUrl = data?.images?.[0]?.url || null;
             if (imageUrl) {
-              return c.json({ imageUrl, model_used: 'nano-banana-pro', references_used: referenceImageUrls.length });
+              return c.json({ imageUrl, model_used: 'nano-banana-pro' });
             }
           } else {
             console.warn(`[fal-proxy] nano-banana-pro failed (status ${res.status}), falling through to flux chain`);
@@ -117,7 +117,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       // Single source of truth for image gen: same code path the cron +
       // backfill use. FLUX-dev at square_hd / 35 steps / guidance 7.0,
       // with archetype guardrails + caption-based archetype sniffing.
-      const result = await generateImageWithBrandRefs(
+      const result = await generateImageWithGuardrails(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
         { caption: caption || null },
@@ -125,7 +125,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       if (!result.imageUrl) {
         return c.json({ error: 'Image generation failed — flux-dev returned no image' }, 502);
       }
-      return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed, references_used: result.referencesUsed });
+      return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed });
     }
     if (action === 'generate-video' && c.req.method === 'POST') {
       const { promptText, promptImage, duration = 5 } = await c.req.json() as any;

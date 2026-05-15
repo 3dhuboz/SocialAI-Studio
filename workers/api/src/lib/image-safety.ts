@@ -55,7 +55,7 @@ export const SAFE_FALLBACK_SCENES = [
 // LLM hallucinates a scene. The image-gen pipeline was archetype-blind: it
 // just took whatever `image_prompt` was stored and shipped it.
 //
-// This map adds a per-archetype safety net. When generateImageWithBrandRefs
+// This map adds a per-archetype safety net. When generateImageWithGuardrails
 // detects the stored prompt contains subjects forbidden for that archetype,
 // it swaps the prompt for a neutral archetype-appropriate fallback scene and
 // extends the FLUX negative_prompt with the archetype's avoid-list.
