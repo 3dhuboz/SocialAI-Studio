@@ -126,7 +126,7 @@ export const PostModal: React.FC<Props> = ({
       <div className="relative z-10 w-full max-w-[calc(100vw-1rem)] sm:max-w-lg max-h-[90vh] overflow-y-auto bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl shadow-black/60 animate-spring-in">
 
         {/* ── Header ── */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/6">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
           <div className="flex items-center gap-2">
             {isIG
               ? <Instagram size={15} className="text-pink-400" />
@@ -282,12 +282,12 @@ export const PostModal: React.FC<Props> = ({
               </div>
             </div>
           ) : isGeneratingImage ? (
-            <div className="w-full h-32 bg-black/30 flex items-center justify-center gap-2 border-b border-white/6">
+            <div className="w-full h-32 bg-black/30 flex items-center justify-center gap-2 border-b border-white/[0.06]">
               <Loader2 size={16} className="animate-spin text-amber-400" />
               <span className="text-xs text-amber-400/70">Generating image…</span>
             </div>
           ) : (
-            <div className="w-full h-24 bg-black/20 flex items-center justify-center gap-3 border-b border-white/6">
+            <div className="w-full h-24 bg-black/20 flex items-center justify-center gap-3 border-b border-white/[0.06]">
               <ImageIcon size={16} className="text-white/15" />
               <div className="flex gap-2">
                 {post.imagePrompt && hasApiKey && (
@@ -353,7 +353,7 @@ export const PostModal: React.FC<Props> = ({
                       </div>
                     </div>
                     {viralityScore.suggestions.length > 0 && (
-                      <ul className="border-t border-white/5 px-4 py-2.5 space-y-1 bg-black/20">
+                      <ul className="border-t border-white/[0.05] px-4 py-2.5 space-y-1 bg-black/20">
                         {viralityScore.suggestions.map((s, i) => (
                           <li key={i} className="text-[11px] text-white/55 flex items-start gap-2 leading-snug">
                             <span className="text-amber-400/60 mt-0.5">→</span>
@@ -363,7 +363,7 @@ export const PostModal: React.FC<Props> = ({
                       </ul>
                     )}
                     {(viralityScore.workspace_p50 !== undefined && viralityScore.workspace_p95 !== undefined) && (
-                      <p className="text-[10px] text-white/30 px-4 py-1.5 border-t border-white/5 bg-black/20">
+                      <p className="text-[10px] text-white/30 px-4 py-1.5 border-t border-white/[0.05] bg-black/20">
                         Trained on {viralityScore.historical_posts} past posts · your median engagement {viralityScore.workspace_p50.toFixed(0)}, top-tier ≥{viralityScore.workspace_p95.toFixed(0)}
                       </p>
                     )}
