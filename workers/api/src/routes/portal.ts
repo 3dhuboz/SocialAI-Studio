@@ -49,13 +49,18 @@ export function registerPortalRoutes(app: Hono<{ Bindings: Env }>): void {
     const slug = c.req.param('slug').toLowerCase();
     const body = await c.req.json<{ email: string; password: string; client_id?: string }>();
     const portalToken = crypto.randomUUID() + '-' + crypto.randomUUID();
+    // 30-day sliding window — every PUT (re-issue) refreshes expires_at
+    // and clears any previous revoked_at, so admin can resurrect a
+    // revoked portal by re-issuing without manually clearing the column.
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     await c.env.DB.prepare(
-      `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id)
-       VALUES (?,?,?,?,?,?)
+      `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id, expires_at, revoked_at)
+       VALUES (?,?,?,?,?,?,?,NULL)
        ON CONFLICT(slug) DO UPDATE SET email=excluded.email, password=excluded.password,
-         portal_token=excluded.portal_token, user_id=excluded.user_id, client_id=excluded.client_id`
-    ).bind(slug, body.email, body.password, portalToken, uid, body.client_id ?? null).run();
-    return c.json({ ok: true, portalToken });
+         portal_token=excluded.portal_token, user_id=excluded.user_id, client_id=excluded.client_id,
+         expires_at=excluded.expires_at, revoked_at=NULL`
+    ).bind(slug, body.email, body.password, portalToken, uid, body.client_id ?? null, expiresAt).run();
+    return c.json({ ok: true, portalToken, expiresAt });
   });
 
   // Portal content — public GET (for rendering), authenticated PUT (for editing)

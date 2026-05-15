@@ -31,6 +31,23 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json<Record<string, unknown>>();
 
+    // ── Privileged fields — never settable by the caller ───────────────────
+    // Pre-2026-05 these were on the PUT field map, which meant any JWT
+    // holder could curl `{ "isAdmin": true, "plan": "agency", "reelCredits":
+    // 9999 }` and self-promote. Now they're admin-only / webhook-only:
+    //
+    //   isAdmin         → flipped manually via wrangler d1 / admin tooling
+    //   plan            → set by PayPal webhook (lib/paypal.ts) on subscription activate
+    //   billingCycle    → set by PayPal webhook alongside plan
+    //   reelCredits     → set by PayPal webhook (renewal grant) or admin-actions credit-grant
+    //   posterCredits   → same as reelCredits (already absent from field map, but listed
+    //                     here so future devs don't add it back)
+    //   agencyBillingUrl→ admin-only — passed via admin onboarding flow
+    //
+    // The frontend (App.tsx) tries to send `isAdmin: true` for admin-email
+    // accounts, but that determination is client-side and trivially spoofed.
+    // True admin promotion now flows through `wrangler d1 execute … UPDATE
+    // users SET is_admin = 1 WHERE id = ?`.
     const existing = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(uid).first();
     if (!existing) {
       await c.env.DB.prepare(
@@ -40,36 +57,35 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(
         uid,
-        body.email ?? null, body.plan ?? null, body.setupStatus ?? null,
-        body.isAdmin ? 1 : 0, body.onboardingDone ? 1 : 0, body.intakeFormDone ? 1 : 0,
-        body.agencyBillingUrl ?? null, body.lateProfileId ?? null,
+        body.email ?? null,
+        null,                                         // plan        — webhook-only
+        body.setupStatus ?? null,
+        0,                                            // is_admin    — admin-only (see comment above)
+        body.onboardingDone ? 1 : 0, body.intakeFormDone ? 1 : 0,
+        null,                                         // agency_billing_url — admin-only
+        body.lateProfileId ?? null,
         JSON.stringify(body.lateConnectedPlatforms ?? []),
         JSON.stringify(body.lateAccountIds ?? {}),
         body.falApiKey ?? null, body.paypalSubscriptionId ?? null,
         JSON.stringify(body.profile ?? {}), JSON.stringify(body.stats ?? {}),
         body.insightReport ? JSON.stringify(body.insightReport) : null,
-        body.billingCycle ?? null
+        null,                                         // billing_cycle — webhook-only
       ).run();
     } else {
       const sets: string[] = [];
       const vals: unknown[] = [];
+      // NOTE: isAdmin / plan / billingCycle / reelCredits / agencyBillingUrl
+      // are deliberately absent — see the privileged-fields comment above.
       const fieldMap: Record<string, string> = {
-        email: 'email', plan: 'plan', setupStatus: 'setup_status', isAdmin: 'is_admin',
+        email: 'email', setupStatus: 'setup_status',
         onboardingDone: 'onboarding_done', intakeFormDone: 'intake_form_done',
-        agencyBillingUrl: 'agency_billing_url', lateProfileId: 'late_profile_id',
+        lateProfileId: 'late_profile_id',
         lateConnectedPlatforms: 'late_connected_platforms', lateAccountIds: 'late_account_ids',
         falApiKey: 'fal_api_key', paypalSubscriptionId: 'paypal_subscription_id',
         profile: 'profile', stats: 'stats', insightReport: 'insight_report',
-        // v5 — reel credits balance. Plan grants (PayPal webhook on renewal)
-        // and one-off credit-pack purchases both increment this column.
-        reelCredits: 'reel_credits',
-        // v6 — 'monthly' | 'yearly'. Set when consuming a pending_activations
-        // row; drives the renewal grant multiplier (×1 or ×12) so yearly subs
-        // get the same total credits/year as monthly subs.
-        billingCycle: 'billing_cycle',
       };
       const jsonFields = new Set(['lateConnectedPlatforms', 'lateAccountIds', 'profile', 'stats', 'insightReport']);
-      const boolFields = new Set(['isAdmin', 'onboardingDone', 'intakeFormDone']);
+      const boolFields = new Set(['onboardingDone', 'intakeFormDone']);
       for (const [k, col] of Object.entries(fieldMap)) {
         if (!(k in body)) continue;
         sets.push(`${col} = ?`);
