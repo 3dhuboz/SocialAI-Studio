@@ -100,7 +100,7 @@ export const ClientIntakeForm: React.FC<ClientIntakeFormProps> = ({ userEmail, o
               <li className="flex items-start gap-2"><ChevronRight size={12} className="text-amber-400 shrink-0 mt-0.5" /> Your AI content calendar goes live — you're up and running!</li>
             </ul>
           </div>
-          <button onClick={onClose} className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3 rounded-2xl transition hover:opacity-90">
+          <button onClick={onClose} className="w-full bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black py-3 rounded-2xl transition-all hover:opacity-90 press">
             Got it — let's go!
           </button>
         </div>
