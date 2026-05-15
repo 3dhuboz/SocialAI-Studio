@@ -73,4 +73,40 @@ describe('buildCritiqueSystemPrompt', () => {
     // The rule should apply whether or not the caption appears to match
     expect(prompt).toContain('REGARDLESS of whether the caption');
   });
+
+  // ── Visual quality rules (added 2026-05-16) ──────────────────────────
+  // The critique used to score purely on topic match — a blurry/dark image
+  // could pass at 7-8 if the subject was "on-topic enough". These tests
+  // guard the new visual-quality clauses that flag those failure modes.
+
+  it('always includes the VISUAL QUALITY RULES section', () => {
+    const prompt = buildCritiqueSystemPrompt('food-restaurant');
+    expect(prompt).toContain('VISUAL QUALITY RULES');
+  });
+
+  it('penalises blurry / out-of-focus / motion-blurred / soft-focus images', () => {
+    const prompt = buildCritiqueSystemPrompt('food-restaurant');
+    expect(prompt).toMatch(/blurry/i);
+    expect(prompt).toMatch(/out of focus/i);
+    expect(prompt).toMatch(/motion-blurred|motion blur/i);
+    expect(prompt).toMatch(/soft-focus|soft focus/i);
+  });
+
+  it('penalises dark / underexposed / dim / gloomy images', () => {
+    const prompt = buildCritiqueSystemPrompt('food-restaurant');
+    expect(prompt).toMatch(/dark/i);
+    expect(prompt).toMatch(/underexposed/i);
+    expect(prompt).toMatch(/dim/i);
+    expect(prompt).toMatch(/gloomy/i);
+  });
+
+  it('preserves the night/candlelit/moody-tone exception so genuine dark posts pass', () => {
+    const prompt = buildCritiqueSystemPrompt('food-restaurant');
+    expect(prompt).toMatch(/night|candlelit|moody/i);
+  });
+
+  it('penalises heavily blended / composited / surreal images (Kontext failure mode)', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toMatch(/blended|composited/i);
+  });
 });
