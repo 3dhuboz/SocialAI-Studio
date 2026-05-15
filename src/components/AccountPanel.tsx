@@ -105,7 +105,7 @@ export const AccountPanel: React.FC<Props> = ({
       <div className="w-full max-w-sm glass-strong border border-white/[0.10] rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[calc(100vh-5rem)]">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/5 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.05] flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center shadow`}>
               <User size={14} className="text-white" />
