@@ -34,7 +34,7 @@ import {
   CheckCircle, ChevronDown, ChevronUp, Zap, Save, Eye, X, Brain, Upload,
   RefreshCw, Link2, Link2Off, TrendingUp, Users, Activity,
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
-  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock
+  Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock, CalendarPlus
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
 import { BrandKitProvider } from './contexts/BrandKitContext';
@@ -4255,25 +4255,35 @@ const Dashboard: React.FC = () => {
               <div className="space-y-4">
                 {/* Restored draft banner */}
                 {draftRestoredAt && (
-                  <div className="bg-amber-500/8 border border-amber-500/25 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-lg flex-shrink-0">📋</span>
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-amber-300">Draft restored from previous session</p>
-                        <p className="text-xs text-white/40 mt-0.5">
-                          {smartPosts.length} posts saved {Math.round((Date.now() - draftRestoredAt) / 60000) < 60
-                            ? `${Math.round((Date.now() - draftRestoredAt) / 60000)} min ago`
-                            : `${Math.round((Date.now() - draftRestoredAt) / 3600000)} hr ago`
-                          } — accept them below or generate a new set.
+                  <div className="bg-gradient-to-r from-amber-500/15 to-orange-500/10 border-2 border-amber-500/50 rounded-2xl p-4 shadow-lg shadow-amber-900/20">
+                    <div className="flex items-start gap-3 mb-3.5">
+                      <span className="text-2xl flex-shrink-0 mt-0.5">📋</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-extrabold text-amber-300 tracking-wide">Unsaved drafts from your last session</p>
+                        <p className="text-xs text-white/50 mt-0.5">
+                          {smartPosts.length} post{smartPosts.length !== 1 ? 's' : ''} waiting — publish them to your calendar or discard to start fresh.
                         </p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => { clearDraft(activeClientId); setSmartPosts([]); setSmartStrategy(''); setDraftRestoredAt(null); }}
-                      className="text-xs text-white/30 hover:text-white/60 border border-white/10 hover:border-white/20 px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 flex-shrink-0"
-                    >
-                      <X size={11} /> Discard
-                    </button>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        onClick={handleAcceptSmartPosts}
+                        disabled={isAccepting || autoGenSet.size > 0}
+                        className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 text-sm shadow-md shadow-green-900/30 transition"
+                      >
+                        {isAccepting ? (
+                          <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                        ) : (
+                          <><CalendarPlus size={14} /> Publish all {smartPosts.length} posts</>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => { clearDraft(activeClientId); setSmartPosts([]); setSmartStrategy(''); setDraftRestoredAt(null); }}
+                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-400/50 hover:bg-red-500/10 transition"
+                      >
+                        <Trash2 size={13} /> Discard all
+                      </button>
+                    </div>
                   </div>
                 )}
 

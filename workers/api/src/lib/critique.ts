@@ -92,6 +92,12 @@ HARD RULES — any of these conditions force a score of 1-2, no exceptions:
   AND the image shows gym equipment, yoga mats, dashboards, or office UI →
   score 1-2.${denylistRule}
 
+TOPIC-MISMATCH RULE — score 3-4 when:
+- Caption is specifically about a PAIN POINT, problem, or wasted time (e.g. "how many hours do you spend…", "still doing this manually", "drowning in notifications", "never enough time") AND the image shows a completely neutral, generic workspace scene that communicates NOTHING about frustration or time pressure (e.g. a keyboard, a plain laptop, an abstract gradient) → score 3-4.
+- Caption is specifically about a SUCCESS, outcome, or transformation AND the image shows a chaotic cluttered scene unrelated to resolution → score 3-4.
+- Caption mentions a SPECIFIC named product or feature AND the image shows a completely different unrelated scene from the same business category → score 3-4.
+In all these cases: match="partial", and reasoning must explain the topic-vs-image mismatch.
+
 Other failure modes (typically score 2-4 depending on severity):
 - Generic stock-photo aesthetic (laptop on desk) on a specific local-business post
 - People/faces in images (violates the no-people policy enforced upstream)
