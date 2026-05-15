@@ -144,7 +144,7 @@ export const HomeDashboard: React.FC<Props> = ({
     <div className="space-y-8">
 
       {/* ── Hero Greeting ── */}
-      <div className="relative rounded-3xl overflow-hidden glass-card noise px-6 py-8 md:px-10 md:py-10">
+      <div className="relative rounded-3xl overflow-hidden glass-card border border-white/[0.06] px-6 py-8 md:px-10 md:py-10">
         <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-transparent to-purple-500/5 pointer-events-none" />
         <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-5">
           <div>
@@ -183,7 +183,7 @@ export const HomeDashboard: React.FC<Props> = ({
             { label: 'Followers',      value: liveStats ? liveStats.followersCount.toLocaleString() : '—', icon: Users, color: 'text-purple-400' },
             { label: 'Engagement',     value: liveStats ? `${liveStats.engagementRate}%` : '—',          icon: TrendingUp, color: 'text-amber-400' },
           ].map(s => (
-            <div key={s.label} className="glass card-hover rounded-2xl px-4 py-3 flex items-center gap-3">
+            <div key={s.label} className="glass-card card-hover border border-white/[0.07] rounded-2xl px-4 py-3 flex items-center gap-3 press">
               <s.icon size={16} className={s.color} />
               <div>
                 <p className="text-white font-black text-lg leading-none">{s.value}</p>
@@ -209,13 +209,13 @@ export const HomeDashboard: React.FC<Props> = ({
 
       {/* ── Action Cards ── */}
       <div>
-        <h2 className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">What would you like to do?</h2>
+        <h2 className="text-[11px] font-bold uppercase tracking-widest text-white/30 mb-4">What would you like to do?</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {actionCards.map(card => (
             <button
               key={card.id}
               onClick={card.onClick}
-              className={`group relative rounded-2xl border ${card.border} bg-gradient-to-br ${card.color} p-5 text-left card-hover press flex flex-col gap-4`}
+              className={`group relative rounded-2xl border ${card.border} bg-gradient-to-br ${card.color} p-5 text-left card-hover press flex flex-col gap-4 noise`}
             >
               <div className="flex items-start justify-between">
                 <div className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center`}>
@@ -284,7 +284,7 @@ export const HomeDashboard: React.FC<Props> = ({
 
         {/* Next scheduled post */}
         <div className="lg:col-span-1 glass-card rounded-2xl p-5 flex flex-col">
-          <p className="text-xs font-bold uppercase tracking-widest text-white/25 mb-4">Next scheduled post</p>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-white/30 mb-4">Next scheduled post</p>
           {nextPost ? (
             <div className="flex-1 flex flex-col gap-3">
               <div className="flex items-center gap-2">
@@ -324,7 +324,7 @@ export const HomeDashboard: React.FC<Props> = ({
 
         {/* Tips */}
         <div className="lg:col-span-2 space-y-3">
-          <p className="text-xs font-bold uppercase tracking-widest text-white/25">Posting tips for today</p>
+          <p className="text-[11px] font-bold uppercase tracking-widest text-white/30">Posting tips for today</p>
           {tips.map((tip, i) => (
             <div key={i} className={`flex gap-4 border ${tip.bg} glass rounded-2xl px-4 py-4`}>
               <div className={`w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center shrink-0`}>

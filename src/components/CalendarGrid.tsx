@@ -102,7 +102,7 @@ export const CalendarGrid: React.FC<Props> = ({
           <button
             onClick={() => setViewDate(new Date(year, month - 1, 1))}
             aria-label="Previous month"
-            className="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/8 transition text-white/50 hover:text-white"
+            className="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] transition-all duration-200 text-white/40 hover:text-white press"
           >
             <ChevronLeft size={16} />
           </button>
@@ -112,21 +112,21 @@ export const CalendarGrid: React.FC<Props> = ({
           <button
             onClick={() => setViewDate(new Date(year, month + 1, 1))}
             aria-label="Next month"
-            className="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/8 transition text-white/50 hover:text-white"
+            className="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] transition-all duration-200 text-white/40 hover:text-white press"
           >
             <ChevronRight size={16} />
           </button>
         </div>
         <button
           onClick={() => { setViewDate(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDay(today); }}
-          className="text-xs font-semibold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 px-3 py-1.5 rounded-xl transition"
+          className="text-xs font-semibold text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/15 border border-amber-500/20 px-3 py-1.5 rounded-xl transition-all duration-200 press"
         >
           Today
         </button>
       </div>
 
       {/* ── Grid ─────────────────────────────────────────────────────────── */}
-      <div className="glass noise rounded-2xl overflow-hidden">
+      <div className="glass-card rounded-2xl overflow-hidden border border-white/[0.06]">
         {/* Day headers */}
         <div className="grid grid-cols-7 border-b border-white/[0.06]">
           {DAYS.map(d => (
@@ -215,7 +215,7 @@ export const CalendarGrid: React.FC<Props> = ({
 
       {/* ── Selected Day Panel ───────────────────────────────────────────── */}
       {selectedDay && (
-        <div className="glass rounded-2xl overflow-hidden animate-fadeSlideUp">
+        <div className="glass-card rounded-2xl overflow-hidden animate-fadeSlideUp border border-white/[0.06]">
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.06]">
             <div>
               <p className="font-bold text-white text-sm">
@@ -261,7 +261,7 @@ export const CalendarGrid: React.FC<Props> = ({
                 <button
                   key={post.id}
                   onClick={() => setSelectedPost(post)}
-                  className="w-full flex gap-4 p-4 hover:bg-white/4 transition group text-left"
+                  className="w-full flex gap-4 p-4 hover:bg-white/[0.04] hover:shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] transition-all duration-200 group text-left relative"
                 >
                   {/* Thumbnail */}
                   {post.postType === 'video' ? (
@@ -272,7 +272,7 @@ export const CalendarGrid: React.FC<Props> = ({
                       size="sm"
                     />
                   ) : (
-                  <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/40 border border-white/8">
+                  <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/50 border border-white/[0.08] shadow-sm">
                     {calendarImages[post.id] || post.image ? (
                       <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
                     ) : calendarGenSet.has(post.id) ? (
