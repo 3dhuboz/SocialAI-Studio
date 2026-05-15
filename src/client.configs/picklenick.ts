@@ -58,7 +58,7 @@ export const CLIENT = {
     agency: '',
   },
 
-  agencyClientLimit: 10,
+  agencyClientLimit: 5,
   clientMode: true,
   autoLoginEmail: import.meta.env.VITE_AUTO_LOGIN_EMAIL ?? '',
   autoLoginPassword: import.meta.env.VITE_AUTO_LOGIN_PASSWORD ?? '',
