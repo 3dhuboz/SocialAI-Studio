@@ -1,6 +1,5 @@
 // fal.ai + Runway API proxies — the frontend never holds the upstream
-// API keys, the worker proxies through and adds auth + rate limiting +
-// brand-grounded reference image selection.
+// API keys, the worker proxies through and adds auth + rate limiting.
 //
 // Three endpoints:
 //
@@ -8,11 +7,10 @@
 //                                       actions (generate-image, generate-video,
 //                                       task-status, task-result, get-credits,
 //                                       check-credits-alert). The generate-image
-//                                       branch is the brain — picks the right
-//                                       fal model (flux-dev / flux-pro-kontext /
-//                                       nano-banana-pro) based on whether the
-//                                       workspace has scraped FB photos to use
-//                                       as brand reference images.
+//                                       branch delegates to lib/image-gen.ts
+//                                       which uses FLUX-dev as the workhorse,
+//                                       or routes to nano-banana-pro when
+//                                       forceModel is set.
 //
 //   app.all('/api/fal-proxy/*', ...)  — generic passthrough for raw fal endpoints
 //                                       not covered by the dispatcher above.
@@ -116,20 +114,16 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       }
 
       // ── Default path: delegate to lib/image-gen.ts ──
-      // Single source of truth for brand-grounded gen: same code path the
-      // cron + backfill use. Inherits the flux-pro-kontext → flux-dev
-      // graceful fallback that's load-bearing when FB CDN reference URLs
-      // are stale (the failure mode the user hit on 2026-05-13 when SaaS
-      // posts with abstract-UI prompts returned hard errors instead of
-      // falling back to plain FLUX). Also gets archetype guardrails +
-      // caption-based archetype sniffing for free.
+      // Single source of truth for image gen: same code path the cron +
+      // backfill use. FLUX-dev at square_hd / 35 steps / guidance 7.0,
+      // with archetype guardrails + caption-based archetype sniffing.
       const result = await generateImageWithBrandRefs(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
         { caption: caption || null },
       );
       if (!result.imageUrl) {
-        return c.json({ error: 'Image generation failed — both flux-pro-kontext and flux-dev returned no image' }, 502);
+        return c.json({ error: 'Image generation failed — flux-dev returned no image' }, 502);
       }
       return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed, references_used: result.referencesUsed });
     }

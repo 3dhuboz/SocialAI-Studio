@@ -150,7 +150,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 // runBacklogRegen:
 //   Regenerates images for posts that scored ≤ threshold (default 5).
 //   Each successful regen lifts the score, removing the post from future
-//   ticks. Cap 20/tick × FLUX Pro Kontext @ ~$0.04 = $0.80/tick worst case.
+//   ticks. Cap 20/tick × FLUX-dev @ ~$0.03 = $0.60/tick worst case.
 //
 // Both wired into cron/dispatcher.ts on the */5 path. Once the backlog
 // is exhausted the COUNT(*) guards make subsequent ticks free no-ops.

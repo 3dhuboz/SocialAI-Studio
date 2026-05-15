@@ -144,8 +144,8 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
    *  fallback path so the new image is guaranteed on-archetype, then
    *  re-scores so the persisted critique reflects what now ships.
    *
-   *  Caps at 20 posts per call (fal.ai cost: 20 × ~$0.04 = $0.80/call max
-   *  if every retry needs FLUX Pro Kontext + critique).
+   *  Caps at 20 posts per call (fal.ai cost: 20 × ~$0.03 = $0.60/call max
+   *  at FLUX-dev pricing + critique).
    *
    *  Body: { threshold?: number (1-7, default 4), limit?: number (default 20) }
    */
