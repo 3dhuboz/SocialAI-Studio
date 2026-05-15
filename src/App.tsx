@@ -1660,25 +1660,61 @@ const Dashboard: React.FC = () => {
   const handleSavePost = async () => {
     if (!generatedContent) { toast('Generate content first.', 'warning'); return; }
     if (!user) return;
-    const postData = {
+    const isVideoPost = contentType === 'video' && !!generatedVideoUrl;
+    const postData: Omit<import('./services/db').DbPost, 'id'> & { clientId?: string | null; image?: string; scheduledFor?: string } = {
       platform,
       content: generatedContent,
       hashtags: generatedHashtags,
       scheduledFor: scheduleDate || new Date().toISOString(),
       status: (scheduleDate ? 'Scheduled' : 'Draft') as SocialPost['status'],
       image: generatedImage || undefined,
-      topic
+      topic,
+      // Video reel fields — only populated when user chose "Text + Video Brief"
+      // and fal.ai finished generating the clip. videoStatus 'ready' skips the
+      // prewarm cron's pending→generating poll loop.
+      ...(isVideoPost && {
+        post_type: 'video',
+        video_url: generatedVideoUrl ?? undefined,
+        video_status: 'ready' as const,
+        video_script: generatedVideoScript
+          ? (Array.isArray((generatedVideoScript as any).script)
+              ? ((generatedVideoScript as any).script as string[]).join(' ')
+              : String((generatedVideoScript as any).script || ''))
+          : undefined,
+        video_shots: generatedVideoScript
+          ? (Array.isArray((generatedVideoScript as any).shots)
+              ? ((generatedVideoScript as any).shots as string[]).join('. ')
+              : String((generatedVideoScript as any).shots || ''))
+          : undefined,
+        video_mood: (generatedVideoScript as any)?.mood ?? undefined,
+      }),
     };
     const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
-    setPosts(prev => [{ id: newPostId, ...postData } as SocialPost, ...prev]);
+    setPosts(prev => [{ id: newPostId, ...postData, postType: isVideoPost ? 'video' : undefined } as unknown as SocialPost, ...prev]);
     // Scheduled posts are published by the cron (5-min tick). We do NOT hand them to Facebook's
     // scheduled_publish_time — that would create an uncancellable duplicate on Facebook's side.
-    toast(`Post ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
+    toast(`${isVideoPost ? 'Reel' : 'Post'} ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
     setGeneratedContent('');
     setGeneratedHashtags([]);
     setGeneratedImage(null);
+    setGeneratedVideoScript(null);
+    setGeneratedVideoUrl(null);
+    setVideoProgress(0);
     setTopic('');
     setScheduleDate('');
+  };
+
+  // ── Poster → Quick Post pre-seed ─────────────────────────────────────────
+  // Called from PosterManager when the user clicks "Use in Post" on a gallery
+  // card. Pre-seeds the Quick Post form with the poster's R2 image URL and
+  // switches to the Create (smart/quickpost) tab so the user just needs to
+  // write a caption and pick a date.
+  const handleAddPosterToCalendar = (imageUrl: string) => {
+    setGeneratedImage(imageUrl);
+    setContentType('image');
+    setActiveTab('smart');
+    setSmartSubMode('quickpost');
+    toast('Poster loaded — write a caption and schedule it! 🖼️', 'success');
   };
 
   // ── Auto-generate images for all smart posts ──
@@ -4761,7 +4797,7 @@ const Dashboard: React.FC = () => {
                   <span className="ml-3 text-sm">Loading Poster Maker…</span>
                 </div>
               }>
-                <PosterManager activeClientId={activeClientId} authMode={authMode} />
+                <PosterManager activeClientId={activeClientId} authMode={authMode} onAddToCalendar={handleAddPosterToCalendar} />
               </Suspense>
             );
           }

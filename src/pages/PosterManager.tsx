@@ -20,7 +20,7 @@ import {
   Image as ImageIcon, Download, Loader2, Sparkles, AlertCircle,
   RotateCcw, Camera, Trash2, History, Check, QrCode, Wand2, Copy, MessageSquare,
   MessageCircle, Smartphone, Mail, Clock,
-  Search, X, CalendarClock, CalendarX,
+  Search, X, CalendarClock, CalendarX, CalendarPlus,
 } from 'lucide-react';
 import { useAuth } from '@clerk/react';
 import { useBrandKit } from '../contexts/BrandKitContext';
@@ -54,6 +54,10 @@ interface PosterManagerProps {
   activeClientId: string | null;
   /** 'clerk' for the main site; 'portal' for white-label client portals. */
   authMode?: 'clerk' | 'portal';
+  /** Called when the user clicks "Use in Post" on a gallery card. App.tsx
+   *  handles this by pre-seeding the Quick Post form with the image URL and
+   *  switching to the Create tab. */
+  onAddToCalendar?: (imageUrl: string) => void;
 }
 
 interface FormState {
@@ -80,7 +84,7 @@ function formatPosterDate(d: Date): string {
   return `${day} ${dnum} ${mon}`;
 }
 
-const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'clerk' }) => {
+const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'clerk', onAddToCalendar }) => {
   // Active brand kit — flows from BrandKitProvider, which refetches on
   // workspace switch. KIT is reactive: when Steve switches client in
   // Agency mode, this component re-renders with the new workspace's kit
@@ -1743,6 +1747,7 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
                   onUseAsBase={() => handleUseAsBase(p)}
                   onDelete={() => handleDeleteSaved(p.id)}
                   onSchedule={(at) => handleScheduleSaved(p.id, at)}
+                  onAddToCalendar={onAddToCalendar}
                 />
               ))}
             </div>
@@ -1768,6 +1773,7 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
                   onUseAsBase={() => handleUseAsBase(p)}
                   onDelete={() => handleDeleteSaved(p.id)}
                   onSchedule={(at) => handleScheduleSaved(p.id, at)}
+                  onAddToCalendar={onAddToCalendar}
                 />
               ))}
             </div>
@@ -1787,8 +1793,11 @@ interface GalleryCardProps {
   onDelete: () => void;
   /** Stamp or clear the post-to-socials schedule. ISO datetime string or null. */
   onSchedule: (scheduledAt: string | null) => void;
+  /** Pre-seed the Quick Post form with this poster's image and switch to the
+   *  Create tab. Optional — portals don't have a calendar. */
+  onAddToCalendar?: (imageUrl: string) => void;
 }
-const GalleryCard: FC<GalleryCardProps> = ({ poster, brandSlug, onUseAsBase, onDelete, onSchedule }) => {
+const GalleryCard: FC<GalleryCardProps> = ({ poster, brandSlug, onUseAsBase, onDelete, onSchedule, onAddToCalendar }) => {
   const headline = poster.contentInputs?.headline || 'Untitled poster';
   const date = poster.contentInputs?.date || '';
   const venueSlug = (poster.contentInputs?.venue || 'cook-day')
@@ -1905,6 +1914,16 @@ const GalleryCard: FC<GalleryCardProps> = ({ poster, brandSlug, onUseAsBase, onD
           >
             <CalendarClock size={10} />
           </button>
+          {onAddToCalendar && (
+            <button
+              type="button"
+              onClick={() => onAddToCalendar(imageUrl)}
+              title="Use this poster as the image in a new post"
+              className="text-[10px] px-1.5 py-1 rounded bg-violet-900/40 hover:bg-violet-700/50 text-violet-300 inline-flex items-center justify-center gap-0.5"
+            >
+              <CalendarPlus size={10} /> Post
+            </button>
+          )}
           <button
             type="button"
             onClick={onDelete}
