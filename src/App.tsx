@@ -3218,7 +3218,7 @@ const Dashboard: React.FC = () => {
                   data-auto-create
                   onClick={handleCreatePost}
                   disabled={isGenerating || isGeneratingImage || isGeneratingVideo || !topic.trim()}
-                  className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-7 py-3 rounded-xl transition flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20 text-sm"
+                  className="bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold px-7 py-3 rounded-xl transition-all flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-amber-500/20 text-sm press"
                 >
                   {(isGenerating || isGeneratingImage || isGeneratingVideo) ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
                   {isGenerating ? 'Writing caption…' : isGeneratingVideo ? 'Building video brief…' : isGeneratingImage ? 'Generating image…' : `Create ${contentType === 'image' ? 'Post + Image' : contentType === 'video' ? 'Post + Video Brief' : 'Post'}`}
@@ -3591,7 +3591,7 @@ const Dashboard: React.FC = () => {
                       <button
                         onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
                         disabled={isPublishing || isGeneratingReel || !generatedContent}
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
+                        className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition-all text-sm shadow-lg shadow-blue-500/15 press"
                       >
                         {isPublishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                         {isGeneratingReel ? 'Generating video…' : `Publish to ${platform} now`}
@@ -3615,7 +3615,7 @@ const Dashboard: React.FC = () => {
                     <>
                       <button
                         onClick={handleSavePost}
-                        className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition text-sm shadow-lg shadow-green-500/15"
+                        className="bg-gradient-to-r from-green-600 to-emerald-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 transition-all text-sm shadow-lg shadow-green-500/15 press"
                       >
                         <Save size={14} /> {scheduleDate ? 'Schedule Post' : 'Save Draft'}
                       </button>
@@ -3632,7 +3632,7 @@ const Dashboard: React.FC = () => {
                           onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
                           disabled={isPublishing || isGeneratingReel}
                           title={isGeneratingReel ? 'Wait for video to finish generating before publishing' : `Publish to ${platform}`}
-                          className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition text-sm shadow-lg shadow-blue-500/15"
+                          className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 text-white font-bold px-5 py-2 rounded-xl flex items-center gap-2 disabled:opacity-60 transition-all text-sm shadow-lg shadow-blue-500/15 press"
                         >
                           {isPublishing ? <Loader2 size={14} className="animate-spin" /> : isGeneratingReel ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                           {isGeneratingReel ? 'Generating video…' : `Publish to ${platform}`}
@@ -3995,7 +3995,7 @@ const Dashboard: React.FC = () => {
                     {/* Smart Schedule */}
                     <button
                       onClick={() => { setAutopilotMode('smart'); setSmartCount(7); }}
-                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition-all press ${
                         autopilotMode === 'smart' ? 'bg-amber-500/15 border-amber-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       }`}
                     >
@@ -4006,7 +4006,7 @@ const Dashboard: React.FC = () => {
                     {/* Quick 24hr */}
                     <button
                       onClick={() => { setAutopilotMode('quick24h'); setSmartCount(3); }}
-                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition-all press ${
                         autopilotMode === 'quick24h' ? 'bg-blue-500/15 border-blue-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       }`}
                     >
@@ -4021,7 +4021,7 @@ const Dashboard: React.FC = () => {
                         if (!canUse) { toast('Highlights Only requires a Growth plan or above.', 'warning'); return; }
                         setAutopilotMode('highlights'); setSmartCount(5);
                       }}
-                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition-all press ${
                         autopilotMode === 'highlights' ? 'bg-green-500/15 border-green-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       } ${!(activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency' || isAdminMode) ? 'opacity-50' : ''}`}
                     >
@@ -4038,7 +4038,7 @@ const Dashboard: React.FC = () => {
                         if (!canUseSaturation) { toast('Saturation Mode is a Pro plan feature.', 'warning'); return; }
                         setAutopilotMode('saturation'); setSmartCount(21);
                       }}
-                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
+                      className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition-all press ${
                         autopilotMode === 'saturation' ? 'bg-red-500/15 border-red-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       } ${!canUseSaturation ? 'opacity-50' : ''}`}
                     >
@@ -4304,7 +4304,7 @@ const Dashboard: React.FC = () => {
                       onClick={handleAcceptSmartPosts}
                       disabled={isAccepting || autoGenSet.size > 0}
                       title={autoGenSet.size > 0 ? `Wait for image generation to finish (${imgGenDone}/${smartPosts.length})` : ''}
-                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition min-w-[220px] justify-center"
+                      className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition-all min-w-[220px] justify-center press"
                     >
                       {isAccepting ? (
                         <><Loader2 size={16} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
@@ -4336,7 +4336,7 @@ const Dashboard: React.FC = () => {
                   const hasImage = !!smartPostImages[i];
                   const isGenning = autoGenSet.has(i);
                   return (
-                  <div key={i} className={`border rounded-2xl overflow-hidden transition ${
+                  <div key={i} className={`border rounded-2xl overflow-hidden transition-all card-hover ${
                     isVideo ? 'bg-purple-950/20 border-purple-500/20' : 'glass-card border-white/[0.08] hover:border-white/15'
                   }`}>
                     <div className="p-4 flex gap-4">
@@ -4499,7 +4499,7 @@ const Dashboard: React.FC = () => {
                   <button
                     onClick={handleAcceptSmartPosts}
                     disabled={isAccepting}
-                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-base shadow-xl shadow-green-900/20 transition"
+                    className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-base shadow-xl shadow-green-900/20 transition-all press"
                   >
                     {isAccepting ? (
                       <><Loader2 size={18} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
@@ -4942,7 +4942,7 @@ const Dashboard: React.FC = () => {
                   const healthDot = !health ? 'bg-white/15' : daysSincePost === null ? 'bg-red-500' : daysSincePost <= 7 ? 'bg-emerald-500' : daysSincePost <= 30 ? 'bg-amber-500' : 'bg-red-500';
                   const planColors: Record<string, string> = { starter: 'text-blue-300 bg-blue-500/15 border-blue-500/25', growth: 'text-purple-300 bg-purple-500/15 border-purple-500/25', pro: 'text-amber-300 bg-amber-500/15 border-amber-500/25', agency: 'text-emerald-300 bg-emerald-500/15 border-emerald-500/25' };
                   return (
-                    <div key={client.id} className={`glass-card border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/[0.08] hover:border-white/15'}`}>
+                    <div key={client.id} className={`glass-card border rounded-2xl p-5 space-y-4 transition-all card-hover ${isActive ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/[0.08] hover:border-white/15'}`}>
                       {/* Header */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-3 min-w-0">
