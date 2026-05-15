@@ -16,6 +16,7 @@ import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 import { critiqueImageInternal } from '../lib/critique';
+import { loadForbiddenSubjects } from '../lib/profile-guards';
 
 export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── Vision-grounded image+caption critique (2026-05 image-stack upgrade) ──
@@ -54,17 +55,38 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
       businessType?: string;
       archetype?: string;
       postId?: string;
+      clientId?: string;
     };
-    const { imageUrl, caption, businessType, archetype, postId } = body;
+    const { imageUrl, caption, businessType, archetype, postId, clientId } = body;
     if (!imageUrl || !caption) {
       return c.json({ error: 'imageUrl and caption are required' }, 400);
     }
+
+    // Resolve which workspace's denylist applies. Order of preference:
+    //   1. Explicit clientId in the body (frontend can pass the active workspace)
+    //   2. postId → look up the post's client_id from D1
+    //   3. User-level denylist only
+    // The look-up keeps the HTTP endpoint feature-parity with the prewarm
+    // cron's threading — without this, a preview-mode critique from the
+    // post editor would skip the intra-domain rule that the cron applies.
+    let resolvedClientId: string | null = clientId ?? null;
+    if (!resolvedClientId && postId) {
+      try {
+        const postRow = await c.env.DB
+          .prepare('SELECT client_id FROM posts WHERE id = ? AND user_id = ?')
+          .bind(postId, uid)
+          .first<{ client_id: string | null }>();
+        if (postRow?.client_id) resolvedClientId = postRow.client_id;
+      } catch { /* falls back to user-level denylist */ }
+    }
+    const forbiddenSubjects = await loadForbiddenSubjects(c.env, uid, resolvedClientId);
 
     const result = await critiqueImageInternal(c.env, {
       imageUrl,
       caption,
       archetypeSlug: archetype || null,
       businessType,
+      forbiddenSubjects,
     });
     if (!result) {
       return c.json({ error: 'Vision critique unavailable' }, 502);

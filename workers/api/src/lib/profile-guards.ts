@@ -32,32 +32,67 @@ export function parseForbiddenSubjects(raw?: string | null): string[] {
 }
 
 /**
- * Look up the owner's forbiddenSubjects denylist from D1. Reads users.profile
- * (JSON column) and parses out the forbiddenSubjects field.
+ * Look up the forbiddenSubjects denylist from D1. Two-tier resolution:
  *
- * Returns [] when:
- *   - The user row doesn't exist (e.g. portal-only account)
- *   - profile is unset / not JSON
- *   - forbiddenSubjects field is unset or empty
+ *   - User-level (users.profile.forbiddenSubjects): the owner's default
+ *     across every workspace they run. Steve typing "porn, gambling" into
+ *     his account-level settings means every client he manages inherits
+ *     that exclusion.
+ *
+ *   - Client-level (clients.profile.forbiddenSubjects): per-workspace
+ *     additions captured at onboarding. The hugheseysque (Seamus) failure
+ *     mode was exactly this: brisket-only BBQ that the agency owner doesn't
+ *     personally need to denylist at user level, but the client absolutely
+ *     does. Pre-2026-05 this column was ignored entirely so the denylist
+ *     silently no-opped for every agency-managed client.
+ *
+ * The two lists are UNION-ed (deduplicated) so a client inherits the owner's
+ * default AND layers their own additions on top. Returns [] only when both
+ * tiers are empty / missing / malformed.
  *
  * Errors are swallowed and logged — failing closed here would block the
  * publish cron entirely, which is worse than the original Seamus failure
  * mode (better to publish unguarded than to halt the platform).
  */
-export async function loadForbiddenSubjects(env: Env, userId: string): Promise<string[]> {
+export async function loadForbiddenSubjects(
+  env: Env,
+  userId: string,
+  clientId?: string | null,
+): Promise<string[]> {
+  const out = new Set<string>();
   try {
-    const row = await env.DB
+    const userRow = await env.DB
       .prepare('SELECT profile FROM users WHERE id = ?')
       .bind(userId)
       .first<{ profile: string | null }>();
-    if (!row?.profile) return [];
-    let parsed: any;
-    try { parsed = JSON.parse(row.profile); } catch { return []; }
-    return parseForbiddenSubjects(parsed?.forbiddenSubjects);
+    if (userRow?.profile) {
+      try {
+        const parsed = JSON.parse(userRow.profile);
+        for (const s of parseForbiddenSubjects(parsed?.forbiddenSubjects)) out.add(s);
+      } catch { /* malformed user profile JSON — ignore, fall through to client tier */ }
+    }
   } catch (err) {
-    console.warn(`[profile-guards] loadForbiddenSubjects failed for user ${userId}:`, err);
-    return [];
+    console.warn(`[profile-guards] loadForbiddenSubjects user lookup failed for user ${userId}:`, err);
   }
+
+  if (clientId) {
+    try {
+      const clientRow = await env.DB
+        .prepare('SELECT profile FROM clients WHERE id = ? AND user_id = ?')
+        .bind(clientId, userId)
+        .first<{ profile: string | null }>();
+      if (clientRow?.profile) {
+        try {
+          const parsed = JSON.parse(clientRow.profile);
+          for (const s of parseForbiddenSubjects(parsed?.forbiddenSubjects)) out.add(s);
+        } catch { /* malformed client profile JSON — ignore */ }
+      }
+    } catch (err) {
+      console.warn(`[profile-guards] loadForbiddenSubjects client lookup failed for client ${clientId}:`, err);
+    }
+  }
+
+  return [...out];
 }
 
 /**

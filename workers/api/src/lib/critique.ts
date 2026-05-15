@@ -206,10 +206,33 @@ export async function critiqueImageInternal(
 
   try {
     const parsed = JSON.parse(stripped);
-    const score = typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5;
-    const match = (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial';
-    const reasoning = (parsed.reasoning || '').toString().slice(0, 300);
-    return { score, match, reasoning };
+    // STRICT validation (2026-05 hardening): every field must be present
+    // and well-typed. Previously a partial JSON like {"reasoning":"…"} would
+    // get score=5 + match='partial' synthesized as defaults, producing a
+    // "5/10 partial — …" critique that lied about having been done. The
+    // publish cron's quality gate only blocks score ≤ 3, so a fake 5
+    // sailed straight through. Now any malformed shape returns null and the
+    // caller treats it as "no critique data" — which is the truth.
+    const score = parsed.score;
+    const match = parsed.match;
+    const reasoning = (parsed.reasoning || '').toString().trim();
+    if (typeof score !== 'number' || !isFinite(score)) {
+      console.warn(`[critique] response missing/non-numeric score — treating as no critique: ${stripped.slice(0, 200)}`);
+      return null;
+    }
+    if (!(['yes', 'partial', 'no'] as const).includes(match)) {
+      console.warn(`[critique] response has invalid match='${match}' — treating as no critique: ${stripped.slice(0, 200)}`);
+      return null;
+    }
+    if (!reasoning) {
+      console.warn(`[critique] response missing reasoning — treating as no critique: ${stripped.slice(0, 200)}`);
+      return null;
+    }
+    return {
+      score: Math.max(0, Math.min(10, score)),
+      match,
+      reasoning: reasoning.slice(0, 300),
+    };
   } catch (e: any) {
     console.warn(`[critique] failed to parse: ${e?.message || e} — raw: ${stripped.slice(0, 200)}`);
     return null;

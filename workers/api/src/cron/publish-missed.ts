@@ -284,7 +284,17 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // forbidden subject — this is the regex-scan belt-and-braces that
       // bites even if the upstream layers missed something. The post gets
       // marked NeedsReview instead of publishing, and the owner is notified.
-      const denylist = await loadForbiddenSubjects(env, (post as any).user_id as string);
+      //
+      // Per-CLIENT denylist (CRITICAL #3 fix, 2026-05): pass client_id so
+      // agency-managed workspaces get their own forbiddenSubjects honoured.
+      // Pre-fix this only checked the user-level denylist, which is why
+      // Seamus's brisket-only exclusion silently no-opped for a managed
+      // client even after the system was nominally "configured" with one.
+      const denylist = await loadForbiddenSubjects(
+        env,
+        (post as any).user_id as string,
+        (post as any).client_id as string | null,
+      );
       if (denylist.length > 0) {
         const captionHit = scanForForbidden((post as any).content as string, denylist);
         const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);
