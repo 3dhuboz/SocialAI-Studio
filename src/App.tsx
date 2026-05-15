@@ -1973,7 +1973,8 @@ const Dashboard: React.FC = () => {
   const handleCalendarRegenImage = async (postId: string, prompt: string) => {
     setCalendarGenSet(prev => new Set(prev).add(postId));
     try {
-      const img = await generateImage(prompt);
+      const caption = posts.find(p => p.id === postId)?.content ?? null;
+      const img = await generateImage(prompt, caption);
       if (img) {
         // Persist to DB so cron uses the image at publish time
         try { await db.updatePost(postId, { imageUrl: img } as Record<string, unknown>); }
@@ -2062,14 +2063,14 @@ const Dashboard: React.FC = () => {
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
-              const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type);
+              const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type, sp.content);
               if (url) postImage = url;
               else if (wantsImage) imageGenFailures++;
             } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
           } else if (!postImage && wantsImage) {
             // No image — generate with full smart logic (returns public URL)
             try {
-              const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type);
+              const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type, sp.content);
               if (url) postImage = url;
               else imageGenFailures++;
             } catch { imageGenFailures++; /* post goes without image */ }
