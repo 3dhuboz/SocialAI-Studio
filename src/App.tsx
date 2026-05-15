@@ -120,7 +120,7 @@ const RecommendationActionButton: React.FC<{
             <ChevronRight size={11} className={`transition-transform ${checklistOpen ? 'rotate-90' : ''}`} />
           </button>
           {checklistOpen && items.length > 0 && (
-            <ol className="bg-black/25 border border-white/8 rounded-xl p-3 space-y-1.5 list-decimal list-inside">
+            <ol className="bg-black/25 border border-white/[0.08] rounded-xl p-3 space-y-1.5 list-decimal list-inside">
               {items.map((item, i) => (
                 <li key={i} className="text-xs text-white/65 leading-relaxed">{item}</li>
               ))}
@@ -3265,7 +3265,7 @@ const Dashboard: React.FC = () => {
 
             {/* Generation loading skeleton with step progress */}
             {(isGenerating || isGeneratingImage || isGeneratingVideo) && !generatedContent && !generatedImage && (
-              <div className="rounded-2xl border border-white/10 overflow-hidden bg-white/2 p-5 space-y-4">
+              <div className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden p-5 space-y-4">
                 {/* Step progress for image posts */}
                 {contentType === 'image' && (
                   <div className="flex items-center justify-center gap-3 pb-2">
@@ -5193,7 +5193,7 @@ const Dashboard: React.FC = () => {
                         const isSaving = savingClientPlan === plan.id;
                         return (
                           <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
-                            isCurrent ? 'border-amber-500/40 bg-amber-500/8' : 'border-white/8 bg-white/2 hover:border-white/15'
+                            isCurrent ? 'border-amber-500/40 bg-amber-500/8' : 'border-white/[0.08] glass-card hover:border-white/15'
                           }`}>
                             {plan.badge && (
                               <span className="absolute -top-2 left-3 text-[9px] font-black bg-amber-500 text-black px-2 py-0.5 rounded-full">{plan.badge}</span>
@@ -5275,7 +5275,7 @@ const Dashboard: React.FC = () => {
                       const isNew = !activePlan;
                       return (
                         <div key={plan.id} className={`relative rounded-2xl border p-4 space-y-3 transition ${
-                          isCurrent ? 'border-amber-500/40 bg-amber-500/8' : 'border-white/8 bg-white/2 hover:border-white/15'
+                          isCurrent ? 'border-amber-500/40 bg-amber-500/8' : 'border-white/[0.08] glass-card hover:border-white/15'
                         }`}>
                           {plan.badge && (
                             <span className="absolute -top-2 left-3 text-[9px] font-black bg-amber-500 text-black px-2 py-0.5 rounded-full">{plan.badge}</span>
@@ -6062,7 +6062,7 @@ const Dashboard: React.FC = () => {
                 ) : (
                   <div className="space-y-2">
                     {clients.map(client => (
-                      <div key={client.id} className="flex items-center justify-between gap-3 bg-black/25 border border-white/6 rounded-xl px-4 py-3 flex-wrap">
+                      <div key={client.id} className="flex items-center justify-between gap-3 glass-card border border-white/[0.06] rounded-xl px-4 py-3 flex-wrap">
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
                             <Users size={13} className="text-emerald-400" />
