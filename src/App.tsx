@@ -2914,7 +2914,7 @@ const Dashboard: React.FC = () => {
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold transition whitespace-nowrap ${
                   canUseReels
                     ? 'bg-purple-500/12 hover:bg-purple-500/20 border-purple-500/25 text-purple-300'
-                    : 'bg-white/3 hover:bg-white/8 border-white/10 text-white/45 hover:text-white/70'
+                    : 'glass-card hover:bg-white/[0.08] border-white/[0.08] text-white/45 hover:text-white/70'
                 }`}
               >
                 <Film size={11} />
@@ -3092,7 +3092,7 @@ const Dashboard: React.FC = () => {
         {/* ═══ QUICK POST MODE ═══ */}
         {activeTab === 'smart' && smartSubMode === 'quickpost' && (
           <div className="space-y-5">
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-5">
               {/* Platform + Content type */}
               <div className="flex flex-wrap gap-5">
                 <div>
@@ -3121,12 +3121,12 @@ const Dashboard: React.FC = () => {
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Content Type</label>
                   <div className="flex gap-2 flex-wrap">
                     <button onClick={() => setContentType('text')}
-                      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'text' ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'}`}>
+                      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'text' ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                       <MessageSquare size={14} /> Text
                     </button>
                     {canUseImages ? (
                       <button onClick={() => setContentType('image')}
-                        className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'image' ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'}`}>
+                        className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'image' ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                         <ImageIcon size={14} /> Text + Image
                       </button>
                     ) : (
@@ -3136,7 +3136,7 @@ const Dashboard: React.FC = () => {
                     )}
                     {(effectivePlan === 'pro' || effectivePlan === 'agency' || (isAdminMode && !activeClientId)) ? (
                       <button onClick={() => setContentType('video')}
-                        className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'video' ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'}`}>
+                        className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'video' ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                         <Play size={14} /> Text + Video Brief
                       </button>
                     ) : (
@@ -3164,7 +3164,7 @@ const Dashboard: React.FC = () => {
                 {['Make it urgent', 'Short & punchy', 'More casual', 'More professional', 'Add a call to action'].map(chip => (
                   <button key={chip}
                     onClick={() => setTopic(prev => prev.trim() ? `${prev.trim()} · ${chip}` : chip)}
-                    className="text-xs px-3 py-1.5 rounded-full border border-white/10 bg-white/3 text-white/35 hover:text-white/60 hover:border-white/20 transition">
+                    className="text-xs px-3 py-1.5 rounded-full border border-white/10 glass-card text-white/35 hover:text-white/60 hover:border-white/20 transition-all">
                     {chip}
                   </button>
                 ))}
@@ -3189,7 +3189,7 @@ const Dashboard: React.FC = () => {
                       className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition font-medium ${
                         contentFormat === f.id
                           ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
-                          : 'bg-white/3 border-white/8 text-white/30 hover:text-white/60 hover:border-white/20'
+                          : 'glass-card border-white/[0.08] text-white/30 hover:text-white/60 hover:border-white/20'
                       }`}>
                       <span>{f.icon}</span> {f.label}
                     </button>
@@ -3228,7 +3228,7 @@ const Dashboard: React.FC = () => {
                     <span className="text-white/20 text-xs">or</span>
                     <button
                       onClick={() => quickPostVideoUploadRef.current?.click()}
-                      className="flex items-center gap-2 px-4 py-3 text-sm font-semibold border border-white/10 bg-white/3 hover:bg-purple-500/10 hover:border-purple-500/30 text-white/40 hover:text-purple-300 rounded-xl transition"
+                      className="flex items-center gap-2 px-4 py-3 text-sm font-semibold border border-white/10 glass-card hover:bg-purple-500/10 hover:border-purple-500/30 text-white/40 hover:text-purple-300 rounded-xl transition-all"
                     >
                       <Upload size={14} /> Upload your own video
                     </button>
@@ -3842,7 +3842,7 @@ const Dashboard: React.FC = () => {
             />
 
             {/* ── Sub-mode toggle ── */}
-            <div className="flex gap-1 p-1 bg-white/3 border border-white/8 rounded-2xl w-fit">
+            <div className="flex gap-1 p-1 glass-card border border-white/[0.08] rounded-2xl w-fit">
               <button
                 onClick={() => setSmartSubMode('autopilot')}
                 className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition ${
@@ -3902,7 +3902,7 @@ const Dashboard: React.FC = () => {
               </div>
 
               {campaigns.filter(c => c.enabled).length === 0 ? (
-                <div className="bg-white/3 border border-dashed border-white/10 rounded-xl p-6 text-center">
+                <div className="glass-card border border-dashed border-white/10 rounded-xl p-6 text-center">
                   <p className="text-white/20 text-xs">No active campaigns. Posts will use your business profile only.</p>
                   <p className="text-white/12 text-[10px] mt-1">Create a campaign for a sale, event launch, seasonal push, or any time-boxed goal.</p>
                 </div>
@@ -3943,17 +3943,17 @@ const Dashboard: React.FC = () => {
                   </h3>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="bg-white/3 rounded-xl p-3.5 border border-white/5">
+                  <div className="glass-card rounded-xl p-3.5 border border-white/[0.05]">
                     <div className="text-amber-400 mb-2"><Zap size={18} /></div>
                     <p className="text-xs font-bold text-white">AI-Powered Campaigns</p>
                     <p className="text-[10px] text-white/30 mt-1">Set rules like "30% off sale" — the AI weaves your campaign into every post with countdown language.</p>
                   </div>
-                  <div className="bg-white/3 rounded-xl p-3.5 border border-white/5">
+                  <div className="glass-card rounded-xl p-3.5 border border-white/[0.05]">
                     <div className="text-amber-400 mb-2"><Clock size={18} /></div>
                     <p className="text-xs font-bold text-white">Time-Boxed Goals</p>
                     <p className="text-[10px] text-white/30 mt-1">Set start/end dates — AI auto-generates "5 days to go!", "Last chance!", "Just launched!" language.</p>
                   </div>
-                  <div className="bg-white/3 rounded-xl p-3.5 border border-white/5">
+                  <div className="glass-card rounded-xl p-3.5 border border-white/[0.05]">
                     <div className="text-amber-400 mb-2"><ImageIcon size={18} /></div>
                     <p className="text-xs font-bold text-white">Image Direction</p>
                     <p className="text-[10px] text-white/30 mt-1">Describe what images should look like — the AI shapes every image prompt to match your campaign vision.</p>
@@ -3996,7 +3996,7 @@ const Dashboard: React.FC = () => {
                     <button
                       onClick={() => { setAutopilotMode('smart'); setSmartCount(7); }}
                       className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
-                        autopilotMode === 'smart' ? 'bg-amber-500/15 border-amber-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                        autopilotMode === 'smart' ? 'bg-amber-500/15 border-amber-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       }`}
                     >
                       <span className="text-base">📅</span>
@@ -4007,7 +4007,7 @@ const Dashboard: React.FC = () => {
                     <button
                       onClick={() => { setAutopilotMode('quick24h'); setSmartCount(3); }}
                       className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
-                        autopilotMode === 'quick24h' ? 'bg-blue-500/15 border-blue-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                        autopilotMode === 'quick24h' ? 'bg-blue-500/15 border-blue-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       }`}
                     >
                       <span className="text-base">⚡</span>
@@ -4022,7 +4022,7 @@ const Dashboard: React.FC = () => {
                         setAutopilotMode('highlights'); setSmartCount(5);
                       }}
                       className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
-                        autopilotMode === 'highlights' ? 'bg-green-500/15 border-green-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                        autopilotMode === 'highlights' ? 'bg-green-500/15 border-green-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       } ${!(activePlan === 'growth' || activePlan === 'pro' || activePlan === 'agency' || isAdminMode) ? 'opacity-50' : ''}`}
                     >
                       <span className="text-base">🏆</span>
@@ -4039,7 +4039,7 @@ const Dashboard: React.FC = () => {
                         setAutopilotMode('saturation'); setSmartCount(21);
                       }}
                       className={`flex flex-col gap-1 px-3 py-3 rounded-xl border text-left transition ${
-                        autopilotMode === 'saturation' ? 'bg-red-500/15 border-red-500/40' : 'bg-white/3 border-white/8 hover:border-white/20'
+                        autopilotMode === 'saturation' ? 'bg-red-500/15 border-red-500/40' : 'glass-card border-white/[0.08] hover:border-white/20'
                       } ${!canUseSaturation ? 'opacity-50' : ''}`}
                     >
                       <span className="text-base">🔥</span>
@@ -4083,7 +4083,7 @@ const Dashboard: React.FC = () => {
                     // If nothing is connected, show all as disabled
                     if (availableOpts.length === 0) {
                       return (
-                        <div className="text-xs text-white/30 bg-white/3 border border-white/10 rounded-xl px-4 py-3">
+                        <div className="text-xs text-white/30 glass-card border border-white/10 rounded-xl px-4 py-3">
                           No platforms connected. <button onClick={() => setActiveTab('settings')} className="text-amber-400 underline">Connect in Settings →</button>
                         </div>
                       );
@@ -4126,7 +4126,7 @@ const Dashboard: React.FC = () => {
                     setIncludeVideos(v => !v);
                   }}
                   className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-semibold transition w-fit ${
-                    includeVideos ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'bg-white/3 border-white/10 text-white/40 hover:text-white/60'
+                    includeVideos ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'
                   } ${!canUseVideos ? 'opacity-50' : ''}`}
                 >
                   🎬 Include Reels/Videos
@@ -4194,7 +4194,7 @@ const Dashboard: React.FC = () => {
 
             {/* Generation Ticker */}
             {isSmartGenerating && (
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
@@ -4337,7 +4337,7 @@ const Dashboard: React.FC = () => {
                   const isGenning = autoGenSet.has(i);
                   return (
                   <div key={i} className={`border rounded-2xl overflow-hidden transition ${
-                    isVideo ? 'bg-purple-950/20 border-purple-500/20' : 'bg-white/3 border-white/8 hover:border-white/15'
+                    isVideo ? 'bg-purple-950/20 border-purple-500/20' : 'glass-card border-white/[0.08] hover:border-white/15'
                   }`}>
                     <div className="p-4 flex gap-4">
                       {/* Image / Video area */}
@@ -4718,7 +4718,7 @@ const Dashboard: React.FC = () => {
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Best Posting Times</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {insightReport.bestTimes.map((bt, i) => (
-                        <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-4">
+                        <div key={i} className="glass-card border border-white/[0.08] rounded-2xl p-4">
                           <div className="flex items-center gap-2 mb-3">
                             {bt.platform === 'Facebook' ? <Facebook size={14} className="text-blue-400" /> : <Instagram size={14} className="text-pink-400" />}
                             <span className="text-xs font-bold text-white/60">{bt.platform}</span>
@@ -4743,7 +4743,7 @@ const Dashboard: React.FC = () => {
                     <h3 className="text-xs font-bold text-white/40 uppercase tracking-widest px-1">Content Topics to Focus On</h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {insightReport.contentFocus.map((cf, i) => (
-                        <div key={i} className="bg-white/3 border border-white/8 rounded-2xl p-4 space-y-1.5">
+                        <div key={i} className="glass-card border border-white/[0.08] rounded-2xl p-4 space-y-1.5">
                           <p className="text-sm font-semibold text-amber-300">{cf.topic}</p>
                           <p className="text-xs text-white/45 leading-relaxed">{cf.reason}</p>
                         </div>
@@ -4896,15 +4896,15 @@ const Dashboard: React.FC = () => {
                 <p className="text-sm text-white/40 mt-1">Manage each client's workspace, social connections, and content independently.</p>
               </div>
               <div className="flex items-center gap-3">
-                <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
+                <div className="text-center glass-card border border-white/[0.08] rounded-xl px-4 py-2">
                   <p className="text-xl font-black text-white">{clients.length}</p>
                   <p className="text-[10px] text-white/30 uppercase tracking-wider">Active</p>
                 </div>
-                <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
+                <div className="text-center glass-card border border-white/[0.08] rounded-xl px-4 py-2">
                   <p className="text-xl font-black text-emerald-400">{clients.length}</p>
                   <p className="text-[10px] text-white/30 uppercase tracking-wider">Total</p>
                 </div>
-                <div className="text-center bg-white/3 border border-white/8 rounded-xl px-4 py-2">
+                <div className="text-center glass-card border border-white/[0.08] rounded-xl px-4 py-2">
                   <p className="text-xl font-black text-white/40">{Math.max(0, agencyClientLimit - clients.length)}</p>
                   <p className="text-[10px] text-white/30 uppercase tracking-wider">Slots free</p>
                 </div>
@@ -4922,7 +4922,7 @@ const Dashboard: React.FC = () => {
 
             {/* Client cards */}
             {clients.length === 0 ? (
-              <div className="bg-white/3 border border-white/8 rounded-2xl p-10 text-center space-y-3">
+              <div className="glass-card border border-white/[0.08] rounded-2xl p-10 text-center space-y-3">
                 <div className="w-14 h-14 bg-emerald-500/10 border border-emerald-500/15 rounded-2xl flex items-center justify-center mx-auto">
                   <Users size={24} className="text-emerald-400/50" />
                 </div>
@@ -4942,7 +4942,7 @@ const Dashboard: React.FC = () => {
                   const healthDot = !health ? 'bg-white/15' : daysSincePost === null ? 'bg-red-500' : daysSincePost <= 7 ? 'bg-emerald-500' : daysSincePost <= 30 ? 'bg-amber-500' : 'bg-red-500';
                   const planColors: Record<string, string> = { starter: 'text-blue-300 bg-blue-500/15 border-blue-500/25', growth: 'text-purple-300 bg-purple-500/15 border-purple-500/25', pro: 'text-amber-300 bg-amber-500/15 border-amber-500/25', agency: 'text-emerald-300 bg-emerald-500/15 border-emerald-500/25' };
                   return (
-                    <div key={client.id} className={`bg-white/3 border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/8 hover:border-white/15'}`}>
+                    <div key={client.id} className={`glass-card border rounded-2xl p-5 space-y-4 transition ${isActive ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/[0.08] hover:border-white/15'}`}>
                       {/* Header */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-3 min-w-0">
@@ -4998,7 +4998,7 @@ const Dashboard: React.FC = () => {
                             <button
                               key={p}
                               onClick={() => setClientPlan(client.id, p)}
-                              className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition capitalize ${client.plan === p ? planColors[p] : 'text-white/25 bg-white/3 border-white/8 hover:border-white/20'}`}
+                              className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition capitalize ${client.plan === p ? planColors[p] : 'text-white/25 glass-card border-white/[0.08] hover:border-white/20'}`}
                             >
                               {p}
                             </button>
@@ -5116,7 +5116,7 @@ const Dashboard: React.FC = () => {
 
             {/* Agency billing link */}
             {(agencyBillingUrl || CLIENT.paypalManageUrl) && (
-              <div className="flex items-center justify-between bg-white/3 border border-white/8 rounded-2xl px-5 py-4">
+              <div className="flex items-center justify-between glass-card border border-white/[0.08] rounded-2xl px-5 py-4">
                 <div>
                   <p className="text-sm font-semibold text-white">Agency Billing</p>
                   <p className="text-xs text-white/30 mt-0.5">
@@ -5170,7 +5170,7 @@ const Dashboard: React.FC = () => {
                 const planOrder: PlanTier[] = ['starter', 'growth', 'pro', 'agency'];
                 const currentIdx = planOrder.indexOf(clientPlan ?? 'starter');
                 return (
-                  <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+                  <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-5">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
                         <ShoppingCart size={16} className="text-amber-400" />
@@ -5238,7 +5238,7 @@ const Dashboard: React.FC = () => {
 
               // ── Normal owner Plan & Billing ──
               return (
-                <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+                <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-5">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 bg-amber-500/15 border border-amber-500/20 rounded-xl flex items-center justify-center">
@@ -5357,7 +5357,7 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Business Profile — Guided Questionnaire */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+            <div className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden">
               <button
                 onClick={() => setProfileExpanded(p => !p)}
                 className="w-full flex items-center justify-between p-6 text-left hover:bg-white/2 transition"
@@ -5576,7 +5576,7 @@ const Dashboard: React.FC = () => {
 
             {/* fal.ai API Key — super-admin only */}
             {isSuperAdmin && (activePlan === 'pro' || activePlan === 'agency') && (
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
                   <span className="text-base">🎬</span>
@@ -5622,7 +5622,7 @@ const Dashboard: React.FC = () => {
             {/* Short Video Toggle — credit-gated. Available on any plan when
                 reel credits > 0 (Pro/Agency get monthly grants; everyone can
                 buy credit packs). */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6">
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 bg-purple-500/15 border border-purple-500/20 rounded-xl flex items-center justify-center">
@@ -5671,7 +5671,7 @@ const Dashboard: React.FC = () => {
                 </div>
               )}
               {!canUseReels && (
-                <div className="mt-4 bg-white/3 border border-white/8 rounded-xl px-4 py-3 flex items-start gap-3 flex-wrap">
+                <div className="mt-4 glass-card border border-white/[0.08] rounded-xl px-4 py-3 flex items-start gap-3 flex-wrap">
                   <p className="text-xs text-white/55 flex-1 min-w-[200px]">
                     Pro includes 4 reel credits/month. Agency: 20/month across all clients. Or buy a one-off pack — credits never expire.
                   </p>
@@ -5702,7 +5702,7 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Social Media Connection — Facebook Graph API */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
                   <Link2 size={16} className="text-blue-400" />
@@ -5774,15 +5774,15 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pl-12">
-                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                <div className="glass-card border border-white/[0.08] rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Promote a website</p>
                   <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Promote pennywiseit.com.au — focus on the new AI tools page."</p>
                 </div>
-                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                <div className="glass-card border border-white/[0.08] rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Run a sale</p>
                   <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"20% off all sessions May 15–25 — urgent tone as we count down."</p>
                 </div>
-                <div className="bg-white/3 border border-white/8 rounded-lg p-2.5">
+                <div className="glass-card border border-white/[0.08] rounded-lg p-2.5">
                   <p className="text-[10px] font-bold text-amber-300/80">Promote an event</p>
                   <p className="text-[10px] text-white/35 mt-0.5 leading-snug">"Sunshine Coast workshop on June 14 — drive bookings, mention limited spots."</p>
                 </div>
@@ -6017,7 +6017,7 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Your Plan */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-4">
               <h3 className="font-bold text-white flex items-center gap-2"><Zap size={16} className="text-amber-400" /> Your Plan</h3>
               {planCfg ? (
                 <div className="flex items-start gap-4 flex-wrap">
@@ -6052,7 +6052,7 @@ const Dashboard: React.FC = () => {
 
             {/* Agency Client Management — hidden in portal mode */}
             {(activePlan === 'agency' || isAdminMode) && authMode !== 'portal' && (
-              <div className="bg-white/3 border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+              <div className="glass-card border border-emerald-500/20 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <h3 className="font-bold text-white flex items-center gap-2"><Users size={16} className="text-emerald-400" /> Client Workspaces</h3>
                   <span className="text-xs text-white/30">{clients.length} / {CLIENT.agencyClientLimit} used</span>
@@ -6134,7 +6134,7 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Data */}
-            <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-4">
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-4">
               <h3 className="font-bold text-white">Data</h3>
               <div className="flex gap-3 flex-wrap">
                 <button
