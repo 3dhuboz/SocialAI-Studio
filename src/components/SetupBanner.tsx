@@ -25,7 +25,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
   if (isLive) return null;
 
   return (
-    <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/8 to-transparent border border-amber-500/20 rounded-2xl p-5 mb-6 glass noise">
+    <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/8 to-transparent border border-amber-500/20 rounded-2xl p-5 mb-6 glass">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-amber-500/20 border border-amber-500/30 rounded-xl flex items-center justify-center">
@@ -57,7 +57,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${
                   done
                     ? active && !isLive
-                      ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                      ? 'bg-amber-500/20 border-amber-500 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
                       : 'bg-green-500/20 border-green-500 text-green-400'
                     : 'bg-white/5 border-white/15 text-white/20'
                 }`}>
@@ -75,7 +75,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
                 <p className="text-[9px] text-white/20 text-center hidden sm:block">{step.sub}</p>
               </div>
               {i < steps.length - 1 && (
-                <div className={`h-px flex-1 mx-1 mb-5 transition-all duration-500 ${i < idx ? 'bg-green-500/40' : 'bg-white/10'}`} />
+                <div className={`h-px flex-1 mx-1 mb-5 transition-all duration-500 ${i < idx ? 'bg-gradient-to-r from-green-500/60 to-emerald-500/40' : 'bg-white/[0.08]'}`} />
               )}
             </React.Fragment>
           );
@@ -91,7 +91,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
               <button
                 key={step.id}
                 onClick={() => onStatusChange(step.id)}
-                className={`text-[10px] px-3 py-1.5 rounded-lg border transition font-semibold ${
+                className={`text-[10px] px-3 py-1.5 rounded-lg border transition-all font-semibold press ${
                   status === step.id
                     ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
                     : 'bg-white/5 border-white/10 text-white/30 hover:bg-white/10'
@@ -108,7 +108,7 @@ export const SetupBanner: React.FC<Props> = ({ status, onStatusChange, isAdmin }
 };
 
 export const LiveBadge: React.FC = () => (
-  <div className="inline-flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-semibold px-3 py-1 rounded-full">
+  <div className="inline-flex items-center gap-1.5 bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-semibold px-3 py-1 rounded-xl">
     <Zap size={11} /> Live
   </div>
 );

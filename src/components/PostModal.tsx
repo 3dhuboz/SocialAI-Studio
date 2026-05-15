@@ -120,7 +120,7 @@ export const PostModal: React.FC<Props> = ({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-lg" />
 
       {/* Modal */}
       <div className="relative z-10 w-full max-w-[calc(100vw-1rem)] sm:max-w-lg max-h-[90vh] overflow-y-auto bg-[var(--color-surface-1)] glass-card noise border-gradient rounded-3xl shadow-2xl shadow-black/60 animate-spring-in">
@@ -140,7 +140,7 @@ export const PostModal: React.FC<Props> = ({
               <span className="text-[10px] bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full">{post.pillar}</span>
             )}
           </div>
-          <button onClick={onClose} className="text-white/25 hover:text-white/70 transition p-1">
+          <button onClick={onClose} className="text-white/25 hover:text-white/60 hover:bg-white/[0.06] transition-all rounded-lg p-1.5 press">
             <X size={16} />
           </button>
         </div>
@@ -223,12 +223,12 @@ export const PostModal: React.FC<Props> = ({
               </div>
               {showScript && post.videoScript && (
                 <div className="px-5 pb-4 space-y-3 animate-fadeSlideUp">
-                  <div className="bg-white/3 border border-white/8 rounded-xl p-3">
+                  <div className="glass-card border border-white/[0.08] rounded-xl p-3">
                     <p className="text-[10px] font-bold text-purple-400/60 uppercase tracking-wider mb-1">Script</p>
                     <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{post.videoScript}</p>
                   </div>
                   {post.videoShots && (
-                    <div className="bg-white/3 border border-white/8 rounded-xl p-3">
+                    <div className="glass-card border border-white/[0.08] rounded-xl p-3">
                       <p className="text-[10px] font-bold text-purple-400/60 uppercase tracking-wider mb-1">Shot Brief</p>
                       <p className="text-xs text-white/60 leading-relaxed whitespace-pre-wrap">{post.videoShots}</p>
                     </div>
@@ -330,12 +330,12 @@ export const PostModal: React.FC<Props> = ({
             {isScorable && (viralityScore || isScoringPost) && (
               <div className="mb-4">
                 {isScoringPost && !viralityScore ? (
-                  <div className="flex items-center gap-2 text-[11px] text-white/35 bg-white/3 rounded-xl px-3 py-2">
+                  <div className="flex items-center gap-2 text-[11px] text-white/35 glass-card border border-white/[0.07] rounded-xl px-3 py-2">
                     <Loader2 size={11} className="animate-spin text-amber-400/60" />
                     Predicting engagement based on your past posts…
                   </div>
                 ) : viralityScore?.data_status === 'insufficient' ? (
-                  <div className="flex items-start gap-2 text-[11px] text-white/40 bg-white/3 rounded-xl px-3 py-2.5 border border-white/8">
+                  <div className="flex items-start gap-2 text-[11px] text-white/40 glass-card rounded-xl px-3 py-2.5 border border-white/[0.08]">
                     <Sparkles size={12} className="text-amber-400/50 shrink-0 mt-0.5" />
                     <span>{viralityScore.reasoning}</span>
                   </div>
@@ -414,7 +414,7 @@ export const PostModal: React.FC<Props> = ({
                   </button>
                   <button
                     onClick={() => { setIsEditing(false); setEditContent(post.content); setEditHashtags((post.hashtags || []).join(' ')); }}
-                    className="text-white/40 hover:text-white/70 px-4 py-2 rounded-xl text-sm transition"
+                    className="text-white/40 hover:text-white/70 hover:bg-white/[0.05] px-4 py-2 rounded-xl text-sm transition-all press"
                   >
                     Cancel
                   </button>
@@ -470,7 +470,7 @@ export const PostModal: React.FC<Props> = ({
           <button
             onClick={handleDelete}
             disabled={isDeleting}
-            className="flex items-center gap-1.5 text-white/20 hover:text-red-400 hover:bg-red-500/10 px-3 py-2.5 rounded-xl text-xs transition"
+            className="flex items-center gap-1.5 text-white/20 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 px-3 py-2.5 rounded-xl text-xs transition-all press"
           >
             <Trash2 size={13} /> Delete
           </button>
