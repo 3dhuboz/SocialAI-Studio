@@ -48,7 +48,7 @@ export async function refreshFactsForUser(
     const d: any = await r.json();
     if (d?.about || d?.description) {
       await env.DB.prepare(
-        `INSERT INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+        `INSERT OR IGNORE INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
          VALUES (?,?,?,?,?,?,?,?)`
       ).bind(userId, clientId, 'about', d.about || d.description, JSON.stringify({ category: d.category }), pageId, 0, new Date().toISOString()).run();
     }
@@ -62,7 +62,7 @@ export async function refreshFactsForUser(
       if (!p.message) continue;
       const eng = (p.reactions?.summary?.total_count || 0) + (p.shares?.count || 0) * 3 + (p.comments?.summary?.total_count || 0) * 2;
       await env.DB.prepare(
-        `INSERT INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+        `INSERT OR IGNORE INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
          VALUES (?,?,?,?,?,?,?,?)`
       ).bind(userId, clientId, 'own_post', p.message, JSON.stringify({ created_time: p.created_time }), p.id, eng, new Date().toISOString()).run();
     }
@@ -76,7 +76,7 @@ export async function refreshFactsForUser(
       const url = ph.images?.[0]?.source;
       if (!url) continue;
       await env.DB.prepare(
-        `INSERT INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+        `INSERT OR IGNORE INTO client_facts (user_id, client_id, fact_type, content, metadata, fb_id, engagement_score, verified_at)
          VALUES (?,?,?,?,?,?,?,?)`
       ).bind(userId, clientId, 'photo', ph.name || 'Untitled photo', JSON.stringify({ url }), ph.id, 0, new Date().toISOString()).run();
     }
