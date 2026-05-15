@@ -91,11 +91,24 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
     forbidden: /\b(?:food|restaurant|plated|plating|dining|kitchen|meal|breakfast|lunch|dinner|cuisine|cocktail|wine|pastry|pastries|loaf|loaves|sourdough|farm|paddock|livestock|cattle|sheep|tractor|crops|harvest|bbq|brisket|smoker|smoked|grill|grilled|charcoal|gym|treadmill|barbell|dumbbell|massage|salon|spa|garage|engine|axle|wrench)\b/i,
     extraNegatives: 'food, plate, plated, restaurant, dining, kitchen, meal, beverage, candlelit, rustic wood board, bbq, smoker, grill, agriculture, farm, livestock, gym, yoga mat, automotive, garage',
     fallbackScenes: [
+      // Generic workspace — neutral fallback
       'modern co-working studio with closed laptop on a clean desk, soft abstract blue and purple gradient on the wall behind, geometric paper shapes scattered, morning daylight',
       'overhead flatlay of an open notebook, smartphone face-down, ceramic mug and pen on a matte white desk, soft natural daylight',
       'minimal home office windowsill with a small potted plant, closed laptop and geometric wall art, sunrise light through window',
-      'abstract layered gradient of blue, purple and soft pink with subtle geometric shapes, low-poly aesthetic, suggesting connectivity and workflow',
       'sleek desk corner with brushed metal lamp, leather notebook and brass pen, golden hour shadows across the surface',
+      // Pain Points / time-pressure / problem posts — chaos, urgency, overwhelm
+      'close-up of an analogue wall clock face against a white background, stark bright daylight, minimal composition',
+      'overhead flatlay of a desk buried in overlapping sticky notes in multiple colours, pens scattered, bright overhead light',
+      'crammed weekly planner open flat with every time slot filled in pencil, corner slightly crumpled, soft daylight',
+      'stack of unread manila folders and dog-eared notebooks teetering on a white desk corner, bright natural light',
+      // Solution / success / clarity posts — order, calm, resolution
+      'single open bullet-journal planner with neatly written tasks, only two items, clean white desk, morning soft light',
+      'empty clean desk with only a single sharpened pencil centred on the surface, bright airy daylight, minimalist',
+      'before-and-after composition: left half cluttered with sticky notes and folders, right half clean with one notebook, split overhead shot',
+      // Educational / tips / process posts — concept in action
+      'close-up of a stopwatch lying flat on a wooden desk, hands at the 12, sharp detail, bright neutral light',
+      'a printed checklist on a clipboard with alternating ticked and unticked boxes, macro close-up on the ticks, crisp daylight',
+      'calendar page pinned to a corkboard with certain dates circled in red marker, bright overhead light, shallow depth of field',
     ],
   },
   'professional-services': {
