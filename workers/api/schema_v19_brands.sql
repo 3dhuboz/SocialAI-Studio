@@ -27,7 +27,7 @@
 -- shape right here; future migrations can flip the pragma cohort-wide.
 --
 -- Apply via:
---   wrangler d1 execute socialai-studio-db --remote --file=workers/api/migrations/schema_v17_brands.sql
+--   wrangler d1 execute socialai-studio-db --remote --file=workers/api/schema_v19_brands.sql
 
 CREATE TABLE IF NOT EXISTS brands (
   id                  TEXT PRIMARY KEY,                       -- slug, e.g. 'socialai-studio'
