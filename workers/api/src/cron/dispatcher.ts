@@ -4,10 +4,11 @@
 //
 // Maps Cloudflare's cron-expression triggers to the right cron function:
 //   */5 * * * *  → prewarm images + videos + publish missed posts
+//   0 */6 * * *  → backlog critique + backlog regen + fal.ai credits check
 //   0 3 * * *    → token refresh
 //   0 4 * * *    → daily fact refresh
 //   0 21 * * 0   → weekly review (Monday 7am AEST)
-//   (anything else) → fallback chain
+//   (anything else) → no-op + warn log (no expensive fallback)
 //
 // Every cron is wrapped in trackCron so:
 //   - a thrown exception in one cron doesn't kill the whole worker dispatch
@@ -59,16 +60,23 @@ async function trackCron(
 export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const cron = event.cron;
   if (cron === '*/5 * * * *') {
+    // Latency-sensitive lane: posts need images prewarmed before the publish
+    // cron fires, and the publish cron needs to fire close to scheduled time.
+    // Backlog jobs are NOT included here — they run on the 6-hourly lane
+    // below to cap their worst-case spend (FLUX Pro Kontext at $0.04/img on
+    // up to 20 imgs/tick = $0.80/tick = $9.60/hr if it ran here).
     await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
     await trackCron(env, 'prewarm_videos', () => cronPrewarmVideos(env));
     await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
-    // Backlog: score every post with image_url but no critique data yet,
-    // then regen low-scoring posts. Both helpers open with a cheap COUNT(*)
-    // — once the backlog is exhausted they become free no-ops on subsequent
-    // ticks. Self-limiting because:
-    //   - critique only touches posts where image_critique_score IS NULL
-    //   - regen only touches posts where image_critique_score <= 5
-    // Once a post is scored OR regenerated to score > 5, it's done.
+    return;
+  }
+  if (cron === '0 */6 * * *') {
+    // 6-hourly lane: "catch up later" work by design. Backlog jobs are
+    // self-limiting (critique only scores posts where image_critique_score
+    // IS NULL; regen only touches posts where image_critique_score <= 5 AND
+    // image_regen_count < MAX_REGEN_ATTEMPTS) so once the backlog is
+    // drained these become cheap no-op COUNT(*) queries. fal.ai credits
+    // check runs on the same tick — also low-frequency by design.
     await trackCron(env, 'backlog_critique', async () => {
       const r = await runBacklogCritique(env);
       return { posts_processed: r.scored };
@@ -77,6 +85,7 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
       const r = await runBacklogRegen(env);
       return { posts_processed: r.regenerated };
     });
+    await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
     return;
   }
   if (cron === '0 3 * * *') {
@@ -94,9 +103,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
     return;
   }
-  // Fallback for 6-hourly credit check and any unmatched triggers
-  await trackCron(env, 'prewarm_fallback', () => cronPrewarmImages(env));
-  await trackCron(env, 'prewarm_videos_fallback', () => cronPrewarmVideos(env));
-  await trackCron(env, 'publish_fallback', () => cronPublishMissedPosts(env));
-  await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
+  // Unknown cron expression — DO NOT trigger any expensive jobs as a
+  // catch-all. Previously this branch re-ran prewarm/publish which is
+  // unnecessary (the */5 branch covers them) and risked running backlog
+  // jobs through a typo. Log loudly and return.
+  console.warn(`[CRON dispatcher] unmatched cron expression: ${cron} — no jobs dispatched`);
 }
