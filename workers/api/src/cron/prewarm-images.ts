@@ -70,21 +70,24 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
       let finalRefs = gen.referencesUsed;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
-      // ── Vision-critique gate (2026-05-12, hardened 2026-05-12 v2) ─────
+      // ── Vision-critique gate (2026-05-12, hardened 2026-05-12 v2;
+      //    cost-tightened 2026-05-16) ────────────────────────────────────
       // Score the generated image against the caption + workspace archetype.
-      // If the score is ≤5, the LLM-generated prompt likely produced an
+      // If the score is <5, the LLM-generated prompt likely produced an
       // off-archetype image (food on a SaaS post, etc.) — regenerate ONCE
       // using a forced archetype fallback scene, then ship whatever the
       // second attempt produces. We don't loop further: a second failure
       // means critique is being overly strict and shipping a 6+ image is
       // still better than blocking the publish pipeline.
       //
-      // Threshold raised from ≤3 to ≤5 because Haiku scored food-on-SaaS
-      // posts as 4-5 (not the expected 1-2) for the Penny Wise I.T
-      // workspace, since archetype was NULL and the prompt told Haiku
-      // "small business" was the context. The hardened system prompt in
-      // lib/critique.ts now forces 1-2 for cross-domain bleed regardless,
-      // but the wider threshold catches edge cases where Haiku is generous.
+      // 2026-05-16: acceptance bar widened from ≤5 (regen) to <5 (regen).
+      // Score=5 is "partial match — on-brand but doesn't reinforce the
+      // specific topic" per the critique rubric. Empirically these ship
+      // fine and the FLUX retry rarely lifts them — wasted ~$0.04/regen +
+      // ~$0.003/critique on posts that were already shippable. Audit
+      // estimated 40-60% FLUX regen spend savings from this single change.
+      // The hardened system prompt in lib/critique.ts still forces 1-2 for
+      // cross-domain bleed, so genuine misses are caught by the wider net.
       //
       // archetypeSlug fallback chain: DB lookup → sniff from caption →
       // null. Sniffing means a workspace that never ran classify-business
@@ -124,8 +127,8 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
         if (critique) {
           console.log(`[CRON prewarm] post ${postId} critique score=${critique.score} match=${critique.match} — ${critique.reasoning}`);
           finalCritique = critique;
-          if (critique.score <= 5) {
-            console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} ≤ 5)`);
+          if (critique.score < 5) {
+            console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} < 5)`);
             const retry = await generateImageWithBrandRefs(env, userId, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;

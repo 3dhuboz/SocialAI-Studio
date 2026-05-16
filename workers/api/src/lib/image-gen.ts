@@ -31,6 +31,13 @@ import {
   sniffArchetypeFromCaption,
 } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
+import { logAiUsage } from './ai-usage';
+
+// Per-model rough cost estimates for ai_usage logging. Refined when the
+// fal.ai invoice settles each month — these are the published per-MP rates
+// for square_hd outputs at the steps/guidance defaults used here.
+const FLUX_DEV_COST_USD = 0.025;
+const FLUX_PRO_KONTEXT_COST_USD = 0.04;
 
 // When `forceFallback` is true, skip the LLM-generated prompt entirely and
 // pick a guaranteed-safe scene from the archetype's fallback bank. Used by
@@ -130,7 +137,23 @@ export async function generateImageWithBrandRefs(
     if (res.ok) {
       const data = await res.json() as any;
       const imageUrl = data?.images?.[0]?.url || null;
-      if (imageUrl) return { imageUrl, modelUsed: 'flux-pro-kontext', referencesUsed: referenceImageUrls.length };
+      if (imageUrl) {
+        // Fire-and-forget metering. Logging is wrapped internally so a D1
+        // hiccup can't propagate up and break the publish pipeline.
+        try {
+          await logAiUsage(env, {
+            userId,
+            clientId,
+            provider: 'fal',
+            model: 'flux-pro-kontext',
+            operation: 'image-gen',
+            imagesGenerated: 1,
+            estCostUsd: FLUX_PRO_KONTEXT_COST_USD,
+            ok: true,
+          });
+        } catch { /* never let logging break image gen */ }
+        return { imageUrl, modelUsed: 'flux-pro-kontext', referencesUsed: referenceImageUrls.length };
+      }
     }
     console.warn(`[image-gen] flux-pro-kontext failed (status ${res.status}), falling back to flux-dev`);
   }
@@ -150,7 +173,34 @@ export async function generateImageWithBrandRefs(
   const data = await res.json() as any;
   if (!res.ok) {
     console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
+    // Log the failed call too — useful for understanding which prompt
+    // patterns trigger fal.ai 4xx/5xx responses.
+    try {
+      await logAiUsage(env, {
+        userId,
+        clientId,
+        provider: 'fal',
+        model: 'flux-dev',
+        operation: 'image-gen',
+        imagesGenerated: 0,
+        estCostUsd: 0,
+        ok: false,
+      });
+    } catch { /* never let logging break image gen */ }
     return { imageUrl: null, modelUsed: 'flux-dev', referencesUsed: 0 };
   }
-  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', referencesUsed: 0 };
+  const imageUrl = data?.images?.[0]?.url || null;
+  try {
+    await logAiUsage(env, {
+      userId,
+      clientId,
+      provider: 'fal',
+      model: 'flux-dev',
+      operation: 'image-gen',
+      imagesGenerated: imageUrl ? 1 : 0,
+      estCostUsd: imageUrl ? FLUX_DEV_COST_USD : 0,
+      ok: !!imageUrl,
+    });
+  } catch { /* never let logging break image gen */ }
+  return { imageUrl, modelUsed: 'flux-dev', referencesUsed: 0 };
 }
