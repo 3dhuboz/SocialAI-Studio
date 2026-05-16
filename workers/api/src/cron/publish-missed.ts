@@ -22,6 +22,8 @@ import { generateImageWithGuardrails } from '../lib/image-gen';
 import { sendResendEmail } from '../lib/email';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
+import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
+import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
 // Translate raw FB Graph errors into a human sentence the user can act on.
 // Keep originals for debugging — but the version we put in posts.reasoning
@@ -188,7 +190,10 @@ async function kickFacebookReelUpload(
 // are marked Missed instead of claimed for publish. Prevents shipping the
 // "generic gradient on a wellness post" failure mode we observed live —
 // the regen loop catches it but if FLUX can't produce a better image after
-// 3 tries, blocking is safer than publishing a known-bad image.
+// MAX_REGEN_ATTEMPTS tries, blocking is safer than publishing a known-bad
+// image. Note: this guard threshold (3) is intentionally HARDER than the
+// generic regen accept threshold (CRITIQUE_ACCEPT_THRESHOLD=5) — we'd
+// rather publish a score-4 image than mark every score-4 post Missed.
 const QUALITY_GUARD_THRESHOLD = 3;
 
 export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
@@ -236,9 +241,9 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
      FROM posts
      WHERE status = 'Scheduled' AND scheduled_for <= ?
        AND image_critique_score IS NOT NULL AND image_critique_score <= ?
-       AND COALESCE(image_regen_count, 0) >= 3
+       AND COALESCE(image_regen_count, 0) >= ?
        AND ${ACTIVE_CLIENT_FILTER}`
-  ).bind(nowAEST, QUALITY_GUARD_THRESHOLD).all<{
+  ).bind(nowAEST, QUALITY_GUARD_THRESHOLD, MAX_REGEN_ATTEMPTS).all<{
     id: string; user_id: string | null; client_id: string | null;
     image_critique_score: number; image_regen_count: number | null;
   }>();
@@ -314,6 +319,30 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           await notifyOwnerOnPublishFailure(env, post as any, reason);
           continue;
         }
+      }
+
+      // ── Fabrication / AI-trope scan (defense layer 6) ───────────────────
+      // The gen-time path (gemini.ts:detectFabrication) already retries with
+      // a stricter prompt when one of these patterns fires, but the gen
+      // pipeline can be bypassed: portal edits, post-rewrite flow that
+      // wasn't routed through the retry loop, or imported drafts. This is
+      // the last line of defence before the post hits a customer's followers.
+      //
+      // Behaviour: scan caption + image_prompt. If any trope pattern fires,
+      // downgrade the post to NeedsReview (NOT Missed — the content is
+      // recoverable, just needs an owner edit) and notify the owner. Same
+      // shared bank as admin scan-flagged-posts and gemini.ts.
+      const captionTropes = scanContentForTropes((post as any).content as string);
+      const promptTropes = scanContentForTropes((post as any).image_prompt as string || '');
+      const allTropes = [...captionTropes, ...promptTropes];
+      if (allTropes.length > 0) {
+        const where = captionTropes.length > 0 ? 'caption' : 'image_prompt';
+        const reason = `Auto-publish blocked: post ${where} contains fabricated content patterns (${allTropes.slice(0, 3).join('; ')}). Open Calendar to edit before this can publish.`;
+        console.warn(`[CRON] Post ${(post as any).id} blocked by trope scan: ${allTropes.join('; ')}`);
+        await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+          .bind('NeedsReview', reason, (post as any).id).run();
+        await notifyOwnerOnPublishFailure(env, post as any, reason);
+        continue;
       }
 
       // Get social tokens for this workspace
