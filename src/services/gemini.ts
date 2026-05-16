@@ -415,14 +415,14 @@ function pickExampleScene(joinedExamples: string): string {
  * lose 5 µs splitting it 4× than risk one path misreading "Pork, Chicken"
  * as a single token. The Seamus incident already cost a client relationship;
  * this defends against the next near-miss.
+ *
+ * Implementation lives in shared/forbidden-subjects.ts so the worker
+ * (workers/api/src/lib/profile-guards.ts) and frontend can never drift on
+ * what counts as a forbidden subject — re-exported here so existing
+ * callers keep working.
  */
-export function parseForbiddenSubjects(raw?: string | null): string[] {
-  if (!raw || typeof raw !== 'string') return [];
-  return raw
-    .split(/[,\n;]/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0 && s.length < 60); // sanity cap on word length
-}
+export { parseForbiddenSubjects } from '../../shared/forbidden-subjects';
+import { parseForbiddenSubjects } from '../../shared/forbidden-subjects';
 
 /**
  * Build the list of acceptable image-prompt subjects from the owner's actual
