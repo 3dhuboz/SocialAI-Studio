@@ -15,14 +15,11 @@
  *   - flux-dev request body params (lock the values we tuned)
  *   - archetype guardrails: forbidden subjects swap to fallback BEFORE fetch
  *   - 5xx error bubbles back as imageUrl=null with useful context logged
- *
- * NOTE on tuned params: The audit task spec says "lock num_inference_steps
- * =35, guidance_scale=7.0" — but the source today uses 28 + 5.0. Tests
- * assert the SOURCE values (the contract is "whatever is in source today
- * stays in source after the parallel PRs land"). If the audit numbers
- * were intended to be the post-tune values, a separate PR should bump
- * source AND tests together.
  */
+// Image-gen test assertions lock the post-PR-#86 source values
+// (num_inference_steps=35, guidance_scale=7.0). On this branch, the source
+// still has the pre-#86 values (28/5.0) — these tests will FAIL on this PR
+// until #86 merges into main. Merging order: #86 → this PR.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateImageWithBrandRefs } from '../lib/image-gen';
 
@@ -125,8 +122,8 @@ describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
     // Lock the dimensions: 1:1 hi-res
     expect(body.image_size).toBe('square_hd');
     // Lock the diffusion params (source-of-truth as of this PR).
-    expect(body.num_inference_steps).toBe(28);
-    expect(body.guidance_scale).toBe(5.0);
+    expect(body.num_inference_steps).toBe(35);
+    expect(body.guidance_scale).toBe(7.0);
     expect(body.num_images).toBe(1);
     expect(body.enable_safety_checker).toBe(true);
     // Negative prompt threaded as a SEPARATE param (not inlined into prompt)
