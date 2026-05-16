@@ -24,7 +24,7 @@
 -- on FLUX last week".
 --
 -- Apply via:
---   wrangler d1 execute socialai-studio-db --remote --file=schema_v17_ai_usage.sql
+--   wrangler d1 execute socialai-studio-db --remote --file=schema_v18_ai_usage.sql
 
 CREATE TABLE IF NOT EXISTS ai_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
