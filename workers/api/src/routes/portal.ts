@@ -53,6 +53,19 @@ export function registerPortalRoutes(app: Hono<{ Bindings: Env }>): void {
     // and clears any previous revoked_at, so admin can resurrect a
     // revoked portal by re-issuing without manually clearing the column.
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    // ── Ownership check ──────────────────────────────────────────────────
+    // Pre-fix: any authenticated user could PUT any slug and either steal
+    // an existing portal (overwriting its user_id) or claim an unused slug.
+    // Now: if the slug exists, the row's user_id MUST match the caller's
+    // uid. Brand-new slugs (no existing row) are still claimable, which is
+    // the bootstrap path admins use when provisioning a new portal.
+    const existing = await c.env.DB.prepare(
+      'SELECT user_id FROM portal WHERE slug = ?'
+    ).bind(slug).first<{ user_id: string | null }>();
+    if (existing && existing.user_id && existing.user_id !== uid) {
+      // 404 (not 403) — avoids confirming to an attacker which slugs are taken.
+      return c.json({ error: 'Not found' }, 404);
+    }
     await c.env.DB.prepare(
       `INSERT INTO portal (slug, email, password, portal_token, user_id, client_id, expires_at, revoked_at)
        VALUES (?,?,?,?,?,?,?,NULL)
@@ -82,8 +95,19 @@ export function registerPortalRoutes(app: Hono<{ Bindings: Env }>): void {
     if (body.hero_subtitle !== undefined) { sets.push('hero_subtitle = ?'); vals.push(body.hero_subtitle); }
     if (body.hero_cta_text !== undefined) { sets.push('hero_cta_text = ?'); vals.push(body.hero_cta_text); }
     if (sets.length === 0) return c.json({ ok: true });
-    vals.push(slug);
-    await c.env.DB.prepare(`UPDATE portal SET ${sets.join(', ')} WHERE slug = ?`).bind(...vals).run();
+    // ── Ownership-scoped UPDATE ──────────────────────────────────────────
+    // Pre-fix: anyone authenticated could overwrite ANY portal's hero copy
+    // by guessing the slug. Now: the WHERE clause requires the row's
+    // user_id to match the caller. If meta.changes is 0, either the slug
+    // doesn't exist or it's owned by someone else — return 404 either way
+    // so we don't leak which slugs are taken.
+    vals.push(slug, uid);
+    const result = await c.env.DB.prepare(
+      `UPDATE portal SET ${sets.join(', ')} WHERE slug = ? AND user_id = ?`
+    ).bind(...vals).run();
+    if (!result.meta || result.meta.changes === 0) {
+      return c.json({ error: 'Not found' }, 404);
+    }
     return c.json({ ok: true });
   });
 }
