@@ -226,15 +226,25 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // ── Runway Proxy ────────────────────────────────────────────────────────
   app.all('/api/runway-proxy/*', async (c) => {
+    // AUTH GATE — Runway is paid per-generation; mirror the fal-proxy guard
+    // so anonymous internet traffic can't drain RUNWAY_API_KEY. The earlier
+    // version accepted a client-supplied Authorization header as a fallback
+    // key, which made this an effectively-open proxy onto our key whenever
+    // the caller omitted their own — drop that path entirely.
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (await isRateLimited(c.env.DB, `runway:${uid}`, 20)) {
+      return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+    }
+
     const path = c.req.path.replace('/api/runway-proxy', '');
     const url = `https://api.runwayml.com/v1${path}`;
     const method = c.req.method;
     const body = method !== 'GET' && method !== 'HEAD' ? await c.req.text() : undefined;
 
-    // Get key from Authorization header or fallback to env var
-    const authHeader = c.req.header('Authorization');
-    const apiKey = authHeader?.replace('Bearer ', '') || c.env.RUNWAY_API_KEY;
-    if (!apiKey) return c.json({ error: 'Runway API key required' }, 401);
+    // Server uses its own key; ignore client-supplied keys to prevent abuse.
+    const apiKey = c.env.RUNWAY_API_KEY;
+    if (!apiKey) return c.json({ error: 'Runway API key not configured' }, 500);
 
     const headers = {
       Authorization: `Bearer ${apiKey}`,
