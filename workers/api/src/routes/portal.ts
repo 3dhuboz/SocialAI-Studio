@@ -47,6 +47,17 @@ export function registerPortalRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const slug = c.req.param('slug').toLowerCase();
+
+    // OWNERSHIP CHECK — without this, any authenticated user can clobber any
+    // whitelabel portal's email/password/token (hijack risk). Pre-check the
+    // existing row's user_id; only allow create (no row) or update-by-owner.
+    const existing = await c.env.DB.prepare(
+      'SELECT user_id FROM portal WHERE slug = ?'
+    ).bind(slug).first<{ user_id: string | null }>();
+    if (existing && existing.user_id && existing.user_id !== uid) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
     const body = await c.req.json<{ email: string; password: string; client_id?: string }>();
     const portalToken = crypto.randomUUID() + '-' + crypto.randomUUID();
     // 30-day sliding window — every PUT (re-issue) refreshes expires_at
@@ -58,7 +69,8 @@ export function registerPortalRoutes(app: Hono<{ Bindings: Env }>): void {
        VALUES (?,?,?,?,?,?,?,NULL)
        ON CONFLICT(slug) DO UPDATE SET email=excluded.email, password=excluded.password,
          portal_token=excluded.portal_token, user_id=excluded.user_id, client_id=excluded.client_id,
-         expires_at=excluded.expires_at, revoked_at=NULL`
+         expires_at=excluded.expires_at, revoked_at=NULL
+       WHERE portal.user_id = excluded.user_id`
     ).bind(slug, body.email, body.password, portalToken, uid, body.client_id ?? null, expiresAt).run();
     return c.json({ ok: true, portalToken, expiresAt });
   });
@@ -82,8 +94,11 @@ export function registerPortalRoutes(app: Hono<{ Bindings: Env }>): void {
     if (body.hero_subtitle !== undefined) { sets.push('hero_subtitle = ?'); vals.push(body.hero_subtitle); }
     if (body.hero_cta_text !== undefined) { sets.push('hero_cta_text = ?'); vals.push(body.hero_cta_text); }
     if (sets.length === 0) return c.json({ ok: true });
-    vals.push(slug);
-    await c.env.DB.prepare(`UPDATE portal SET ${sets.join(', ')} WHERE slug = ?`).bind(...vals).run();
+    // OWNERSHIP CHECK in the UPDATE — without `AND user_id = ?` any
+    // authenticated user could overwrite any portal's hero copy.
+    vals.push(slug, uid);
+    const result = await c.env.DB.prepare(`UPDATE portal SET ${sets.join(', ')} WHERE slug = ? AND user_id = ?`).bind(...vals).run();
+    if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Forbidden or not found' }, 403);
     return c.json({ ok: true });
   });
 }
