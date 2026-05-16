@@ -19,7 +19,7 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
-import { getAuthUserId } from '../auth';
+import { requireAuth } from '../middleware/auth';
 import { classifyArchetypeFromFingerprint } from '../lib/archetypes';
 import { POSTS_PER_WEEK, TRIAL_POST_LIMIT } from '../lib/pricing';
 
@@ -88,9 +88,14 @@ async function maybeAutoClassifyUserArchetype(env: Env, uid: string): Promise<vo
 }
 
 export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
+  // Gate every /api/db/posts endpoint behind requireAuth — collapses 8 inline
+  // getAuthUserId(...) calls down to one declaration. The wildcard covers
+  // /:id and /delete-all/bulk-status/client-health subpaths in one shot.
+  app.use('/api/db/posts', requireAuth);
+  app.use('/api/db/posts/*', requireAuth);
+
   app.get('/api/db/posts', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const clientId = c.req.query('clientId') ?? null;
     const { results } = clientId
       ? await c.env.DB.prepare('SELECT * FROM posts WHERE user_id = ? AND client_id = ? ORDER BY scheduled_for ASC').bind(uid, clientId).all()
@@ -103,8 +108,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.post('/api/db/posts', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const body = await c.req.json<Record<string, unknown>>();
 
     // ── Post quota enforcement ────────────────────────────────────────────────
@@ -188,8 +192,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.put('/api/db/posts/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const postId = c.req.param('id');
     const body = await c.req.json<Record<string, unknown>>();
     const sets: string[] = [];
@@ -222,8 +225,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.delete('/api/db/posts/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const postId = c.req.param('id');
     await c.env.DB.prepare('DELETE FROM posts WHERE id = ? AND user_id = ?').bind(postId, uid).run();
     return c.json({ ok: true });
@@ -231,8 +233,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // Delete all posts for the authenticated user (optionally scoped to a client)
   app.delete('/api/db/posts', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const clientId = c.req.query('clientId');
     if (clientId) {
       await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
@@ -245,8 +246,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // POST-based bulk delete (fallback for clients that don't support DELETE with no path param)
   app.post('/api/db/posts/delete-all', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const { clientId } = await c.req.json<{ clientId?: string | null }>();
     if (clientId) {
       await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
@@ -258,8 +258,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // Bulk-update posts status (e.g. mark overdue as Missed)
   app.post('/api/db/posts/bulk-status', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const { ids, status } = await c.req.json<{ ids: string[]; status: string }>();
     if (!ids?.length) return c.json({ ok: true });
     const placeholders = ids.map(() => '?').join(', ');
@@ -269,8 +268,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // Client posts (limited, for health check)
   app.get('/api/db/posts/client-health', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const clientId = c.req.query('clientId');
     if (!clientId) return c.json({ error: 'clientId required' }, 400);
     const { results } = await c.env.DB.prepare(
