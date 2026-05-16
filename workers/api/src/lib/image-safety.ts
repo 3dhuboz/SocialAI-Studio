@@ -20,6 +20,7 @@ import {
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
   isAbstractUIPrompt,
+  needsSafeFallback,
 } from '../../../../shared/flux-prompts';
 
 export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt };
@@ -312,18 +313,23 @@ export function sniffArchetypeFromCaption(caption: string | null | undefined): s
   return null;
 }
 
-// Returns { prompt, negativePrompt } pair, or null if the prompt is too
-// short / invalid to seed a sensible image (caller should skip image gen
-// and let the post publish text-only).
+// Returns { prompt, negativePrompt } pair, or null if the prompt is missing
+// (caller should skip image gen and let the post publish text-only).
+// Uses needsSafeFallback() from shared/flux-prompts.ts — the same filter the
+// frontend's buildSafeImagePromptClient uses — so abstract UI prompts,
+// title-case business names, vague generic terms ("produce", "items"),
+// single-word prompts, and "N/A" placeholders all get swapped for a
+// neutral fallback scene instead of shipping the bad prompt to FLUX.
+//
+// Previously this only checked `length < 5`, which let the cron path ship
+// prompts the frontend would have rejected (e.g. "Bella's Bakery" 2-word
+// title, "showcase journey" vague pair). Same drift bug class as the
+// FLUX_NEGATIVE_PROMPT issue.
 export function buildSafeImagePrompt(rawPrompt: string | null | undefined): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
-  if (!prompt || prompt.length < 5) return null;
+  if (!prompt) return null;
 
-  // If the AI's prompt is primarily describing a digital interface, chart,
-  // or comparison grid, FLUX will render a blurry pricing-table mockup that
-  // sells nothing. Swap to a randomised neutral real-world scene from the
-  // fallback bank above so cron-regenerated posts stop looking identical.
-  const safeBase = isAbstractUIPrompt(prompt)
+  const safeBase = needsSafeFallback(prompt)
     ? SAFE_FALLBACK_SCENES[Math.floor(Math.random() * SAFE_FALLBACK_SCENES.length)]
     : prompt;
 

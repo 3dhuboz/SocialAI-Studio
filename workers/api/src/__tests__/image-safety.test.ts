@@ -95,8 +95,40 @@ describe('buildSafeImagePrompt', () => {
     expect(buildSafeImagePrompt('')).toBeNull();
   });
 
-  it('returns null for strings shorter than 5 chars', () => {
-    expect(buildSafeImagePrompt('hi')).toBeNull();
+  it('returns null for whitespace-only string', () => {
+    expect(buildSafeImagePrompt('   ')).toBeNull();
+  });
+
+  it('swaps short prompts for a fallback scene (was null pre-2026-05-16)', () => {
+    // Prior behaviour returned null for length < 5 — left the cron path
+    // with a weaker filter than the frontend's buildSafeImagePromptClient.
+    // Now both use needsSafeFallback: short prompts get a neutral scene
+    // instead of dropping the image. The cron's SQL filter still rejects
+    // length < 5 upstream, so this path mainly catches mid-length junk
+    // like "hi mom" or "N/A".
+    const result = buildSafeImagePrompt('hi');
+    expect(result).not.toBeNull();
+    expect(result!.prompt).toContain(FLUX_STYLE_SUFFIX);
+  });
+
+  it('swaps title-case business name (e.g. "Bella Bakery") for a fallback scene', () => {
+    const result = buildSafeImagePrompt("Bella's Bakery");
+    expect(result).not.toBeNull();
+    expect(result!.prompt).not.toContain("Bella's");
+    expect(result!.prompt).toContain(FLUX_STYLE_SUFFIX);
+  });
+
+  it('swaps "N/A" / "none" placeholder strings for a fallback scene', () => {
+    const result = buildSafeImagePrompt('N/A');
+    expect(result).not.toBeNull();
+    expect(result!.prompt).not.toMatch(/^N\/A/);
+  });
+
+  it('swaps vague-term short prompts for a fallback scene', () => {
+    // "showcase items" hits the vague-term + <8-words branch
+    const result = buildSafeImagePrompt('showcase items');
+    expect(result).not.toBeNull();
+    expect(result!.prompt).not.toContain('showcase items');
   });
 
   it('returns a prompt+negativePrompt pair for a valid prompt', () => {
@@ -108,7 +140,7 @@ describe('buildSafeImagePrompt', () => {
   });
 
   it('strips people-mentions from the positive prompt', () => {
-    const result = buildSafeImagePrompt('a smiling chef holding a plate');
+    const result = buildSafeImagePrompt('a smiling chef holding a plate of pasta on a wooden table');
     expect(result!.prompt).not.toMatch(/\b(smiling|chef|holding)\b/i);
   });
 

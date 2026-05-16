@@ -456,15 +456,16 @@ export function buildProductAllowlist(
     });
 }
 
-// isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX
-// are imported + re-exported from shared/flux-prompts.ts (single source of
-// truth shared with workers/api/src/lib/image-safety.ts). Re-export here so
-// existing import paths keep working.
+// isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX,
+// needsSafeFallback are imported + re-exported from shared/flux-prompts.ts
+// (single source of truth shared with workers/api/src/lib/image-safety.ts).
+// Re-export here so existing import paths keep working.
 import {
   isAbstractUIPrompt,
   FLUX_NEGATIVE_PROMPT,
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
+  needsSafeFallback,
 } from '../../shared/flux-prompts';
 export { isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX };
 
@@ -540,11 +541,7 @@ const PEOPLE_REGEX_VIDEO = /\b(woman|women|man|men|person|people|portrait|face|f
  */
 export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
-  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt) || /^(N\/A|none|null|undefined)$/i.test(prompt);
-  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt) && prompt.split(' ').length <= 5;
-  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
-  const isAbstractUI = isAbstractUIPrompt(prompt);
-  const needsFallback = isBadPrompt || looksLikeTitle || tooVague || isAbstractUI;
+  const needsFallback = needsSafeFallback(prompt);
 
   // Fail-closed if we'd be picking a random scene against a generic business
   // type. This is the audit fix that stops "pizza on a tech post" — the old

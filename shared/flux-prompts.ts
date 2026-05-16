@@ -34,6 +34,34 @@ export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT
 // catches lingering subject words before they reach the diffusion model.
 export const PEOPLE_REGEX = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi;
 
+// Test whether a prompt needs to be swapped for a fallback scene before
+// being sent to FLUX. Returns true when the prompt is missing, too short to
+// be descriptive, a single word, a literal "N/A" / "none", looks like a
+// title rather than a scene description, uses overly vague generic terms,
+// or is describing a digital UI (handled by isAbstractUIPrompt below).
+//
+// Callers pick the appropriate fallback (neutral SAFE_FALLBACK_SCENES on
+// the worker side, archetype-aware pickExampleScene on the frontend side).
+//
+// This is the shared definition of "what's a bad prompt" — previously
+// duplicated between buildSafeImagePromptClient (strict) and the worker's
+// buildSafeImagePrompt (weak: only length < 5). The weaker worker check
+// let abstract/title-case prompts ship to FLUX from the cron path.
+export function needsSafeFallback(prompt: string): boolean {
+  if (!prompt) return true;
+  // Missing, too short, single word, or literal placeholder text
+  if (prompt.length < 15 || !/\s/.test(prompt) || /^(N\/A|none|null|undefined)$/i.test(prompt)) return true;
+  // "Coffee Shop" / "Bella's Bakery" — title-case ≤5 words is a business
+  // NAME, not a scene description
+  if (/^[A-Z][a-z]+ [A-Z&]/.test(prompt) && prompt.split(' ').length <= 5) return true;
+  // Vague generic terms in a short prompt — these almost always come from
+  // the LLM lazily wrapping the topic in non-specific nouns
+  if (/\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8) return true;
+  // Abstract UI / dashboard / infographic prompts
+  if (isAbstractUIPrompt(prompt)) return true;
+  return false;
+}
+
 // Test whether a prompt is describing a digital interface, chart, infographic,
 // or comparison grid — situations where FLUX produces a blurry pricing-table
 // mockup instead of a photographable scene.
