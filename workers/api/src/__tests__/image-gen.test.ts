@@ -11,15 +11,15 @@
  *
  * Tests focus on:
  *   - happy path returns the image URL
- *   - routing: flux-pro/kontext WITH refs, flux/dev WITHOUT refs
  *   - flux-dev request body params (lock the values we tuned)
  *   - archetype guardrails: forbidden subjects swap to fallback BEFORE fetch
  *   - 5xx error bubbles back as imageUrl=null with useful context logged
  */
 // Image-gen test assertions lock the post-PR-#86 source values
-// (num_inference_steps=35, guidance_scale=7.0). On this branch, the source
-// still has the pre-#86 values (28/5.0) — these tests will FAIL on this PR
-// until #86 merges into main. Merging order: #86 → this PR.
+// (num_inference_steps=35, guidance_scale=7.0). Kontext tests have been
+// removed because PR #86 deletes that code path entirely. On this branch,
+// source still has the pre-#86 values — flux-dev tests will FAIL until #86
+// merges into main. Merging order: #86 → this PR.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateImageWithBrandRefs } from '../lib/image-gen';
 
@@ -140,88 +140,6 @@ describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
     const init = fetchMock.mock.calls[0][1];
     expect(init.headers.Authorization).toBe('Key fal-test-key');
     expect(init.headers['Content-Type']).toBe('application/json');
-  });
-});
-
-describe('generateImageWithBrandRefs — brand-ref path (flux-pro/kontext)', () => {
-  it('routes to flux-pro/kontext when ≥1 photo is stored', async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/kontext.png' }] }), { status: 200 }),
-    );
-    const env = makeEnv({
-      userArchetype: 'food-restaurant',
-      photoUrls: ['https://fb-cdn/photo1.jpg', 'https://fb-cdn/photo2.jpg'],
-    });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, {
-      prompt: 'overhead flatlay of pastries',
-      negativePrompt: 'people',
-    });
-    expect(result.modelUsed).toBe('flux-pro-kontext');
-    expect(result.referencesUsed).toBe(2);
-    expect(result.imageUrl).toBe('https://fal.cdn/kontext.png');
-    expect(fetchMock.mock.calls[0][0]).toBe('https://fal.run/fal-ai/flux-pro/kontext');
-  });
-
-  it('caps reference images at 4 (cost guard)', async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
-    );
-    const env = makeEnv({
-      userArchetype: 'food-restaurant',
-      photoUrls: ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'].map((p) => `https://cdn/${p}.jpg`),
-    });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.image_urls).toHaveLength(4);
-    expect(result.referencesUsed).toBeLessThanOrEqual(6);
-  });
-
-  it('falls back to flux-dev when flux-pro/kontext returns 5xx', async () => {
-    fetchMock
-      .mockResolvedValueOnce(new Response('upstream error', { status: 503 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/devfallback.png' }] }), { status: 200 }),
-      );
-    const env = makeEnv({
-      userArchetype: 'food-restaurant',
-      photoUrls: ['https://cdn/p1.jpg'],
-    });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0][0]).toContain('kontext');
-    expect(fetchMock.mock.calls[1][0]).toContain('flux/dev');
-    expect(result.modelUsed).toBe('flux-dev');
-    expect(result.referencesUsed).toBe(0);
-    expect(result.imageUrl).toBe('https://fal.cdn/devfallback.png');
-  });
-
-  it('falls back to flux-dev when kontext response is missing the imageUrl', async () => {
-    fetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({ images: [] }), { status: 200 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/x.png' }] }), { status: 200 }),
-      );
-    const env = makeEnv({
-      userArchetype: 'food-restaurant',
-      photoUrls: ['https://cdn/p1.jpg'],
-    });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(result.modelUsed).toBe('flux-dev');
-  });
-
-  it('uses guidance_scale=3.5 for flux-pro/kontext (different from flux-dev)', async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
-    );
-    const env = makeEnv({
-      userArchetype: 'food-restaurant',
-      photoUrls: ['https://cdn/p1.jpg'],
-    });
-    await generateImageWithBrandRefs(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.guidance_scale).toBe(3.5);
-    expect(body.aspect_ratio).toBe('1:1');
   });
 });
 
@@ -416,32 +334,5 @@ describe('generateImageWithBrandRefs — error handling', () => {
     expect(result.imageUrl).toBe('https://fal.cdn/x');
     // Used flux-dev (no refs survived the failed lookup).
     expect(result.modelUsed).toBe('flux-dev');
-  });
-
-  it('handles malformed photo metadata JSON gracefully (skips bad row)', async () => {
-    const env: any = {
-      FAL_API_KEY: 'k',
-      DB: {
-        prepare: vi.fn().mockImplementation((sql: string) => {
-          const lower = sql.toLowerCase();
-          return {
-            bind: () => ({
-              first: () => Promise.resolve(lower.includes('from users') ? { archetype_slug: 'food-restaurant' } : null),
-              all: () => Promise.resolve({ results: [
-                { metadata: 'not json at all' },        // skip
-                { metadata: JSON.stringify({ noUrl: 1 }) }, // skip
-                { metadata: JSON.stringify({ url: 'https://cdn/good.jpg' }) }, // keep
-              ] }),
-            }),
-          };
-        }),
-      },
-    };
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/kontext' }] }), { status: 200 }),
-    );
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
-    expect(result.modelUsed).toBe('flux-pro-kontext');
-    expect(result.referencesUsed).toBe(1);
   });
 });
