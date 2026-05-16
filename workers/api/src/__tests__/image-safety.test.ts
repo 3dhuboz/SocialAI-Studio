@@ -7,6 +7,7 @@ import {
   FLUX_STYLE_SUFFIX,
   FLUX_NEGATIVE_PROMPT,
 } from '../lib/image-safety';
+import { needsSafeFallback } from '../../../../shared/flux-prompts';
 
 // ── isAbstractUIPrompt ────────────────────────────────────────────────────
 
@@ -81,6 +82,39 @@ describe('FLUX_STYLE_SUFFIX', () => {
     expect(FLUX_STYLE_SUFFIX).toMatch(/well-exposed/);
     expect(FLUX_STYLE_SUFFIX).toMatch(/sharp focus/);
     expect(FLUX_STYLE_SUFFIX).toMatch(/crisp detail/);
+  });
+});
+
+// ── needsSafeFallback (shared filter) ─────────────────────────────────────
+
+describe('needsSafeFallback', () => {
+  // True — needs fallback
+  it.each([
+    ['', 'empty'],
+    ['hi', 'too short (< 15)'],
+    ['singleword', 'no whitespace'],
+    ['N/A', 'placeholder'],
+    ['none', 'placeholder'],
+    ['undefined', 'placeholder'],
+    ["Bella's Bakery", 'title-case ≤5 words'],
+    ['Acme Co Plumbing & Heating', 'title-case ≤5 words with brand chars'],
+    ['showcase items', 'vague term + < 8 words'],
+    ['fresh produce stuff', 'vague terms + < 8 words'],
+    ['journey of tips today', 'vague terms + < 8 words'],
+    ['dashboard mockup', 'abstract UI'],
+    ['pricing tier comparison page', 'abstract UI'],
+  ])('returns true for: "%s" (%s)', (prompt) => {
+    expect(needsSafeFallback(prompt)).toBe(true);
+  });
+
+  // False — prompt is good
+  it.each([
+    'slow-smoked brisket on a butcher board with rosemary sprigs',
+    'overhead flatlay of an open notebook, ceramic mug and pen on a linen runner',
+    'fresh produce displayed in a wicker basket at the farmers market',  // vague term BUT 11 words
+    'rolled yoga mat, water bottle and a folded towel on a clean studio floor',
+  ])('returns false for: %s', (prompt) => {
+    expect(needsSafeFallback(prompt)).toBe(false);
   });
 });
 
