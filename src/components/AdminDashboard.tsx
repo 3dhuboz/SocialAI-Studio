@@ -117,7 +117,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
                 return (
                   <div key={post.id} className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden hover:border-white/15 transition">
                     {post.image_url ? (
-                      <img src={post.image_url} alt="" className="w-full h-32 object-cover" />
+                      <img src={post.image_url} alt="" loading="lazy" className="w-full h-32 object-cover" />
                     ) : (
                       <div className="w-full h-20 bg-gradient-to-br from-white/3 to-white/1 flex items-center justify-center">
                         <Calendar size={18} className="text-white/10" />
@@ -147,7 +147,7 @@ export const AdminDashboard: React.FC<Props> = ({ clients, ownWorkspace, allPost
                 return (
                   <div key={post.id} className="flex items-center gap-4 py-3 px-2 hover:bg-white/2 transition">
                     <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/5">
-                      {post.image_url ? <img src={post.image_url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Calendar size={12} className="text-white/10" /></div>}
+                      {post.image_url ? <img src={post.image_url} alt="" loading="lazy" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Calendar size={12} className="text-white/10" /></div>}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-white/60 truncate">{post.content?.substring(0, 120)}</p>

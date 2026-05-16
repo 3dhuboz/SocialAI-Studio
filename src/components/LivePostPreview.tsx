@@ -41,7 +41,7 @@ export const LivePostPreview: React.FC<Props> = ({
           {/* Header */}
           <div className="flex items-center gap-2.5 px-4 pt-3 pb-2">
             {profileLogo ? (
-              <img src={profileLogo} alt="" className="w-10 h-10 rounded-full object-cover border border-black/5 flex-shrink-0" />
+              <img src={profileLogo} alt="" loading="lazy" className="w-10 h-10 rounded-full object-cover border border-black/5 flex-shrink-0" />
             ) : (
               <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-black text-sm flex-shrink-0" style={{ background: FB_BLUE }}>
                 {initial}
@@ -80,7 +80,7 @@ export const LivePostPreview: React.FC<Props> = ({
               </div>
             </div>
           ) : image && contentType !== 'video' ? (
-            <img src={image} alt="" className="w-full max-h-72 object-cover" />
+            <img src={image} alt="" loading="lazy" className="w-full max-h-72 object-cover" />
           ) : null}
 
           {/* Reaction summary */}
@@ -113,7 +113,7 @@ export const LivePostPreview: React.FC<Props> = ({
           {/* Header */}
           <div className="flex items-center gap-2.5 px-3 py-2.5 border-b border-gray-100">
             {profileLogo ? (
-              <img src={profileLogo} alt="" className="w-8 h-8 rounded-full object-cover border-2 border-transparent p-px flex-shrink-0" style={{ background: IG_GRAD, backgroundOrigin: 'border-box' }} />
+              <img src={profileLogo} alt="" loading="lazy" className="w-8 h-8 rounded-full object-cover border-2 border-transparent p-px flex-shrink-0" style={{ background: IG_GRAD, backgroundOrigin: 'border-box' }} />
             ) : (
               <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-black text-xs flex-shrink-0 p-px" style={{ background: IG_GRAD }}>
                 <div className="w-full h-full rounded-full flex items-center justify-center bg-gray-800 text-white">{initial}</div>
@@ -135,7 +135,7 @@ export const LivePostPreview: React.FC<Props> = ({
               <p className="text-xs text-gray-500">Generating Reel… {Math.round(videoProgress * 100)}%</p>
             </div>
           ) : image && contentType !== 'video' ? (
-            <img src={image} alt="" className="w-full object-cover" style={{ aspectRatio: '1/1' }} />
+            <img src={image} alt="" loading="lazy" className="w-full object-cover" style={{ aspectRatio: '1/1' }} />
           ) : (
             <div className="w-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center" style={{ aspectRatio: '1/1' }}>
               <span className="text-4xl">📸</span>

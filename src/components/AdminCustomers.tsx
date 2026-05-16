@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
-  RefreshCw, Search, Loader2, ExternalLink, Calendar,
+  RefreshCw, Search, Loader2, ExternalLink,
   ChevronDown, ChevronRight, ShieldCheck, X,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
@@ -9,6 +9,7 @@ import type {
   AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
+import { PaymentList } from './PaymentList';
 
 /**
  * AdminCustomers — agency-owner / admin dashboard for self-serve signups +
@@ -679,61 +680,5 @@ const PlanChip: React.FC<{ label: string; tone: 'amber' | 'emerald' | 'sky' }> =
   );
 };
 
-// ──────────────────────────────────────────────────────────────────────────────
-// PaymentList — compact event-list renderer used inside expanded customer rows
-// AND inside the customer Billing screen. Accepts the raw rows from
-// /api/admin/payments or /api/billing.
-// ──────────────────────────────────────────────────────────────────────────────
-
-const eventLabel = (eventType: string): string => {
-  switch (eventType) {
-    case 'BILLING.SUBSCRIPTION.ACTIVATED': return 'Subscription activated';
-    case 'BILLING.SUBSCRIPTION.CANCELLED': return 'Subscription cancelled';
-    case 'PAYMENT.SALE.COMPLETED':         return 'Payment received';
-    case 'PAYMENT.SALE.REFUNDED':          return 'Refunded';
-    case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED': return 'Payment failed';
-    default: return eventType.replace(/^[A-Z]+\./, '').replace(/_/g, ' ').toLowerCase();
-  }
-};
-
-const statusTone = (status: string): string => {
-  switch (status) {
-    case 'completed': return 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20';
-    case 'cancelled': return 'text-white/55 bg-white/5 border-white/10';
-    case 'refunded':  return 'text-rose-300 bg-rose-500/10 border-rose-500/20';
-    case 'failed':    return 'text-orange-300 bg-orange-500/10 border-orange-500/20';
-    default:          return 'text-white/55 bg-white/5 border-white/10';
-  }
-};
-
-export const PaymentList: React.FC<{ payments: PaymentEvent[] }> = ({ payments }) => (
-  <ul className="pt-3 space-y-1.5">
-    {payments.map((p, i) => (
-      <li
-        key={p.id ?? `${p.event_type}-${p.created_at}-${i}`}
-        className="flex items-center gap-3 px-3 py-2 rounded-xl bg-white/[0.025] border border-white/[0.04]"
-      >
-        <div className="flex-shrink-0 text-white/35">
-          <Calendar size={13} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-white/85">{eventLabel(p.event_type)}</span>
-            <span className={`text-[9px] font-bold tracking-[0.08em] uppercase border rounded-full px-1.5 py-0.5 ${statusTone(p.status)}`}>
-              {p.status}
-            </span>
-          </div>
-          <div className="text-[10.5px] text-white/35 mt-0.5">
-            {fmtDateShort(p.created_at)}
-            {p.plan && <span className="ml-2 capitalize">· {p.plan}</span>}
-          </div>
-        </div>
-        {typeof p.amount_cents === 'number' && (
-          <div className={`text-sm font-bold tabular-nums ${p.amount_cents < 0 ? 'text-rose-300' : 'text-white'}`}>
-            {fmtMoney(p.amount_cents, p.currency || 'AUD')}
-          </div>
-        )}
-      </li>
-    ))}
-  </ul>
-);
+// PaymentList lives in ./PaymentList — extracted so AccountPanel can import
+// it without dragging the whole AdminCustomers module into the eager bundle.
