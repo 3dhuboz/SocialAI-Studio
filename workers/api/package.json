@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "wrangler dev --port 8787",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. --dir src/__tests__",
+    "test:watch": "vitest --root ../.. --dir src/__tests__"
   },
   "dependencies": {
     "@clerk/backend": "^3.2.0",
