@@ -31,6 +31,10 @@
 
 import type { Hono, Context } from 'hono';
 import type { Env } from '../env';
+// HMAC-SHA256 embed token helpers — extracted into a shared lib so the
+// verifier can be unit-tested against its own minter and so PennyBuilder's
+// signing side can later import the same canonical shape.
+import { verifyEmbedToken } from '../lib/embed-token';
 
 // ── Auth helper — Bearer token timing-safe compare ───────────────────────────
 function authPennybuilder(c: Context<{ Bindings: Env }>): Response | null {
@@ -47,53 +51,6 @@ function authPennybuilder(c: Context<{ Bindings: Env }>): Response | null {
   }
   if (diff !== 0) return c.json({ error: 'Forbidden' }, 403);
   return null;
-}
-
-// ── HMAC-SHA256 embed token verification ─────────────────────────────────────
-// Token format: base64url(payload).base64url(HMAC-SHA256(payload))
-// Payload is a JSON object with sub, exp, iat, aud, iss fields.
-async function hmacB64(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
-  const bytes = new Uint8Array(sig);
-  let bin = '';
-  for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-type EmbedClaims = {
-  sub: string;
-  email?: string;
-  name?: string;
-  aud: string;
-  iss: string;
-  iat: number;
-  exp: number;
-};
-
-async function verifyEmbedToken(secret: string, token: string): Promise<EmbedClaims | null> {
-  const [payload, sig] = token.split('.');
-  if (!payload || !sig) return null;
-  const expected = await hmacB64(secret, payload);
-  // Timing-safe compare.
-  if (sig.length !== expected.length) return null;
-  let diff = 0;
-  for (let i = 0; i < sig.length; i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
-  if (diff !== 0) return null;
-  try {
-    const raw = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-    const claims = JSON.parse(raw) as EmbedClaims;
-    if (typeof claims.exp !== 'number' || claims.exp * 1000 < Date.now()) return null;
-    return claims;
-  } catch {
-    return null;
-  }
 }
 
 export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
