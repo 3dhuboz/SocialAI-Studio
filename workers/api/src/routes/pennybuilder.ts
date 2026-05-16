@@ -1,4 +1,4 @@
-// PennyBuilder bridge — two endpoints that wire SocialAI Studio into
+// PennyBuilder bridge — three endpoints that wire SocialAI Studio into
 // PennyBuilder's "📱 Social" add-on.
 //
 // PennyBuilder offers SocialAI Studio Starter as a $29/mo Stripe add-on.
@@ -15,6 +15,14 @@
 //   4. Mint a 7-day Clerk sign-in token + return a magic-link URL the
 //      buyer can use to land directly in their dashboard
 //
+// POST /api/admin/cancel-from-pennybuilder
+//   Mirror of the provision endpoint, called when a PB buyer cancels the
+//   $29/mo add-on. Looks up the user by paypal_subscription_id = 'pb:<sub>'
+//   (NOT email — narrower attack surface), downgrades plan to 'free',
+//   clears billing_cycle, and drops a pending_cancellations row so the
+//   user sees "subscription cancelled — reactivate?" on next sign-in.
+//   Idempotent: returns 200 even when no matching row is found.
+//
 // GET /embed?token=...
 //   The iframe in PennyBuilder's Builder loads this URL. We verify the
 //   HMAC-signed (5-minute TTL) token, mint a 60-second Clerk sign-in
@@ -24,7 +32,7 @@
 //   https://*.workers.dev https://*.pennywiseit.com.au` so the parent
 //   frame on pennybuilder.* can render us.
 //
-// Both endpoints are authenticated with the shared PENNYBUILDER_PROVISION_SECRET
+// All endpoints are authenticated with the shared PENNYBUILDER_PROVISION_SECRET
 // environment variable. Contract documented in pennybuilder/docs/socialai-integration.md.
 //
 // Extracted from src/index.ts as part of the route-module split.
@@ -225,6 +233,78 @@ export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
       ok: true,
       externalAccountId: clerkUserId,
       magicSignInLink: magicLink,
+    });
+  });
+
+  /**
+   * POST /api/admin/cancel-from-pennybuilder
+   * Called by PennyBuilder's Stripe webhook on subscription.deleted or
+   * customer.subscription.updated → cancel_at_period_end. Authenticated
+   * with the shared PENNYBUILDER_PROVISION_SECRET.
+   *
+   * Lookup is keyed by paypal_subscription_id = 'pb:<sub_id>' (NOT email).
+   * If somebody ever leaks the shared secret, this narrower key means
+   * they can only deprovision real PB-linked subscriptions — they can't
+   * downgrade arbitrary users by guessing emails.
+   *
+   * Idempotent: returns 200 even when the lookup finds no row, so PB can
+   * safely replay webhooks without us 4xx-ing.
+   */
+  app.post('/api/admin/cancel-from-pennybuilder', async (c) => {
+    const guard = authPennybuilder(c);
+    if (guard) return guard;
+
+    type Body = {
+      stripeSubscriptionId?: string;
+      email?: string; // optional, logging only
+    };
+    let body: Body;
+    try { body = await c.req.json<Body>(); }
+    catch { return c.json({ error: 'bad json' }, 400); }
+
+    const stripeSubscriptionId = (body.stripeSubscriptionId ?? '').trim();
+    if (!stripeSubscriptionId) {
+      return c.json({ error: 'stripeSubscriptionId required' }, 400);
+    }
+
+    // ── Lookup by sub id (NOT email) — narrower attack surface. ─────────────
+    const row = await c.env.DB.prepare(
+      `SELECT id, email FROM users WHERE paypal_subscription_id = 'pb:' || ?`
+    ).bind(stripeSubscriptionId).first<{ id: string; email: string | null }>();
+
+    if (row) {
+      // ── Downgrade. Defense-in-depth: scope the UPDATE by sub id too so
+      //    a future bug that swaps `row` mid-handler can't accidentally
+      //    downgrade a different user.
+      await c.env.DB.prepare(
+        `UPDATE users SET plan = 'free', billing_cycle = NULL
+         WHERE id = ? AND paypal_subscription_id = 'pb:' || ?`
+      ).bind(row.id, stripeSubscriptionId).run();
+
+      // ── Drop a pending_cancellations row so the dashboard shows the
+      //    "subscription cancelled — reactivate?" banner on next sign-in.
+      //    INSERT OR IGNORE keeps webhook replays idempotent (PK is the row id,
+      //    but we use the user id as the row id so re-cancels are no-ops).
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO pending_cancellations
+           (id, email, paypal_subscription_id, cancelled_at, consumed)
+         VALUES (?, ?, 'pb:' || ?, ?, 0)`
+      ).bind(
+        row.id,
+        row.email ?? body.email ?? null,
+        stripeSubscriptionId,
+        new Date().toISOString(),
+      ).run();
+
+      console.log(`PennyBuilder cancellation processed for ${row.email ?? row.id} (sub=${stripeSubscriptionId})`);
+    } else {
+      console.log(`PennyBuilder cancellation: no matching user for sub=${stripeSubscriptionId} (idempotent no-op)`);
+    }
+
+    return c.json({
+      ok: true,
+      externalAccountId: row?.id ?? null,
+      cancelled: !!row,
     });
   });
 
