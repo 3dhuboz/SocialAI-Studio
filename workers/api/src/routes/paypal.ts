@@ -31,13 +31,16 @@ import {
   PAYPAL_PLAN_TIER,
   PAYPAL_YEARLY_PLAN_IDS,
   REEL_CREDIT_PACKS,
-  ADMIN_NOTIFY_EMAIL,
   paypalAccessToken,
   paypalVerifyWebhookSignature,
   recordPaymentEvent,
   welcomeEmailHtml,
   cancellationEmailHtml,
 } from '../lib/paypal';
+// Per-reseller branding: pulls reseller-specific identity (app name, accent,
+// support inbox, etc.) from the brands table so emails/admin pings stop
+// hardcoding "SocialAI Studio" / steve@pennywiseit.com.au.
+import { loadBrandBySubscriptionOrEmail } from '../lib/brand';
 
 const uuid = () => crypto.randomUUID();
 
@@ -74,16 +77,25 @@ export function registerPaypalRoutes(app: Hono<{ Bindings: Env }>): void {
 
       // Send welcome email here (don't wait for the webhook — it's the safety net,
       // not the primary signal). Skipped silently if RESEND_API_KEY isn't set.
+      //
+      // Brand resolution: at this point the user row doesn't exist yet (the
+      // frontend consumes the pending_activation on next render to seed it),
+      // so we can't loadBrandForUser. We look up by subscription/email — which
+      // will fall back to the default brand for first-time signups. That's
+      // correct: the welcome email always reflects the reseller-of-record at
+      // the time of signup, which for a brand-new user is the default brand
+      // unless they were pre-provisioned with brand_id.
       if (email) {
+        const brand = await loadBrandBySubscriptionOrEmail(c.env, subscriptionId, email);
         await sendResendEmail(c.env, {
           to: email,
-          subject: `Welcome to Social AI Studio — your ${planId} plan is active!`,
-          html: welcomeEmailHtml(planId),
+          subject: `Welcome to ${brand.appName} — your ${planId} plan is active!`,
+          html: welcomeEmailHtml(brand, planId),
         });
         await sendResendEmail(c.env, {
-          to: ADMIN_NOTIFY_EMAIL,
+          to: brand.adminNotifyEmail,
           subject: `New subscriber: ${email} — ${planId} plan`,
-          html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${planId}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>`,
+          html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${planId}<br><strong>Subscription ID:</strong> ${subscriptionId}<br><strong>Brand:</strong> ${brand.id}</p>`,
         });
       }
 
@@ -242,8 +254,13 @@ export function registerPaypalRoutes(app: Hono<{ Bindings: Env }>): void {
       console.log(`PayPal activation stored for ${email || subscriptionId} → plan: ${plan} (${billingCycle})`);
 
       if (email) {
-        await sendResendEmail(c.env, { to: email, subject: `Welcome to Social AI Studio — your ${plan} plan is active!`, html: welcomeEmailHtml(plan) });
-        await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan} (${billingCycle})<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+        // Webhook arrives after the verify endpoint has already INSERT'd the
+        // pending_activation, but typically before the frontend has consumed
+        // it into the users row. loadBrandBySubscriptionOrEmail walks the
+        // subscription→user→brand path; falls back to default if not yet linked.
+        const brand = await loadBrandBySubscriptionOrEmail(c.env, subscriptionId, email);
+        await sendResendEmail(c.env, { to: email, subject: `Welcome to ${brand.appName} — your ${plan} plan is active!`, html: welcomeEmailHtml(brand, plan) });
+        await sendResendEmail(c.env, { to: brand.adminNotifyEmail, subject: `New subscriber: ${email} — ${plan} plan`, html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan} (${billingCycle})<br><strong>Subscription ID:</strong> ${subscriptionId}<br><strong>Brand:</strong> ${brand.id}</p>` });
       }
     }
 
@@ -264,8 +281,9 @@ export function registerPaypalRoutes(app: Hono<{ Bindings: Env }>): void {
       console.log(`PayPal cancellation stored for ${email || subscriptionId}`);
 
       if (email) {
-        await sendResendEmail(c.env, { to: email, subject: 'Your Social AI Studio subscription has been cancelled', html: cancellationEmailHtml() });
-        await sendResendEmail(c.env, { to: ADMIN_NOTIFY_EMAIL, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}</p>` });
+        const brand = await loadBrandBySubscriptionOrEmail(c.env, subscriptionId, email);
+        await sendResendEmail(c.env, { to: email, subject: `Your ${brand.appName} subscription has been cancelled`, html: cancellationEmailHtml(brand) });
+        await sendResendEmail(c.env, { to: brand.adminNotifyEmail, subject: `Cancellation: ${email}`, html: `<p>PayPal subscription cancelled.</p><p><strong>Email:</strong> ${email}<br><strong>Subscription ID:</strong> ${subscriptionId}<br><strong>Brand:</strong> ${brand.id}</p>` });
       }
     }
 
