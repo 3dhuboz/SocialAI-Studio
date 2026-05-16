@@ -23,6 +23,7 @@ import { cronCheckFalCredits } from './check-fal-credits';
 import { cronWeeklyReview } from './weekly-review';
 import { cronRefreshFacts } from './refresh-facts';
 import { cronPublishMissedPosts } from './publish-missed';
+import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
@@ -68,6 +69,11 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
     await trackCron(env, 'prewarm_videos', () => cronPrewarmVideos(env));
     await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
+    // Poll FB Reel uploads kicked off by the publish cron. Audit P0 fix
+    // (2026-05) — Phase 3 (status poll) + Phase 4 (finish) of the reel
+    // pipeline live here so the publish cron's hot loop isn't blocked
+    // for 180s per post on FB processing. Bounded by 10s tick budget.
+    await trackCron(env, 'poll_pending_reels', () => cronPollPendingReels(env));
     return;
   }
   if (cron === '0 */6 * * *') {
