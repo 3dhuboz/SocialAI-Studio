@@ -16,7 +16,7 @@
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 import { resolveArchetypeSlug } from '../lib/archetypes';
 import { sniffArchetypeFromCaption } from '../lib/image-safety';
 import { critiqueImageInternal } from '../lib/critique';
@@ -64,10 +64,9 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
 
       // Pass caption into image-gen so the in-helper guardrail fires even
       // when users.archetype_slug is NULL (the SocialAI Studio failure mode).
-      const gen = await generateImageWithBrandRefs(env, userId, clientId, safe, { caption });
+      const gen = await generateImageWithGuardrails(env, userId, clientId, safe, { caption });
       let finalUrl = gen.imageUrl;
       let finalModel = gen.modelUsed;
-      let finalRefs = gen.referencesUsed;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
       // ── Vision-critique gate (2026-05-12, hardened 2026-05-12 v2) ─────
@@ -126,11 +125,10 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
           finalCritique = critique;
           if (critique.score <= 5) {
             console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} ≤ 5)`);
-            const retry = await generateImageWithBrandRefs(env, userId, clientId, safe, { forceFallback: true, caption });
+            const retry = await generateImageWithGuardrails(env, userId, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               finalModel = `${retry.modelUsed} (forced-fallback retry)`;
-              finalRefs = retry.referencesUsed;
               // Re-critique the retry so the persisted score reflects what
               // actually shipped (not the original failed attempt).
               const retryCritique = await critiqueImageInternal(env, {
@@ -185,7 +183,7 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
             .bind(finalUrl, postId).run();
         }
         generated++;
-        console.log(`[CRON prewarm] generated for post ${postId} via ${finalModel} (${finalRefs} refs)`);
+        console.log(`[CRON prewarm] generated for post ${postId} via ${finalModel}`);
       } else {
         console.warn(`[CRON prewarm] no URL for post ${postId} via ${finalModel}`);
       }

@@ -1,6 +1,5 @@
 // fal.ai + Runway API proxies — the frontend never holds the upstream
-// API keys, the worker proxies through and adds auth + rate limiting +
-// brand-grounded reference image selection.
+// API keys, the worker proxies through and adds auth + rate limiting.
 //
 // Three endpoints:
 //
@@ -8,11 +7,10 @@
 //                                       actions (generate-image, generate-video,
 //                                       task-status, task-result, get-credits,
 //                                       check-credits-alert). The generate-image
-//                                       branch is the brain — picks the right
-//                                       fal model (flux-dev / flux-pro-kontext /
-//                                       nano-banana-pro) based on whether the
-//                                       workspace has scraped FB photos to use
-//                                       as brand reference images.
+//                                       branch delegates to lib/image-gen.ts
+//                                       which uses FLUX-dev as the workhorse,
+//                                       or routes to nano-banana-pro when
+//                                       forceModel is set.
 //
 //   app.all('/api/fal-proxy/*', ...)  — generic passthrough for raw fal endpoints
 //                                       not covered by the dispatcher above.
@@ -28,7 +26,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 
 export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────
@@ -54,15 +52,14 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         negativePrompt?: string;
         clientId?: string | null;
         // caption: the post text this image will accompany. Used by
-        // generateImageWithBrandRefs for archetype sniffing when the workspace
+        // generateImageWithGuardrails for archetype sniffing when the workspace
         // hasn't run classify-business yet — without it, guardrails no-op for
         // unclassified workspaces and cross-domain images ship unchecked.
         caption?: string | null;
         // forceModel: optional override for testing/UX. Acceptable values:
-        //   'flux-dev'           — original cheap baseline (no brand refs)
-        //   'flux-pro-kontext'   — brand-grounded ($0.04/img, max 4 refs)
-        //   'nano-banana-pro'    — premium brand-grounded ($0.15/img, max 14 refs)
-        forceModel?: 'flux-dev' | 'flux-pro-kontext' | 'nano-banana-pro';
+        //   'flux-dev'       — FLUX Dev baseline (default path, square_hd, 35 steps)
+        //   'nano-banana-pro' — Gemini 3 Pro Image with up to 14 brand refs ($0.15/img)
+        forceModel?: 'flux-dev' | 'nano-banana-pro';
       };
       if (!prompt) return c.json({ error: 'prompt is required' }, 400);
       if (!/candid iPhone/i.test(prompt)) {
@@ -106,7 +103,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
             const data = await res.json() as any;
             const imageUrl = data?.images?.[0]?.url || null;
             if (imageUrl) {
-              return c.json({ imageUrl, model_used: 'nano-banana-pro', references_used: referenceImageUrls.length });
+              return c.json({ imageUrl, model_used: 'nano-banana-pro' });
             }
           } else {
             console.warn(`[fal-proxy] nano-banana-pro failed (status ${res.status}), falling through to flux chain`);
@@ -117,22 +114,18 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       }
 
       // ── Default path: delegate to lib/image-gen.ts ──
-      // Single source of truth for brand-grounded gen: same code path the
-      // cron + backfill use. Inherits the flux-pro-kontext → flux-dev
-      // graceful fallback that's load-bearing when FB CDN reference URLs
-      // are stale (the failure mode the user hit on 2026-05-13 when SaaS
-      // posts with abstract-UI prompts returned hard errors instead of
-      // falling back to plain FLUX). Also gets archetype guardrails +
-      // caption-based archetype sniffing for free.
-      const result = await generateImageWithBrandRefs(
+      // Single source of truth for image gen: same code path the cron +
+      // backfill use. FLUX-dev at square_hd / 35 steps / guidance 7.0,
+      // with archetype guardrails + caption-based archetype sniffing.
+      const result = await generateImageWithGuardrails(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
         { caption: caption || null },
       );
       if (!result.imageUrl) {
-        return c.json({ error: 'Image generation failed — both flux-pro-kontext and flux-dev returned no image' }, 502);
+        return c.json({ error: 'Image generation failed — flux-dev returned no image' }, 502);
       }
-      return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed, references_used: result.referencesUsed });
+      return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed });
     }
     if (action === 'generate-video' && c.req.method === 'POST') {
       const { promptText, promptImage, duration = 5 } = await c.req.json() as any;

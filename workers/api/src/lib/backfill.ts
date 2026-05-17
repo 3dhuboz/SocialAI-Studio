@@ -15,7 +15,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
-import { generateImageWithBrandRefs } from './image-gen';
+import { generateImageWithGuardrails } from './image-gen';
 import { callAnthropicVision } from './anthropic';
 import { loadForbiddenSubjects } from './profile-guards';
 
@@ -75,8 +75,8 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 
       // 2026-05 image-stack upgrade: brand-grounded via FLUX Pro Kontext
       // when the workspace has scraped FB photos available, FLUX-dev when
-      // it doesn't. See generateImageWithBrandRefs in lib/image-gen.ts.
-      const gen = await generateImageWithBrandRefs(env, uid, clientId, safe, { caption });
+      // it doesn't. See generateImageWithGuardrails in lib/image-gen.ts.
+      const gen = await generateImageWithGuardrails(env, uid, clientId, safe, { caption });
       let finalUrl = gen.imageUrl;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
@@ -95,7 +95,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
           finalCritique = critique;
           if (critique.score <= 3) {
-            const retry = await generateImageWithBrandRefs(env, uid, clientId, safe, { forceFallback: true, caption });
+            const retry = await generateImageWithGuardrails(env, uid, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
@@ -150,7 +150,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 // runBacklogRegen:
 //   Regenerates images for posts that scored ≤ threshold (default 5).
 //   Each successful regen lifts the score, removing the post from future
-//   ticks. Cap 20/tick × FLUX Pro Kontext @ ~$0.04 = $0.80/tick worst case.
+//   ticks. Cap 20/tick × FLUX-dev @ ~$0.03 = $0.60/tick worst case.
 //
 // Both wired into cron/dispatcher.ts on the */5 path. Once the backlog
 // is exhausted the COUNT(*) guards make subsequent ticks free no-ops.
@@ -424,7 +424,7 @@ export async function runBacklogRegen(
       const safe = buildSafeImagePrompt(post.image_prompt);
       if (!safe) { failed++; continue; }
 
-      const gen = await generateImageWithBrandRefs(
+      const gen = await generateImageWithGuardrails(
         env, post.user_id, post.client_id, safe, { forceFallback: true, caption: post.content },
       );
       if (!gen.imageUrl) { failed++; continue; }

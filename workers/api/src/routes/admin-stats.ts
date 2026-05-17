@@ -35,7 +35,10 @@ const FAB_PATTERNS: Array<[RegExp, string]> = [
   // Fake customer testimonials
   [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
   [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-  [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
+  // Negative lookbehind excludes rhetorical anthropomorphizing like "It says…",
+  // "the stock photo says…" — those are figures of speech, not fake testimonials.
+  // Mirrors the gen-time check in src/services/gemini.ts:detectFabrication.
+  [/\b(?<!\b(?:it|this|that|one|nothing|everything|message|photo|image|caption|post|content|feed|story|stock|generic|ad|advert|brand|tagline)\s)(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
   [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature'],
   // Fake statistics
   [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving|higher|lower|faster)/i, 'invented percentage statistic'],
@@ -79,7 +82,12 @@ function scanContentForTropes(content: string): string[] {
       consecutiveShort = 0;
     }
   }
-  if (maxRun >= 3) reasons.push(`AI cadence — ${maxRun} consecutive short sentences`);
+  // Threshold matches src/services/gemini.ts:detectFabrication (was bumped
+  // from 3 → 5 after 3 produced false positives on legitimate 3-item feature
+  // lists, e.g. "AI writes your posts. Generates your images. Publishes at
+  // the right time."). The admin scanner must use the same bar as the gen-time
+  // guard or it flags posts the gen path accepted.
+  if (maxRun >= 5) reasons.push(`AI cadence — ${maxRun} consecutive short sentences`);
   return reasons;
 }
 
