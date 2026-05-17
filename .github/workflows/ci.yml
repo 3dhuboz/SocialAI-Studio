@@ -20,6 +20,11 @@ jobs:
         run: npm ci
       - name: Frontend typecheck
         run: npx tsc --noEmit
+      - name: Frontend tests
+        # vitest is configured in package.json. The two test files under
+        # src/**/__tests__/ (archetypes, gemini) exercise pure helpers — no
+        # secrets / network, safe for CI.
+        run: npm test
       - name: Frontend build
         run: npm run build
 
@@ -28,6 +33,13 @@ jobs:
         run: npm ci --prefix workers/api
       - name: Worker typecheck
         run: npx --prefix workers/api tsc --noEmit
+        working-directory: workers/api
+      - name: Worker tests
+        # Only runs if a `test` script is wired in workers/api/package.json.
+        # Today the worker has no test runner; this step no-ops cleanly via
+        # `npm test --if-present` so adding the first worker test is a
+        # one-line change to workers/api/package.json with no CI follow-up.
+        run: npm test --if-present
         working-directory: workers/api
 
       # Guard against the on_hold filter being silently removed again.

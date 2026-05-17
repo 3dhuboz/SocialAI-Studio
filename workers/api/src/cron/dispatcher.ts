@@ -3,11 +3,11 @@
 // row in cron_runs for the /api/cron-health endpoint.
 //
 // Maps Cloudflare's cron-expression triggers to the right cron function:
-//   */5 * * * *  → prewarm images + videos + publish missed posts
-//   0 */6 * * *  → backlog critique + backlog regen + fal.ai credits check
-//   0 3 * * *    → token refresh
-//   0 4 * * *    → daily fact refresh
-//   0 21 * * 0   → weekly review (Monday 7am AEST)
+//   */5 * * * *   → prewarm images + videos + publish missed posts + poll reels
+//   0 */6 * * *   → backlog critique + backlog regen + fal.ai credits check
+//   0 3 * * *     → token refresh
+//   0 4 * * *     → daily fact refresh
+//   0 21 * * SUN  → weekly review (Monday 7am AEST)
 //   (anything else) → no-op + warn log (no expensive fallback)
 //
 // Every cron is wrapped in trackCron so:
@@ -105,7 +105,15 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // Monday 7am AEST (Sunday 21:00 UTC) — Autonomous Weekly Review.
   // For each workspace with FB connected, analyse last 7 days' performance
   // and send a Monday recap email with a CTA to approve next week's posts.
-  if (cron === '0 21 * * 0') {
+  //
+  // GOTCHA: Cloudflare passes the literal trigger string from wrangler.toml
+  // to event.cron — no normalisation. The CF cron parser rejects "0" as the
+  // day-of-week field and demands the symbolic "SUN", so wrangler.toml must
+  // use "0 21 * * SUN" and this case must compare the exact same string.
+  // The previous "0 21 * * 0" form was unreachable: cron would never match
+  // and the fallback chain ran instead, double-firing prewarm + publish at
+  // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
+  if (cron === '0 21 * * SUN') {
     await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
     return;
   }

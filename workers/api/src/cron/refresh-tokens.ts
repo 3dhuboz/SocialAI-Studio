@@ -15,7 +15,34 @@ import type { Env } from '../env';
 export async function cronRefreshTokens(env: Env) {
   const appId = env.FACEBOOK_APP_ID;
   const appSecret = env.FACEBOOK_APP_SECRET;
-  if (!appId || !appSecret) { console.log('[CRON] No FB app credentials — skipping token refresh'); return; }
+  if (!appId || !appSecret) {
+    // Loud failure: a missing FB app secret means every workspace's long-lived
+    // token will silently age out and start failing publish ~60 days later.
+    // Treat the missing-secret branch the same way check-fal-credits.ts treats
+    // low credits — console.error so the line shows up in wrangler tail with
+    // an error level, plus a Resend email so Steve hears about it the same
+    // day. Behaviour is unchanged otherwise (still a no-op return).
+    const missing = [!appId && 'FACEBOOK_APP_ID', !appSecret && 'FACEBOOK_APP_SECRET']
+      .filter(Boolean).join(', ');
+    console.error(`[CRON] Token refresh SKIPPED — missing secret(s): ${missing}. Every workspace's FB token will silently expire ~60 days from its last refresh.`);
+    if (env.RESEND_API_KEY) {
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'SocialAI Studio <noreply@socialaistudio.au>',
+            to: 'steve@3dhub.au',
+            subject: `Token refresh cron SKIPPED — missing ${missing}`,
+            html: `<div style="font-family:sans-serif;max-width:540px;margin:0 auto;padding:20px;"><h2 style="color:#ef4444;">FB Token Refresh Disabled</h2><p>The daily token-refresh cron just ran and silently no-op'd because the following secret(s) are not set on the worker:</p><pre style="background:#f3f4f6;padding:10px;border-radius:6px;">${missing}</pre><p>Every workspace's long-lived Facebook token will expire ~60 days from its last successful refresh, after which scheduled posts will start failing with <code>invalid_token</code>.</p><p>Fix: <code>npx wrangler secret put FACEBOOK_APP_ID</code> and <code>FACEBOOK_APP_SECRET</code>, then redeploy.</p></div>`,
+          }),
+        });
+      } catch (e: any) {
+        console.error('[CRON] Failed to send refresh-skip alert email:', e?.message);
+      }
+    }
+    return;
+  }
 
   // Collect all workspaces (users + clients) that have a longLivedUserToken
   const users = await env.DB.prepare('SELECT id, social_tokens FROM users WHERE social_tokens IS NOT NULL').all();

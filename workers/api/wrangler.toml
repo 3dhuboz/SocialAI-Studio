@@ -3,6 +3,13 @@ main = "src/index.ts"
 compatibility_date = "2024-09-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Worker observability — retain logs from scheduled() handlers + fetch handlers
+# so we can debug cron failures after the fact via `wrangler tail` and the
+# dashboard's Logs tab. Without this, console.* output is dropped after each
+# invocation and the only forensic data we have is rows in cron_runs.
+[observability]
+enabled = true
+
 [vars]
 ENVIRONMENT = "production"
 # Public base URL for the REELS_R2 bucket (set via R2 → socialai-reels →
@@ -91,12 +98,23 @@ port = 8787
 name = "socialai-api-staging"
 vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev" }
 
+# ⚠️ STAGING D1 NOT YET SEPARATE FROM PROD ⚠️
+# TODO: create separate staging D1 via `npx wrangler d1 create socialai-db-staging`
+# and replace the database_id below. Previously this block pointed at the prod
+# database_id (6295841e-e5f7-4355-b0e0-c5f22e58d99d) — meaning every staging
+# deploy was writing into the prod DB. Until a real staging DB exists, the
+# placeholder ID below causes `wrangler deploy --env staging` to fail with
+# "no such database", which is the desired fail-loud behaviour.
+#
+# When you've created the staging DB:
+#   1. Run: npx wrangler d1 create socialai-db-staging
+#   2. Replace REPLACE_ME_STAGING_D1_ID with the new UUID from step 1
+#   3. Bootstrap schema: npx wrangler d1 execute socialai-db-staging \
+#        --remote --file=schema.sql   (then each schema_v*.sql in order)
 [[env.staging.d1_databases]]
 binding = "DB"
-database_name = "socialai-db"
-database_id = "6295841e-e5f7-4355-b0e0-c5f22e58d99d"
-# To use a separate staging DB: create one with `wrangler d1 create socialai-db-staging`
-# and replace database_id above.
+database_name = "socialai-db-staging"
+database_id = "REPLACE_ME_STAGING_D1_ID"
 
 [[env.staging.r2_buckets]]
 binding = "REELS_R2"

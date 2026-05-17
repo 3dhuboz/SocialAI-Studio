@@ -220,16 +220,33 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // caused posts to be marked Missed while still actively being published).
   // Also clear claim_id so the post is eligible for re-claim by a healthy run.
   //
+  // The right column to age out on is `claim_at` — the timestamp the cron
+  // stamped when it took ownership of the row. Comparing `scheduled_for`
+  // here was wrong: a post scheduled for 9:00 picked up at 9:01 and stuck
+  // in Publishing would be eligible for reset at 9:11 by the old logic
+  // (10 min past its schedule), but a post scheduled for 8:30 picked up
+  // at 9:01 would be reset on the very next tick (already 30+ min past
+  // schedule) — i.e. zombies that have only been "Publishing" for a few
+  // minutes get killed while truly stuck zombies hang around. claim_at
+  // exists on every claimed row (set in the UPDATE below, schema v7).
+  // Rows with NULL claim_at (legacy pre-v7) fall through to the old
+  // scheduled_for check so we don't strand them.
+  //
   // Reel kick handoff (schema_v17, 2026-05): rows with fb_publish_state IN
   // ('kicked', 'polling') are mid-transfer to FB and owned by the poll cron
   // — exclude them from the zombie sweep. The poll cron has its own 8-min
   // stale-kick guard so a hung FB upload won't pin Publishing forever.
+  const tenMinAgoUtc = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const tenMinAgo = new Date(Date.now() + 10 * 60 * 60 * 1000 - 10 * 60 * 1000).toISOString().replace('Z', '');
   await env.DB.prepare(
     `UPDATE posts SET status = 'Missed', claim_id = NULL, claim_at = NULL
-     WHERE status = 'Publishing' AND scheduled_for <= ?
-       AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))`
-  ).bind(tenMinAgo).run();
+       WHERE status = 'Publishing'
+         AND (
+           (claim_at IS NOT NULL AND claim_at <= ?)
+           OR (claim_at IS NULL AND scheduled_for <= ?)
+         )
+         AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))`
+  ).bind(tenMinAgoUtc, tenMinAgo).run();
 
   // Image-quality guard. Posts whose image scored at/below the guard threshold
   // AND whose FLUX regen budget is exhausted go straight to Missed with a
@@ -270,10 +287,20 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
        AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(claimId, claimAt, nowAEST).run();
 
+  // FIFO fairness: oldest scheduled_for first. Without ORDER BY, SQLite returns
+  // rows in whatever order the index/scan produces — which under load tends to
+  // be insertion order, but isn't a guarantee and is wrong when the backlog
+  // spans multiple users. ASC means an 8:00 post always publishes before a
+  // 9:00 post on the same tick, even if the 9:00 one was inserted later.
+  // Round-robin by user_id would prevent one workspace from monopolising a
+  // tick's 20-slot budget, but FIFO is the simpler correct default — if we
+  // see one workspace starve others we can revisit with a window function.
   const rows = await env.DB.prepare(
     `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id,
             post_type, video_url, video_status, audio_mixed_url
-     FROM posts WHERE status = 'Publishing' AND claim_id = ? LIMIT 20`
+     FROM posts WHERE status = 'Publishing' AND claim_id = ?
+     ORDER BY scheduled_for ASC
+     LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
   if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: 0 }; }
