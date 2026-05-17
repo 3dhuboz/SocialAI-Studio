@@ -2,7 +2,11 @@ import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
-import { LandingPage } from './components/LandingPage';
+import { LoadingShell } from './components/LoadingShell';
+// LandingPage (~1.3k lines) only renders for unauthed visitors / trial-exhausted
+// users — lazy-load so signed-in dashboard users don't pay for it on first paint.
+// CinematicTour (used inside LandingPage) splits along with it automatically.
+const LandingPage = lazy(() => import('./components/LandingPage').then(m => ({ default: m.LandingPage })));
 import { SetupBanner } from './components/SetupBanner';
 import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
@@ -11,13 +15,15 @@ import { useDb } from './hooks/useDb';
 import { mapDbPostToSocialPost } from './services/db';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
-import { PricingTable } from './components/PricingTable';
+// PricingTable is modal-gated (only mounted when showPricing is true).
+const PricingTable = lazy(() => import('./components/PricingTable').then(m => ({ default: m.PricingTable })));
 import { CreditPackModal } from './components/CreditPackModal';
 import { TestReelPublishButton } from './components/TestReelPublishButton';
 import { TrialPaywall } from './components/TrialPaywall';
 import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
-import { OnboardingWizard } from './components/OnboardingWizard';
+// OnboardingWizard is modal-gated (only mounted when showOnboarding is true).
+const OnboardingWizard = lazy(() => import('./components/OnboardingWizard').then(m => ({ default: m.OnboardingWizard })));
 import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
@@ -36,7 +42,8 @@ import {
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
   Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock, CalendarPlus
 } from 'lucide-react';
-import { AdminCustomers } from './components/AdminCustomers';
+// AdminCustomers is tab-gated (only mounted when activeTab === 'customers' && isAdminMode).
+const AdminCustomers = lazy(() => import('./components/AdminCustomers').then(m => ({ default: m.AdminCustomers })));
 import { BrandKitProvider } from './contexts/BrandKitContext';
 // PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
 // the user actually clicks the Posters tab — keeps the home/calendar bundle small.
@@ -1973,7 +1980,8 @@ const Dashboard: React.FC = () => {
   const handleCalendarRegenImage = async (postId: string, prompt: string) => {
     setCalendarGenSet(prev => new Set(prev).add(postId));
     try {
-      const img = await generateImage(prompt);
+      const caption = posts.find(p => p.id === postId)?.content ?? null;
+      const img = await generateImage(prompt, caption);
       if (img) {
         // Persist to DB so cron uses the image at publish time
         try { await db.updatePost(postId, { imageUrl: img } as Record<string, unknown>); }
@@ -2062,14 +2070,14 @@ const Dashboard: React.FC = () => {
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
-              const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type);
+              const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type, sp.content);
               if (url) postImage = url;
               else if (wantsImage) imageGenFailures++;
             } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
           } else if (!postImage && wantsImage) {
             // No image — generate with full smart logic (returns public URL)
             try {
-              const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type);
+              const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type, sp.content);
               if (url) postImage = url;
               else imageGenFailures++;
             } catch { imageGenFailures++; /* post goes without image */ }
@@ -2394,7 +2402,11 @@ const Dashboard: React.FC = () => {
       );
     }
     if (showLanding && !CLIENT.clientMode) {
-      return <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} portalContent={portalContent} />;
+      return (
+        <Suspense fallback={<LoadingShell />}>
+          <LandingPage onActivate={() => setShowLanding(false)} onSignIn={() => setShowLanding(false)} portalContent={portalContent} />
+        </Suspense>
+      );
     }
     return <AuthScreen onShowLanding={() => setShowLanding(false)} />;
   }
@@ -2409,15 +2421,19 @@ const Dashboard: React.FC = () => {
     || (!activePlan && dbLoaded && !isOnFreeTrial)
     || (!activePlan && dbLoaded && isTrialExhausted);
   if (!CLIENT.clientMode && shouldShowLanding) {
-    return <LandingPage
-      onActivate={async plan => {
-        setActivePlan(plan);
-        setShowLanding(false);
-        if (user) await db.upsertUser({ plan, setupStatus: 'ordered' }).catch(() => {});
-      }}
-      onSignIn={() => setShowLanding(false)}
-      portalContent={portalContent}
-    />;
+    return (
+      <Suspense fallback={<LoadingShell />}>
+        <LandingPage
+          onActivate={async plan => {
+            setActivePlan(plan);
+            setShowLanding(false);
+            if (user) await db.upsertUser({ plan, setupStatus: 'ordered' }).catch(() => {});
+          }}
+          onSignIn={() => setShowLanding(false)}
+          portalContent={portalContent}
+        />
+      </Suspense>
+    );
   }
 
   // Still loading D1 data
@@ -2543,7 +2559,6 @@ const Dashboard: React.FC = () => {
                               // turns out vague/abstract (post-audit 2026-05).
                               const genResult = await FalService.generateImage(seedPrompt, profile.type, activeClientId);
                               inputImage = genResult.url;
-                              if (genResult.referencesUsed > 0) console.log(`[image] brand-grounded via ${genResult.model} with ${genResult.referencesUsed} references`);
                               setVideoModalProgress(0.25);
                             }
 
@@ -2637,19 +2652,21 @@ const Dashboard: React.FC = () => {
       )}
 
       {showOnboarding && (
-        <OnboardingWizard
-          profile={profile}
-          onUpdateProfile={updates => setProfile(prev => ({ ...prev, ...updates }))}
-          onSave={handleSaveProfile}
-          onDismiss={handleDismissOnboarding}
-          userEmail={user?.email ?? undefined}
-          socialTokens={socialTokens}
-          onSaveSocialTokens={saveSocialTokens}
-          onGenerateFirstPosts={() => handleSmartSchedule(3)}
-          isGenerating={isSmartGenerating}
-          generatedCount={smartPosts.length}
-          onAdvanceSetup={status => setSetupStatus(status as SetupStatus)}
-        />
+        <Suspense fallback={<LoadingShell />}>
+          <OnboardingWizard
+            profile={profile}
+            onUpdateProfile={updates => setProfile(prev => ({ ...prev, ...updates }))}
+            onSave={handleSaveProfile}
+            onDismiss={handleDismissOnboarding}
+            userEmail={user?.email ?? undefined}
+            socialTokens={socialTokens}
+            onSaveSocialTokens={saveSocialTokens}
+            onGenerateFirstPosts={() => handleSmartSchedule(3)}
+            isGenerating={isSmartGenerating}
+            generatedCount={smartPosts.length}
+            onAdvanceSetup={status => setSetupStatus(status as SetupStatus)}
+          />
+        </Suspense>
       )}
       {/* ── Publishing overlay ── */}
       {isPublishing && (
@@ -2740,7 +2757,7 @@ const Dashboard: React.FC = () => {
                 </div>
               )
             ) : generatedImage ? (
-              <img src={generatedImage} alt="Post media" className="w-full max-h-64 object-cover" />
+              <img src={generatedImage} alt="Post media" loading="lazy" className="w-full max-h-64 object-cover" />
             ) : null}
             {/* Facebook-style actions */}
             <div className="px-4 py-3 border-t border-gray-100">
@@ -2765,12 +2782,14 @@ const Dashboard: React.FC = () => {
 
       {/* Pricing Modal */}
       {showPricing && (
-        <PricingTable
-          onClose={() => { setShowPricing(false); setPricingDefaultPlan(null); }}
-          onPlanActivated={handlePlanActivated}
-          userId={user?.uid}
-          defaultPlanId={pricingDefaultPlan ?? undefined}
-        />
+        <Suspense fallback={<LoadingShell />}>
+          <PricingTable
+            onClose={() => { setShowPricing(false); setPricingDefaultPlan(null); }}
+            onPlanActivated={handlePlanActivated}
+            userId={user?.uid}
+            defaultPlanId={pricingDefaultPlan ?? undefined}
+          />
+        </Suspense>
       )}
       {/* Trial-exhausted paywall — full-screen, contextual, pre-selects Growth */}
       {showTrialPaywall && (
@@ -3340,6 +3359,7 @@ const Dashboard: React.FC = () => {
                       <img
                         src={generatedImage}
                         alt="AI Generated"
+                        loading="lazy"
                         className={`w-full object-cover ${generatedContent ? 'md:h-full max-h-72 md:max-h-none' : 'max-h-96'}`}
                         style={{ minHeight: generatedContent ? 180 : undefined }}
                       />
@@ -4372,7 +4392,7 @@ const Dashboard: React.FC = () => {
                         <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/8 relative group">
                           {hasImage ? (
                             <>
-                              <img src={smartPostImages[i]} alt="" className="w-full h-full object-cover" />
+                              <img src={smartPostImages[i]} alt="" loading="lazy" className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1">
                                 <button onClick={() => handleRegenImage(i)} title="Regenerate" className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"><RefreshCw size={12} className="text-white" /></button>
                                 <button onClick={() => handleUploadImage(i)} title="Upload" className="bg-white/20 hover:bg-white/30 p-1.5 rounded-lg"><Upload size={12} className="text-white" /></button>
@@ -5138,7 +5158,9 @@ const Dashboard: React.FC = () => {
 
         {/* ═══ CUSTOMERS TAB ═══ — admin-only, see tabs array gate above */}
         {activeTab === 'customers' && isAdminMode && (
-          <AdminCustomers />
+          <Suspense fallback={<LoadingShell />}>
+            <AdminCustomers />
+          </Suspense>
         )}
 
         {/* ═══ SETTINGS TAB ═══ */}

@@ -4,6 +4,7 @@ import App from './App';
 import { ClerkProvider } from '@clerk/react';
 import { AuthProvider } from './contexts/AuthContext';
 import { PortalAuthProvider } from './contexts/PortalAuthContext';
+import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { CLIENT } from './client.config';
 import './index.css';
 
@@ -96,16 +97,18 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {CLIENT.clientMode ? (
-      <PortalAuthProvider>
-        <App />
-      </PortalAuthProvider>
-    ) : (
-      <ClerkProvider publishableKey={clerkPubKey}>
-        <AuthProvider>
+    <RootErrorBoundary>
+      {CLIENT.clientMode ? (
+        <PortalAuthProvider>
           <App />
-        </AuthProvider>
-      </ClerkProvider>
-    )}
+        </PortalAuthProvider>
+      ) : (
+        <ClerkProvider publishableKey={clerkPubKey}>
+          <AuthProvider>
+            <App />
+          </AuthProvider>
+        </ClerkProvider>
+      )}
+    </RootErrorBoundary>
   </React.StrictMode>
 );

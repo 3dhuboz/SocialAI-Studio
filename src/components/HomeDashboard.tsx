@@ -298,7 +298,7 @@ export const HomeDashboard: React.FC<Props> = ({
                 </span>
               </div>
               {nextPost.image && (
-                <img src={nextPost.image} alt="" className="w-full h-28 object-cover rounded-xl opacity-80" />
+                <img src={nextPost.image} alt="" loading="lazy" className="w-full h-28 object-cover rounded-xl opacity-80" />
               )}
               <p className="text-sm text-white/70 leading-relaxed line-clamp-4 flex-1">{nextPost.content}</p>
               <button

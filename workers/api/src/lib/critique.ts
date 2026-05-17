@@ -111,6 +111,18 @@ Other failure modes (typically score 2-4 depending on severity):
 - Text overlay artifacts (FLUX rendered fake menu text, pricing badges, etc.)
 - Subject mismatch (caption mentions a product the image doesn't show)
 
+VISUAL QUALITY RULES — these apply regardless of topic match:
+- Visibly blurry, out of focus, motion-blurred, or soft-focus image where the
+  intended subject cannot be clearly seen → score 3-4, match="partial". The
+  image must look like a SHARP iPhone photo. Aesthetic depth-of-field on a
+  background is fine; the subject itself must be sharp.
+- Dark, underexposed, dim, or gloomy image where the subject is hard to make
+  out due to lack of light → score 3-4, match="partial". Default lighting
+  should be bright natural daylight — exceptions only for posts whose caption
+  explicitly references night, candlelit, or moody-tone content.
+- Heavily blended, composited, or surreal-looking image that doesn't read as
+  a single coherent photographable scene → score 2-4.
+
 Return JSON ONLY, no prose. Schema:
 {"score": <0-10>, "match": "yes"|"partial"|"no", "reasoning": "<one sentence>"}`;
 }

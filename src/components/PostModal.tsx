@@ -240,7 +240,7 @@ export const PostModal: React.FC<Props> = ({
           /* ── Image ── */
           displayImage ? (
             <div className="relative">
-              <img src={displayImage} alt="" className="w-full max-h-56 object-cover" />
+              <img src={displayImage} alt="" loading="lazy" className="w-full max-h-56 object-cover" />
               {/* AI quality-check badge — populated by Haiku 4.5 vision at
                   prewarm time. Colour-codes the score so the user can scan
                   for "needs eyes on it" posts at a glance. Tooltip shows the

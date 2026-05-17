@@ -274,7 +274,7 @@ export const CalendarGrid: React.FC<Props> = ({
                   ) : (
                   <div className="w-14 h-14 rounded-xl shrink-0 overflow-hidden bg-black/50 border border-white/[0.08] shadow-sm">
                     {calendarImages[post.id] || post.image ? (
-                      <img src={calendarImages[post.id] || post.image} alt="" className="w-full h-full object-cover" />
+                      <img src={calendarImages[post.id] || post.image} alt="" loading="lazy" className="w-full h-full object-cover" />
                     ) : calendarGenSet.has(post.id) ? (
                       <div className="w-full h-full flex items-center justify-center">
                         <Loader2 size={14} className="animate-spin text-amber-400" />
