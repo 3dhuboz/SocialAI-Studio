@@ -10,10 +10,11 @@
 // GET /api/admin/scan-flagged-posts — post-content scanner for AI tropes,
 //                                      invented stats, fake testimonials
 //
-// The trope scanner (FAB_PATTERNS + scanContentForTropes) is colocated as
-// private helpers since they're cron-only — no other caller. If a future
-// /api/score-post or similar wants the same patterns, lift them to
-// lib/content-quality.ts at that point.
+// The trope scanner (FAB_PATTERNS + scanContentForTropes) was previously
+// colocated here as a private helper. Lifted to shared/fabrication-patterns.ts
+// so the worker cron (publish-missed.ts) can apply the same bank pre-publish
+// as a belt-and-braces last line of defence — same drift bug class as the
+// FLUX_NEGATIVE_PROMPT lift in PR #86.
 //
 // Action endpoints (backfill, regen, provision, bootstrap) live in
 // routes/admin-actions.ts and call the lib helpers that were extracted in
@@ -27,61 +28,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { requireAdmin } from '../auth';
 import { PLAN_PRICE_AUD } from '../lib/pricing';
-
-// FAB_PATTERNS: regex bank covering the most common AI-tropes that get
-// past the frontend scrubber. Used by /api/admin/scan-flagged-posts to
-// surface scheduled posts that need editing BEFORE they publish.
-const FAB_PATTERNS: Array<[RegExp, string]> = [
-  // Fake customer testimonials
-  [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
-  [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-  [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
-  [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature'],
-  // Fake statistics
-  [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving|higher|lower|faster)/i, 'invented percentage statistic'],
-  [/\b(?:by|of|up\s+to|reach(?:ing|ed)?|gain(?:ing|ed)?|boost(?:ing|ed)?\s+\w+\s+by)\s+\d{1,3}(?:\.\d+)?%/i, 'invented percentage statistic ("by X%" form)'],
-  [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
-  [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
-  [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
-  [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
-  [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
-  [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
-  // Fake urgency
-  [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
-  [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
-  // Structural AI tropes
-  [/\bYour\s+(?:best|top|favourite|favorite)\s+\w+\s+goes\s+live\s+at\s+\d/i, 'AI-tutorial opener'],
-  [/\bNobody\s+sees\s+(it|them)[.!?]\s*Timing\s+is\s+everything/i, 'three-beat AI rhythm'],
-  [/\bNo more (staring at a blank screen|wondering what to (write|post|say)|guessing)/i, 'AI cliché ("No more X-ing at a Y")'],
-  [/(?:\bEvery\s+\S+(?:\s+\S+){0,3}[.!]\s*){2,}/i, '"Every X. Every Y." anaphora'],
-  [/\b(?:channell?ed|leveraged|elevated)\s+(?:significant|considerable|substantial|incredible)/i, 'buzzword soup ("channelled significant…")'],
-  [/\bbespoke\s+(digital\s+platforms?|ai\s+(?:tools?|solutions?|platforms?))/i, 'agency-speak ("bespoke digital platforms")'],
-  [/\bSmall business owners (often|usually|typically|always|never|rarely)/i, 'generalising opener ("Small business owners often…")'],
-  [/\b(Timing|Consistency|Authenticity|Quality|Strategy)\s+is\s+everything[.!?]/i, 'empty epigram ("Timing is everything")'],
-  [/\bThat'?s\s+the\s+gap\s+we\s+close/i, '"That\'s the gap we close"'],
-  [/\bMaking\s+(real|a\s+real)\s+difference/i, '"Making real differences"'],
-];
-
-function scanContentForTropes(content: string): string[] {
-  const reasons: string[] = [];
-  for (const [pattern, reason] of FAB_PATTERNS) {
-    if (pattern.test(content)) reasons.push(reason);
-  }
-  // Cadence detector — 3+ consecutive ≤6-word declaratives
-  const sentences = content.split(/[.!?]\s+/).filter(s => s.trim().length > 0);
-  let consecutiveShort = 0;
-  let maxRun = 0;
-  for (const s of sentences) {
-    if (s.trim().split(/\s+/).length <= 6) {
-      consecutiveShort++;
-      if (consecutiveShort > maxRun) maxRun = consecutiveShort;
-    } else {
-      consecutiveShort = 0;
-    }
-  }
-  if (maxRun >= 3) reasons.push(`AI cadence — ${maxRun} consecutive short sentences`);
-  return reasons;
-}
+import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
 export function registerAdminStatsRoutes(app: Hono<{ Bindings: Env }>): void {
   /**

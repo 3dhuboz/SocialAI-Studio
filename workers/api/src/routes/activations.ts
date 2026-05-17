@@ -41,6 +41,11 @@ export function timingSafeEqualStr(a: string, b: string): boolean {
 }
 
 export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
+  // OWNERSHIP NOTE — every GET/PUT below is scoped to the caller's own
+  // user-row email. Previously the email query param was trusted, letting
+  // any authenticated user fetch (and consume) another user's pending
+  // activation/cancellation by guessing their email. We now resolve the
+  // caller's email server-side from users.id = uid and ignore the param.
   app.get('/api/db/activations', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
@@ -51,15 +56,18 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
     // query param, it MUST match the email on the caller's own user row.
     // Mismatches return 404 (not 403) so we don't leak that the email
     // belongs to a real account.
-    const email = c.req.query('email') ?? null;
-    if (email) {
-      const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
-      if (!me || (me.email ?? '').toLowerCase() !== email.toLowerCase()) {
-        return c.json({ activation: null }, 404);
-      }
+    const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
+    const callerEmail = me?.email ?? null;
+    const emailParam = c.req.query('email') ?? null;
+    if (emailParam && (callerEmail ?? '').toLowerCase() !== emailParam.toLowerCase()) {
+      return c.json({ activation: null }, 404);
     }
+    // First look for an activation that's keyed by uid (pre-provisioned by
+    // the PB bridge), then fall back to the caller's verified email.
     const byUid = await c.env.DB.prepare('SELECT * FROM pending_activations WHERE id = ? AND consumed = 0').bind(uid).first();
-    const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_activations WHERE email = ? AND consumed = 0').bind(email).first() : null;
+    const byEmail = callerEmail
+      ? await c.env.DB.prepare('SELECT * FROM pending_activations WHERE email = ? AND consumed = 0').bind(callerEmail).first()
+      : null;
     const row = byUid ?? byEmail ?? null;
     return c.json({ activation: row });
   });
@@ -74,21 +82,27 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
     // user.email (or the row.id must equal uid — the by-uid bootstrap path).
     const id = c.req.param('id');
     const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
-    const row = await c.env.DB.prepare('SELECT id, email FROM pending_activations WHERE id = ?').bind(id).first<{ id: string; email: string | null }>();
-    if (!row) return c.json({ error: 'Not found' }, 404);
-    const matchesUid = row.id === uid;
-    const matchesEmail = !!me?.email && !!row.email && me.email.toLowerCase() === row.email.toLowerCase();
-    if (!matchesUid && !matchesEmail) return c.json({ error: 'Not found' }, 404);
-    await c.env.DB.prepare('UPDATE pending_activations SET consumed = 1 WHERE id = ?').bind(id).run();
+    const callerEmail = me?.email ?? null;
+    // Consume ONLY when the row's email or id matches the caller — stops a
+    // logged-in user from marking another user's pending row consumed
+    // (which would deny that user their plan upgrade prompt).
+    const result = await c.env.DB.prepare(
+      `UPDATE pending_activations SET consumed = 1
+       WHERE id = ? AND (id = ? OR email = ?)`
+    ).bind(id, uid, callerEmail ?? '').run();
+    if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Forbidden or not found' }, 403);
     return c.json({ ok: true });
   });
 
   app.get('/api/db/cancellations', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    const email = c.req.query('email') ?? null;
+    const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
+    const callerEmail = me?.email ?? null;
     const byUid = await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE id = ? AND consumed = 0').bind(uid).first();
-    const byEmail = email ? await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE email = ? AND consumed = 0').bind(email).first() : null;
+    const byEmail = callerEmail
+      ? await c.env.DB.prepare('SELECT * FROM pending_cancellations WHERE email = ? AND consumed = 0').bind(callerEmail).first()
+      : null;
     const row = byUid ?? byEmail ?? null;
     return c.json({ cancellation: row });
   });
@@ -97,7 +111,13 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const id = c.req.param('id');
-    await c.env.DB.prepare('UPDATE pending_cancellations SET consumed = 1 WHERE id = ?').bind(id).run();
+    const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
+    const callerEmail = me?.email ?? null;
+    const result = await c.env.DB.prepare(
+      `UPDATE pending_cancellations SET consumed = 1
+       WHERE id = ? AND (id = ? OR email = ?)`
+    ).bind(id, uid, callerEmail ?? '').run();
+    if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Forbidden or not found' }, 403);
     return c.json({ ok: true });
   });
 
