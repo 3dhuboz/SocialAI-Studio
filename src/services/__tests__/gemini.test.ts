@@ -7,19 +7,31 @@
  *   - buildRegionalVoiceBlock      (Aussie-location voice lock)
  *   - detectFabrication            (fake-stat / fake-testimonial detector)
  *   - scrubBannedPhrases           (post-flight trope scrubber)
+ *   - shared archetype-scenes      (re-export drift guard, PR #87)
  *
  * Complements scripts/audit-smoke-test.ts which is the standalone
  * pre-merge sanity script. The vitest suite is the same tests in a proper
  * framework so they can run in CI alongside type-check + build.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   isAbstractUIPrompt,
   buildSafeImagePromptClient,
   buildRegionalVoiceBlock,
   detectFabrication,
   scrubBannedPhrases,
+  buildArchetypeVoiceBlock,
+  setActiveArchetype,
+  SAFE_FALLBACK_SCENES as SAFE_FALLBACK_SCENES_FRONTEND,
+  ARCHETYPE_IMAGE_GUARDRAILS as ARCHETYPE_IMAGE_GUARDRAILS_FRONTEND,
+  CAPTION_ARCHETYPE_KEYWORDS as CAPTION_ARCHETYPE_KEYWORDS_FRONTEND,
 } from '../gemini';
+import {
+  SAFE_FALLBACK_SCENES,
+  ARCHETYPE_IMAGE_GUARDRAILS,
+  CAPTION_ARCHETYPE_KEYWORDS,
+} from '../../../shared/archetype-scenes';
+import { ARCHETYPES, getArchetypeBySlug } from '../../data/archetypes';
 
 describe('isAbstractUIPrompt — false-positive guards', () => {
   it.each([
@@ -116,7 +128,12 @@ describe('detectFabrication — invented stats and cadence', () => {
     // (Threshold was bumped from 3 to 5 in 2026-05 to stop false-positives on
     // natural 3-item feature lists like "AI writes your posts. Generates your
     // images. Publishes at the right time." Sustained AI rhythm is still caught.)
-    ['Nobody sees it. Timing is everything. We fix that. Trust us. We promise.', /cadence|short sentences/i],
+    // 2026-05 PR #87: this sample fires the shared three-beat-AI-rhythm
+    // pattern (`Nobody sees it. Timing is everything.`) BEFORE the cadence
+    // detector gets a chance to count consecutive short sentences. Either
+    // reason proves the post is flagged — the underlying contract is "this
+    // shape of copy must not ship", not which pattern catches it first.
+    ['Nobody sees it. Timing is everything. We fix that. Trust us. We promise.', /cadence|short sentences|three-beat AI rhythm/i],
     ['Boost engagement by 45% with our new feature.', /percentage/i],
     ['Loved it! — Sarah J., Brisbane', /testimonial signature/i],
     // 2026-05 SaaS-genre additions
@@ -197,5 +214,114 @@ describe('scrubBannedPhrases — preservation guards', () => {
   ])('preserves "%s"', (input, requiredRegex) => {
     const out = scrubBannedPhrases(input);
     expect(out).toMatch(requiredRegex);
+  });
+});
+
+// ── Shared archetype-scenes re-export guards (PR #87) ─────────────────────
+//
+// Verifies that the frontend's re-exports of SAFE_FALLBACK_SCENES,
+// ARCHETYPE_IMAGE_GUARDRAILS, and CAPTION_ARCHETYPE_KEYWORDS resolve to
+// the SAME object identity as the shared module. If a developer ever
+// reintroduces an inline copy (the original drift bug), this fails
+// immediately and the build refuses to ship.
+describe('shared archetype-scenes — frontend re-exports match shared module', () => {
+  it('frontend SAFE_FALLBACK_SCENES is the same object as the shared one', () => {
+    expect(SAFE_FALLBACK_SCENES_FRONTEND).toBe(SAFE_FALLBACK_SCENES);
+  });
+  it('frontend ARCHETYPE_IMAGE_GUARDRAILS is the same object as the shared one', () => {
+    expect(ARCHETYPE_IMAGE_GUARDRAILS_FRONTEND).toBe(ARCHETYPE_IMAGE_GUARDRAILS);
+  });
+  it('frontend CAPTION_ARCHETYPE_KEYWORDS is the same object as the shared one', () => {
+    expect(CAPTION_ARCHETYPE_KEYWORDS_FRONTEND).toBe(CAPTION_ARCHETYPE_KEYWORDS);
+  });
+});
+
+// ── Archetype voice cues — exist and reach gen-time lookup (PR #87) ───────
+//
+// The high-leverage quality win: every classified post should be able to
+// have its archetype's voiceCues + bannedTropeExtras injected into the
+// caption prompt. Before this PR the fields were defined on the Archetype
+// interface but UNREAD — generateSocialPost looked at imageExamples only.
+//
+// Test the data plumbing: every archetype has populated voiceCues, and the
+// tech-saas-agency archetype (the one we know has bannedTropeExtras) ships
+// with the agency-pitch banned list we expect to see in the prompt.
+describe('archetype voiceCues + bannedTropeExtras — gen-time injection contract', () => {
+  it('every archetype defines voiceCues (non-empty string)', () => {
+    // Without voiceCues, the prompt-build line is silently skipped (truthy
+    // check). Make sure no archetype regresses to an empty cue.
+    for (const a of ARCHETYPES) {
+      expect(a.voiceCues, `${a.slug}.voiceCues`).toBeTruthy();
+      expect(a.voiceCues.length, `${a.slug}.voiceCues non-trivial`).toBeGreaterThan(20);
+    }
+  });
+
+  it('bbq-smokehouse voice cues reflect the confident no-frills brief', () => {
+    // This is the manual-smoke target archetype from the PR description.
+    // The voice cue should encode "confident, no-frills" — that's what
+    // makes a BBQ post sound like a pitmaster, not a generic restaurant.
+    const arch = getArchetypeBySlug('bbq-smokehouse');
+    expect(arch).toBeDefined();
+    expect(arch!.voiceCues.toLowerCase()).toMatch(/confident|no-frills/);
+  });
+
+  it('tech-saas-agency exposes bannedTropeExtras with SaaS jargon', () => {
+    // bannedTropeExtras gets joined into the prompt — make sure the bank
+    // actually contains the SaaS-pitch tropes that bite our own self-promo
+    // posts (the audit identified this archetype as the worst offender).
+    const arch = getArchetypeBySlug('tech-saas-agency');
+    expect(arch?.bannedTropeExtras).toBeDefined();
+    expect(arch!.bannedTropeExtras!.length).toBeGreaterThan(0);
+    const joined = arch!.bannedTropeExtras!.join(' ').toLowerCase();
+    // Spot-check 2 known entries — the bank is long enough that we don't
+    // pin to the full list, but these two SHOULD be there.
+    expect(joined).toContain('thought leadership');
+    expect(joined).toContain('value proposition');
+  });
+});
+
+// ── buildArchetypeVoiceBlock — gen-time prompt injection (PR #87) ────────
+//
+// The high-leverage quality win. Pre-PR these lines were unread; this test
+// proves the wiring works end-to-end so the caption prompt receives the
+// archetype's voice direction.
+describe('buildArchetypeVoiceBlock — archetype voice cues reach the prompt', () => {
+  beforeEach(() => {
+    // Reset module-scope archetype cache between tests so order doesn't
+    // taint behaviour
+    setActiveArchetype(null);
+  });
+
+  it('returns voiceCuesLine for the BBQ smokehouse archetype (manual smoke target)', () => {
+    setActiveArchetype('bbq-smokehouse');
+    const { voiceCuesLine, bannedTropeLine } = buildArchetypeVoiceBlock('BBQ Smokehouse');
+    // The cue text from src/data/archetypes.ts should now flow into the
+    // returned line — this is the actual quality win
+    expect(voiceCuesLine).toContain('Voice cues (from your brand archetype):');
+    expect(voiceCuesLine.toLowerCase()).toMatch(/confident|no-frills/);
+    // bbq-smokehouse has no bannedTropeExtras — bannedTropeLine stays empty
+    expect(bannedTropeLine).toBe('');
+  });
+
+  it('returns bannedTropeLine for tech-saas-agency (jargon-heavy archetype)', () => {
+    setActiveArchetype('tech-saas-agency');
+    const { voiceCuesLine, bannedTropeLine } = buildArchetypeVoiceBlock('Marketing Agency');
+    expect(voiceCuesLine).toContain('Voice cues');
+    expect(bannedTropeLine).toContain('Avoid these tropes');
+    expect(bannedTropeLine.toLowerCase()).toContain('thought leadership');
+  });
+
+  it('falls back to keyword-match when no archetype is cached', () => {
+    // No setActiveArchetype call. businessType "BBQ smokehouse" should hit
+    // the keyword bank and still yield the cues.
+    const { voiceCuesLine } = buildArchetypeVoiceBlock('BBQ smokehouse');
+    expect(voiceCuesLine).toContain('Voice cues');
+  });
+
+  it('returns empty strings when no archetype matches (graceful degradation)', () => {
+    setActiveArchetype(null);
+    const { voiceCuesLine, bannedTropeLine } = buildArchetypeVoiceBlock('xyzzy unclassifiable');
+    expect(voiceCuesLine).toBe('');
+    expect(bannedTropeLine).toBe('');
   });
 });
