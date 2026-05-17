@@ -31,7 +31,7 @@ export const CLIENT = {
    *      - Token type: "User access token" (or "Business Integration System User
    *        access token" for non-expiring tokens — Phase 2)
    *      - Permissions: pages_show_list, pages_manage_posts, pages_read_engagement,
-   *        publish_video, instagram_basic, instagram_content_publish, pages_read_user_content
+   *        publish_video, instagram_basic, instagram_content_publish
    *      - Asset types: Pages, Instagram Accounts
    *      - Save → copy the Configuration ID
    * 4. Settings → add your domain to Valid OAuth Redirect URIs
