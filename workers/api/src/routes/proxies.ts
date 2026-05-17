@@ -52,7 +52,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         negativePrompt?: string;
         clientId?: string | null;
         // caption: the post text this image will accompany. Used by
-        // generateImageWithBrandRefs for archetype sniffing when the workspace
+        // generateImageWithGuardrails for archetype sniffing when the workspace
         // hasn't run classify-business yet — without it, guardrails no-op for
         // unclassified workspaces and cross-domain images ship unchecked.
         caption?: string | null;

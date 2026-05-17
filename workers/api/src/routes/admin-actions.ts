@@ -20,7 +20,7 @@ import { getAuthUserId, requireAdmin } from '../auth';
 import { backfillImagesForUser } from '../lib/backfill';
 import { critiqueImageInternal } from '../lib/critique';
 import { resolveArchetypeSlug } from '../lib/archetypes';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from '../lib/image-safety';
 import { tryCreateClerkUser, tryCreateCFPagesProject } from '../lib/provisioning';
 import { refreshFactsForWorkspace } from '../lib/facebook-facts';
@@ -197,7 +197,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
         // curated archetype scene over the suspect LLM-generated prompt.
         // Pass the caption so image-gen can sniff the archetype if the
         // workspace's archetype_slug is NULL.
-        const gen = await generateImageWithBrandRefs(
+        const gen = await generateImageWithGuardrails(
           c.env, uid, post.client_id, safe, { forceFallback: true, caption: post.content },
         );
         if (!gen.imageUrl) {
