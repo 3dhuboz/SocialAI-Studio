@@ -21,14 +21,19 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
-import { getAuthUserId } from '../auth';
+import { requireAuth } from '../middleware/auth';
 
 const uuid = () => crypto.randomUUID();
 
 export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
+  // Gate every /api/db/clients endpoint behind requireAuth — the previous
+  // version inlined getAuthUserId(...) in each of the 5 handlers. Wildcard
+  // pattern covers the bare path AND the :id variants in one declaration.
+  app.use('/api/db/clients', requireAuth);
+  app.use('/api/db/clients/*', requireAuth);
+
   app.get('/api/db/clients', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const { results } = await c.env.DB.prepare('SELECT * FROM clients WHERE user_id = ?').bind(uid).all();
     const clients = results.map((r: Record<string, unknown>) => ({
       ...r,
@@ -42,8 +47,7 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.get('/api/db/clients/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const clientId = c.req.param('id');
     const row = await c.env.DB.prepare('SELECT * FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<Record<string, unknown>>();
     if (!row) return c.json({ client: null });
@@ -60,8 +64,7 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.post('/api/db/clients', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
 
     // ── Agency client-count gate ───────────────────────────────────────────
     // Only Agency-plan users may create client workspaces. Admins get a
@@ -95,8 +98,7 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.put('/api/db/clients/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const clientId = c.req.param('id');
     const body = await c.req.json<Record<string, unknown>>();
     const sets: string[] = [];
@@ -123,8 +125,7 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.delete('/api/db/clients/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const clientId = c.req.param('id');
     await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
     await c.env.DB.prepare('DELETE FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).run();

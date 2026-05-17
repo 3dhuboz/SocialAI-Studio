@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env';
 import { dispatchScheduled } from './cron/dispatcher';
+import { requestIdMiddleware } from './middleware/request-id';
 import { registerCampaignRoutes } from './routes/campaigns';
 import { registerHealthRoutes } from './routes/health';
 import { registerUserRoutes } from './routes/user';
@@ -37,6 +38,11 @@ import { registerProxyRoutes } from './routes/proxies';
 import { registerPennybuildRoutes } from './routes/pennybuilder';
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Request-ID first — every downstream middleware (CORS, auth, onError) and
+// every log line reads `c.get('requestId')`. Mounted before CORS so even
+// preflight (OPTIONS) responses carry a correlation id.
+app.use('*', requestIdMiddleware);
 
 app.use(
   '*',
@@ -92,6 +98,28 @@ registerPostQualityRoutes(app);
 registerPostersRoutes(app);
 registerProxyRoutes(app);
 registerPennybuildRoutes(app);
+
+// ── Global error handler ──────────────────────────────────────────────────
+// Without this, a thrown error in any handler falls through to Hono's
+// default text/html 500 page — which breaks the frontend's JSON-only
+// fetch wrappers and hides the request id from support tickets. Every
+// 500 now ships the same JSON shape as every other error: { error, message,
+// requestId }. The requestId matches the X-Request-Id response header AND
+// the server log line written here, so a user-pasted id is enough to find
+// the failing request in `wrangler tail`.
+app.onError((err, c) => {
+  const requestId = c.get('requestId');
+  console.error(`[error] requestId=${requestId} path=${c.req.path}`, err);
+  return c.json({ error: 'internal_error', message: err.message, requestId }, 500);
+});
+
+// ── 404 handler ───────────────────────────────────────────────────────────
+// Same JSON shape so the frontend doesn't choke on `res.json()` for a typo'd
+// path. Includes the path back to the caller so a 404 in production tells
+// the frontend dev exactly which URL the worker couldn't match.
+app.notFound((c) => {
+  return c.json({ error: 'not_found', path: c.req.path, requestId: c.get('requestId') }, 404);
+});
 
 export default {
   fetch: app.fetch,
