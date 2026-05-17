@@ -17,10 +17,16 @@
 import type { Context } from 'hono';
 import type { Env } from '../env';
 import { SUBSCRIPTION_STATUS } from './pricing';
+import type { Brand } from './brand';
 
 const uuid = () => crypto.randomUUID();
 
 export const PAYPAL_API_BASE = 'https://api-m.paypal.com';
+
+// ADMIN_NOTIFY_EMAIL is the platform-wide ops inbox for the default brand.
+// Kept exported for legacy callers; per-brand admin emails are now resolved
+// via loadBrandForUser(env, userId).adminNotifyEmail and that should be
+// preferred going forward. See TODO_WHITELABEL.md.
 export const ADMIN_NOTIFY_EMAIL = 'steve@pennywiseit.com.au';
 
 // Plan-ID → tier mapping. Keep in sync with src/client.config.ts paypalPlanIds
@@ -137,17 +143,36 @@ export async function paypalVerifyWebhookSignature(req: Request, rawBody: string
   return data.verification_status === 'SUCCESS';
 }
 
-export function welcomeEmailHtml(plan: string): string {
+// Welcome email rendered for a new PayPal subscriber. Brand-aware: every
+// surface that used to hardcode "Social AI Studio" / #f59e0b / #0a0a0f /
+// socialaistudio.au / support@pennywiseit.com.au now reads from `brand`.
+//
+// Brand resolution lives in lib/brand.ts — callers should pass the result
+// of `loadBrandForUser(env, userId)` (or `loadDefaultBrand(env)` when the
+// user_id is unknown, e.g. webhook-only flows before the activation is
+// consumed).
+export function welcomeEmailHtml(brand: Brand, plan: string): string {
   const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
   const steps = ['Log in and complete your business profile','Connect your Facebook & Instagram pages','Generate your first AI post and schedule it'];
+  const accent = brand.accentColor;
+  const bg = brand.bgColor;
+  const appName = brand.appName;
+  const dashUrl = `https://${brand.domain}`;
+  const supportEmail = brand.supportEmail;
   const stepsHtml = steps.map((s, i) =>
-    `<div style="display:flex;align-items:center;gap:12px;"><div style="width:24px;height:24px;background:#f59e0b22;border:1px solid #f59e0b44;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#f59e0b;font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</div><span style="color:#d1d5db;font-size:13px;">${s}</span></div>`
+    `<div style="display:flex;align-items:center;gap:12px;"><div style="width:24px;height:24px;background:${accent}22;border:1px solid ${accent}44;border-radius:50%;display:flex;align-items:center;justify-content:center;color:${accent};font-size:11px;font-weight:700;flex-shrink:0;">${i+1}</div><span style="color:#d1d5db;font-size:13px;">${s}</span></div>`
   ).join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:#f59e0b;font-weight:800;font-size:15px;">Social AI Studio</span></div></div><div style="background:linear-gradient(135deg,#f59e0b22,#ef444411);border:1px solid #f59e0b33;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><div style="font-size:48px;margin-bottom:16px;">🎉</div><h1 style="color:#ffffff;font-size:26px;font-weight:900;margin:0 0 12px;">You're all set!</h1><p style="color:#9ca3af;font-size:15px;line-height:1.6;margin:0 0 24px;">Your <strong style="color:#f59e0b;">${planName} Plan</strong> is now active. Welcome to Social AI Studio — let's grow your social media together.</p><a href="https://socialaistudio.au" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#000;font-weight:900;font-size:14px;padding:14px 32px;border-radius:50px;text-decoration:none;">Open Dashboard →</a></div><div style="background:#111118;border:1px solid #1f2937;border-radius:16px;padding:24px 28px;margin-bottom:16px;"><h2 style="color:#ffffff;font-size:14px;font-weight:700;margin:0 0 16px;">What happens next?</h2><div style="display:flex;flex-direction:column;gap:12px;">${stepsHtml}</div></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:support@pennywiseit.com.au" style="color:#f59e0b;text-decoration:none;">support@pennywiseit.com.au</a> · <a href="https://socialaistudio.au" style="color:#f59e0b;text-decoration:none;">socialaistudio.au</a></p></div></body></html>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:${bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:${accent};font-weight:800;font-size:15px;">${appName}</span></div></div><div style="background:linear-gradient(135deg,${accent}22,#ef444411);border:1px solid ${accent}33;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><div style="font-size:48px;margin-bottom:16px;">🎉</div><h1 style="color:#ffffff;font-size:26px;font-weight:900;margin:0 0 12px;">You're all set!</h1><p style="color:#9ca3af;font-size:15px;line-height:1.6;margin:0 0 24px;">Your <strong style="color:${accent};">${planName} Plan</strong> is now active. Welcome to ${appName} — let's grow your social media together.</p><a href="${dashUrl}" style="display:inline-block;background:linear-gradient(135deg,${accent},#ef4444);color:#000;font-weight:900;font-size:14px;padding:14px 32px;border-radius:50px;text-decoration:none;">Open Dashboard →</a></div><div style="background:#111118;border:1px solid #1f2937;border-radius:16px;padding:24px 28px;margin-bottom:16px;"><h2 style="color:#ffffff;font-size:14px;font-weight:700;margin:0 0 16px;">What happens next?</h2><div style="display:flex;flex-direction:column;gap:12px;">${stepsHtml}</div></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:${supportEmail}" style="color:${accent};text-decoration:none;">${supportEmail}</a> · <a href="${dashUrl}" style="color:${accent};text-decoration:none;">${brand.domain}</a></p></div></body></html>`;
 }
 
-export function cancellationEmailHtml(): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#0a0a0f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:#f59e0b;font-weight:800;font-size:15px;">Social AI Studio</span></div></div><div style="background:#111118;border:1px solid #374151;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><h1 style="color:#ffffff;font-size:22px;font-weight:900;margin:0 0 12px;">Subscription Cancelled</h1><p style="color:#9ca3af;font-size:14px;line-height:1.6;margin:0 0 24px;">Your Social AI Studio subscription has been cancelled. You'll retain access until the end of your current billing period.</p><p style="color:#6b7280;font-size:13px;margin:0;">Changed your mind? <a href="https://socialaistudio.au" style="color:#f59e0b;text-decoration:none;">Reactivate your plan</a> anytime.</p></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:support@pennywiseit.com.au" style="color:#f59e0b;text-decoration:none;">support@pennywiseit.com.au</a></p></div></body></html>`;
+// Cancellation email — same brand-aware shape as welcomeEmailHtml.
+export function cancellationEmailHtml(brand: Brand): string {
+  const accent = brand.accentColor;
+  const bg = brand.bgColor;
+  const appName = brand.appName;
+  const dashUrl = `https://${brand.domain}`;
+  const supportEmail = brand.supportEmail;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:${bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:560px;margin:0 auto;padding:40px 24px;"><div style="text-align:center;margin-bottom:32px;"><div style="display:inline-flex;align-items:center;gap:10px;background:#111118;border:1px solid #1f2937;border-radius:50px;padding:10px 20px;"><span style="font-size:18px;">✨</span><span style="color:${accent};font-weight:800;font-size:15px;">${appName}</span></div></div><div style="background:#111118;border:1px solid #374151;border-radius:20px;padding:40px 32px;text-align:center;margin-bottom:24px;"><h1 style="color:#ffffff;font-size:22px;font-weight:900;margin:0 0 12px;">Subscription Cancelled</h1><p style="color:#9ca3af;font-size:14px;line-height:1.6;margin:0 0 24px;">Your ${appName} subscription has been cancelled. You'll retain access until the end of your current billing period.</p><p style="color:#6b7280;font-size:13px;margin:0;">Changed your mind? <a href="${dashUrl}" style="color:${accent};text-decoration:none;">Reactivate your plan</a> anytime.</p></div><p style="text-align:center;color:#374151;font-size:11px;margin:0;">Questions? <a href="mailto:${supportEmail}" style="color:${accent};text-decoration:none;">${supportEmail}</a></p></div></body></html>`;
 }
 
 /**

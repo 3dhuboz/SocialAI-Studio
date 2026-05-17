@@ -1,6 +1,6 @@
 /**
  * Unit tests for workers/api/src/lib/image-gen.ts — the single
- * generateImageWithBrandRefs chokepoint that every internal image-gen
+ * generateImageWithGuardrails chokepoint that every internal image-gen
  * caller (cron prewarm, JIT publish, manual backfill, fal-proxy)
  * shares.
  *
@@ -21,7 +21,7 @@
 // source still has the pre-#86 values — flux-dev tests will FAIL until #86
 // merges into main. Merging order: #86 → this PR.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let originalFetch: typeof globalThis.fetch;
@@ -79,19 +79,18 @@ function makeEnv(opts: {
 
 // ── Happy paths ──────────────────────────────────────────────────────
 
-describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
+describe('generateImageWithGuardrails — happy path (no brand refs)', () => {
   it('returns the imageUrl from flux-dev when no photos are stored', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/abc.png' }] }), { status: 200 }),
     );
     const env = makeEnv({ userArchetype: 'food-restaurant', photoUrls: [] });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, {
+    const result = await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'overhead flatlay of sourdough on linen',
       negativePrompt: 'people, faces',
     });
     expect(result.imageUrl).toBe('https://fal.cdn/abc.png');
     expect(result.modelUsed).toBe('flux-dev');
-    expect(result.referencesUsed).toBe(0);
   });
 
   it('hits the FLUX-dev endpoint (NOT Kontext) when there are no brand refs', async () => {
@@ -99,7 +98,7 @@ describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
       new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/x.png' }] }), { status: 200 }),
     );
     const env = makeEnv({ photoUrls: [] });
-    await generateImageWithBrandRefs(env, 'user-1', null, {
+    await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'safe prompt',
       negativePrompt: 'neg',
     });
@@ -114,7 +113,7 @@ describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
       new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/x.png' }] }), { status: 200 }),
     );
     const env = makeEnv({ photoUrls: [] });
-    await generateImageWithBrandRefs(env, 'user-1', null, {
+    await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'safe prompt',
       negativePrompt: 'neg',
     });
@@ -136,7 +135,7 @@ describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
     );
     const env = makeEnv({ photoUrls: [] });
-    await generateImageWithBrandRefs(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
+    await generateImageWithGuardrails(env, 'user-1', null, { prompt: 'p', negativePrompt: 'n' });
     const init = fetchMock.mock.calls[0][1];
     expect(init.headers.Authorization).toBe('Key fal-test-key');
     expect(init.headers['Content-Type']).toBe('application/json');
@@ -145,7 +144,7 @@ describe('generateImageWithBrandRefs — happy path (no brand refs)', () => {
 
 // ── Archetype guardrails ─────────────────────────────────────────────
 
-describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)', () => {
+describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth)', () => {
   it('SaaS archetype + food prompt → swaps for archetype-appropriate fallback BEFORE fetch', async () => {
     // SocialAI Studio regression: archetype=tech-saas-agency, but the
     // LLM's image_prompt drifted to a restaurant scene. Guardrail should
@@ -155,7 +154,7 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
     );
     const env = makeEnv({ userArchetype: 'tech-saas-agency', photoUrls: [] });
-    await generateImageWithBrandRefs(env, 'user-1', null, {
+    await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'overhead shot of a plated meal in a restaurant kitchen with sourdough loaf on the side',
       negativePrompt: 'people',
     });
@@ -170,7 +169,7 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
     );
     const env = makeEnv({ userArchetype: 'tech-saas-agency', photoUrls: [] });
-    await generateImageWithBrandRefs(env, 'user-1', null, {
+    await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'modern co-working studio with closed laptop and morning light',
       negativePrompt: 'people, hands',
     });
@@ -191,7 +190,7 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
     );
     const env = makeEnv({ userArchetype: null, photoUrls: [] });
     const saasCaption = 'Smart Scheduling and engagement data: SocialAI auto-publishes your content calendar.';
-    await generateImageWithBrandRefs(
+    await generateImageWithGuardrails(
       env,
       'user-1',
       null,
@@ -214,7 +213,7 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
     );
     const env = makeEnv({ userArchetype: null, photoUrls: [] });
-    await generateImageWithBrandRefs(
+    await generateImageWithGuardrails(
       env,
       'user-1',
       null,
@@ -240,7 +239,7 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
       clientArchetype: 'food-restaurant',
       photoUrls: [],
     });
-    await generateImageWithBrandRefs(env, 'user-1', 'client-99', {
+    await generateImageWithGuardrails(env, 'user-1', 'client-99', {
       prompt: 'overhead shot of plated pasta with herbs',
       negativePrompt: 'people',
     });
@@ -255,7 +254,7 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
     );
     const env = makeEnv({ userArchetype: 'tech-saas-agency', photoUrls: [] });
-    await generateImageWithBrandRefs(
+    await generateImageWithGuardrails(
       env,
       'user-1',
       null,
@@ -272,20 +271,19 @@ describe('generateImageWithBrandRefs — archetype guardrails (defence-in-depth)
 
 // ── Error paths ──────────────────────────────────────────────────────
 
-describe('generateImageWithBrandRefs — error handling', () => {
+describe('generateImageWithGuardrails — error handling', () => {
   it('flux-dev 5xx → returns imageUrl=null + logs the error context', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ detail: 'GPU pool exhausted', message: 'try again' }), { status: 503 }),
     );
     const env = makeEnv({ userArchetype: 'food-restaurant', photoUrls: [] });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, {
+    const result = await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'overhead flatlay',
       negativePrompt: 'people',
     });
     expect(result.imageUrl).toBeNull();
     expect(result.modelUsed).toBe('flux-dev');
-    expect(result.referencesUsed).toBe(0);
     // Useful context (status + detail) should make it into the warn log
     // so on-call can grep for "GPU pool exhausted" without re-running.
     const allWarnCalls = warnSpy.mock.calls.flat().join(' ');
@@ -298,7 +296,7 @@ describe('generateImageWithBrandRefs — error handling', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fetchMock.mockResolvedValueOnce(new Response('{}', { status: 400 }));
     const env = makeEnv({ photoUrls: [] });
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, {
+    const result = await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'x',
       negativePrompt: 'y',
     });
@@ -327,7 +325,7 @@ describe('generateImageWithBrandRefs — error handling', () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/x' }] }), { status: 200 }),
     );
-    const result = await generateImageWithBrandRefs(env, 'user-1', null, {
+    const result = await generateImageWithGuardrails(env, 'user-1', null, {
       prompt: 'safe',
       negativePrompt: 'neg',
     });

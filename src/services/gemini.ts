@@ -169,6 +169,34 @@ export function setActiveArchetype(slug: string | null) {
   activeArchetypeSlug = slug;
 }
 
+/** Build the archetype voice cue + banned-trope prompt lines from the
+ *  cached classifier archetype + keyword fallback. Returns two strings
+ *  ready for direct prompt-template interpolation (both empty when no
+ *  archetype matches, so the prompt degrades gracefully).
+ *
+ *  Exported so tests can verify the wiring without exercising the network
+ *  path in generateSocialPost. Resolution order matches
+ *  getImagePromptExamples:
+ *    1. Cached classifier archetype (activeArchetypeSlug, set by App.tsx)
+ *    2. Keyword match against ARCHETYPES (works pre-classifier)
+ *  Empty strings on no match. */
+export function buildArchetypeVoiceBlock(businessType: string): {
+  voiceCuesLine: string;
+  bannedTropeLine: string;
+} {
+  const archetype =
+    (activeArchetypeSlug ? getArchetypeBySlug(activeArchetypeSlug) : undefined)
+    ?? matchArchetypeByKeyword(businessType)
+    ?? undefined;
+  const voiceCuesLine = archetype?.voiceCues
+    ? `\nVoice cues (from your brand archetype): ${archetype.voiceCues}`
+    : '';
+  const bannedTropeLine = archetype?.bannedTropeExtras?.length
+    ? `\nAvoid these tropes (archetype-specific): ${archetype.bannedTropeExtras.join(', ')}`
+    : '';
+  return { voiceCuesLine, bannedTropeLine };
+}
+
 /** Generate business-specific image prompt examples.
  *
  *  Resolution order:
@@ -415,14 +443,14 @@ function pickExampleScene(joinedExamples: string): string {
  * lose 5 µs splitting it 4× than risk one path misreading "Pork, Chicken"
  * as a single token. The Seamus incident already cost a client relationship;
  * this defends against the next near-miss.
+ *
+ * Implementation lives in shared/forbidden-subjects.ts so the worker
+ * (workers/api/src/lib/profile-guards.ts) and frontend can never drift on
+ * what counts as a forbidden subject — re-exported here so existing
+ * callers keep working.
  */
-export function parseForbiddenSubjects(raw?: string | null): string[] {
-  if (!raw || typeof raw !== 'string') return [];
-  return raw
-    .split(/[,\n;]/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0 && s.length < 60); // sanity cap on word length
-}
+export { parseForbiddenSubjects } from '../../shared/forbidden-subjects';
+import { parseForbiddenSubjects } from '../../shared/forbidden-subjects';
 
 /**
  * Build the list of acceptable image-prompt subjects from the owner's actual
@@ -456,18 +484,33 @@ export function buildProductAllowlist(
     });
 }
 
-export function isAbstractUIPrompt(prompt: string): boolean {
-  // Tier 1 — terms that are ALWAYS bad regardless of context
-  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
-  // Tier 2 — context-dependent: only bad when paired with a UI-type noun
-  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
-  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
-  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
-  // Tier 3 — explicit "illustration of" / "diagram of" — clear intent for
-  // abstract art rather than photographic content
-  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
-  return false;
-}
+// isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX,
+// needsSafeFallback are imported + re-exported from shared/flux-prompts.ts
+// (single source of truth shared with workers/api/src/lib/image-safety.ts).
+// Re-export here so existing import paths keep working.
+import {
+  isAbstractUIPrompt,
+  FLUX_NEGATIVE_PROMPT,
+  FLUX_STYLE_SUFFIX,
+  PEOPLE_REGEX,
+  needsSafeFallback,
+} from '../../shared/flux-prompts';
+export { isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX };
+
+// SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS
+// live in shared/archetype-scenes.ts so the frontend image-prompt swap path
+// can pick a fallback scene that the worker's guardrails would also accept.
+// Previously the frontend had no SAFE_FALLBACK_SCENES bank at all — its
+// `pickExampleScene(getImagePromptExamples(businessType))` flow picked from
+// the businessType examples, which could choose a scene the worker
+// guardrails would later block. Same drift bug class as
+// FLUX_NEGATIVE_PROMPT (PR #86).
+import {
+  SAFE_FALLBACK_SCENES,
+  ARCHETYPE_IMAGE_GUARDRAILS,
+  CAPTION_ARCHETYPE_KEYWORDS,
+} from '../../shared/archetype-scenes';
+export { SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS };
 
 /**
  * Regional voice block — injected into Smart Schedule and single-post prompts
@@ -507,35 +550,6 @@ Write like an actual local, not like a Sydney agency or a US tech blog.
 `;
 }
 
-// Canonical FLUX negative-prompt — passed as a SEPARATE parameter so the
-// diffusion model actually suppresses these concepts at sampling time.
-//
-// 2026-05 deep audit: the previous design appended these tokens onto the
-// POSITIVE prompt as "no people, no faces, no hands, …". FLUX-dev does not
-// parse inline negations — those words become positive concepts. Worse, the
-// negative tokens often pull semantically-related content INTO the image
-// (saying "no hands" near "pizza" makes a hand more likely to appear, since
-// the model sees "hands" as a strong contextual cue). Hence the steaming
-// pizza with a hand in the screenshot. fal.ai/flux/dev accepts top-level
-// `negative_prompt` and respects it properly when guidance_scale ≥ 5.
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene';
-
-// Canonical positive-prompt suffix — kept INTENTIONALLY trope-free now that
-// negatives live in the dedicated field. The worker's tripwire still checks
-// for "candid iPhone" so we keep that token; the rest is style direction.
-//
-// Lighting bias: defaults to BRIGHT natural daylight after a customer flagged
-// outputs trending too dark/moody. AI-picked moody lighting is fine for tone-
-// specific campaigns (countdown, scarcity) but the default pull should be
-// bright + airy so feeds stay scrollable. The negative-prompt list also calls
-// out "dark", "underexposed", "shadows" to push back at the diffusion bias.
-export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT natural daylight, well-exposed, airy, slightly imperfect framing, real-world wear and texture, 1:1 square format';
-
-// People-mention regex — defense-in-depth scrub of positive prompts.
-// The dedicated FLUX_NEGATIVE_PROMPT field is the real enforcement; this
-// strip catches lingering subject words before they reach the diffusion model.
-const PEOPLE_REGEX = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi;
-
 // Reused by generateVideoBrief — same intent, slightly broader vocab
 // (talking head, no "looking/standing/sitting/wearing/happy" — those describe
 // the camera shot rather than the subject and may legitimately appear in
@@ -570,11 +584,7 @@ const PEOPLE_REGEX_VIDEO = /\b(woman|women|man|men|person|people|portrait|face|f
  */
 export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
-  const isBadPrompt = !prompt || prompt.length < 15 || !/\s/.test(prompt) || /^(N\/A|none|null|undefined)$/i.test(prompt);
-  const looksLikeTitle = /^[A-Z][a-z]+ [A-Z&]/.test(prompt) && prompt.split(' ').length <= 5;
-  const tooVague = /\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8;
-  const isAbstractUI = isAbstractUIPrompt(prompt);
-  const needsFallback = isBadPrompt || looksLikeTitle || tooVague || isAbstractUI;
+  const needsFallback = needsSafeFallback(prompt);
 
   // Fail-closed if we'd be picking a random scene against a generic business
   // type. This is the audit fix that stops "pizza on a tech post" — the old
@@ -814,6 +824,12 @@ export const generateSocialPost = async (
   // Pull verified FB-scraped facts for this workspace (zero invention possible)
   const facts = await fetchClientFacts(clientId);
   const groundTruthBlock = buildGroundTruthBlock(facts);
+
+  // 2026-05 quality win: inject the archetype's voice cues + extra banned
+  // tropes into the prompt. Pre-PR the archetype lookup only drove image-
+  // prompt examples — `archetype.voiceCues` and `archetype.bannedTropeExtras`
+  // were defined on the type but UNREAD by every call site.
+  const { voiceCuesLine, bannedTropeLine } = buildArchetypeVoiceBlock(businessType);
   // Sanity check: detect corrupted profile data (e.g. agency profile leaked into client workspace)
   const isSinglePostProfileCorrupted = (() => {
     if (!profile) return false;
@@ -943,7 +959,7 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 ═══════════════════════════════════════════════════════════════════
 
 You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
-Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.
+Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.${voiceCuesLine}${bannedTropeLine}
 ${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}${exclusionMandate}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
@@ -1122,44 +1138,13 @@ Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_st
 
 // Module-scoped fabrication patterns. Hot path — called 1-2× per generated
 // post (Smart Schedule batches up to 21 posts), so we don't want to recompile
-// the array on every invocation. Each entry: [regex, human-readable reason].
-const FAB_CHECKS: Array<[RegExp, string]> = [
-  // Fake customer testimonials
-  [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
-  [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-  // Invented quote: matches `<subject> says: "..."` but excludes rhetorical
-  // anthropomorphizing like `It says: "..."`, `the stock photo says: "..."`
-  // — those are figures of speech, not fake testimonials. Real fabrications
-  // attribute to a human/customer/brand entity: `John says:`, `our customer
-  // raved:`, `Sarah told us:`.
-  [/\b(?<!\b(?:it|this|that|one|nothing|everything|message|photo|image|caption|post|content|feed|story|stock|generic|ad|advert|brand|tagline)\s)(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
-  [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature (e.g. "Sarah J., Brisbane")'],
-  // Fake statistics — match "45% increase" AND "by 45%" / "up to 45%" / "of 45%"
-  // shapes. The "by" variant came up in real Penny Wise posts ("Boost
-  // engagement by 45% with our new feature") and the original narrow regex
-  // missed it.
-  [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving|higher|lower|faster)/i, 'invented percentage statistic'],
-  [/\b(?:by|of|up\s+to|reach(?:ing|ed)?|gain(?:ing|ed)?|boost(?:ing|ed)?\s+\w+\s+by)\s+\d{1,3}(?:\.\d+)?%/i, 'invented percentage statistic ("by X%" form)'],
-  [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving claim'],
-  [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier claim'],
-  [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
-  // 2026-05 audit additions: invented frequency/cadence claims (real Penny
-  // Wise post: "Small business owners in Rockhampton are already posting
-  // 7-14 times per week on autopilot")
-  [/\b(?:already\s+)?posting\s+\d+(?:[-–]\d+)?\s+times?\s+(?:per|a)\s+(?:day|week|month)/i, 'invented posting-frequency claim'],
-  [/\b(?:already\s+)?(?:get|gets|getting|generating|generated)\s+\d+(?:[-–]\d+)?\s+(?:more\s+)?(?:leads?|sales?|customers?|comments?|likes?|shares?|views?)/i, 'invented engagement-stat claim'],
-  // 2026-05 SaaS follow-up: "generates 7-14 posts per week" / "writes 30
-  // captions a month" — the marketing-claim verb form. Distinct from the
-  // "posting NN times" shape above. The literal "7-14 posts/week" survives
-  // (brand-guide preferred form) — only the verb-driven sentence form trips.
-  [/\b(?:generates?|writes?|produces?|delivers?|creates?|cranks?\s+out)\s+\d+(?:[-–]\d+)?\s+(?:posts?|captions?|articles?|videos?|reels?)\s+(?:per|a|each)\s+(?:day|week|month)/i, 'invented content-generation cadence claim'],
-  // 2026-05 audit additions: leading questions with implied stat (real Penny
-  // Wise post: "How many hours could you reclaim this week?")
-  [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],
-  // Fake urgency / countdowns / events without source
-  [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
-  [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
-];
+// the array on every invocation.
+//
+// 2026-05 lift: pattern bank moved to shared/fabrication-patterns.ts so the
+// worker (publish-missed cron + admin scan-flagged-posts) shares the exact
+// same bank as the gen-time detector here. Single source of truth — same
+// drift bug class as FLUX_NEGATIVE_PROMPT (PR #86) and parseForbiddenSubjects.
+import { FAB_PATTERNS as FAB_CHECKS, AI_CADENCE_THRESHOLD } from '../../shared/fabrication-patterns';
 
 export function detectFabrication(content: string, brandContext: string = ''): string | null {
   const ctxLower = brandContext.toLowerCase();
@@ -1187,6 +1172,7 @@ export function detectFabrication(content: string, brandContext: string = ''): s
   // Publishes at the right time.") which are normal marketing copy. Bumped
   // to 5 so we only catch sustained AI rhythm, not natural punchy lists.
   // Semantic invention is still caught by the LLM judge (judgePost).
+  // Threshold imported from shared/fabrication-patterns.ts.
   const sentences = content.split(/[.!?]\s+/).filter(s => s.trim().length > 0);
   let consecutiveShort = 0;
   let maxRun = 0;
@@ -1199,7 +1185,7 @@ export function detectFabrication(content: string, brandContext: string = ''): s
       consecutiveShort = 0;
     }
   }
-  if (maxRun >= 5) {
+  if (maxRun >= AI_CADENCE_THRESHOLD) {
     return `AI cadence — ${maxRun} consecutive short sentences (≤6 words). Reads like a tech blog, not a small business.`;
   }
   return null;
@@ -1392,7 +1378,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
  * Same smart prompt logic as generateMarketingImage, but returns a public URL
  * instead of base64. Used by Accept All to persist images to D1.
  */
-export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business'): Promise<string | null> => {
+export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business', caption?: string | null): Promise<string | null> => {
   // Same shared safety pipeline as generateMarketingImage above — returns
   // null when the post should publish text-only (fail-closed).
   const safe = buildSafeImagePromptClient(prompt, businessType);
@@ -1402,7 +1388,7 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) return data.imageUrl;
@@ -1542,17 +1528,52 @@ export const rewritePost = async (
   tone: string
 ): Promise<{ content: string; hashtags: string[] }> => {
   try {
-    const prompt = `You are an expert social media manager for "${businessName}", a ${businessType}. Tone: ${tone}.
+    // Base prompt (attempt 1). Preserved original tone+length contract; the
+    // retry below adds a stricter no-fabrication preamble without changing
+    // the user's instruction.
+    const basePrompt = `You are an expert social media manager for "${businessName}", a ${businessType}. Tone: ${tone}.
 The user wants to post on ${platform}.
 Their draft or idea: "${draft}"
 Instruction: ${instruction}
 Rewrite or improve the post based on the instruction. Include relevant emojis and 5-10 relevant hashtags.
 Return ONLY raw JSON with no markdown or code fences: {"content": "...", "hashtags": ["..."]}`;
-    const raw = (await callAI(prompt, { temperature: 0.8, responseFormat: 'json' })).trim();
-    const parsed = parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
+
     // 2026-05 audit: the rewrite endpoint was unguarded — Smart Schedule's
-    // generated posts go through scrubBannedPhrases (line 1802ish) but a
-    // user-triggered Rewrite did not. Same banned-tropes pipeline now applies.
+    // generated posts route through detectFabrication + retry (line ~1004),
+    // but a user-triggered Rewrite did not. Same fabrication scan + single
+    // retry with a stricter prompt now applies. Temperature stays at 0.8
+    // on attempt 1 (preserve creative latitude); attempt 2 drops to 0.4
+    // because the first attempt fabricated and we'd rather sacrifice some
+    // variety than ship invented stats/quotes.
+    let parsed: { content: string; hashtags: string[] };
+    let attempt = 0;
+    let lastReason = '';
+    while (true) {
+      attempt++;
+      const promptForThisAttempt = attempt === 1
+        ? basePrompt
+        : `${basePrompt}\n\nATTEMPT #${attempt} — your previous rewrite was rejected because: "${lastReason}". Do NOT invent customers, quotes, statistics, percentages, urgency claims, or campaigns. Stick to the user's draft + instruction only.`;
+      const raw = (await callAI(promptForThisAttempt, {
+        temperature: attempt === 1 ? 0.8 : 0.4,
+        responseFormat: 'json',
+      })).trim();
+      parsed = parseAiJson(raw) || { content: 'Error rewriting post.', hashtags: [] };
+      if (typeof parsed.content !== 'string' || !parsed.content) break;
+      const fabReason = detectFabrication(parsed.content);
+      if (!fabReason) break;
+      if (attempt >= 2) {
+        // One retry exhausted — log the surviving fabrication and proceed.
+        // The downstream scrubBannedPhrases call will still strip many
+        // structural tropes; this just means the model couldn't produce a
+        // clean rewrite in two passes. Better than a stack overflow loop
+        // or a hard error to the user.
+        console.warn(`[rewritePost] fabrication survived ${attempt} attempts: ${fabReason}`);
+        break;
+      }
+      lastReason = fabReason;
+      console.warn(`[rewritePost] attempt ${attempt} rejected: ${fabReason}`);
+    }
+    // Trope scrubber — strips structural AI cadence that survived the fab scan
     if (parsed.content) parsed.content = scrubBannedPhrases(parsed.content);
     return parsed;
   } catch (error: any) {

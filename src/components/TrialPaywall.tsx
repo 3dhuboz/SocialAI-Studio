@@ -96,7 +96,7 @@ export const TrialPaywall: React.FC<Props> = ({ posts, freeTrialPosts, onClose, 
                   <div key={i} className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-3">
                     {post.image ? (
                       <div className="aspect-square rounded-xl overflow-hidden mb-2 bg-white/[0.02]">
-                        <img src={post.image} alt="" className="w-full h-full object-cover" />
+                        <img src={post.image} alt="" loading="lazy" className="w-full h-full object-cover" />
                       </div>
                     ) : (
                       <div className="aspect-square rounded-xl bg-gradient-to-br from-amber-500/10 to-purple-500/10 flex items-center justify-center mb-2">

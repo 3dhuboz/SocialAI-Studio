@@ -12,24 +12,12 @@
 // docs + Settings UI input.
 
 import type { Env } from '../env';
+import { parseForbiddenSubjects } from '../../../../shared/forbidden-subjects';
 
-/**
- * Tokenise the owner-typed denylist string into a clean lowercase array.
- * Accepts commas, semicolons, or newlines as separators.
- *
- *   "pork, chicken\nLamb;  FISH " → ["pork", "chicken", "lamb", "fish"]
- *
- * Empty / null / non-string input → []. Each token is sanity-capped at 60
- * chars to catch a paste-mistake where the entire profile description ends
- * up in this field.
- */
-export function parseForbiddenSubjects(raw?: string | null): string[] {
-  if (!raw || typeof raw !== 'string') return [];
-  return raw
-    .split(/[,\n;]/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0 && s.length < 60);
-}
+// Re-exported so existing callers keep working. Implementation lives in
+// shared/forbidden-subjects.ts so the frontend (src/services/gemini.ts) and
+// worker can never drift on what counts as a forbidden subject.
+export { parseForbiddenSubjects };
 
 /**
  * Look up the forbiddenSubjects denylist from D1. Two-tier resolution:

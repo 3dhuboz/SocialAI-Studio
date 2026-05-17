@@ -160,7 +160,7 @@ export const FacebookConnectButton: React.FC<Props> = ({
               className="w-full flex items-center gap-3 p-3.5 rounded-xl glass card-hover hover:bg-blue-500/10 hover:border-blue-500/30 text-left group"
             >
               {page.picture?.data?.url
-                ? <img src={page.picture.data.url} alt="" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+                ? <img src={page.picture.data.url} alt="" loading="lazy" className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
                 : (
                   <div className="w-9 h-9 rounded-lg bg-[#1877F2] flex items-center justify-center flex-shrink-0">
                     <Facebook size={16} className="text-white" />

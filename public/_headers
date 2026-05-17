@@ -1,6 +1,7 @@
 /*
-  Content-Security-Policy: frame-ancestors *
+  Content-Security-Policy: frame-ancestors 'self' https://builder.pennywiseit.com.au https://*.pennywiseit.com.au https://pennybuilder.steve-700.workers.dev
   X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
 
 # Service worker — never cache the SW file itself or browsers will keep
 # serving the old one for hours after a deploy. Cache headers on the

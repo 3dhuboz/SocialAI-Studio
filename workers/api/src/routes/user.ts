@@ -16,19 +16,24 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
-import { getAuthUserId } from '../auth';
+import { requireAuth } from '../middleware/auth';
 
 export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
+  // Apply requireAuth to every /api/db/user* endpoint in one shot — the
+  // pre-middleware version inlined the same 2-line getAuthUserId call at
+  // the top of every handler. With the middleware, handlers can assume
+  // `c.get('uid')` is set; unauthenticated requests get a JSON 401 with
+  // the request id before the handler runs.
+  app.use('/api/db/user', requireAuth);
+
   app.get('/api/db/user', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const row = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first();
     return c.json({ user: row ?? null });
   });
 
   app.put('/api/db/user', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     const body = await c.req.json<Record<string, unknown>>();
 
     // ── Privileged fields — never settable by the caller ───────────────────
@@ -103,8 +108,7 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.delete('/api/db/user', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
-    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    const uid = c.get('uid');
     await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(uid).run();
     return c.json({ ok: true });
   });

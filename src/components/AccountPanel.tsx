@@ -7,7 +7,7 @@ import {
 import { useUser } from '@clerk/react';
 import { useDb } from '../hooks/useDb';
 import type { BillingInfo } from '../services/db';
-import { PaymentList } from './AdminCustomers';
+import { PaymentList } from './PaymentList';
 import { CLIENT } from '../client.config';
 import { useAuth } from '../contexts/AuthContext';
 

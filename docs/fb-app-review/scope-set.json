@@ -1,0 +1,88 @@
+{
+  "_comment_about_this_file": "Source of truth for the scope set being submitted in App Review. Diff against future submissions to catch scope drift. The OAuth scope strings in src/services/facebookService.ts and the Facebook Login for Business Configuration must both match this list — if they drift, the OAuth dialog will fail to request a scope we're submitting or will request a scope we haven't justified, and the submission gets rejected.",
+
+  "submitted_at": "TBD — fill in when Steve submits via developers.facebook.com",
+  "submitted_by": "Steve (steve@pennywiseit.com.au)",
+  "app_id": "847198108337884",
+  "app_name": "SocialAI Studio",
+  "configuration_id": "947627521425720",
+  "configuration_name": "SocialAI Studio Connect",
+  "previous_submission": {
+    "submitted_at": "2026-03-13",
+    "rejected_at": "2026-03-16",
+    "rejection_reason": "Screencast Not Aligned with Use Case Details — previous take started after the OAuth consent dialog, so reviewers could not verify that users see and consent to the permissions before the app uses them.",
+    "scopes_in_previous_submission": [
+      "pages_show_list",
+      "pages_manage_posts",
+      "pages_read_engagement"
+    ]
+  },
+
+  "scopes": [
+    {
+      "name": "pages_show_list",
+      "category": "Facebook Page management",
+      "advanced_access_needed": true,
+      "why_we_need_it": "After OAuth consent, GET /me/accounts returns the user's manageable Pages. We render a picker UI so the user selects which Page to connect to SocialAI Studio. Most SMB owners admin multiple Pages.",
+      "code_location": "workers/api/src/routes/facebook.ts:48 (token-exchange endpoint), src/components/FacebookConnectButton.tsx:62 (picker UI)",
+      "demo_timestamp_in_screencast": "1:30–1:50"
+    },
+    {
+      "name": "pages_manage_posts",
+      "category": "Facebook Page publishing",
+      "advanced_access_needed": true,
+      "why_we_need_it": "Core product value — we publish AI-generated posts (text + image) to the connected Page via POST /{page-id}/feed and POST /{page-id}/photos. Without this scope the app can generate posts but cannot publish them.",
+      "code_location": "workers/api/src/cron/publish-missed.ts (publish loop, lines ~428–485)",
+      "demo_timestamp_in_screencast": "2:20–2:45"
+    },
+    {
+      "name": "pages_read_engagement",
+      "category": "Facebook Page analytics",
+      "advanced_access_needed": true,
+      "why_we_need_it": "Two uses: (1) the in-app Insights tab surfaces engagement back to the user, (2) the AI uses 28-day rolling engagement as a learning signal to write better posts. Calls GET /{page-id}/insights and GET /{page-id}/posts (with likes/comments/shares summaries).",
+      "code_location": "src/services/facebookService.ts:135 (getPageStats), src/services/facebookService.ts:234 (getRecentPosts)",
+      "demo_timestamp_in_screencast": "3:35–3:55"
+    },
+    {
+      "name": "instagram_content_publish",
+      "category": "Instagram Business publishing",
+      "advanced_access_needed": true,
+      "why_we_need_it": "Most SMB users want to publish to Facebook AND Instagram in parallel from one tool. After we detect a linked instagram_business_account on the Page, we publish via POST /{ig-user-id}/media → POST /{ig-user-id}/media_publish (Content Publishing API). Publish-only, no reads of private content.",
+      "code_location": "src/services/facebookService.ts:341 (postToInstagram), src/services/facebookService.ts:365 (postReelToInstagram for IG Reels)",
+      "demo_timestamp_in_screencast": "3:15–3:35"
+    },
+    {
+      "name": "publish_video",
+      "category": "Facebook Page video publishing",
+      "advanced_access_needed": true,
+      "why_we_need_it": "We generate short-form video Reels (Kling AI, 9:16, 3–60s, MP4 H.264) and publish them to the user's Page Reels feed via the /{page-id}/video_reels endpoint (three-phase resumable upload). Reels are the highest-engagement format on Facebook in 2026 — the single most-requested feature from our customers.",
+      "code_location": "workers/api/src/cron/publish-missed.ts:132 (postReelToFacebookPage), workers/api/src/routes/facebook.ts:77 (pre-flight smoke test at POST /api/test-reel-publish)",
+      "demo_timestamp_in_screencast": "2:45–3:15"
+    }
+  ],
+
+  "helper_scopes_not_requiring_advanced_access": [
+    {
+      "name": "instagram_basic",
+      "why": "Granted automatically with instagram_content_publish — we use it to read the IG Business account ID off the Page (the instagram_business_account field on /me/accounts) so we know which IG user to publish to. No app review needed for this scope."
+    }
+  ],
+
+  "scopes_explicitly_NOT_being_submitted": [
+    {
+      "name": "pages_read_user_content",
+      "currently_in_oauth_fallback_string": true,
+      "currently_in_FLB_configuration": "[VERIFY] check the FLB Configuration on developers.facebook.com",
+      "decision": "REMOVE from both before submitting. We do not actually read user comments or messages — leaving this in the OAuth string risks a rejection on grounds of 'requested scope not demonstrated in use case'.",
+      "action_required": "Before recording: edit src/services/facebookService.ts to remove pages_read_user_content from the classic-mode scope string on line ~56. Also open the FLB Configuration and remove it from the permissions list."
+    },
+    {
+      "name": "read_insights",
+      "why_not": "Our app degrades gracefully when this is not granted — see facebookService.ts:170 (the try/catch around the insights endpoint). pages_read_engagement covers the same use case at the post level. Adding read_insights would expand scope without adding user value."
+    },
+    {
+      "name": "business_management",
+      "why_not": "We don't operate at the Business Manager level. Users connect individual Pages they admin."
+    }
+  ]
+}

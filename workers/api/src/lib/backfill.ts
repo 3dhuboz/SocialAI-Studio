@@ -12,12 +12,16 @@
 // Extracted from src/index.ts as Phase B step 21 of the route-module split.
 
 import type { Env } from '../env';
-import { buildSafeImagePrompt, sniffArchetypeFromCaption } from './image-safety';
+import { buildSafeImagePrompt } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
-import { generateImageWithBrandRefs } from './image-gen';
-import { callAnthropicVision } from './anthropic';
+import { generateImageWithGuardrails } from './image-gen';
 import { loadForbiddenSubjects } from './profile-guards';
+import { callAnthropicVision } from './anthropic';
+import {
+  CRITIQUE_ACCEPT_THRESHOLD,
+  MAX_REGEN_ATTEMPTS,
+} from '../../../../shared/critique-thresholds';
 
 export async function backfillImagesForUser(env: Env, uid: string) {
   const apiKey = env.FAL_API_KEY;
@@ -26,11 +30,25 @@ export async function backfillImagesForUser(env: Env, uid: string) {
   // Find Scheduled posts owned by this user (own + via client) that have a
   // prompt but no URL. Cap at 30 per call so a single backfill can't blow the
   // fal.ai budget.
+  //
+  // 2026-05-16 cost guard: tighten the predicate so an admin/owner can't
+  // accidentally drain FLUX credits on stale or unscheduled rows:
+  //   - status = 'Scheduled' (not Draft) — drafts may never publish; if/when
+  //     the owner schedules them, the prewarm cron / next backfill call
+  //     picks them up at that point.
+  //   - scheduled_for IS NOT NULL — skip rows where the schedule column was
+  //     never written (defensive — Scheduled status implies the column is
+  //     set, but historic data can be inconsistent).
+  //   - scheduled_for > now - 7d — skip very stale Scheduled posts that
+  //     never published. They're either zombie rows or in flight for the
+  //     publish-missed sweep, neither of which warrants a fresh FLUX call.
   const rows = await env.DB.prepare(
     `SELECT p.id, p.image_prompt, p.client_id, p.content
      FROM posts p
      LEFT JOIN clients c ON p.client_id = c.id
      WHERE p.status = 'Scheduled'
+       AND p.scheduled_for IS NOT NULL
+       AND p.scheduled_for > datetime('now', '-7 days')
        AND (p.user_id = ? OR c.user_id = ?)
        AND (p.image_url IS NULL OR p.image_url = '')
        AND p.image_prompt IS NOT NULL
@@ -42,13 +60,6 @@ export async function backfillImagesForUser(env: Env, uid: string) {
   const posts = rows.results || [];
   let succeeded = 0; let failed = 0; let critiqueRetries = 0; const errors: string[] = [];
 
-  // Schema v9: archetype is per-(user OR client). Cache by client_id within
-  // this run so we don't hit the DB once per post for the same workspace.
-  // Same cache key shape is reused for the per-(user, client) denylist —
-  // the lookup is two D1 reads per workspace, cached across the batch.
-  const archetypeCache = new Map<string, string | null>();
-  const denylistCache = new Map<string, string[]>();
-
   for (const post of posts) {
     try {
       const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''));
@@ -58,33 +69,16 @@ export async function backfillImagesForUser(env: Env, uid: string) {
       const clientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
 
-      const cacheKey = clientId || '__user__';
-      if (!archetypeCache.has(cacheKey)) {
-        archetypeCache.set(cacheKey, await resolveArchetypeSlug(env, uid, clientId));
-      }
-      const archetypeSlug = archetypeCache.get(cacheKey) || null;
-      // Owner-declared denylist with per-client tier (CRITICAL #3 from the
-      // audit). Pre-fix this call was hardcoded to uid only, so an agency-
-      // managed client's own forbiddenSubjects was silently ignored at
-      // backfill time even though the prewarm cron honoured it. Now both
-      // tiers are union-ed and threaded through critiqueImageInternal.
-      if (!denylistCache.has(cacheKey)) {
-        denylistCache.set(cacheKey, await loadForbiddenSubjects(env, uid, clientId));
-      }
-      const forbiddenSubjects = denylistCache.get(cacheKey) || [];
-
-      // 2026-05 image-stack upgrade: brand-grounded via FLUX Pro Kontext
-      // when the workspace has scraped FB photos available, FLUX-dev when
-      // it doesn't. See generateImageWithBrandRefs in lib/image-gen.ts.
-      const gen = await generateImageWithBrandRefs(env, uid, clientId, safe, { caption });
+      // Pass caption so sniffArchetypeFromCaption fires for unclassified
+      // workspaces. Reuse archetypeSlug from gen to skip a second DB call.
+      const gen = await generateImageWithGuardrails(env, uid, clientId, safe, { caption });
       let finalUrl = gen.imageUrl;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
-      // Vision-critique gate (mirror of cronPrewarmImages). One retry with a
-      // forced archetype fallback if the first attempt scored ≤3 for
-      // image/caption mismatch. Skipped when caption is empty or
-      // OPENROUTER_API_KEY is missing.
       if (finalUrl && caption.length > 20) {
+        const archetypeSlug = gen.archetypeSlug;
+        const forbiddenSubjects = await loadForbiddenSubjects(env, uid, clientId);
+
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
           caption,
@@ -94,8 +88,8 @@ export async function backfillImagesForUser(env: Env, uid: string) {
         if (critique) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
           finalCritique = critique;
-          if (critique.score <= 3) {
-            const retry = await generateImageWithBrandRefs(env, uid, clientId, safe, { forceFallback: true, caption });
+          if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+            const retry = await generateImageWithGuardrails(env, uid, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
@@ -105,7 +99,13 @@ export async function backfillImagesForUser(env: Env, uid: string) {
                 archetypeSlug,
                 forbiddenSubjects,
               });
-              if (retryCritique) finalCritique = retryCritique;
+              if (retryCritique) {
+                finalCritique = retryCritique;
+              } else {
+                // Re-critique failed — clear stale score so we don't persist
+                // the original bad image's score against the fallback that shipped.
+                finalCritique = null;
+              }
             }
           }
         }
@@ -148,9 +148,17 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 //   while Anthropic times out trying to fetch them.)
 //
 // runBacklogRegen:
-//   Regenerates images for posts that scored ≤ threshold (default 5).
-//   Each successful regen lifts the score, removing the post from future
-//   ticks. Cap 20/tick × FLUX Pro Kontext @ ~$0.04 = $0.80/tick worst case.
+//   Regenerates images for posts that scored < threshold (default 5, so
+//   only scores 0-4 trigger regen — 5 ships as-is per the cost-tightening
+//   on 2026-05-16). Each successful regen lifts the score, removing the
+//   post from future ticks. Cap 20/tick × FLUX Pro Kontext @ ~$0.04 =
+//   $0.80/tick worst case.
+//
+//   2026-05-16 cost cut: status filter narrowed from IN ('Scheduled','Draft')
+//   to status='Scheduled' AND scheduled_for IS NOT NULL AND scheduled_for in
+//   the last 14 days. Drafts may sit forever without publishing — regen'ing
+//   them up front is wasted FLUX spend; the manual backfill endpoint will
+//   pick them up if/when they're scheduled.
 //
 // Both wired into cron/dispatcher.ts on the */5 path. Once the backlog
 // is exhausted the COUNT(*) guards make subsequent ticks free no-ops.
@@ -202,48 +210,44 @@ export async function runBacklogCritique(
   let scored = 0;
   let lowScores = 0;
   let failed = 0;
-  // Cache archetype + denylist lookups within a tick — posts often share a workspace.
+
+  // Pre-resolve archetype + denylist for every unique workspace in the batch.
+  // The previous lazy-fill-inside-loop pattern wasn't concurrency-safe — when
+  // we parallelise the critique loop below, two posts from the same workspace
+  // could race the cache set. Pre-population sidesteps that and also lets us
+  // fire all the DB queries in one Promise.all instead of N serial awaits.
+  const uniqueWorkspaces = Array.from(
+    new Set(posts.map((p) => `${p.user_id}:${p.client_id || '__user__'}`))
+  ).map((key) => {
+    const [user_id, clientPart] = key.split(':');
+    return { key, user_id, client_id: clientPart === '__user__' ? null : clientPart };
+  });
   const archetypeCache = new Map<string, string | null>();
   const denylistCache = new Map<string, string[]>();
+  await Promise.all(uniqueWorkspaces.flatMap((w) => [
+    resolveArchetypeSlug(env, w.user_id, w.client_id).then((s) => archetypeCache.set(w.key, s)),
+    loadForbiddenSubjects(env, w.user_id, w.client_id).then((d) => denylistCache.set(w.key, d)),
+  ]));
 
-  for (const post of posts) {
+  // Concurrent critique — Anthropic Haiku tier easily absorbs 5 in-flight,
+  // and the 300ms pacer that used to live at the end of the loop is gone.
+  // Chunked Promise.all so we never exceed CRITIQUE_CONCURRENCY in flight.
+  const CRITIQUE_CONCURRENCY = 5;
+  const processOne = async (post: { id: string; content: string; client_id: string | null; user_id: string; image_url: string }) => {
     let errorMsg: string | null = null;
     let critique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
     try {
       const cacheKey = `${post.user_id}:${post.client_id || '__user__'}`;
-      if (!archetypeCache.has(cacheKey)) {
-        archetypeCache.set(cacheKey, await resolveArchetypeSlug(env, post.user_id, post.client_id));
-      }
       const archetypeSlug = archetypeCache.get(cacheKey) || null;
-      if (!denylistCache.has(cacheKey)) {
-        denylistCache.set(cacheKey, await loadForbiddenSubjects(env, post.user_id, post.client_id));
-      }
-      const forbiddenSubjects = denylistCache.get(cacheKey) || [];
+      const forbiddenSubjects = denylistCache.get(cacheKey) ?? [];
 
-      // We inline the Anthropic/OpenRouter calls (rather than delegating to
-      // critiqueImageInternal) so each post can stamp the exact provider
-      // error string into image_critique_reasoning — useful for diagnosing
-      // backlog stalls via SELECT instead of `wrangler tail`. The system
-      // prompt comes from the shared builder so the HARD RULES gate matches
-      // the user-initiated path; only the error-capture differs. Denylist
-      // threaded through so backlog rescore picks up the same intra-domain
-      // exclusions as the prewarm path.
+      // Inline Anthropic/OpenRouter calls (vs critiqueImageInternal) so each
+      // post can stamp the exact provider error string into reasoning — useful
+      // for diagnosing backlog stalls via SELECT instead of wrangler tail.
+      // System prompt from shared builder so HARD RULES match the user path.
       const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug, forbiddenSubjects);
       const userPrompt = `Caption that will be published with this image:\n\n"${post.content.slice(0, 800)}"\n\nDoes the image match?`;
-
-      // Strict JSON validator — same rules as critiqueImageInternal. Returns
-      // null if any required field is missing/malformed so we don't synthesize
-      // fake 5/partial defaults that bypass the quality gate.
-      const validateCritique = (raw: any) => {
-        const score = raw?.score;
-        const match = raw?.match;
-        const reasoning = (raw?.reasoning ?? '').toString().trim();
-        if (typeof score !== 'number' || !isFinite(score)) return null;
-        if (!(['yes', 'partial', 'no'] as const).includes(match)) return null;
-        if (!reasoning) return null;
-        return { score: Math.max(0, Math.min(10, score)), match, reasoning: reasoning.slice(0, 300) };
-      };
 
       // Path A: Anthropic direct (only when key is set).
       if (env.ANTHROPIC_API_KEY) {
@@ -259,12 +263,11 @@ export async function runBacklogCritique(
             responseFormat: 'json',
           });
           const parsed = JSON.parse(text);
-          const validated = validateCritique(parsed);
-          if (validated) {
-            critique = validated;
-          } else {
-            errorMsg = `Anthropic: response missing required fields — ${text.slice(0, 180)}`;
-          }
+          critique = {
+            score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
+            match: (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial',
+            reasoning: (parsed.reasoning || '').toString().slice(0, 300),
+          };
         } catch (e: any) {
           errorMsg = `Anthropic: ${(e?.message || 'unknown').slice(0, 180)}`;
         }
@@ -312,13 +315,11 @@ export async function runBacklogCritique(
               .replace(/\s*```$/i, '')
               .trim();
             const parsed = JSON.parse(stripped);
-            const validated = validateCritique(parsed);
-            if (validated) {
-              critique = validated;
-            } else {
-              const orErr = `OpenRouter: response missing required fields — ${stripped.slice(0, 150)}`;
-              errorMsg = errorMsg ? `${errorMsg} | ${orErr}` : orErr;
-            }
+            critique = {
+              score: typeof parsed.score === 'number' ? Math.max(0, Math.min(10, parsed.score)) : 5,
+              match: (['yes', 'partial', 'no'] as const).includes(parsed.match) ? parsed.match : 'partial',
+              reasoning: (parsed.reasoning || '').toString().slice(0, 300),
+            };
           }
         } catch (e: any) {
           const orErr = `OpenRouter threw: ${(e?.message || 'unknown').slice(0, 150)}`;
@@ -356,25 +357,22 @@ export async function runBacklogCritique(
       } catch { /* logging is best-effort */ }
       failed++;
     }
-    // Pace Anthropic — 300ms between calls. 20 posts × 300ms = 6s.
-    await new Promise(r => setTimeout(r, 300));
+  };
+
+  for (let i = 0; i < posts.length; i += CRITIQUE_CONCURRENCY) {
+    await Promise.all(posts.slice(i, i + CRITIQUE_CONCURRENCY).map(processOne));
   }
 
   return { found: posts.length, scored, low_scores: lowScores, failed };
 }
 
-// Max FLUX regen attempts per post. After this many tries, the post is
-// excluded from the regen queue and (if its scheduled_for arrives without
-// the score recovering) gets marked Missed by the publish-time quality
-// guard in cron/publish-missed.ts. Without a cap, a post whose caption is
-// hard for FLUX to render concretely (abstract wellness/coaching prompts
-// where FLUX defaults to generic stock-photo aesthetics) would loop
-// forever at ~$0.04/regen × 12 ticks/hour = ~$1/hour until publish.
-const MAX_REGEN_ATTEMPTS = 3;
+// MAX_REGEN_ATTEMPTS is imported from shared/critique-thresholds.ts (single
+// source of truth shared with the publish-time quality guard in
+// cron/publish-missed.ts and the gen-time critique in cron/prewarm-images.ts).
 
 export async function runBacklogRegen(
   env: Env,
-  threshold: number = 5,
+  threshold: number = CRITIQUE_ACCEPT_THRESHOLD,
 ): Promise<{ skipped?: boolean; found: number; regenerated: number; failed: number }> {
   if (!env.FAL_API_KEY) {
     return { skipped: true, found: 0, regenerated: 0, failed: 0 };
@@ -382,12 +380,26 @@ export async function runBacklogRegen(
   // Cheap gate. Excludes posts that have exhausted their regen budget so
   // the COUNT goes to 0 once the workable backlog is drained — keeps this
   // a free no-op on most ticks.
+  //
+  // 2026-05-16 cost cut:
+  //   1. score < ? (not <=) — score=5 is "partial but on-brand" per the
+  //      critique rubric; empirical retries rarely improve it, so we ship
+  //      it instead of burning ~$0.04 FLUX + $0.003 critique per attempt.
+  //   2. status='Scheduled' AND scheduled_for IS NOT NULL — Drafts excluded
+  //      because they may never publish. A stale draft sitting in the DB
+  //      with a low critique score would otherwise loop through the regen
+  //      pipeline every 5 min until image_regen_count hit MAX_REGEN_ATTEMPTS.
+  //   3. scheduled_for > now - 14d — stale scheduled posts (e.g. someone
+  //      bulk-scheduled then forgot, then the auto-publish-missed sweep
+  //      gave up on them) shouldn't keep draining credits either.
   const pending = await env.DB.prepare(
     `SELECT COUNT(*) as n FROM posts
      WHERE image_critique_score IS NOT NULL
-       AND image_critique_score <= ?
+       AND image_critique_score < ?
        AND image_prompt IS NOT NULL AND image_prompt != ''
-       AND status IN ('Scheduled', 'Draft')
+       AND status = 'Scheduled'
+       AND scheduled_for IS NOT NULL
+       AND scheduled_for > datetime('now', '-14 days')
        AND COALESCE(image_regen_count, 0) < ?`
   ).bind(threshold, MAX_REGEN_ATTEMPTS).first<{ n: number }>();
   if (!pending || pending.n === 0) return { skipped: true, found: 0, regenerated: 0, failed: 0 };
@@ -397,9 +409,11 @@ export async function runBacklogRegen(
     `SELECT id, content, image_prompt, client_id, user_id, image_critique_score
      FROM posts
      WHERE image_critique_score IS NOT NULL
-       AND image_critique_score <= ?
+       AND image_critique_score < ?
        AND image_prompt IS NOT NULL AND image_prompt != ''
-       AND status IN ('Scheduled', 'Draft')
+       AND status = 'Scheduled'
+       AND scheduled_for IS NOT NULL
+       AND scheduled_for > datetime('now', '-14 days')
        AND COALESCE(image_regen_count, 0) < ?
      ORDER BY image_critique_score ASC, scheduled_for ASC
      LIMIT ?`
@@ -411,6 +425,10 @@ export async function runBacklogRegen(
   const posts = rows.results || [];
   let regenerated = 0;
   let failed = 0;
+  // Cache denylist lookups within a tick — posts often share a workspace,
+  // and loadForbiddenSubjects is two D1 queries (user + client). Mirrors
+  // the cache pattern in runBacklogCritique.
+  const denylistCache = new Map<string, string[]>();
 
   for (const post of posts) {
     // Bump regen_count up front so a mid-loop throw or transient FAL
@@ -424,22 +442,23 @@ export async function runBacklogRegen(
       const safe = buildSafeImagePrompt(post.image_prompt);
       if (!safe) { failed++; continue; }
 
-      const gen = await generateImageWithBrandRefs(
+      const gen = await generateImageWithGuardrails(
         env, post.user_id, post.client_id, safe, { forceFallback: true, caption: post.content },
       );
       if (!gen.imageUrl) { failed++; continue; }
 
-      // Re-critique so the new score persists. Same archetype-sniff fallback
-      // as prewarm: DB → caption sniff → null. Forbidden subjects threaded
-      // through so the regen verdict is held to the same intra-domain rule
-      // as the prewarm-time critique.
-      let archetypeSlug = await resolveArchetypeSlug(env, post.user_id, post.client_id);
-      if (!archetypeSlug) archetypeSlug = sniffArchetypeFromCaption(post.content);
-      const forbiddenSubjects = await loadForbiddenSubjects(env, post.user_id, post.client_id);
+      // Reuse archetypeSlug from gen (already resolved + caption-sniffed)
+      // and load the owner denylist so the critique catches intra-domain
+      // exclusions (e.g. pork on a brisket-only BBQ).
+      const cacheKey = `${post.user_id}:${post.client_id || '__user__'}`;
+      if (!denylistCache.has(cacheKey)) {
+        denylistCache.set(cacheKey, await loadForbiddenSubjects(env, post.user_id, post.client_id));
+      }
+      const forbiddenSubjects = denylistCache.get(cacheKey) ?? [];
       const critique = await critiqueImageInternal(env, {
         imageUrl: gen.imageUrl,
         caption: post.content,
-        archetypeSlug,
+        archetypeSlug: gen.archetypeSlug,
         forbiddenSubjects,
       });
 
