@@ -30,6 +30,12 @@ import {
   sniffArchetypeFromCaption,
 } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
+import { logAiUsage } from './ai-usage';
+
+// Per-model rough cost estimates for ai_usage logging. Refined when the
+// fal.ai invoice settles each month — these are the published per-MP rates
+// for square_hd outputs at the steps/guidance defaults used here.
+const FLUX_DEV_COST_USD = 0.025;
 
 // When `forceFallback` is true, skip the LLM-generated prompt entirely and
 // pick a guaranteed-safe scene from the archetype's fallback bank. Used by
@@ -105,7 +111,34 @@ export async function generateImageWithGuardrails(
   const data = await res.json() as any;
   if (!res.ok) {
     console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
+    // Log the failed call too — useful for understanding which prompt
+    // patterns trigger fal.ai 4xx/5xx responses.
+    try {
+      await logAiUsage(env, {
+        userId,
+        clientId,
+        provider: 'fal',
+        model: 'flux-dev',
+        operation: 'image-gen',
+        imagesGenerated: 0,
+        estCostUsd: 0,
+        ok: false,
+      });
+    } catch { /* never let logging break image gen */ }
     return { imageUrl: null, modelUsed: 'flux-dev', archetypeSlug };
   }
-  return { imageUrl: data?.images?.[0]?.url || null, modelUsed: 'flux-dev', archetypeSlug };
+  const imageUrl = data?.images?.[0]?.url || null;
+  try {
+    await logAiUsage(env, {
+      userId,
+      clientId,
+      provider: 'fal',
+      model: 'flux-dev',
+      operation: 'image-gen',
+      imagesGenerated: imageUrl ? 1 : 0,
+      estCostUsd: imageUrl ? FLUX_DEV_COST_USD : 0,
+      ok: !!imageUrl,
+    });
+  } catch { /* never let logging break image gen */ }
+  return { imageUrl, modelUsed: 'flux-dev', archetypeSlug };
 }

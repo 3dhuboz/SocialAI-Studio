@@ -82,15 +82,12 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
     // user.email (or the row.id must equal uid — the by-uid bootstrap path).
     const id = c.req.param('id');
     const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
-    const callerEmail = me?.email ?? null;
-    // Consume ONLY when the row's email or id matches the caller — stops a
-    // logged-in user from marking another user's pending row consumed
-    // (which would deny that user their plan upgrade prompt).
-    const result = await c.env.DB.prepare(
-      `UPDATE pending_activations SET consumed = 1
-       WHERE id = ? AND (id = ? OR email = ?)`
-    ).bind(id, uid, callerEmail ?? '').run();
-    if ((result.meta?.changes ?? 0) === 0) return c.json({ error: 'Forbidden or not found' }, 403);
+    const row = await c.env.DB.prepare('SELECT id, email FROM pending_activations WHERE id = ?').bind(id).first<{ id: string; email: string | null }>();
+    if (!row) return c.json({ error: 'Not found' }, 404);
+    const matchesUid = row.id === uid;
+    const matchesEmail = !!me?.email && !!row.email && (me.email as string).toLowerCase() === (row.email as string).toLowerCase();
+    if (!matchesUid && !matchesEmail) return c.json({ error: 'Not found' }, 404);
+    await c.env.DB.prepare('UPDATE pending_activations SET consumed = 1 WHERE id = ?').bind(id).run();
     return c.json({ ok: true });
   });
 

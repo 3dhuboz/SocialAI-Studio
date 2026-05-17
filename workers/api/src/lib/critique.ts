@@ -22,6 +22,13 @@
 
 import type { Env } from '../env';
 import { callAnthropicVision } from './anthropic';
+import { logAiUsage } from './ai-usage';
+
+// Rough per-call cost estimate for ai_usage logging — refined when the
+// Anthropic / OpenRouter invoice settles. Critique runs on Haiku 4.5
+// vision at temp 0.1, 250 max tokens, with a ~1.5KB system prompt — so
+// most calls land in the $0.002–$0.004 range.
+const CRITIQUE_COST_USD = 0.003;
 
 // Shared system prompt for vision-grounded image+caption critique. Exported
 // so direct-path callers (e.g. lib/backfill.ts runBacklogCritique, which
@@ -131,13 +138,20 @@ export async function critiqueImageInternal(
      *  Passed through to buildCritiqueSystemPrompt as the intra-domain HARD
      *  RULE that fails any image visibly containing a banned subject. */
     forbiddenSubjects?: string[];
+    /** Optional metering context. When set, the ai_usage log row attributes
+     *  spend to this workspace/post. All optional — omitting them still
+     *  records the call against the (provider, model, operation) bucket
+     *  but without per-tenant attribution. */
+    userId?: string | null;
+    clientId?: string | null;
+    postId?: string | null;
   },
 ): Promise<{ score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null> {
   // Need at least one provider key — Anthropic direct preferred, OpenRouter
   // as fallback. Return null if neither is set so the caller ships the
   // image untouched instead of blocking the publish pipeline.
   if (!env.ANTHROPIC_API_KEY && !env.OPENROUTER_API_KEY) return null;
-  const { imageUrl, caption, archetypeSlug, forbiddenSubjects } = params;
+  const { imageUrl, caption, archetypeSlug, forbiddenSubjects, userId, clientId, postId } = params;
   // businessType param kept on the type for backward compat with HTTP callers
   // but no longer used — when archetypeSlug is null the system prompt
   // instructs the vision model to derive business type from the caption
@@ -147,6 +161,11 @@ export async function critiqueImageInternal(
 
   const userPrompt = `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?`;
   let raw = '';
+  // Which provider we ultimately consumed credits from — used for the
+  // ai_usage row at the end. 'anthropic' wins if Anthropic direct returned
+  // a non-empty body; 'openrouter' wins if we fell through; null means
+  // both upstreams failed and we'll log with ok=false.
+  let providerUsed: 'anthropic' | 'openrouter' | null = null;
 
   // Path A — Anthropic direct (preferred when key is set). Same Haiku 4.5
   // model, native vision API, no OpenRouter intermediary.
@@ -163,6 +182,7 @@ export async function critiqueImageInternal(
         responseFormat: 'json',
       });
       raw = text;
+      if (raw) providerUsed = 'anthropic';
     } catch (e: any) {
       // Network/auth glitch on Anthropic — log and fall through to
       // OpenRouter so we don't lose the critique entirely. The OpenRouter
@@ -200,16 +220,41 @@ export async function critiqueImageInternal(
     });
     if (!orRes.ok) {
       console.warn(`[critique] OpenRouter HTTP ${orRes.status} — skipping`);
+      try {
+        await logAiUsage(env, {
+          userId, clientId, postId,
+          provider: 'openrouter',
+          model: 'anthropic/claude-haiku-4.5',
+          operation: 'critique',
+          estCostUsd: 0,
+          ok: false,
+        });
+      } catch { /* never let logging break critique */ }
       return null;
     }
     const orJson = await orRes.json() as any;
     raw = orJson.choices?.[0]?.message?.content || '';
+    if (raw) providerUsed = 'openrouter';
   } catch (e: any) {
     console.warn(`[critique] OpenRouter call failed: ${e?.message}`);
+    try {
+      await logAiUsage(env, {
+        userId, clientId, postId,
+        provider: 'openrouter',
+        model: 'anthropic/claude-haiku-4.5',
+        operation: 'critique',
+        estCostUsd: 0,
+        ok: false,
+      });
+    } catch { /* never let logging break critique */ }
     return null;
   }
 
-  if (!raw) return null;
+  if (!raw) {
+    // Both upstreams returned empty. Already logged failures above where
+    // they happened; nothing more to record here.
+    return null;
+  }
 
   // Strip ```json / ``` fences — OpenRouter+Haiku occasionally wraps the
   // structured-output JSON in a markdown code block despite the
@@ -250,6 +295,20 @@ export async function critiqueImageInternal(
       console.warn(`[critique] response missing reasoning — treating as no critique: ${stripped.slice(0, 200)}`);
       return null;
     }
+    // Successful critique — record the call against the provider that
+    // actually answered. providerUsed=null shouldn't reach here because
+    // an empty raw returns null above; defensive `?? 'anthropic'` keeps
+    // the type system happy.
+    try {
+      await logAiUsage(env, {
+        userId, clientId, postId,
+        provider: providerUsed ?? 'anthropic',
+        model: providerUsed === 'openrouter' ? 'anthropic/claude-haiku-4.5' : 'claude-haiku-4-5',
+        operation: 'critique',
+        estCostUsd: CRITIQUE_COST_USD,
+        ok: true,
+      });
+    } catch { /* never let logging break critique */ }
     return {
       score: Math.max(0, Math.min(10, score)),
       match,
@@ -257,6 +316,18 @@ export async function critiqueImageInternal(
     };
   } catch (e: any) {
     console.warn(`[critique] failed to parse: ${e?.message || e} — raw: ${stripped.slice(0, 200)}`);
+    try {
+      await logAiUsage(env, {
+        userId, clientId, postId,
+        provider: providerUsed ?? 'anthropic',
+        model: providerUsed === 'openrouter' ? 'anthropic/claude-haiku-4.5' : 'claude-haiku-4-5',
+        operation: 'critique',
+        // Cost was incurred even though we couldn't parse the response —
+        // record full cost with ok=false so the spend tally is honest.
+        estCostUsd: CRITIQUE_COST_USD,
+        ok: false,
+      });
+    } catch { /* never let logging break critique */ }
     return null;
   }
 }

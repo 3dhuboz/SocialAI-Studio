@@ -115,8 +115,8 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
         console.log(`[CRON prewarm] post ${postId} critique score=${critique.score} match=${critique.match} — ${critique.reasoning}`);
         finalCritique = critique;
 
-        if (critique.score <= CRITIQUE_ACCEPT_THRESHOLD) {
-          console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} ≤ ${CRITIQUE_ACCEPT_THRESHOLD})`);
+        if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+          console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} < ${CRITIQUE_ACCEPT_THRESHOLD})`);
           const retry = await generateImageWithGuardrails(env, userId, clientId, safe, { forceFallback: true, caption });
           if (retry.imageUrl) {
             finalUrl = retry.imageUrl;

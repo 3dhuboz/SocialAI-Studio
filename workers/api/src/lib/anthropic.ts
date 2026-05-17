@@ -4,6 +4,82 @@
 // (see WORKER_SPLIT_PLAN.md). Pure functions, no Env access — callers pass
 // the API key directly. That means these can be unit-tested without a
 // Cloudflare runtime.
+//
+// 2026-05-16 cost-attribution update: each helper now accepts an optional
+// `metering` arg carrying `env` + (userId, clientId, postId, operation).
+// When set, the helper fires a fire-and-forget ai_usage row recording
+// model + token usage + estimated cost against the workspace. The arg is
+// optional so existing callers (post-quality, ai, campaign-research,
+// weekly-review) keep compiling unchanged; opt in by passing { env, ... }.
+// Logging is wrapped in try/catch so a D1 failure never propagates.
+
+import type { Env } from '../env';
+import { logAiUsage, type AiUsageRow } from './ai-usage';
+
+// Per-model cost coefficients (USD per 1M tokens). Haiku 4.5 is the
+// default vision/text model; the Sonnet/Opus paths in lib/campaign-research
+// pay more — callers override via the `metering.estCostUsd` field when
+// they want to record an explicit number instead of trusting the lookup.
+const ANTHROPIC_PRICING_USD_PER_M: Record<string, { in: number; out: number }> = {
+  'claude-haiku-4-5': { in: 1.0, out: 5.0 },
+  'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
+};
+
+function estimateAnthropicCost(model: string, usage: any): number {
+  const p = ANTHROPIC_PRICING_USD_PER_M[model] || ANTHROPIC_PRICING_USD_PER_M['claude-haiku-4-5'];
+  const tokensIn = Number(usage?.input_tokens ?? 0)
+    + Number(usage?.cache_creation_input_tokens ?? 0)
+    + Number(usage?.cache_read_input_tokens ?? 0) * 0.1; // cache reads are 10% list
+  const tokensOut = Number(usage?.output_tokens ?? 0);
+  return (tokensIn * p.in + tokensOut * p.out) / 1_000_000;
+}
+
+/** Optional metering context for Anthropic helper calls. Callers that pass
+ *  this object get an ai_usage row written automatically on success/failure.
+ *  Pass-through only — the helper does not interpret beyond logging. */
+export type AnthropicMetering = {
+  env: Env;
+  userId?: string | null;
+  clientId?: string | null;
+  postId?: string | null;
+  /** What this call is for — 'caption', 'campaign-research', 'score-post',
+   *  etc. Recorded as ai_usage.operation. */
+  operation: string;
+  /** Override the per-model price lookup. Useful for paths with known
+   *  fixed-cost ceilings (e.g. critique fixed at $0.003) where the token
+   *  arithmetic isn't worth the noise. */
+  estCostUsdOverride?: number;
+};
+
+async function logAnthropicCall(
+  metering: AnthropicMetering | undefined,
+  model: string,
+  usage: any,
+  ok: boolean,
+): Promise<void> {
+  if (!metering) return;
+  try {
+    const row: AiUsageRow = {
+      userId: metering.userId ?? null,
+      clientId: metering.clientId ?? null,
+      postId: metering.postId ?? null,
+      provider: 'anthropic',
+      model,
+      operation: metering.operation,
+      tokensIn: usage?.input_tokens != null
+        ? Number(usage.input_tokens)
+          + Number(usage?.cache_creation_input_tokens ?? 0)
+          + Number(usage?.cache_read_input_tokens ?? 0)
+        : undefined,
+      tokensOut: usage?.output_tokens != null ? Number(usage.output_tokens) : undefined,
+      estCostUsd: metering.estCostUsdOverride ?? estimateAnthropicCost(model, usage ?? {}),
+      ok,
+    };
+    await logAiUsage(metering.env, row);
+  } catch (e: any) {
+    console.warn(`[anthropic-meter] log failed: ${e?.message || e}`);
+  }
+}
 
 // ── Anthropic direct call helper (2026-05 stack upgrade) ─────────────────
 //
@@ -32,8 +108,12 @@ export async function callAnthropicDirect(opts: {
   temperature: number;
   maxTokens: number;
   responseFormat: 'json' | 'text';
+  /** Optional metering context. When set, the call is recorded in
+   *  ai_usage with provider='anthropic' + the supplied operation name.
+   *  Existing callers can omit this and get the pre-2026-05-16 behaviour. */
+  metering?: AnthropicMetering;
 }): Promise<{ text: string; usage: any }> {
-  const { apiKey, model, systemPrompt, cachedPrefix, prompt, temperature, maxTokens, responseFormat } = opts;
+  const { apiKey, model, systemPrompt, cachedPrefix, prompt, temperature, maxTokens, responseFormat, metering } = opts;
 
   // Build messages array — Anthropic format puts system as a top-level field,
   // not a message. Cached prefix lives in a content block on the user message
@@ -85,11 +165,16 @@ export async function callAnthropicDirect(opts: {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
+    // Log the failure before throwing so cost-attribution still captures
+    // upstream errors (rate limits, auth, 5xx) that we want to track but
+    // can't bill for.
+    await logAnthropicCall(metering, model, {}, false);
     throw new Error(`Anthropic ${res.status}: ${errText.slice(0, 300)}`);
   }
 
   const data = await res.json() as any;
   const text = (data?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+  await logAnthropicCall(metering, model, data?.usage, true);
   return { text, usage: data?.usage || {} };
 }
 
@@ -114,8 +199,13 @@ export async function callAnthropicVision(opts: {
   temperature: number;
   maxTokens: number;
   responseFormat: 'json' | 'text';
+  /** Optional metering context. When set, the call is recorded in
+   *  ai_usage with provider='anthropic' + operation. Critique callers
+   *  (lib/critique) do their own logging at a higher level to capture the
+   *  OpenRouter fallback path too, so they leave this undefined. */
+  metering?: AnthropicMetering;
 }): Promise<{ text: string; usage: any }> {
-  const { apiKey, model, systemPrompt, prompt, imageUrl, temperature, maxTokens, responseFormat } = opts;
+  const { apiKey, model, systemPrompt, prompt, imageUrl, temperature, maxTokens, responseFormat, metering } = opts;
 
   // For JSON mode: same instruction-append idiom as callAnthropicDirect.
   // Haiku 4.5 honours this reliably at temp ≤ 0.2.
@@ -149,11 +239,13 @@ export async function callAnthropicVision(opts: {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
+    await logAnthropicCall(metering, model, {}, false);
     throw new Error(`Anthropic vision ${res.status}: ${errText.slice(0, 300)}`);
   }
 
   const data = await res.json() as any;
   const text = (data?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+  await logAnthropicCall(metering, model, data?.usage, true);
   return { text, usage: data?.usage || {} };
 }
 

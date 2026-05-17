@@ -30,11 +30,25 @@ export async function backfillImagesForUser(env: Env, uid: string) {
   // Find Scheduled posts owned by this user (own + via client) that have a
   // prompt but no URL. Cap at 30 per call so a single backfill can't blow the
   // fal.ai budget.
+  //
+  // 2026-05-16 cost guard: tighten the predicate so an admin/owner can't
+  // accidentally drain FLUX credits on stale or unscheduled rows:
+  //   - status = 'Scheduled' (not Draft) — drafts may never publish; if/when
+  //     the owner schedules them, the prewarm cron / next backfill call
+  //     picks them up at that point.
+  //   - scheduled_for IS NOT NULL — skip rows where the schedule column was
+  //     never written (defensive — Scheduled status implies the column is
+  //     set, but historic data can be inconsistent).
+  //   - scheduled_for > now - 7d — skip very stale Scheduled posts that
+  //     never published. They're either zombie rows or in flight for the
+  //     publish-missed sweep, neither of which warrants a fresh FLUX call.
   const rows = await env.DB.prepare(
     `SELECT p.id, p.image_prompt, p.client_id, p.content
      FROM posts p
      LEFT JOIN clients c ON p.client_id = c.id
      WHERE p.status = 'Scheduled'
+       AND p.scheduled_for IS NOT NULL
+       AND p.scheduled_for > datetime('now', '-7 days')
        AND (p.user_id = ? OR c.user_id = ?)
        AND (p.image_url IS NULL OR p.image_url = '')
        AND p.image_prompt IS NOT NULL
@@ -74,7 +88,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
         if (critique) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
           finalCritique = critique;
-          if (critique.score <= CRITIQUE_ACCEPT_THRESHOLD) {
+          if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
             const retry = await generateImageWithGuardrails(env, uid, clientId, safe, { forceFallback: true, caption });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
@@ -134,9 +148,17 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 //   while Anthropic times out trying to fetch them.)
 //
 // runBacklogRegen:
-//   Regenerates images for posts that scored ≤ threshold (default 5).
-//   Each successful regen lifts the score, removing the post from future
-//   ticks. Cap 20/tick × FLUX-dev @ ~$0.03 = $0.60/tick worst case.
+//   Regenerates images for posts that scored < threshold (default 5, so
+//   only scores 0-4 trigger regen — 5 ships as-is per the cost-tightening
+//   on 2026-05-16). Each successful regen lifts the score, removing the
+//   post from future ticks. Cap 20/tick × FLUX Pro Kontext @ ~$0.04 =
+//   $0.80/tick worst case.
+//
+//   2026-05-16 cost cut: status filter narrowed from IN ('Scheduled','Draft')
+//   to status='Scheduled' AND scheduled_for IS NOT NULL AND scheduled_for in
+//   the last 14 days. Drafts may sit forever without publishing — regen'ing
+//   them up front is wasted FLUX spend; the manual backfill endpoint will
+//   pick them up if/when they're scheduled.
 //
 // Both wired into cron/dispatcher.ts on the */5 path. Once the backlog
 // is exhausted the COUNT(*) guards make subsequent ticks free no-ops.
@@ -358,12 +380,26 @@ export async function runBacklogRegen(
   // Cheap gate. Excludes posts that have exhausted their regen budget so
   // the COUNT goes to 0 once the workable backlog is drained — keeps this
   // a free no-op on most ticks.
+  //
+  // 2026-05-16 cost cut:
+  //   1. score < ? (not <=) — score=5 is "partial but on-brand" per the
+  //      critique rubric; empirical retries rarely improve it, so we ship
+  //      it instead of burning ~$0.04 FLUX + $0.003 critique per attempt.
+  //   2. status='Scheduled' AND scheduled_for IS NOT NULL — Drafts excluded
+  //      because they may never publish. A stale draft sitting in the DB
+  //      with a low critique score would otherwise loop through the regen
+  //      pipeline every 5 min until image_regen_count hit MAX_REGEN_ATTEMPTS.
+  //   3. scheduled_for > now - 14d — stale scheduled posts (e.g. someone
+  //      bulk-scheduled then forgot, then the auto-publish-missed sweep
+  //      gave up on them) shouldn't keep draining credits either.
   const pending = await env.DB.prepare(
     `SELECT COUNT(*) as n FROM posts
      WHERE image_critique_score IS NOT NULL
-       AND image_critique_score <= ?
+       AND image_critique_score < ?
        AND image_prompt IS NOT NULL AND image_prompt != ''
-       AND status IN ('Scheduled', 'Draft')
+       AND status = 'Scheduled'
+       AND scheduled_for IS NOT NULL
+       AND scheduled_for > datetime('now', '-14 days')
        AND COALESCE(image_regen_count, 0) < ?`
   ).bind(threshold, MAX_REGEN_ATTEMPTS).first<{ n: number }>();
   if (!pending || pending.n === 0) return { skipped: true, found: 0, regenerated: 0, failed: 0 };
@@ -373,9 +409,11 @@ export async function runBacklogRegen(
     `SELECT id, content, image_prompt, client_id, user_id, image_critique_score
      FROM posts
      WHERE image_critique_score IS NOT NULL
-       AND image_critique_score <= ?
+       AND image_critique_score < ?
        AND image_prompt IS NOT NULL AND image_prompt != ''
-       AND status IN ('Scheduled', 'Draft')
+       AND status = 'Scheduled'
+       AND scheduled_for IS NOT NULL
+       AND scheduled_for > datetime('now', '-14 days')
        AND COALESCE(image_regen_count, 0) < ?
      ORDER BY image_critique_score ASC, scheduled_for ASC
      LIMIT ?`
