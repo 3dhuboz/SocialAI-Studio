@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "wrangler dev --port 8787",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@clerk/backend": "^3.2.0",
@@ -14,6 +15,10 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241022.0",
     "typescript": "^5.5.4",
+    "vitest": "^4.1.6",
     "wrangler": "^3.78.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.0"
   }
 }

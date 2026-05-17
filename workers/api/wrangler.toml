@@ -78,10 +78,14 @@ bucket_name = "socialai-posters"
 # index_name = "archetypes"
 
 # Cron triggers:
-# */5 * * * *   — prewarm videos + publish missed posts (every 5 min)
+# */5 * * * *   — prewarm images + prewarm videos + publish missed posts.
+#                  Latency-sensitive lane only.
+# 0 */6 * * *   — backlog critique + backlog regen + fal.ai credits check.
+#                  "Catch up later" lane. Throttled from */5 → every 6h to
+#                  cap worst-case FLUX Pro Kontext spend (was $9.60/hr at
+#                  */5 cadence; now $0.80 × 4 ticks/day worst case).
 # 0 3 * * *    — refresh Facebook tokens (daily 3am UTC)
 # 0 4 * * *    — refresh client_facts from connected FB Pages (daily 4am UTC)
-# 0 */6 * * *  — check fal.ai credits (every 6 hours)
 # 0 21 * * SUN  — Autonomous Weekly Review (Monday 7am AEST = Sun 21:00 UTC).
 #                 CF cron parser rejects "0" for day-of-week — use "SUN".
 [triggers]

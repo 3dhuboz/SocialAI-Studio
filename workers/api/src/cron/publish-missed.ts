@@ -18,10 +18,12 @@
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 import { sendResendEmail } from '../lib/email';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
+import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
+import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
 // Translate raw FB Graph errors into a human sentence the user can act on.
 // Keep originals for debugging — but the version we put in posts.reasoning
@@ -120,16 +122,28 @@ async function notifyOwnerOnPublishFailure(
   }
 }
 
-// ── Facebook Page Reels publishing ──────────────────────────────────────────
-// Three-phase resumable upload: start → transfer (FB pulls from file_url) →
-// finish/publish. Runs only inside the publish cron — never exposed as an HTTP
-// route. Mirrors the existing IG postReelToInstagram pattern in
-// src/services/facebookService.ts so error shapes are consistent.
+// ── Facebook Page Reels publishing — KICK phase ─────────────────────────────
+// Audit P0 (Hono/Workers lane, 2026-05) — was previously a 4-phase blocking
+// function that polled FB for up to 180s per post serially inside the publish
+// cron's hot loop. With 20 posts per claim × 180s, the cron blew its 30s CPU
+// budget on the first slow IG response and got killed mid-batch, silently
+// dropping posts.
+//
+// Now split into kickFacebookReelUpload (this function, ~3-5s, runs inside
+// the publish cron) and the new cron/poll-pending-reels.ts (polls FB status
+// + runs the finish phase, owned by a separate */5 tick, 10s tick budget).
+// Pattern mirrors cron/prewarm-videos.ts's kick-then-poll architecture for
+// Kling i2v.
+//
+// Persists the FB-issued video_id to posts.fb_video_id (schema_v17) so the
+// poll cron has a handle for status fetches and the finish phase. The post
+// row stays in status='Publishing' with fb_publish_state='kicked' until the
+// poll cron resolves it to 'done' or 'failed'.
 //
 // Permissions: pages_manage_posts + publish_video (already in OAuth scope).
 // Reel requirements: 9:16 aspect, 3-90s, H.264, MP4. Kling at aspect_ratio:'9:16'
 // satisfies all of these.
-async function postReelToFacebookPage(
+async function kickFacebookReelUpload(
   pageId: string,
   pageAccessToken: string,
   description: string,
@@ -164,37 +178,9 @@ async function postReelToFacebookPage(
   if (transferData.error) throw new Error(`FB reel transfer: ${transferData.error.message}`);
   if (transferData.success === false) throw new Error('FB reel transfer: hosted-URL fetch failed');
 
-  // Phase 3 — poll until video processing completes (typically 30-120s).
-  const maxWait = 180_000;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < maxWait) {
-    const statusRes = await fetch(
-      `${base}/${videoId}?fields=status&access_token=${encodeURIComponent(pageAccessToken)}`,
-    );
-    const statusData = await statusRes.json() as any;
-    const uploadingPhase = statusData.status?.uploading_phase?.status;
-    const processingPhase = statusData.status?.processing_phase?.status;
-    if (uploadingPhase === 'error' || processingPhase === 'error') {
-      const errMsg =
-        statusData.status?.uploading_phase?.errors?.[0]?.message
-        || statusData.status?.processing_phase?.errors?.[0]?.message
-        || 'unknown FB processing error';
-      throw new Error(`FB reel processing failed: ${errMsg}`);
-    }
-    if (statusData.status?.video_status === 'ready' || uploadingPhase === 'complete') break;
-    await new Promise(r => setTimeout(r, 5000));
-  }
-
-  // Phase 4 — finish: flip the reel to PUBLISHED with the caption.
-  const finishUrl =
-    `${base}/${pageId}/video_reels`
-    + `?upload_phase=finish&video_id=${encodeURIComponent(videoId)}`
-    + `&video_state=PUBLISHED&description=${encodeURIComponent(description)}`
-    + `&access_token=${encodeURIComponent(pageAccessToken)}`;
-  const finishRes = await fetch(finishUrl, { method: 'POST' });
-  const finishData = await finishRes.json() as any;
-  if (finishData.error) throw new Error(`FB reel publish: ${finishData.error.message}`);
-  if (finishData.success === false) throw new Error('FB reel publish: finish phase rejected');
+  // Done — FB now has the bytes (or knows where to pull them from). The poll
+  // cron owns Phase 3 (status poll) and Phase 4 (finish). Return the video_id
+  // so the caller can persist it to posts.fb_video_id for handoff.
   return videoId;
 }
 
@@ -204,12 +190,30 @@ async function postReelToFacebookPage(
 // are marked Missed instead of claimed for publish. Prevents shipping the
 // "generic gradient on a wellness post" failure mode we observed live —
 // the regen loop catches it but if FLUX can't produce a better image after
-// 3 tries, blocking is safer than publishing a known-bad image.
+// MAX_REGEN_ATTEMPTS tries, blocking is safer than publishing a known-bad
+// image. Note: this guard threshold (3) is intentionally HARDER than the
+// generic regen accept threshold (CRITIQUE_ACCEPT_THRESHOLD=5) — we'd
+// rather publish a score-4 image than mark every score-4 post Missed.
 const QUALITY_GUARD_THRESHOLD = 3;
 
 export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
+
+  // ── Early bail-out ──────────────────────────────────────────────────────
+  // Audit P0 (2026-05): the publish cron used to do an unconditional zombie
+  // sweep + quality-guard sweep + claim attempt on every */5 tick even when
+  // there was nothing to publish. With most workspaces having 0 posts due in
+  // a given 5-min window, the typical tick wastes 3+ DB writes for nothing.
+  // Single cheap COUNT(*) gate — when 0, return immediately and skip the
+  // entire heavy claim sweep.
+  const dueCheck = await env.DB.prepare(
+    `SELECT COUNT(*) as c FROM posts
+     WHERE status IN ('Scheduled', 'Publishing') AND scheduled_for <= ?`
+  ).bind(nowAEST).first<{ c: number }>();
+  if (!dueCheck || dueCheck.c === 0) {
+    return { posts_processed: 0 };
+  }
 
   // Clean up zombie Publishing posts — only if they've been stuck for >10 min
   // (previous code reset ALL Publishing posts every 5-min cron tick, which
@@ -227,6 +231,11 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // exists on every claimed row (set in the UPDATE below, schema v7).
   // Rows with NULL claim_at (legacy pre-v7) fall through to the old
   // scheduled_for check so we don't strand them.
+  //
+  // Reel kick handoff (schema_v17, 2026-05): rows with fb_publish_state IN
+  // ('kicked', 'polling') are mid-transfer to FB and owned by the poll cron
+  // — exclude them from the zombie sweep. The poll cron has its own 8-min
+  // stale-kick guard so a hung FB upload won't pin Publishing forever.
   const tenMinAgoUtc = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const tenMinAgo = new Date(Date.now() + 10 * 60 * 60 * 1000 - 10 * 60 * 1000).toISOString().replace('Z', '');
   await env.DB.prepare(
@@ -235,7 +244,8 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
          AND (
            (claim_at IS NOT NULL AND claim_at <= ?)
            OR (claim_at IS NULL AND scheduled_for <= ?)
-         )`
+         )
+         AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))`
   ).bind(tenMinAgoUtc, tenMinAgo).run();
 
   // Image-quality guard. Posts whose image scored at/below the guard threshold
@@ -248,9 +258,9 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
      FROM posts
      WHERE status = 'Scheduled' AND scheduled_for <= ?
        AND image_critique_score IS NOT NULL AND image_critique_score <= ?
-       AND COALESCE(image_regen_count, 0) >= 3
+       AND COALESCE(image_regen_count, 0) >= ?
        AND ${ACTIVE_CLIENT_FILTER}`
-  ).bind(nowAEST, QUALITY_GUARD_THRESHOLD).all<{
+  ).bind(nowAEST, QUALITY_GUARD_THRESHOLD, MAX_REGEN_ATTEMPTS).all<{
     id: string; user_id: string | null; client_id: string | null;
     image_critique_score: number; image_regen_count: number | null;
   }>();
@@ -338,6 +348,30 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         }
       }
 
+      // ── Fabrication / AI-trope scan (defense layer 6) ───────────────────
+      // The gen-time path (gemini.ts:detectFabrication) already retries with
+      // a stricter prompt when one of these patterns fires, but the gen
+      // pipeline can be bypassed: portal edits, post-rewrite flow that
+      // wasn't routed through the retry loop, or imported drafts. This is
+      // the last line of defence before the post hits a customer's followers.
+      //
+      // Behaviour: scan caption + image_prompt. If any trope pattern fires,
+      // downgrade the post to NeedsReview (NOT Missed — the content is
+      // recoverable, just needs an owner edit) and notify the owner. Same
+      // shared bank as admin scan-flagged-posts and gemini.ts.
+      const captionTropes = scanContentForTropes((post as any).content as string);
+      const promptTropes = scanContentForTropes((post as any).image_prompt as string || '');
+      const allTropes = [...captionTropes, ...promptTropes];
+      if (allTropes.length > 0) {
+        const where = captionTropes.length > 0 ? 'caption' : 'image_prompt';
+        const reason = `Auto-publish blocked: post ${where} contains fabricated content patterns (${allTropes.slice(0, 3).join('; ')}). Open Calendar to edit before this can publish.`;
+        console.warn(`[CRON] Post ${(post as any).id} blocked by trope scan: ${allTropes.join('; ')}`);
+        await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+          .bind('NeedsReview', reason, (post as any).id).run();
+        await notifyOwnerOnPublishFailure(env, post as any, reason);
+        continue;
+      }
+
       // Get social tokens for this workspace
       const tokensRaw = (post as any).client_id
         ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind((post as any).client_id).first<{ social_tokens: string | null }>()
@@ -388,10 +422,10 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       if (needsImage && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
         const safe = buildSafeImagePrompt(promptForGen);
         if (safe) try {
-          // 2026-05 image-stack upgrade: route through generateImageWithBrandRefs
+          // 2026-05 image-stack upgrade: route through generateImageWithGuardrails
           // so JIT generation gets the same brand-grounded path the manual
           // backfill + frontend use. See helper at top of this file.
-          const gen = await generateImageWithBrandRefs(
+          const gen = await generateImageWithGuardrails(
             env,
             (post as any).user_id,
             (post as any).client_id || null,
@@ -403,7 +437,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
               .bind(gen.imageUrl, (post as any).id).run();
             jitGenerated++;
-            console.log(`[CRON] JIT-generated image for post ${(post as any).id} via ${gen.modelUsed} (${gen.referencesUsed} refs, ${jitGenerated}/${MAX_JIT_IMAGES_PER_RUN})`);
+            console.log(`[CRON] JIT-generated image for post ${(post as any).id} via ${gen.modelUsed} (${jitGenerated}/${MAX_JIT_IMAGES_PER_RUN})`);
           } else {
             console.warn(`[CRON] JIT image gen returned no URL for post ${(post as any).id} via ${gen.modelUsed}`);
           }
@@ -433,18 +467,34 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         try {
           // Reel caption — strip trailing hashtags from content (idempotent)
           // and append clean hashtag block. Same idiom as fullText above.
+          // Saved to reasoning column on the post row so the poll cron has
+          // the exact caption to ship at finish-phase time (it doesn't
+          // re-derive from content + hashtags to avoid drift).
           const reelDescription = fullText.length > 2200 ? fullText.slice(0, 2199) : fullText;
-          const reelId = await postReelToFacebookPage(pageId, token, reelDescription, videoUrl);
-          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
-            .bind('Posted', 'fb-page-reel', (post as any).id).run();
-          console.log(`[CRON] Published reel ${(post as any).id} -> ${reelId}`);
+          const fbVideoId = await kickFacebookReelUpload(pageId, token, reelDescription, videoUrl);
+          // Stash the FB video_id + caption on the post and stay in Publishing.
+          // The poll cron picks this up on its */5 tick (typically the very
+          // next tick for FB Reels — fb_publish_state='kicked' is the
+          // contract). Note: we keep claim_id set; the poll cron clears it
+          // when it transitions to done/failed. Zombie reset's 10-min buffer
+          // (scheduled_for <= tenMinAgo) is wide enough to cover FB's typical
+          // 30-120s processing tail.
+          await env.DB.prepare(
+            `UPDATE posts SET fb_video_id = ?, fb_publish_state = 'kicked',
+                              fb_kicked_at = ?, reasoning = ?
+             WHERE id = ?`
+          ).bind(fbVideoId, nowAEST, `fb-page-reel-pending:${reelDescription.slice(0, 1800)}`, (post as any).id).run();
+          console.log(`[CRON] Reel kicked ${(post as any).id} -> fb_video_id=${fbVideoId} (poll cron will finish)`);
           continue;
         } catch (reelErr: any) {
-          // Reel publish failed — fall through to image post so the slot still
-          // ships. Persist the error so the dashboard surfaces it.
-          console.warn(`[CRON] Reel publish failed for post ${(post as any).id}: ${reelErr?.message}. Falling back to image post.`);
+          // Kick failed (start or transfer phase) — fall through to image post
+          // so the slot still ships. Persist the error so the dashboard surfaces
+          // it. (Note: the previous 180s poll-then-throw failure mode is gone —
+          // poll-time errors are now the poll cron's problem, with the same
+          // image-fallback semantics handled separately there.)
+          console.warn(`[CRON] Reel kick failed for post ${(post as any).id}: ${reelErr?.message}. Falling back to image post.`);
           await env.DB.prepare('UPDATE posts SET video_error = ? WHERE id = ?')
-            .bind(`Reel publish failed: ${(reelErr?.message || 'unknown').slice(0, 400)}`, (post as any).id).run();
+            .bind(`Reel kick failed: ${(reelErr?.message || 'unknown').slice(0, 400)}`, (post as any).id).run();
           // Continue to image fallback below
         }
       }
