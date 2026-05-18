@@ -79,7 +79,7 @@ Tone: professional, concise, user-value first. Imagine a Meta reviewer looking a
 >
 > Reels are the highest-engagement format on Facebook in 2026 and they're the single most-requested feature from our customers. Without `publish_video`, our app can generate Reel videos but cannot publish them, and users have to download the MP4 and upload to Facebook themselves — which defeats the "set it and forget it" value of the product.
 >
-> Implementation lives at `workers/api/src/cron/publish-missed.ts` (the `postReelToFacebookPage` function) and there is a pre-flight smoke-test endpoint at `POST /api/test-reel-publish` that kicks off `upload_phase=start` without completing the upload, so users can verify their connection works before scheduling a batch of Reels.
+> Implementation is split across two Cloudflare Workers cron jobs to stay inside the 30-second CPU budget per tick: `workers/api/src/cron/publish-missed.ts` (the `kickFacebookReelUpload` function — runs `upload_phase=start` and the hosted-URL transfer) and `workers/api/src/cron/poll-pending-reels.ts` (the `finishFacebookReel` function — runs `upload_phase=finish` with `video_state=PUBLISHED` once Facebook reports the video is ready). There is also a pre-flight smoke-test endpoint at `POST /api/test-reel-publish` that kicks off `upload_phase=start` without completing the upload, so users can verify their connection works before scheduling a batch of Reels.
 >
 > **Verify in screencast:** 2:45 – 3:15. The user publishes a Reel through our app; the next tab shows it live on the Page's Reels feed.
 
