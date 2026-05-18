@@ -25,6 +25,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
+import { checkBillingGate } from '../lib/billing-gate';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { timingSafeEqualStr } from '../lib/timing-safe';
 import {
@@ -396,24 +397,20 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/postproxy/publish-now', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    if (await isRateLimited(c.env.DB, `pp-publish:${uid}`, 10)) {
-      return c.json({ error: 'Rate limit exceeded — 10 manual publishes per minute' }, 429);
-    }
+    // RATE LIMIT + BILLING GATE — Postproxy /api/posts is paid (per-post
+    // Postproxy fees + per-platform Meta delivery). Block past_due
+    // subscribers so a declined card can't churn Postproxy credit until
+    // the cancellation lands. Different tables (rate_limit_log vs users)
+    // — fire both checks in parallel (matches the ai/generate pattern).
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `pp-publish:${uid}`, 10),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — 10 manual publishes per minute' }, 429);
+    if (denied) return denied;
+
     const body = await c.req.json<{ postId?: string }>().catch(() => null);
     if (!body?.postId) return c.json({ error: 'postId required' }, 400);
-
-    // ── Inline billing-gate ──────────────────────────────────────────────
-    // No standalone lib/billing-gate.ts exists in this branch — the brief
-    // referenced one that's coming in a parallel sprint. Inline the
-    // trial-only block here mirroring routes/posts.ts; full plan parity
-    // can move into a shared lib once the gate module lands.
-    const userRow = await c.env.DB.prepare('SELECT plan FROM users WHERE id = ?')
-      .bind(uid).first<{ plan: string | null }>();
-    if (userRow?.plan === null) {
-      // Trial users CAN still publish — they're capped on total post creation
-      // (enforced at POST /api/db/posts). publish-now is a no-op gate for them;
-      // we just record the intent.
-    }
 
     // Load the post + verify ownership (own-workspace OR agency client owned by uid).
     const post = await c.env.DB.prepare(
