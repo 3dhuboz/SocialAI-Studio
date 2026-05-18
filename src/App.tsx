@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
@@ -29,6 +29,9 @@ import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
 import { FacebookConnectButton } from './components/FacebookConnectButton';
+import { PostproxyConnectButton } from './components/PostproxyConnectButton';
+import { MigrationBanner } from './components/MigrationBanner';
+import { createPostproxyService } from './services/postproxyService';
 import { CalendarGrid } from './components/CalendarGrid';
 import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
@@ -550,6 +553,22 @@ const Dashboard: React.FC = () => {
     db.setSocialTokens(tokens as unknown as Record<string, unknown>, activeClientId).catch(() => {
       toast('Facebook token could not be saved — check VITE_AI_WORKER_URL is set in CF Pages.', 'error');
     });
+  };
+
+  // Postproxy migration — service factory used for the publish-now path
+  // (replaces direct FacebookService.postToPageDirect calls when the
+  // workspace is on the Postproxy path) and the MigrationBanner reconnect
+  // trigger. The reconnect handler navigates to Settings + forces the
+  // PostproxyConnectButton into Stage 1, bypassing the URL ?step= check
+  // for users who haven't hit OAuth yet.
+  const postproxyService = useMemo(
+    () => createPostproxyService(getApiToken, authMode),
+    [getApiToken, authMode],
+  );
+  const [forcePostproxyReconnect, setForcePostproxyReconnect] = useState(false);
+  const handleStartPostproxyReconnect = () => {
+    setForcePostproxyReconnect(true);
+    setActiveTab('settings');
   };
 
   // Agency client workspaces
@@ -1510,7 +1529,12 @@ const Dashboard: React.FC = () => {
   }, [fbConnected, socialTokens.facebookPageId, socialTokens.facebookPageAccessToken]);
 
   const handlePublishDirect = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
-    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
+    // Postproxy dual-path: a workspace is on the new path once a placement
+    // has been chosen. For the Quick Post flow we have no post.id yet —
+    // the worker's /publish-now needs one — so we save the draft to D1
+    // first, then call publishNow with the returned id.
+    const onPostproxyPath = !!socialTokens.postproxyPlacementId;
+    if (!onPostproxyPath && (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken)) {
       toast('Connect your Facebook page in Settings first.', 'warning'); return;
     }
     setIsPublishing(true);
@@ -1520,6 +1544,29 @@ const Dashboard: React.FC = () => {
       const fullText = generatedHashtags.length > 0
         ? `${_postNowBase}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
         : _postNowBase;
+
+      if (onPostproxyPath) {
+        // Postproxy path: save the draft, then publish-now. We only
+        // attempt Facebook here — Instagram + multi-platform fan-out
+        // through Postproxy is a P1 follow-up the cleanup PR adds.
+        if (!platforms.includes('facebook')) {
+          toast('Instagram publishing via Postproxy is coming soon — Facebook only for now.', 'warning');
+        } else {
+          const newId = await db.createPost({
+            content: _postNowBase,
+            platform: 'Facebook',
+            status: 'Scheduled',
+            scheduled_for: new Date().toISOString(),
+            hashtags: generatedHashtags,
+            image_url: generatedImage?.startsWith('http') ? generatedImage : null,
+            clientId: activeClientId,
+          });
+          await postproxyService.publishNow(newId);
+        }
+        setPublishSuccess(true);
+        setTimeout(() => setPublishSuccess(false), 4000);
+        return;
+      }
 
       for (const plat of platforms) {
         if (plat === 'facebook') {
@@ -3038,6 +3085,20 @@ const Dashboard: React.FC = () => {
         />
         )}
 
+        {/* Postproxy migration nudge — only renders for workspaces that have a
+            legacy facebook connection but haven't picked a Postproxy placement
+            yet. The Reconnect handler navigates to Settings + forces the
+            PostproxyConnectButton into Stage-1 so the user can start OAuth in
+            one click. */}
+        {!CLIENT.clientMode && (
+          <MigrationBanner
+            socialTokens={socialTokens}
+            clientId={activeClientId}
+            onReconnect={handleStartPostproxyReconnect}
+            className="mb-5"
+          />
+        )}
+
         {/* Free trial banner — shown only to no-plan users with trial credits.
             TWO modes:
               • If FB ISN'T connected → red warning that takes precedence:
@@ -3765,6 +3826,18 @@ const Dashboard: React.FC = () => {
               onSave={handleUpdatePost}
               onPublish={async (post) => {
                 try {
+                  // Postproxy migration: when this workspace has chosen a
+                  // placement, route through the worker — it loads the post
+                  // from D1, sends Postproxy a single create-post call, and
+                  // flips status to Publishing pending the webhook. Legacy
+                  // Graph fallback below is preserved for the dual-path
+                  // window. Cleanup specialist drops it once cutover lands.
+                  if (socialTokens.postproxyPlacementId) {
+                    await postproxyService.publishNow(post.id);
+                    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+                    toast('Publishing via Postproxy — Facebook will confirm in moments.', 'success');
+                    return;
+                  }
                   const _pubBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
                   const text = post.hashtags?.length ? `${_pubBase}\n\n${post.hashtags.join(' ')}` : _pubBase;
                   if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
@@ -3788,6 +3861,13 @@ const Dashboard: React.FC = () => {
               }}
               onRetry={async (post) => {
                 try {
+                  // Postproxy migration — same dual-path rationale as onPublish above.
+                  if (socialTokens.postproxyPlacementId) {
+                    await postproxyService.publishNow(post.id);
+                    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+                    toast('Retrying via Postproxy — Facebook will confirm in moments.', 'success');
+                    return;
+                  }
                   const _retryBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
                   const text = post.hashtags?.length ? `${_retryBase}\n\n${post.hashtags.join(' ')}` : _retryBase;
                   if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
@@ -5723,7 +5803,10 @@ const Dashboard: React.FC = () => {
               <div className="h-px flex-1 bg-white/6" />
             </div>
 
-            {/* Social Media Connection — Facebook Graph API */}
+            {/* Social Media Connection — Postproxy (new) + legacy migration banner.
+                During the dual-path window we render the new connect button by
+                default. Workspaces still on the legacy Facebook Graph path are
+                nudged via MigrationBanner above to reconnect once. */}
             <div className="glass-card border border-white/[0.08] rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
@@ -5731,37 +5814,100 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-white">Social Media Connection</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page &amp; Instagram via the official Facebook API</p>
+                  <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page via Postproxy — handles token refresh, reels, and stories</p>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <FacebookConnectButton
-                  connectedPageId={socialTokens.facebookPageId}
+                <PostproxyConnectButton
+                  clientId={activeClientId}
+                  connectedPlacementId={socialTokens.postproxyPlacementId}
                   connectedPageName={socialTokens.facebookPageName || profile.name}
-                  instagramConnected={!!socialTokens.instagramBusinessAccountId}
-                  tokenNeverExpires={socialTokens.facebookConnected ? true : undefined}
-                  onConnected={async (pageId, pageAccessToken, pageName, longLivedUserToken, instagramBusinessAccountId) => {
+                  forcePickerStage={forcePostproxyReconnect}
+                  onConnected={(placement) => {
                     const updated: SocialTokens = {
                       ...socialTokens,
-                      facebookPageId: pageId,
-                      facebookPageAccessToken: pageAccessToken,
+                      postproxyPlacementId: placement.id,
+                      postproxyConnectedAt: new Date().toISOString(),
+                      postproxyProfileStatus: 'active',
+                      facebookPageName: placement.name,
+                      // Keep facebookConnected flag truthy so existing UI gates
+                      // (Quick Post platform picker, dashboard CTAs) keep working.
                       facebookConnected: true,
-                      connectedAt: new Date().toISOString(),
-                      facebookPageName: pageName,
-                      longLivedUserToken: longLivedUserToken || undefined,
-                      instagramBusinessAccountId: instagramBusinessAccountId || '',
-                      instagramConnected: !!instagramBusinessAccountId,
                     };
                     saveSocialTokens(updated);
-                    toast(`Connected to ${pageName}${instagramBusinessAccountId ? ' + Instagram' : ''} successfully!`, 'success');
+                    setForcePostproxyReconnect(false);
+                    toast(`Connected to ${placement.name} via Postproxy!`, 'success');
                   }}
                   onDisconnect={() => {
-                    saveSocialTokens(DEFAULT_SOCIAL_TOKENS);
-                    toast('Social accounts disconnected.', 'warning');
+                    // Clear postproxy fields only — leave legacy facebook* fields
+                    // alone so the legacy path stays available for a no-op rollback
+                    // until the user explicitly disconnects there too.
+                    const updated: SocialTokens = {
+                      ...socialTokens,
+                      postproxyProfileId: undefined,
+                      postproxyPlacementId: undefined,
+                      postproxyGroupId: undefined,
+                      postproxyProfileStatus: undefined,
+                      postproxyConnectedAt: undefined,
+                    };
+                    saveSocialTokens(updated);
+                    setForcePostproxyReconnect(false);
+                    toast('Postproxy disconnected. You can reconnect anytime.', 'warning');
                   }}
                 />
               </div>
+
+              {/* Legacy Facebook Graph connection — kept visible while the
+                  workspace is still on the dual-path window so the user has a
+                  way to disconnect the legacy token if they want. Cleanup
+                  specialist removes this block entirely once the cutover is
+                  complete and FacebookConnectButton is deleted. */}
+              {socialTokens.facebookPageId && !socialTokens.postproxyPlacementId && (
+                <details className="group mt-4">
+                  <summary className="text-[11px] text-white/40 hover:text-white/60 cursor-pointer list-none flex items-center gap-1.5 transition">
+                    <ChevronRight size={11} className="group-open:rotate-90 transition" />
+                    Legacy Facebook connection (still active)
+                  </summary>
+                  <div className="mt-3">
+                    <FacebookConnectButton
+                      connectedPageId={socialTokens.facebookPageId}
+                      connectedPageName={socialTokens.facebookPageName || profile.name}
+                      instagramConnected={!!socialTokens.instagramBusinessAccountId}
+                      tokenNeverExpires={socialTokens.facebookConnected ? true : undefined}
+                      onConnected={async (pageId, pageAccessToken, pageName, longLivedUserToken, instagramBusinessAccountId) => {
+                        const updated: SocialTokens = {
+                          ...socialTokens,
+                          facebookPageId: pageId,
+                          facebookPageAccessToken: pageAccessToken,
+                          facebookConnected: true,
+                          connectedAt: new Date().toISOString(),
+                          facebookPageName: pageName,
+                          longLivedUserToken: longLivedUserToken || undefined,
+                          instagramBusinessAccountId: instagramBusinessAccountId || '',
+                          instagramConnected: !!instagramBusinessAccountId,
+                        };
+                        saveSocialTokens(updated);
+                        toast(`Reconnected legacy path to ${pageName}.`, 'success');
+                      }}
+                      onDisconnect={() => {
+                        // Only clear legacy fields here — postproxy fields stay.
+                        const updated: SocialTokens = {
+                          ...socialTokens,
+                          facebookPageId: '',
+                          facebookPageAccessToken: '',
+                          facebookConnected: !!socialTokens.postproxyPlacementId,
+                          instagramBusinessAccountId: '',
+                          instagramConnected: false,
+                          longLivedUserToken: undefined,
+                        };
+                        saveSocialTokens(updated);
+                        toast('Legacy Facebook path disconnected.', 'warning');
+                      }}
+                    />
+                  </div>
+                </details>
+              )}
 
               {/* Pre-flight smoke test for FB Page Reels publishing. Catches
                   permission/token issues at config time instead of letting a
