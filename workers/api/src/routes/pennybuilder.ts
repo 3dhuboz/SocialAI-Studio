@@ -47,6 +47,7 @@ import type { Env } from '../env';
 // verifier can be unit-tested against its own minter and so PennyBuilder's
 // signing side can later import the same canonical shape.
 import { verifyEmbedToken } from '../lib/embed-token';
+import { timingSafeEqualStr } from '../lib/timing-safe';
 
 // ── Auth helper — Bearer token timing-safe compare ───────────────────────────
 function authPennybuilder(c: Context<{ Bindings: Env }>): Response | null {
@@ -56,12 +57,7 @@ function authPennybuilder(c: Context<{ Bindings: Env }>): Response | null {
   if (!auth?.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401);
   const provided = auth.slice('Bearer '.length);
   // Timing-safe compare to avoid leaking secret length via response timing.
-  if (provided.length !== expected.length) return c.json({ error: 'Forbidden' }, 403);
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) {
-    diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
-  }
-  if (diff !== 0) return c.json({ error: 'Forbidden' }, 403);
+  if (!timingSafeEqualStr(provided, expected)) return c.json({ error: 'Forbidden' }, 403);
   return null;
 }
 

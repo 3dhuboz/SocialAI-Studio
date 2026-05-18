@@ -58,27 +58,24 @@ async function logAnthropicCall(
   ok: boolean,
 ): Promise<void> {
   if (!metering) return;
-  try {
-    const row: AiUsageRow = {
-      userId: metering.userId ?? null,
-      clientId: metering.clientId ?? null,
-      postId: metering.postId ?? null,
-      provider: 'anthropic',
-      model,
-      operation: metering.operation,
-      tokensIn: usage?.input_tokens != null
-        ? Number(usage.input_tokens)
-          + Number(usage?.cache_creation_input_tokens ?? 0)
-          + Number(usage?.cache_read_input_tokens ?? 0)
-        : undefined,
-      tokensOut: usage?.output_tokens != null ? Number(usage.output_tokens) : undefined,
-      estCostUsd: metering.estCostUsdOverride ?? estimateAnthropicCost(model, usage ?? {}),
-      ok,
-    };
-    await logAiUsage(metering.env, row);
-  } catch (e: any) {
-    console.warn(`[anthropic-meter] log failed: ${e?.message || e}`);
-  }
+  // logAiUsage itself swallows D1 errors, so no outer try/catch needed.
+  const row: AiUsageRow = {
+    userId: metering.userId ?? null,
+    clientId: metering.clientId ?? null,
+    postId: metering.postId ?? null,
+    provider: 'anthropic',
+    model,
+    operation: metering.operation,
+    tokensIn: usage?.input_tokens != null
+      ? Number(usage.input_tokens)
+        + Number(usage?.cache_creation_input_tokens ?? 0)
+        + Number(usage?.cache_read_input_tokens ?? 0)
+      : undefined,
+    tokensOut: usage?.output_tokens != null ? Number(usage.output_tokens) : undefined,
+    estCostUsd: metering.estCostUsdOverride ?? estimateAnthropicCost(model, usage ?? {}),
+    ok,
+  };
+  await logAiUsage(metering.env, row);
 }
 
 // ── Anthropic direct call helper (2026-05 stack upgrade) ─────────────────

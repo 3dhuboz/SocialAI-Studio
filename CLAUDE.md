@@ -141,7 +141,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
 |------|---------|
-| `image-gen.ts` | `generateImageWithBrandRefs` — single chokepoint for all image generation. Picks flux-pro-kontext (brand refs) → flux-dev (fallback). Returns `{ imageUrl, modelUsed, referencesUsed, archetypeSlug }` |
+| `image-gen.ts` | `generateImageWithGuardrails` — single chokepoint for all image generation. Picks flux-pro-kontext (brand refs) → flux-dev (fallback). Returns `{ imageUrl, modelUsed, referencesUsed, archetypeSlug }` |
 | `image-safety.ts` | `buildSafeImagePrompt`, `isAbstractUIPrompt`, `sniffArchetypeFromCaption`, `applyArchetypeGuardrails`, `FLUX_NEGATIVE_PROMPT`, `FLUX_STYLE_SUFFIX` |
 | `critique.ts` | `critiqueImageInternal`, `buildCritiqueSystemPrompt` — vision critique (Haiku 4.5) |
 | `profile-guards.ts` | `loadForbiddenSubjects` (unions users.profile + clients.profile), `scanForForbidden`, `parseForbiddenSubjects` |
@@ -255,8 +255,8 @@ npm test   # from repo root
 
 ### Image generation (always use the chokepoint)
 ```ts
-import { generateImageWithBrandRefs } from '../lib/image-gen';
-const result = await generateImageWithBrandRefs(env, userId, clientId, { prompt }, { caption });
+import { generateImageWithGuardrails } from '../lib/image-gen';
+const result = await generateImageWithGuardrails(env, userId, clientId, prompt, { caption });
 // result.archetypeSlug is returned — don't call resolveArchetypeSlug again
 ```
 

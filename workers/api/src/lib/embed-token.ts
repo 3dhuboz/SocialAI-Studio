@@ -20,6 +20,8 @@
 // accepts (impersonation) — or legit tokens fail (production breakage).
 // See workers/api/src/lib/__tests__/embed-token.test.ts.
 
+import { timingSafeEqualStr } from './timing-safe';
+
 export type EmbedClaims = {
   sub: string;
   email?: string;
@@ -98,11 +100,8 @@ export async function verifyEmbedToken(secret: string, token: string): Promise<E
   if (!payload || !sig) return null;
   const expected = await hmacB64(secret, payload);
   // Timing-safe compare so we don't leak signature byte-by-byte via
-  // response timing. Lengths first to short-circuit the obviously-bad case.
-  if (sig.length !== expected.length) return null;
-  let diff = 0;
-  for (let i = 0; i < sig.length; i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
-  if (diff !== 0) return null;
+  // response timing.
+  if (!timingSafeEqualStr(sig, expected)) return null;
   try {
     const raw = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
     const claims = JSON.parse(raw) as EmbedClaims;

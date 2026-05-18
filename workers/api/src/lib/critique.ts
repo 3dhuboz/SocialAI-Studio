@@ -220,24 +220,6 @@ export async function critiqueImageInternal(
     });
     if (!orRes.ok) {
       console.warn(`[critique] OpenRouter HTTP ${orRes.status} — skipping`);
-      try {
-        await logAiUsage(env, {
-          userId, clientId, postId,
-          provider: 'openrouter',
-          model: 'anthropic/claude-haiku-4.5',
-          operation: 'critique',
-          estCostUsd: 0,
-          ok: false,
-        });
-      } catch { /* never let logging break critique */ }
-      return null;
-    }
-    const orJson = await orRes.json() as any;
-    raw = orJson.choices?.[0]?.message?.content || '';
-    if (raw) providerUsed = 'openrouter';
-  } catch (e: any) {
-    console.warn(`[critique] OpenRouter call failed: ${e?.message}`);
-    try {
       await logAiUsage(env, {
         userId, clientId, postId,
         provider: 'openrouter',
@@ -246,7 +228,21 @@ export async function critiqueImageInternal(
         estCostUsd: 0,
         ok: false,
       });
-    } catch { /* never let logging break critique */ }
+      return null;
+    }
+    const orJson = await orRes.json() as any;
+    raw = orJson.choices?.[0]?.message?.content || '';
+    if (raw) providerUsed = 'openrouter';
+  } catch (e: any) {
+    console.warn(`[critique] OpenRouter call failed: ${e?.message}`);
+    await logAiUsage(env, {
+      userId, clientId, postId,
+      provider: 'openrouter',
+      model: 'anthropic/claude-haiku-4.5',
+      operation: 'critique',
+      estCostUsd: 0,
+      ok: false,
+    });
     return null;
   }
 
@@ -299,16 +295,14 @@ export async function critiqueImageInternal(
     // actually answered. providerUsed=null shouldn't reach here because
     // an empty raw returns null above; defensive `?? 'anthropic'` keeps
     // the type system happy.
-    try {
-      await logAiUsage(env, {
-        userId, clientId, postId,
-        provider: providerUsed ?? 'anthropic',
-        model: providerUsed === 'openrouter' ? 'anthropic/claude-haiku-4.5' : 'claude-haiku-4-5',
-        operation: 'critique',
-        estCostUsd: CRITIQUE_COST_USD,
-        ok: true,
-      });
-    } catch { /* never let logging break critique */ }
+    await logAiUsage(env, {
+      userId, clientId, postId,
+      provider: providerUsed ?? 'anthropic',
+      model: providerUsed === 'openrouter' ? 'anthropic/claude-haiku-4.5' : 'claude-haiku-4-5',
+      operation: 'critique',
+      estCostUsd: CRITIQUE_COST_USD,
+      ok: true,
+    });
     return {
       score: Math.max(0, Math.min(10, score)),
       match,
@@ -316,18 +310,16 @@ export async function critiqueImageInternal(
     };
   } catch (e: any) {
     console.warn(`[critique] failed to parse: ${e?.message || e} — raw: ${stripped.slice(0, 200)}`);
-    try {
-      await logAiUsage(env, {
-        userId, clientId, postId,
-        provider: providerUsed ?? 'anthropic',
-        model: providerUsed === 'openrouter' ? 'anthropic/claude-haiku-4.5' : 'claude-haiku-4-5',
-        operation: 'critique',
-        // Cost was incurred even though we couldn't parse the response —
-        // record full cost with ok=false so the spend tally is honest.
-        estCostUsd: CRITIQUE_COST_USD,
-        ok: false,
-      });
-    } catch { /* never let logging break critique */ }
+    await logAiUsage(env, {
+      userId, clientId, postId,
+      provider: providerUsed ?? 'anthropic',
+      model: providerUsed === 'openrouter' ? 'anthropic/claude-haiku-4.5' : 'claude-haiku-4-5',
+      operation: 'critique',
+      // Cost was incurred even though we couldn't parse the response —
+      // record full cost with ok=false so the spend tally is honest.
+      estCostUsd: CRITIQUE_COST_USD,
+      ok: false,
+    });
     return null;
   }
 }
