@@ -24,11 +24,8 @@
 //   - No-op outside production. Local `wrangler dev` runs against the
 //     same D1 by default (no separate dev binding), so without this
 //     guard every developer's smoke test would pollute the production
-//     usage table. We check env.ENVIRONMENT — the binding doesn't exist
-//     in the Env type today (intentional: don't introduce a new binding
-//     just for this), so the check uses a defensive `(env as any)` cast.
-//     Default behaviour (binding undefined) is to LOG, matching today's
-//     prod deploy where ENVIRONMENT isn't set.
+//     usage table. Default behaviour (env.ENVIRONMENT undefined) is to
+//     LOG, matching today's prod deploy where ENVIRONMENT isn't set.
 //
 // Cost estimates (rough, hand-rolled — refine when actual invoices come
 // in):
@@ -66,12 +63,9 @@ export type AiUsageRow = {
  * ENVIRONMENT is unset (today's prod deploy), the helper writes.
  */
 export async function logAiUsage(env: Env, row: AiUsageRow): Promise<void> {
-  // Dev-mode no-op. The binding isn't in the Env type (intentional — we
-  // don't want to add a new binding just for this), so cast to access it.
-  // `undefined` means "production behaviour" so existing prod deploys keep
-  // logging without a wrangler.toml change.
-  const environment = (env as unknown as { ENVIRONMENT?: string }).ENVIRONMENT;
-  if (environment !== undefined && environment !== 'production') {
+  // Dev-mode no-op. `undefined` means "production behaviour" so existing
+  // prod deploys keep logging without a wrangler.toml change.
+  if (env.ENVIRONMENT !== undefined && env.ENVIRONMENT !== 'production') {
     return;
   }
 

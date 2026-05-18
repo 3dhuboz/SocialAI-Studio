@@ -113,32 +113,28 @@ export async function generateImageWithGuardrails(
     console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
     // Log the failed call too — useful for understanding which prompt
     // patterns trigger fal.ai 4xx/5xx responses.
-    try {
-      await logAiUsage(env, {
-        userId,
-        clientId,
-        provider: 'fal',
-        model: 'flux-dev',
-        operation: 'image-gen',
-        imagesGenerated: 0,
-        estCostUsd: 0,
-        ok: false,
-      });
-    } catch { /* never let logging break image gen */ }
-    return { imageUrl: null, modelUsed: 'flux-dev', archetypeSlug };
-  }
-  const imageUrl = data?.images?.[0]?.url || null;
-  try {
     await logAiUsage(env, {
       userId,
       clientId,
       provider: 'fal',
       model: 'flux-dev',
       operation: 'image-gen',
-      imagesGenerated: imageUrl ? 1 : 0,
-      estCostUsd: imageUrl ? FLUX_DEV_COST_USD : 0,
-      ok: !!imageUrl,
+      imagesGenerated: 0,
+      estCostUsd: 0,
+      ok: false,
     });
-  } catch { /* never let logging break image gen */ }
+    return { imageUrl: null, modelUsed: 'flux-dev', archetypeSlug };
+  }
+  const imageUrl = data?.images?.[0]?.url || null;
+  await logAiUsage(env, {
+    userId,
+    clientId,
+    provider: 'fal',
+    model: 'flux-dev',
+    operation: 'image-gen',
+    imagesGenerated: imageUrl ? 1 : 0,
+    estCostUsd: imageUrl ? FLUX_DEV_COST_USD : 0,
+    ok: !!imageUrl,
+  });
   return { imageUrl, modelUsed: 'flux-dev', archetypeSlug };
 }

@@ -84,4 +84,9 @@ export type Env = {
   // /api/admin/provision-from-pennybuilder endpoint AND to verify the
   // HMAC-signed embed token on GET /embed.
   PENNYBUILDER_PROVISION_SECRET?: string;
+  // Deployment-environment marker. Unset (or 'production') in prod. Set
+  // to 'dev' / 'staging' in lower envs so cost-metering and other
+  // observability helpers can no-op outside prod (see lib/ai-usage.ts).
+  // This is a `[vars]` value in wrangler.toml, not a binding.
+  ENVIRONMENT?: string;
 };
