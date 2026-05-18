@@ -124,7 +124,7 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
     };
     return (
       <div className="fixed inset-0 z-[999] bg-black/90 backdrop-blur-lg flex items-center justify-center p-6">
-        <div className="bg-[#111118] border border-green-500/25 rounded-3xl p-10 w-full max-w-md text-center">
+        <div className="glass-card border border-green-500/25 rounded-3xl p-10 w-full max-w-md text-center">
           <div className="w-16 h-16 mx-auto mb-5 bg-green-500/15 border border-green-500/30 rounded-2xl flex items-center justify-center">
             <CheckCircle size={30} className="text-green-400" />
           </div>
@@ -297,7 +297,7 @@ export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId
         {/* PayPal checkout panel */}
         {selectedPlan && selectedPayPalPlanId && (
           <div className="mt-8 bg-[#0d0d18] border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
-            <div className="bg-gradient-to-r from-[#1a1a2e] to-[#0f0f1a] px-8 py-6 border-b border-white/5 flex items-center justify-between flex-wrap gap-3">
+            <div className="bg-gradient-to-r from-[#1a1a2e] to-[#0f0f1a] px-8 py-6 border-b border-white/[0.05] flex items-center justify-between flex-wrap gap-3">
               <div>
                 <div className="inline-flex items-center gap-2 bg-[#003087]/20 border border-[#003087]/30 text-[#009cde] text-xs font-bold px-3 py-1.5 rounded-full mb-2">
                   <Lock size={10} /> Secure checkout via PayPal
