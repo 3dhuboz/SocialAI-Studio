@@ -24,7 +24,7 @@
       "category": "Facebook Page management",
       "advanced_access_needed": true,
       "why_we_need_it": "After OAuth consent, GET /me/accounts returns the user's manageable Pages. We render a picker UI so the user selects which Page to connect to SocialAI Studio. Most SMB owners admin multiple Pages.",
-      "code_location": "workers/api/src/routes/facebook.ts:48 (token-exchange endpoint), src/components/FacebookConnectButton.tsx:62 (picker UI)",
+      "code_location": "workers/api/src/routes/facebook.ts:33 (token-exchange endpoint; /me/accounts fetch on line ~48), src/components/FacebookConnectButton.tsx:156 (picker UI render — pages.map)",
       "demo_timestamp_in_screencast": "1:30–1:50"
     },
     {
@@ -32,7 +32,7 @@
       "category": "Facebook Page publishing",
       "advanced_access_needed": true,
       "why_we_need_it": "Core product value — we publish AI-generated posts (text + image) to the connected Page via POST /{page-id}/feed and POST /{page-id}/photos. Without this scope the app can generate posts but cannot publish them.",
-      "code_location": "workers/api/src/cron/publish-missed.ts (publish loop, lines ~428–485)",
+      "code_location": "workers/api/src/cron/publish-missed.ts (publish loop, lines ~439–495 — multipart image upload at 439, text-only fallback at 487)",
       "demo_timestamp_in_screencast": "2:20–2:45"
     },
     {
@@ -56,7 +56,7 @@
       "category": "Facebook Page video publishing",
       "advanced_access_needed": true,
       "why_we_need_it": "We generate short-form video Reels (Kling AI, 9:16, 3–60s, MP4 H.264) and publish them to the user's Page Reels feed via the /{page-id}/video_reels endpoint (three-phase resumable upload). Reels are the highest-engagement format on Facebook in 2026 — the single most-requested feature from our customers.",
-      "code_location": "workers/api/src/cron/publish-missed.ts:132 (postReelToFacebookPage), workers/api/src/routes/facebook.ts:77 (pre-flight smoke test at POST /api/test-reel-publish)",
+      "code_location": "workers/api/src/cron/publish-missed.ts:72 (kickFacebookReelUpload — upload_phase=start + hosted-URL transfer), workers/api/src/cron/poll-pending-reels.ts:48 (finishFacebookReel — upload_phase=finish + video_state=PUBLISHED), workers/api/src/routes/facebook.ts:77 (pre-flight smoke test at POST /api/test-reel-publish). Split into kick + poll-later in PR #99 to keep the 5-min publish cron inside its 30s CPU budget.",
       "demo_timestamp_in_screencast": "2:45–3:15"
     }
   ],
@@ -71,10 +71,10 @@
   "scopes_explicitly_NOT_being_submitted": [
     {
       "name": "pages_read_user_content",
-      "currently_in_oauth_fallback_string": true,
-      "currently_in_FLB_configuration": "[VERIFY] check the FLB Configuration on developers.facebook.com",
+      "currently_in_oauth_fallback_string": false,
+      "currently_in_FLB_configuration": "[VERIFY-DASHBOARD] check the FLB Configuration on developers.facebook.com — code side is clean as of 2026-05-18 but the dashboard config still needs a manual sweep",
       "decision": "REMOVE from both before submitting. We do not actually read user comments or messages — leaving this in the OAuth string risks a rejection on grounds of 'requested scope not demonstrated in use case'.",
-      "action_required": "Before recording: edit src/services/facebookService.ts to remove pages_read_user_content from the classic-mode scope string on line ~56. Also open the FLB Configuration and remove it from the permissions list."
+      "action_required": "Code side DONE in PR #104 (line 56 of src/services/facebookService.ts no longer includes pages_read_user_content). Dashboard side still TODO — Steve: open the FLB Configuration `947627521425720` and verify pages_read_user_content is NOT in the permissions list. Remove if present."
     },
     {
       "name": "read_insights",

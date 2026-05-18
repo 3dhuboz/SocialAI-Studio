@@ -35,12 +35,12 @@ This package contains everything you (Steve) need to record the screencast and s
 
 The OAuth scope set declared in code must match what we submit. The scope set is declared in two places — verify both:
 
-- [ ] **`src/services/facebookService.ts` line ~56** (classic fallback path) currently reads:
-      `'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video,instagram_basic,instagram_content_publish,pages_read_user_content'`
+- [x] **`src/services/facebookService.ts` line 56** (classic fallback path) now reads:
+      `'pages_show_list,pages_read_engagement,pages_manage_posts,publish_video,instagram_basic,instagram_content_publish'`
 
-      Compare against `docs/fb-app-review/scope-set.json`. If anything's missing, the OAuth dialog won't ask for it and the reviewer will mark the scope as "not demonstrated".
+      Matches `docs/fb-app-review/scope-set.json` exactly — the 5 submission scopes plus `instagram_basic` (helper, no review needed).
 
-      **Note:** `pages_read_user_content` is in the fallback string but **NOT** in our submission set. That's intentional — we don't actually use it, and submitting unused scopes is a known rejection cause. Before recording, remove `pages_read_user_content` from the fallback string. [VERIFY]
+      **Resolved 2026-05-18:** `pages_read_user_content` was removed from this fallback string in PR #104 (`[post-rollout] wire staging D1 UUID + strip unused FB scope`). Verified clean in this checklist sweep.
 
 - [ ] **Facebook Login for Business Configuration** (Configuration ID `947627521425720`)
       Visit <https://developers.facebook.com/apps/847198108337884/fb-login-for-business/configurations/>
