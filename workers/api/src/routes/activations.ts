@@ -27,18 +27,9 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId } from '../auth';
+import { timingSafeEqualStr } from '../lib/timing-safe';
 
 const uuid = () => crypto.randomUUID();
-
-// Constant-time string comparison — avoids leaking the secret one byte at a
-// time through response-time differences. Both strings are read fully before
-// the result is returned, so an attacker can't bisect on timing.
-export function timingSafeEqualStr(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 
 export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
   // OWNERSHIP NOTE — every GET/PUT below is scoped to the caller's own
