@@ -12,14 +12,14 @@
 // rows >10min old get reset to Missed so they're eligible for re-claim.
 //
 // Extracted from src/index.ts as Phase B step 13 of the route-module split.
-// Colocated helpers (friendlyPublishReason / notifyOwnerOnPublishFailure /
-// escapeHtml / postReelToFacebookPage) are cron-only — no HTTP route depends
-// on them — so they live next to their single caller.
+// The owner-failure notifier + escapeHtml were lifted to lib/cron-notify.ts
+// since poll-pending-reels.ts needs them too. friendlyPublishReason +
+// kickFacebookReelUpload remain colocated — they're cron-only.
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
-import { sendResendEmail } from '../lib/email';
+import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
@@ -46,80 +46,6 @@ function friendlyPublishReason(raw: string): string {
     return 'Image upload to Facebook failed — open Calendar and click Retry.';
   }
   return raw.slice(0, 200);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
-}
-
-// Email the workspace owner when one of their posts fails to publish.
-// Throttled to ONE email per workspace per hour — a 14-post Smart Schedule batch
-// hitting an expired token shouldn't fire 14 emails. Uses cron_runs as a tiny
-// KV store: a row of synthetic type `alert:fb_failure:<wsKey>` means "we sent
-// for this workspace at this run_at." Query the latest within 1h to throttle.
-async function notifyOwnerOnPublishFailure(
-  env: Env,
-  post: { id: string; user_id?: string | null; client_id?: string | null },
-  reason: string,
-): Promise<void> {
-  if (!env.RESEND_API_KEY) return;
-  try {
-    const wsKey = post.client_id ? `client:${post.client_id}` : `user:${post.user_id ?? 'unknown'}`;
-    const cronType = `alert:fb_failure:${wsKey}`.slice(0, 80);
-
-    // Throttle — skip if we sent for this workspace in the last hour
-    const recent = await env.DB.prepare(
-      `SELECT 1 FROM cron_runs WHERE cron_type = ? AND run_at > datetime('now','-1 hour') LIMIT 1`,
-    ).bind(cronType).first();
-    if (recent) return;
-
-    // Look up owner email + workspace name
-    let email: string | null = null;
-    let workspaceName = 'your workspace';
-    if (post.client_id) {
-      const row = await env.DB.prepare(
-        `SELECT u.email as email, c.name as name FROM clients c JOIN users u ON u.id = c.user_id WHERE c.id = ?`,
-      ).bind(post.client_id).first<{ email: string | null; name: string | null }>();
-      email = row?.email ?? null;
-      if (row?.name) workspaceName = row.name;
-    } else if (post.user_id) {
-      const row = await env.DB.prepare(`SELECT email FROM users WHERE id = ?`)
-        .bind(post.user_id).first<{ email: string | null }>();
-      email = row?.email ?? null;
-    }
-    if (!email) return;
-
-    const isTokenIssue = /token|expired|reconnect|permission|forbidden|connect facebook|page not found|manage_pages/i.test(reason);
-    const fixCta = isTokenIssue
-      ? `<a href="https://socialaistudio.au/admin" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Reconnect Facebook</a>`
-      : `<a href="https://socialaistudio.au" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Open Calendar</a>`;
-
-    await sendResendEmail(env, {
-      to: email,
-      subject: `Heads up — a scheduled post couldn't publish to Facebook`,
-      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#111;">
-        <h2 style="margin:0 0 8px;color:#dc2626;">A scheduled post didn't go out</h2>
-        <p style="margin:0 0 16px;color:#374151;">A post for <strong>${escapeHtml(workspaceName)}</strong> was scheduled but couldn't be published to Facebook.</p>
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
-          <strong>Reason:</strong><br/><span style="color:#374151;">${escapeHtml(reason)}</span>
-        </div>
-        ${isTokenIssue
-          ? `<p style="margin:0 0 16px;color:#374151;">This usually means your Facebook page connection has expired. It takes 30 seconds to reconnect — click below.</p>`
-          : `<p style="margin:0 0 16px;color:#374151;">Open your calendar to retry the post or check what went wrong.</p>`}
-        <p>${fixCta}</p>
-        <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;">We only send one of these per workspace per hour, so you won't get spammed if multiple posts queue up.</p>
-      </div>`,
-    });
-
-    // Mark sent — doubles as a 1-hour throttle window
-    await env.DB.prepare(
-      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms) VALUES (?,1,0,?,0)`,
-    ).bind(cronType, reason.slice(0, 200)).run();
-    console.log(`[CRON] Sent publish-failure alert to ${email} for post ${post.id}`);
-  } catch (e: any) {
-    // Never let alert plumbing kill the publish path — log and move on
-    console.error(`[CRON] notifyOwnerOnPublishFailure error: ${e?.message || e}`);
-  }
 }
 
 // ── Facebook Page Reels publishing — KICK phase ─────────────────────────────
@@ -269,7 +195,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
     await env.DB.prepare(
       `UPDATE posts SET status = 'Missed', reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?`,
     ).bind(reason, p.id).run();
-    await notifyOwnerOnPublishFailure(env, p, reason);
+    await notifyOwnerOnFailure(env, p, reason, 'post');
     console.log(`[CRON] Quality-blocked publish for post ${p.id} (score=${p.image_critique_score}, attempts=${p.image_regen_count})`);
   }
 
@@ -343,7 +269,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           console.warn(`[CRON] Post ${(post as any).id} blocked by forbiddenSubjects guard: "${hit}" in ${where}`);
           await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
             .bind('NeedsReview', reason, (post as any).id).run();
-          await notifyOwnerOnPublishFailure(env, post as any, reason);
+          await notifyOwnerOnFailure(env, post as any, reason, 'post');
           continue;
         }
       }
@@ -368,7 +294,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         console.warn(`[CRON] Post ${(post as any).id} blocked by trope scan: ${allTropes.join('; ')}`);
         await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
           .bind('NeedsReview', reason, (post as any).id).run();
-        await notifyOwnerOnPublishFailure(env, post as any, reason);
+        await notifyOwnerOnFailure(env, post as any, reason, 'post');
         continue;
       }
 
@@ -382,7 +308,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         console.warn(`[CRON] No FB tokens for post ${(post as any).id} — marking missed`);
         await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ? WHERE id = ?')
           .bind('Missed', reason, (post as any).id).run();
-        await notifyOwnerOnPublishFailure(env, post as any, reason);
+        await notifyOwnerOnFailure(env, post as any, reason, 'post');
         continue;
       }
 
@@ -582,7 +508,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // it next tick if appropriate (the sweep also handles stuck Publishing).
       await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
         .bind('Missed', reason, (post as any).id).run();
-      await notifyOwnerOnPublishFailure(env, post as any, reason);
+      await notifyOwnerOnFailure(env, post as any, reason, 'post');
     }
   }
   return { posts_processed: posts.length };

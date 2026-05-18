@@ -36,70 +36,10 @@
 // row will see fb_publish_state='done' and skip it.
 
 import type { Env } from '../env';
-import { sendResendEmail } from '../lib/email';
+import { notifyOwnerOnFailure } from '../lib/cron-notify';
 
 const TICK_BUDGET_MS = 10_000;
 const STALE_KICK_THRESHOLD_MS = 8 * 60 * 1000; // 8 min — FB Reel p99 is ~2-3 min
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
-}
-
-// Mirror of publish-missed.ts's notifier — duplicated here to avoid a
-// circular import (publish-missed depends on this cron's column contract
-// in turn). One-hour throttle keyed by workspace.
-async function notifyOwnerOnReelPollFailure(
-  env: Env,
-  post: { id: string; user_id?: string | null; client_id?: string | null },
-  reason: string,
-): Promise<void> {
-  if (!env.RESEND_API_KEY) return;
-  try {
-    const wsKey = post.client_id ? `client:${post.client_id}` : `user:${post.user_id ?? 'unknown'}`;
-    const cronType = `alert:fb_failure:${wsKey}`.slice(0, 80);
-
-    const recent = await env.DB.prepare(
-      `SELECT 1 FROM cron_runs WHERE cron_type = ? AND run_at > datetime('now','-1 hour') LIMIT 1`,
-    ).bind(cronType).first();
-    if (recent) return;
-
-    let email: string | null = null;
-    let workspaceName = 'your workspace';
-    if (post.client_id) {
-      const row = await env.DB.prepare(
-        `SELECT u.email as email, c.name as name FROM clients c JOIN users u ON u.id = c.user_id WHERE c.id = ?`,
-      ).bind(post.client_id).first<{ email: string | null; name: string | null }>();
-      email = row?.email ?? null;
-      if (row?.name) workspaceName = row.name;
-    } else if (post.user_id) {
-      const row = await env.DB.prepare(`SELECT email FROM users WHERE id = ?`)
-        .bind(post.user_id).first<{ email: string | null }>();
-      email = row?.email ?? null;
-    }
-    if (!email) return;
-
-    await sendResendEmail(env, {
-      to: email,
-      subject: `Heads up — a scheduled reel couldn't publish to Facebook`,
-      html: `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#111;">
-        <h2 style="margin:0 0 8px;color:#dc2626;">A scheduled reel didn't go out</h2>
-        <p style="margin:0 0 16px;color:#374151;">A reel for <strong>${escapeHtml(workspaceName)}</strong> uploaded to Facebook but couldn't be published.</p>
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 16px;margin-bottom:16px;">
-          <strong>Reason:</strong><br/><span style="color:#374151;">${escapeHtml(reason)}</span>
-        </div>
-        <p style="margin:0 0 16px;color:#374151;">Open your calendar to retry — it'll fall back to an image post if needed.</p>
-        <p><a href="https://socialaistudio.au" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Open Calendar</a></p>
-        <p style="margin:24px 0 0;color:#9ca3af;font-size:12px;">We only send one of these per workspace per hour, so you won't get spammed if multiple posts queue up.</p>
-      </div>`,
-    });
-
-    await env.DB.prepare(
-      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms) VALUES (?,1,0,?,0)`,
-    ).bind(cronType, reason.slice(0, 200)).run();
-  } catch (e: any) {
-    console.error(`[CRON poll-reels] notifyOwnerOnReelPollFailure error: ${e?.message || e}`);
-  }
-}
 
 // Phase 4 — finish: flip the FB reel to PUBLISHED with the caption.
 // Caller passes the captioned description that was stashed on the post row
@@ -188,7 +128,7 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
                               claim_id = NULL, claim_at = NULL
              WHERE id = ?`
           ).bind(reason, 'FB reel processing timed out (>8 min)', nowAEST, post.id).run();
-          await notifyOwnerOnReelPollFailure(env, post, reason);
+          await notifyOwnerOnFailure(env, post, reason, 'reel');
           console.warn(`[CRON poll-reels] reel ${post.id} timed out — marked Missed`);
           processed++;
           continue;
@@ -208,7 +148,7 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
                             claim_id = NULL, claim_at = NULL
            WHERE id = ?`
         ).bind(reason, nowAEST, post.id).run();
-        await notifyOwnerOnReelPollFailure(env, post, reason);
+        await notifyOwnerOnFailure(env, post, reason, 'reel');
         processed++;
         continue;
       }
@@ -235,7 +175,7 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
                             claim_id = NULL, claim_at = NULL
            WHERE id = ?`
         ).bind(reason, `FB reel processing error: ${fbMsg}`.slice(0, 500), nowAEST, post.id).run();
-        await notifyOwnerOnReelPollFailure(env, post, reason);
+        await notifyOwnerOnFailure(env, post, reason, 'reel');
         console.warn(`[CRON poll-reels] reel ${post.id} FB error: ${fbMsg}`);
         processed++;
         continue;
@@ -274,7 +214,7 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
                             claim_id = NULL, claim_at = NULL
            WHERE id = ?`
         ).bind(reason, nowAEST, post.id).run();
-        await notifyOwnerOnReelPollFailure(env, post, reason);
+        await notifyOwnerOnFailure(env, post, reason, 'reel');
         processed++;
         continue;
       }
@@ -297,7 +237,7 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
                             claim_id = NULL, claim_at = NULL
            WHERE id = ?`
         ).bind(reason, `FB reel finish error: ${(finishErr?.message || 'unknown').slice(0, 400)}`, nowAEST, post.id).run();
-        await notifyOwnerOnReelPollFailure(env, post, reason);
+        await notifyOwnerOnFailure(env, post, reason, 'reel');
         console.warn(`[CRON poll-reels] reel ${post.id} finish failed: ${finishErr?.message}`);
         processed++;
       }
