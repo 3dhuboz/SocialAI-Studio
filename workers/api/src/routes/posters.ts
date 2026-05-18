@@ -25,6 +25,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
+import { checkBillingGate } from '../lib/billing-gate';
 import { POSTER_QUOTA_PER_MONTH, PLAN_INCLUDES_POSTERS, userHasFeature } from '../lib/pricing';
 
 const uuid = () => crypto.randomUUID();
@@ -522,9 +523,13 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // Image gen is more expensive than text — lower rate-limit ceiling (10/min
     // per user) so a held-down Generate button can't burn through credits.
-    if (await isRateLimited(c.env.DB, `ai-image:${uid}`, 10)) {
-      return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
-    }
+    // Pair with billing gate to block past_due users from churning fal credit.
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `ai-image:${uid}`, 10),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+    if (denied) return denied;
 
     let body: { prompt?: string; aspectRatio?: '1:1' | '9:16' | '16:9' };
     try { body = await c.req.json(); }

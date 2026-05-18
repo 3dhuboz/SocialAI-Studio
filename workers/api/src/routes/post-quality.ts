@@ -15,6 +15,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
+import { checkBillingGate } from '../lib/billing-gate';
 import { critiqueImageInternal } from '../lib/critique';
 import { loadForbiddenSubjects } from '../lib/profile-guards';
 
@@ -42,9 +43,14 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/critique-image-caption', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    if (await isRateLimited(c.env.DB, `critique:${uid}`, 60)) {
-      return c.json({ error: 'Rate limit exceeded — 60 critiques per minute' }, 429);
-    }
+    // RATE LIMIT + BILLING GATE — Haiku vision is paid per call; block past_due
+    // users so a declined card can't keep critiquing images.
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `critique:${uid}`, 60),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — 60 critiques per minute' }, 429);
+    if (denied) return denied;
     if (!c.env.ANTHROPIC_API_KEY && !c.env.OPENROUTER_API_KEY) {
       return c.json({ error: 'No critique provider configured' }, 500);
     }
@@ -135,9 +141,14 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/score-post', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    if (await isRateLimited(c.env.DB, `score:${uid}`, 60)) {
-      return c.json({ error: 'Rate limit exceeded — 60 score calls per minute' }, 429);
-    }
+    // RATE LIMIT + BILLING GATE — score-post calls OpenRouter; block past_due
+    // users to keep declined-card customers from burning provider credit.
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `score:${uid}`, 60),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — 60 score calls per minute' }, 429);
+    if (denied) return denied;
     const apiKey = c.env.OPENROUTER_API_KEY;
     if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500);
 

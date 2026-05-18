@@ -245,7 +245,7 @@ export const AccountPanel: React.FC<Props> = ({
 
               {/* Trust footer */}
               <p className="flex items-center justify-center gap-1.5 text-[11px] text-white/15">
-                <ShieldCheck size={11} /> Secured with Clerk + Stripe
+                <ShieldCheck size={11} /> Secured with Clerk + PayPal
               </p>
             </div>
           )}

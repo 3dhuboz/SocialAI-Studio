@@ -54,52 +54,73 @@ export function registerPaypalRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/paypal-verify', async (c) => {
     const body = await c.req.json<{ subscriptionId?: string; uid?: string | null; planId?: string }>().catch(() => null);
     if (!body) return c.json({ error: 'Invalid JSON' }, 400);
-    const { subscriptionId, planId } = body;
-    if (!subscriptionId || !planId) return c.json({ error: 'Missing subscriptionId or planId' }, 400);
+    const { subscriptionId } = body;
+    if (!subscriptionId) return c.json({ error: 'Missing subscriptionId' }, 400);
 
     try {
       const token = await paypalAccessToken(c.env);
       const res = await fetch(`${PAYPAL_API_BASE}/v1/billing/subscriptions/${subscriptionId}`, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
-      const sub = await res.json() as { status?: string; subscriber?: { email_address?: string; payer_id?: string } };
+      const sub = await res.json() as { status?: string; plan_id?: string; subscriber?: { email_address?: string; payer_id?: string } };
       if (sub.status !== 'ACTIVE') {
         return c.json({ error: `Subscription not yet active (status: ${sub.status}). Please wait and try again.` }, 400);
+      }
+
+      // ── Plan-tier resolution from PayPal's authoritative source ──────────
+      // Pre-fix (security audit 2026-05-19): we used the `planId` from the
+      // request body verbatim. That meant a caller with a valid $29 Starter
+      // subscription could POST { subscriptionId: <their real sub>, planId:
+      // "agency" } and seed a pending_activations row marked agency. On next
+      // sign-in the Clerk-authed consume path upgraded them for free.
+      //
+      // Now: ignore the body's planId entirely and resolve from the PayPal
+      // subscription's own plan_id via the PAYPAL_PLAN_TIER lookup. If the
+      // sub's plan_id isn't in the table, the activation is rejected —
+      // safer to fail-closed than to let a misconfigured PayPal plan ID
+      // create an upgrade we don't actually price.
+      const paypalPlanId = sub.plan_id || '';
+      const plan = PAYPAL_PLAN_TIER[paypalPlanId] ?? null;
+      if (!plan) {
+        console.error(`[paypal-verify] sub ${subscriptionId} returned unknown plan_id "${paypalPlanId}" — rejecting`);
+        return c.json({ error: 'Unrecognized subscription plan. Please contact support.' }, 400);
       }
 
       const email = sub.subscriber?.email_address || '';
       const payerId = sub.subscriber?.payer_id || '';
       const id = uuid();
-      await c.env.DB.prepare(
+      const insertResult = await c.env.DB.prepare(
         `INSERT OR IGNORE INTO pending_activations (id, plan, email, paypal_subscription_id, paypal_customer_id, activated_at, consumed)
          VALUES (?,?,?,?,?,?,0)`
-      ).bind(id, planId, email, subscriptionId, payerId, new Date().toISOString()).run();
+      ).bind(id, plan, email, subscriptionId, payerId, new Date().toISOString()).run();
 
       // Send welcome email here (don't wait for the webhook — it's the safety net,
       // not the primary signal). Skipped silently if RESEND_API_KEY isn't set.
       //
+      // Gated on insertResult.meta.changes === 1 to skip duplicate emails when
+      // the INSERT OR IGNORE no-ops — once schema_v21's unique partial index
+      // lands, the FE retrying paypal-verify on a flaky network will hit the
+      // dedup index and we'd otherwise spam the welcome email on every retry.
+      //
       // Brand resolution: at this point the user row doesn't exist yet (the
       // frontend consumes the pending_activation on next render to seed it),
       // so we can't loadBrandForUser. We look up by subscription/email — which
-      // will fall back to the default brand for first-time signups. That's
-      // correct: the welcome email always reflects the reseller-of-record at
-      // the time of signup, which for a brand-new user is the default brand
-      // unless they were pre-provisioned with brand_id.
-      if (email) {
+      // will fall back to the default brand for first-time signups.
+      if (email && insertResult.meta?.changes === 1) {
         const brand = await loadBrandBySubscriptionOrEmail(c.env, subscriptionId, email);
         await sendResendEmail(c.env, {
           to: email,
-          subject: `Welcome to ${brand.appName} — your ${planId} plan is active!`,
-          html: welcomeEmailHtml(brand, planId),
+          subject: `Welcome to ${brand.appName} — your ${plan} plan is active!`,
+          html: welcomeEmailHtml(brand, plan),
         });
         await sendResendEmail(c.env, {
           to: brand.adminNotifyEmail,
-          subject: `New subscriber: ${email} — ${planId} plan`,
-          html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${planId}<br><strong>Subscription ID:</strong> ${subscriptionId}<br><strong>Brand:</strong> ${brand.id}</p>`,
+          subject: `New subscriber: ${email} — ${plan} plan`,
+          html: `<p>New PayPal subscription activated.</p><p><strong>Email:</strong> ${email}<br><strong>Plan:</strong> ${plan}<br><strong>Subscription ID:</strong> ${subscriptionId}<br><strong>Brand:</strong> ${brand.id}</p>`,
         });
       }
 
-      return c.json({ success: true, plan: planId });
+      return c.json({ success: true, plan });
     } catch (err: any) {
       console.error('PayPal verify error:', err?.message || err);
       return c.json({ error: 'Verification failed. Please contact support.' }, 500);
