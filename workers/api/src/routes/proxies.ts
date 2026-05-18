@@ -25,6 +25,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
+import { checkBillingGate } from '../lib/billing-gate';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 
@@ -37,10 +38,17 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // AUTH GATE — fal.ai is paid per-image/video; never let it run anonymous.
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    // RATE LIMIT — 20 fal.ai calls per minute per user (images are the dominant cost).
-    if (await isRateLimited(c.env.DB, `fal:${uid}`, 20)) {
-      return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
-    }
+    // RATE LIMIT + BILLING GATE — fal.ai is the most expensive endpoint
+    // ($0.025-$0.15/image). Block past_due subscribers so a declined card
+    // can't churn provider credit until the cancellation eventually lands.
+    // Both checks hit different tables (rate_limit_log vs users) and neither
+    // depends on the other's result — fire them in parallel.
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `fal:${uid}`, 20),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+    if (denied) return denied;
 
     const url = new URL(c.req.url);
     const action = url.searchParams.get('action');
@@ -189,9 +197,13 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // AUTH GATE — required to use the proxied fal.ai endpoint with our key.
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    if (await isRateLimited(c.env.DB, `fal:${uid}`, 20)) {
-      return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
-    }
+    // RATE LIMIT + BILLING GATE — same rationale as the dispatcher above.
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `fal:${uid}`, 20),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+    if (denied) return denied;
 
     const path = c.req.path.replace('/api/fal-proxy', '');
     const url = `https://api.fal.ai${path}`;
@@ -226,9 +238,14 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // the caller omitted their own — drop that path entirely.
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    if (await isRateLimited(c.env.DB, `runway:${uid}`, 20)) {
-      return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
-    }
+    // RATE LIMIT + BILLING GATE — Runway is paid per-generation; mirror the
+    // fal-proxy guard so a past_due card can't keep generating videos.
+    const [isLimited, denied] = await Promise.all([
+      isRateLimited(c.env.DB, `runway:${uid}`, 20),
+      checkBillingGate(c, uid),
+    ]);
+    if (isLimited) return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
+    if (denied) return denied;
 
     const path = c.req.path.replace('/api/runway-proxy', '');
     const url = `https://api.runwayml.com/v1${path}`;

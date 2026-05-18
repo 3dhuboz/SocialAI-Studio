@@ -16,7 +16,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect } from '../lib/anthropic';
-import { SUBSCRIPTION_STATUS } from '../lib/pricing';
+import { checkBillingGate } from '../lib/billing-gate';
 import { fetchUrlText } from '../lib/web-fetch';
 
 export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
@@ -38,23 +38,18 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // RATE LIMIT + BILLING GATE — fire both checks concurrently since they
     // hit different tables (rate_limit_log vs users) and neither depends on
-    // the other's result.
-    const [isLimited, billingRow] = await Promise.all([
+    // the other's result. Block AI generation when payment has failed —
+    // prevents burning provider credits we can't recover. Webhook sets/clears
+    // subscription_status. checkBillingGate is the shared helper that gates
+    // every paid AI endpoint (see lib/billing-gate.ts).
+    const [isLimited, denied] = await Promise.all([
       isRateLimited(c.env.DB, `ai:${uid}`, 30),
-      c.env.DB.prepare('SELECT subscription_status FROM users WHERE id = ?')
-        .bind(uid).first<{ subscription_status: string | null }>(),
+      checkBillingGate(c, uid),
     ]);
     if (isLimited) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
     }
-    // Block AI generation when payment has failed — prevents burning provider
-    // credits we can't recover. Webhook sets/clears subscription_status.
-    if (billingRow?.subscription_status === SUBSCRIPTION_STATUS.PAST_DUE) {
-      return c.json({
-        error: 'Your subscription payment has failed. Please update your billing details to continue using AI generation.',
-        code: 'PAYMENT_PAST_DUE',
-      }, 402);
-    }
+    if (denied) return denied;
 
     let body: {
       prompt?: string;

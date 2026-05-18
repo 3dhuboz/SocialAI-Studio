@@ -183,9 +183,10 @@ export function cancellationEmailHtml(brand: Brand): string {
  * Event types handled:
  *   BILLING.SUBSCRIPTION.ACTIVATED  → status 'completed', no amount
  *   BILLING.SUBSCRIPTION.CANCELLED  → status 'cancelled', no amount
+ *   BILLING.SUBSCRIPTION.SUSPENDED  → status 'suspended', flags past_due
  *   PAYMENT.SALE.COMPLETED          → status 'completed', positive amount_cents
  *   PAYMENT.SALE.REFUNDED           → status 'refunded',  negative amount_cents
- *   BILLING.SUBSCRIPTION.PAYMENT.FAILED → status 'failed', no amount
+ *   BILLING.SUBSCRIPTION.PAYMENT.FAILED → status 'failed', flags past_due
  *
  * Other event types are intentionally ignored (we'd just be storing noise).
  */
@@ -199,7 +200,7 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
   let captureId: string | null = null;
   let amountCents: number | null = null;
   let currency = 'AUD';
-  let status: 'completed' | 'cancelled' | 'refunded' | 'failed' | null = null;
+  let status: 'completed' | 'cancelled' | 'suspended' | 'refunded' | 'failed' | null = null;
   let email: string | null = resource.subscriber?.email_address || null;
   let plan: string | null = null;
 
@@ -243,6 +244,16 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
     case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED': {
       subscriptionId = resource.id || null;
       status = 'failed';
+      break;
+    }
+    case 'BILLING.SUBSCRIPTION.SUSPENDED': {
+      // PayPal fires SUSPENDED after repeated payment failures (typically 3
+      // attempts) or when an admin manually pauses the subscription. Distinct
+      // from PAYMENT.FAILED (per-attempt) — SUSPENDED is terminal until
+      // reactivation. We gate AI features the same way for both — see the
+      // past_due block below.
+      subscriptionId = resource.id || null;
+      status = 'suspended';
       break;
     }
     default:
@@ -312,14 +323,18 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
     } catch { /* non-critical — gate will clear on next successful call */ }
   }
 
-  // Failed payment — mark the user past_due so AI generation is gated
-  // until billing is resolved. Gates in routes/ai.ts check this column.
-  if (eventType === 'BILLING.SUBSCRIPTION.PAYMENT.FAILED' && userId) {
+  // Failed/suspended payment — mark the user past_due so paid endpoints are
+  // gated until billing is resolved. checkBillingGate (lib/billing-gate.ts)
+  // reads this column. PAYMENT.FAILED is per-attempt (PayPal retries up to 3
+  // times); SUSPENDED is terminal (sub paused entirely). Same downstream
+  // treatment in both cases — block paid endpoints until they fix billing.
+  if (userId && (eventType === 'BILLING.SUBSCRIPTION.PAYMENT.FAILED' ||
+                 eventType === 'BILLING.SUBSCRIPTION.SUSPENDED')) {
     try {
       await c.env.DB.prepare(
         `UPDATE users SET subscription_status = ? WHERE id = ?`
       ).bind(SUBSCRIPTION_STATUS.PAST_DUE, userId).run();
-      console.log(`[billing] user ${userId} marked past_due — payment failed`);
+      console.log(`[billing] user ${userId} marked past_due — ${eventType}`);
     } catch (e: any) {
       console.warn(`[billing] failed to mark user ${userId} past_due:`, e?.message);
     }
