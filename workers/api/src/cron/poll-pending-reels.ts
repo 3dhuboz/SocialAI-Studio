@@ -37,6 +37,7 @@
 
 import type { Env } from '../env';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
+import { loadSocialTokensForPosts, lookupSocialTokens } from './_shared';
 
 const TICK_BUDGET_MS = 10_000;
 const STALE_KICK_THRESHOLD_MS = 8 * 60 * 1000; // 8 min — FB Reel p99 is ~2-3 min
@@ -105,6 +106,30 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
   const base = 'https://graph.facebook.com/v21.0';
   let processed = 0;
 
+  // Batch-load social_tokens for every workspace in this batch — one query
+  // per table (clients, users) instead of N round-trips. See _shared.ts.
+  const tokensMap = await loadSocialTokensForPosts(env, posts);
+
+  // Kick off FB status fetches in parallel BEFORE the sequential loop.
+  // Pre-fix this was a serial ~1s fetch per row inside the loop body, so a
+  // 10-row batch needed ~10s of FB-latency time alone — already over the
+  // 10s tick budget before any DB work. Now all fetches start at once and
+  // the loop awaits each by post.id when it needs the result; DB writes +
+  // finish-phase POSTs stay sequential. Rows without tokens or fb_video_id
+  // are skipped — the token-missing branch in the loop fires first and we
+  // `continue` before touching this map.
+  const statusPromises = new Map<string, Promise<any>>();
+  for (const post of posts) {
+    const t = lookupSocialTokens(tokensMap, post);
+    if (!t?.facebookPageAccessToken || !post.fb_video_id) continue;
+    statusPromises.set(
+      post.id,
+      fetch(`${base}/${post.fb_video_id}?fields=status&access_token=${encodeURIComponent(t.facebookPageAccessToken)}`)
+        .then(r => r.json())
+        .catch((e: any) => ({ __fetchError: e?.message || 'fetch failed' })),
+    );
+  }
+
   for (const post of posts) {
     if (Date.now() - startedAt > TICK_BUDGET_MS) {
       console.log(`[CRON poll-reels] tick budget exceeded (${Date.now() - startedAt}ms) — deferring ${posts.length - processed} reel(s) to next tick`);
@@ -135,11 +160,10 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
         }
       }
 
-      // Look up FB page tokens for this workspace.
-      const tokensRaw = post.client_id
-        ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind(post.client_id).first<{ social_tokens: string | null }>()
-        : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(post.user_id).first<{ social_tokens: string | null }>();
-      const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+      // Tokens come from the batch-loaded map (preloaded above) — no per-row
+      // DB round-trip. Missing entry = workspace has no tokens row OR the
+      // JSON was malformed → treat same as "no FB connected".
+      const tokens = lookupSocialTokens(tokensMap, post);
       if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
         const reason = 'No Facebook page connected — go to Settings → Connect Facebook to fix.';
         await env.DB.prepare(
@@ -153,11 +177,16 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
         continue;
       }
 
-      // Phase 3 — single status poll (no inner wait loop, that was the bug).
-      const statusRes = await fetch(
-        `${base}/${post.fb_video_id}?fields=status&access_token=${encodeURIComponent(tokens.facebookPageAccessToken)}`,
-      );
-      const statusData = await statusRes.json() as any;
+      // Phase 3 — await the parallel-kicked status fetch (no inner wait loop,
+      // that was the bug). The fetch was started before the loop began, so
+      // most of the FB network round-trip is already in-flight by the time
+      // we get here. The fetch may have transport-failed; treat the same as
+      // "still processing" so we retry next tick rather than mark Missed.
+      const statusData = await statusPromises.get(post.id) as any;
+      if (!statusData || statusData.__fetchError) {
+        console.warn(`[CRON poll-reels] reel ${post.id} status fetch failed: ${statusData?.__fetchError || 'no response'} — will retry next tick`);
+        continue;
+      }
       const uploadingPhase = statusData.status?.uploading_phase?.status;
       const processingPhase = statusData.status?.processing_phase?.status;
       const videoStatus = statusData.status?.video_status;

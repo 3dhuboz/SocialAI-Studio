@@ -21,7 +21,7 @@ import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
-import { ACTIVE_CLIENT_FILTER } from './_shared';
+import { ACTIVE_CLIENT_FILTER, loadSocialTokensForPosts, lookupSocialTokens } from './_shared';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
@@ -232,6 +232,13 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: 0 }; }
   console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
+  // Preload social_tokens for every workspace in this batch in two queries
+  // instead of one-per-post. The previous inline lookup was N+1 against D1 —
+  // up to 20 round-trips per tick to fetch what's almost always 1-3 distinct
+  // workspaces' tokens (most batches are dominated by a single owner's posts).
+  // See cron/_shared.ts:loadSocialTokensForPosts for the IN-list query shape.
+  const tokensMap = await loadSocialTokensForPosts(env, posts as { user_id?: string | null; client_id?: string | null }[]);
+
   // Cap on JIT image generations per cron run. fal.ai can be slow (~10-15s per
   // image on cold start) and the worker has a wall-time budget, so we don't let
   // a stampede of missing images blow the budget. Posts above the cap publish
@@ -298,11 +305,10 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         continue;
       }
 
-      // Get social tokens for this workspace
-      const tokensRaw = (post as any).client_id
-        ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind((post as any).client_id).first<{ social_tokens: string | null }>()
-        : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind((post as any).user_id).first<{ social_tokens: string | null }>();
-      const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+      // Social tokens come from the batch-loaded map (see preload above) —
+      // collapses what used to be a per-post DB round-trip into a single
+      // in-memory hash lookup.
+      const tokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null });
       if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
         const reason = 'No Facebook page connected — go to Settings → Connect Facebook to fix.';
         console.warn(`[CRON] No FB tokens for post ${(post as any).id} — marking missed`);
