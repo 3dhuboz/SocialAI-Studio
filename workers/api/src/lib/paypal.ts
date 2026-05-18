@@ -284,6 +284,29 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
     }
   }
 
+  // ── Plan resolution race fallback (security audit 2026-05-19 #I6) ─────────
+  // PAYMENT.SALE.COMPLETED fires at PayPal-checkout time, which is BEFORE the
+  // user signs back in to consume their pending_activation row. In that window
+  // users.plan is still NULL, so the lookups above leave `plan` null, and the
+  // reel-credit grant guard at the bottom of this function skips silently.
+  // Result: pro/agency subscribers lose their first month's 4/20 reel credits.
+  //
+  // pending_activations is the authoritative source for the plan in that
+  // window (the PayPal webhook for ACTIVATED + the /api/paypal-verify route
+  // both stamp it there before the user has signed in). Fall through to it.
+  if (!plan && subscriptionId) {
+    const pa = await c.env.DB.prepare(
+      'SELECT plan FROM pending_activations WHERE paypal_subscription_id = ? ORDER BY activated_at DESC LIMIT 1'
+    ).bind(subscriptionId).first<{ plan: string | null }>();
+    if (pa?.plan) plan = pa.plan;
+  }
+  if (!plan && email) {
+    const pa = await c.env.DB.prepare(
+      'SELECT plan FROM pending_activations WHERE email = ? AND consumed = 0 ORDER BY activated_at DESC LIMIT 1'
+    ).bind(email).first<{ plan: string | null }>();
+    if (pa?.plan) plan = pa.plan;
+  }
+
   // Cap raw_event so a single huge webhook can't blow row size limits.
   const rawJson = (() => {
     try { return JSON.stringify(event).slice(0, 8000); } catch { return null; }
