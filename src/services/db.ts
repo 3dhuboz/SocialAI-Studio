@@ -577,6 +577,38 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     },
 
     /**
+     * Auto-fix a `view-checklist` recommendation.
+     *
+     * Classifies each item server-side via one LLM call, then dispatches to a
+     * per-kind handler that either audits state (read-only) or applies a SAFE
+     * D1 fix (e.g. shift Scheduled posts into Mon-Fri 9am-5pm). The five
+     * handler kinds — AUDIT_FB_PAGE, AUDIT_DB, AUTO_FIX_SCHEDULE,
+     * SUGGEST_REWRITE, MANUAL_ONLY — map to the `kind`/`status` fields below.
+     *
+     * Suggested rewrites are NEVER pushed to Facebook automatically — the
+     * `payload.current` + `payload.proposed` strings are returned for the
+     * user to review and apply manually.
+     *
+     * Rate-limited 10/min per user. Agency callers must pass `clientId` to
+     * scope reads/writes to the right workspace.
+     */
+    async autoFixChecklist(input: { items: string[]; clientId?: string | null }): Promise<{
+      results: Array<{
+        item: string;
+        kind: 'audit' | 'auto_fix' | 'suggest' | 'manual';
+        status: 'ok' | 'finding' | 'fixed' | 'suggested' | 'failed';
+        details: string;
+        payload?: Record<string, unknown>;
+      }>;
+    }> {
+      const res = await f('/api/recommendations/auto-fix-checklist', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return res.json() as any;
+    },
+
+    /**
      * 90-second Magic Onboarding (Tier 3 wow feature).
      *
      * After FB Page is connected, call this once to:
