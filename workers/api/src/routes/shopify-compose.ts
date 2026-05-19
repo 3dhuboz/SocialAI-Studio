@@ -283,7 +283,12 @@ export async function composeProductPost(
     if (env.ANTHROPIC_API_KEY) {
       const result = await callAnthropicDirect({
         apiKey: env.ANTHROPIC_API_KEY,
-        model: 'anthropic/claude-haiku-4.5',
+        // api.anthropic.com uses the bare model id; the `anthropic/` prefix
+        // is OpenRouter-only and api.anthropic.com returns 404 not_found_error
+        // if you send it through. Other callsites in this codebase that hit
+        // callAnthropicDirect (campaign-research, weekly-review, post-quality)
+        // all use this same bare-id form.
+        model: 'claude-haiku-4-5',
         systemPrompt: SOCIAL_SYSTEM_PROMPT,
         prompt: userPrompt,
         temperature: 0.7,
