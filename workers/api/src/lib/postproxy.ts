@@ -53,12 +53,22 @@ export interface PostproxyCreatePostArgs {
   /** Public media URLs (R2 / fal). Order matters — first URL is the
    *  primary asset (image OR video) for the post. */
   media: string[];
-  /** 'feed' for a standard photo/text post; 'reel' for a Reels publish. */
-  format: 'feed' | 'reel';
-  /** FB Page numeric ID = the placement.id from /profiles/:id/placements. */
+  /** Post format. FB accepts 'feed' (legacy alias for 'post' that the
+   *  Postproxy server backward-compats) or 'reel'. IG accepts 'post',
+   *  'reel', or 'story' per docs §platform-parameters. */
+  format: 'feed' | 'post' | 'reel' | 'story';
+  /** FB Page numeric ID = the placement.id from /profiles/:id/placements.
+   *  IGNORED for Instagram (IG has no placements — see docs §3299). */
   pageId: string;
   /** For reels only — Postproxy uses this as the Reel title. ≤60 chars. */
   title?: string;
+  /** Target platform. Defaults to 'facebook' to preserve all existing
+   *  call-site behaviour during the ig-wire rollout. Cron + routes pass
+   *  this through; the lib decides which platforms.* block to emit. */
+  platform?: 'facebook' | 'instagram';
+  /** Instagram only — first comment posted after the image lands. Capped
+   *  at 2196 chars per docs §post-create. Ignored for FB. */
+  firstComment?: string;
 }
 
 export interface PostproxyPlatformStatus {
@@ -182,18 +192,24 @@ export async function ensureProfileGroup(
 /** Open an OAuth redirect URL for the given profile_group + platform.
  *  Postproxy returns a hosted-OAuth URL that the browser navigates to;
  *  Meta consent happens there, then Postproxy redirects to `redirectUrl`
- *  carrying our oauth_state nonce. */
+ *  carrying our oauth_state nonce.
+ *
+ *  `platform` defaults to 'facebook' for back-compat — existing call
+ *  sites that don't pass it get the same wire shape they did before
+ *  ig-wire. The /api/postproxy/init-connection route will gain a
+ *  `platform` body param in the follow-up routes PR. */
 export async function initializeConnection(
   env: Env,
   groupId: string,
   redirectUrl: string,
+  platform: 'facebook' | 'instagram' = 'facebook',
 ): Promise<{ url: string }> {
   const data = await pfFetch<{ url: string; success?: boolean }>(
     env,
     `/profile_groups/${encodeURIComponent(groupId)}/initialize_connection`,
     {
       method: 'POST',
-      body: { platform: 'facebook', redirect_url: redirectUrl },
+      body: { platform, redirect_url: redirectUrl },
     },
   );
   if (!data?.url) {
@@ -240,16 +256,32 @@ export async function listPlacements(
 // ── Posts ────────────────────────────────────────────────────────────────
 
 /** Build the Postproxy /api/posts payload from our typed args.
- *  Exported for tests — production callers should use createPost. */
+ *  Exported for tests — production callers should use createPost.
+ *
+ *  Branches on `args.platform` (defaults to 'facebook' for back-compat):
+ *    - facebook: emits `platforms.facebook = { format, page_id, title? }`.
+ *      Existing call sites that don't pass `platform` get exactly the same
+ *      wire shape they did before this change.
+ *    - instagram: emits `platforms.instagram = { format, title?, first_comment? }`.
+ *      No `page_id` — IG has no placements (docs §3299). */
 export function buildCreatePostPayload(args: PostproxyCreatePostArgs): Record<string, unknown> {
-  const platform: Record<string, unknown> = {
+  const platform = args.platform ?? 'facebook';
+  const block: Record<string, unknown> = {
     format: args.format,
-    page_id: args.pageId,
   };
+  if (platform === 'facebook') {
+    block.page_id = args.pageId;
+  }
   if (args.format === 'reel' && args.title) {
-    // FB Reels require a title — Postproxy passes this through verbatim
-    // as the reel title. Cap at 60 chars (FB's hard limit).
-    platform.title = args.title.slice(0, 60);
+    // Reels require a title — Postproxy passes this through as the Reel
+    // title. Cap at 60 chars (Meta's hard limit, applies to both FB Reels
+    // and IG Reels).
+    block.title = args.title.slice(0, 60);
+  }
+  if (platform === 'instagram' && args.firstComment) {
+    // IG first_comment auto-posts as a comment after publish. Cap at 2196
+    // chars per docs §post-create. Ignored for FB.
+    block.first_comment = args.firstComment.slice(0, 2196);
   }
   return {
     post: {
@@ -258,9 +290,7 @@ export function buildCreatePostPayload(args: PostproxyCreatePostArgs): Record<st
     },
     profiles: [args.profileId],
     media: args.media,
-    platforms: {
-      facebook: platform,
-    },
+    platforms: { [platform]: block },
   };
 }
 
