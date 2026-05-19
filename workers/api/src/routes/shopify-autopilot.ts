@@ -1,0 +1,232 @@
+// Shopify embedded-app: AI Autopilot batch generator.
+//
+// Backs the bulk content-calendar flow on the embedded app. The frontend
+// plans the schedule client-side (it knows the merchant's local timezone,
+// the vibe preset, and the synced product list), then calls the
+// single-post endpoint below N times with concurrency-3 to fill the
+// calendar in parallel.
+//
+// We deliberately keep the worker stateless across the batch — each
+// /generate-one call is independent, so:
+//   * a flaky LLM/image call on slot 4 doesn't kill slots 5–10
+//   * the frontend can show real-time "3 of 10 generated" progress
+//   * rate-limit pressure naturally throttles at the per-shop cap
+//
+// Endpoints:
+//
+//   POST /api/shopify/autopilot/generate-one
+//     Body: { productId, platform, scheduledFor, tone? }
+//     1. Re-uses composeProductPost() from shopify-compose.ts (caption + image)
+//     2. Inserts a Scheduled post directly into the posts table with
+//        owner_kind='shop', owner_id=<shopDomain>, status='Scheduled'
+//        and the provided scheduledFor.
+//     3. Returns the created post.
+//
+// Rate limit: 20/min per shop. Higher than the 10/min cap on /compose
+// because the bulk gen does naturally space things out (3 parallel × 5–20s
+// per call ≈ 9–60 sec per slot), but still bounded so a hostile retry
+// can't blow through 100 posts a minute.
+//
+// Auth: session-token (Bearer). The shop domain is taken from the verified
+// JWT, never from the body — a caller can't generate on behalf of another
+// shop.
+
+import type { Hono } from 'hono';
+import type { Env } from '../env';
+import { isRateLimited } from '../auth';
+import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
+import { composeProductPost, ComposeError } from './shopify-compose';
+
+const RATE_LIMIT_PER_MIN = 20;
+const ALLOWED_PLATFORMS = new Set(['facebook', 'instagram', 'both']);
+const ALLOWED_TONES = new Set(['friendly', 'professional', 'playful']);
+const ALLOWED_POST_TYPES = new Set(['image', 'video']);
+
+/** Default motion prompt for the Kling i2v cron. Specific enough to give
+ *  Kling a recognisable visual goal without being so prescriptive that
+ *  every product looks identical. The prewarm-videos cron already adds a
+ *  generic "cinematic, smooth motion" fallback if this is omitted. */
+const DEFAULT_MOTION_PROMPT =
+  'cinematic product showcase, slow camera dolly forward, soft natural light, gentle subject rotation, premium tabletop staging';
+
+function requireShopifyConfig(env: Env): { key: string; secret: string } | null {
+  if (!env.SHOPIFY_API_KEY || !env.SHOPIFY_API_SECRET) return null;
+  return { key: env.SHOPIFY_API_KEY, secret: env.SHOPIFY_API_SECRET };
+}
+
+async function requireSession(c: any): Promise<VerifiedSession | Response> {
+  const cfg = requireShopifyConfig(c.env);
+  if (!cfg) return c.json({ error: 'Shopify app not configured' }, 500);
+  const auth = c.req.header('Authorization') || '';
+  if (!auth.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401);
+  const session = await verifySessionToken(auth.slice(7), cfg.key, cfg.secret);
+  if (!session) return c.json({ error: 'Invalid session token' }, 401);
+  return session;
+}
+
+// Look up the shop's active campaign (if any). Active = start_at <= now()
+// AND (end_at IS NULL OR end_at >= now()). When present, its theme/goal
+// is woven into the compose prompt so the generated post reflects the
+// merchant's current marketing push.
+//
+// Tolerant of the campaigns table not existing yet — autopilot can ship
+// independently of campaigns, and the catch below stops a missing table
+// from blocking generation.
+async function findActiveCampaignContext(env: Env, shop: string): Promise<string | null> {
+  try {
+    const now = new Date().toISOString();
+    const row = await env.DB.prepare(
+      `SELECT name, goal, theme
+         FROM shopify_campaigns
+        WHERE shop_domain = ?
+          AND start_at <= ?
+          AND (end_at IS NULL OR end_at >= ?)
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    ).bind(shop, now, now).first<{ name: string; goal: string | null; theme: string | null }>();
+    if (!row) return null;
+    return [
+      `Campaign name: ${row.name}`,
+      row.goal ? `Goal: ${row.goal}` : null,
+      row.theme ? `Theme: ${row.theme}` : null,
+    ].filter(Boolean).join('\n');
+  } catch {
+    // Table doesn't exist or query failed — degrade silently.
+    return null;
+  }
+}
+
+export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): void {
+  app.post('/api/shopify/autopilot/generate-one', async (c) => {
+    const sessionOrResp = await requireSession(c);
+    if (sessionOrResp instanceof Response) return sessionOrResp;
+    const shop = sessionOrResp.shopDomain;
+
+    if (await isRateLimited(c.env.DB, `shopify-autopilot:${shop}`, RATE_LIMIT_PER_MIN)) {
+      return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);
+    }
+
+    const body = await c.req.json().catch(() => null) as {
+      productId?: string;
+      platform?: string;
+      scheduledFor?: string;
+      tone?: string;
+      postType?: string;
+      motionPrompt?: string;
+    } | null;
+    if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+
+    const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
+    if (!productId) return c.json({ error: 'productId is required' }, 400);
+
+    const platform = body.platform || 'both';
+    if (!ALLOWED_PLATFORMS.has(platform)) {
+      return c.json({ error: `platform must be one of: ${[...ALLOWED_PLATFORMS].join(', ')}` }, 400);
+    }
+
+    const tone = body.tone || 'friendly';
+    if (!ALLOWED_TONES.has(tone)) {
+      return c.json({ error: `tone must be one of: ${[...ALLOWED_TONES].join(', ')}` }, 400);
+    }
+
+    const postType = body.postType || 'image';
+    if (!ALLOWED_POST_TYPES.has(postType)) {
+      return c.json({ error: `postType must be 'image' or 'video'` }, 400);
+    }
+    const motionPrompt = typeof body.motionPrompt === 'string' && body.motionPrompt.trim()
+      ? body.motionPrompt.trim().slice(0, 500)
+      : DEFAULT_MOTION_PROMPT;
+
+    // scheduledFor must be an ISO string in the future. We refuse anything
+    // > 60 days out to avoid persisting stale rows the cron will hit.
+    const scheduledFor = typeof body.scheduledFor === 'string' ? body.scheduledFor : '';
+    const scheduleMs = Date.parse(scheduledFor);
+    if (!scheduleMs || Number.isNaN(scheduleMs)) {
+      return c.json({ error: 'scheduledFor must be a valid ISO date string' }, 400);
+    }
+    if (scheduleMs < Date.now() - 60_000) {
+      return c.json({ error: 'scheduledFor cannot be in the past' }, 400);
+    }
+    if (scheduleMs > Date.now() + 60 * 86_400_000) {
+      return c.json({ error: 'scheduledFor cannot be more than 60 days out' }, 400);
+    }
+
+    // Look up active campaign for context (best-effort).
+    const campaignContext = await findActiveCampaignContext(c.env, shop);
+
+    let composed;
+    try {
+      composed = await composeProductPost(
+        c.env, shop, productId,
+        platform as 'facebook' | 'instagram' | 'both',
+        tone as 'friendly' | 'professional' | 'playful',
+        campaignContext || undefined,
+      );
+    } catch (err: any) {
+      if (err instanceof ComposeError) {
+        const code = err.stage === 'product' ? 404 : 502;
+        return c.json({ stage: err.stage, error: err.message }, code);
+      }
+      console.error('[shopify-autopilot] unexpected:', String(err?.stack ?? err));
+      return c.json({ error: String(err?.message ?? err).slice(0, 300) }, 500);
+    }
+
+    // Insert as Scheduled. Mirror shopify-posts.ts contract: write BOTH
+    // legacy (user_id, client_id) AND tenant-abstracted (owner_kind, owner_id)
+    // columns. user_id is the shop sentinel because the column is NOT NULL.
+    //
+    // For postType='video' we also set:
+    //   post_type='video', video_status='pending', video_script=<motion>
+    // which the prewarm-videos cron (runs every 5 min) picks up to fire
+    // off Kling i2v generation against image_url as the thumbnail. When
+    // the video lands the cron flips video_status to 'ready' and sets
+    // video_url; publish-missed then ships it to FB via the Reels API.
+    const id = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+    const scheduledIso = new Date(scheduleMs).toISOString();
+
+    if (postType === 'video') {
+      await c.env.DB.prepare(
+        `INSERT INTO posts (
+           id, user_id, client_id, owner_kind, owner_id,
+           content, image_url, platform, status, scheduled_for, created_at,
+           post_type, video_status, video_script
+         )
+         VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?, 'video', 'pending', ?)`,
+      ).bind(
+        id, shop, shop,
+        composed.caption,
+        composed.imageUrl,   // serves as the thumbnail for Kling i2v
+        platform,
+        scheduledIso,
+        nowIso,
+        motionPrompt,
+      ).run();
+    } else {
+      await c.env.DB.prepare(
+        `INSERT INTO posts (id, user_id, client_id, owner_kind, owner_id, content, image_url, platform, status, scheduled_for, created_at)
+         VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?)`,
+      ).bind(
+        id, shop, shop,
+        composed.caption,
+        composed.imageUrl,
+        platform,
+        scheduledIso,
+        nowIso,
+      ).run();
+    }
+
+    return c.json({
+      id,
+      status: 'Scheduled',
+      caption: composed.caption,
+      image_url: composed.imageUrl,
+      platform,
+      scheduled_for: scheduledIso,
+      product: composed.product,
+      campaign_used: !!campaignContext,
+      post_type: postType,
+      video_status: postType === 'video' ? 'pending' : null,
+    }, 201);
+  });
+}

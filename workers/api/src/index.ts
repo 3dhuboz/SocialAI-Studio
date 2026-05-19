@@ -44,6 +44,9 @@ import { registerShopifySocialConnectRoutes } from './routes/shopify-social-conn
 import { registerShopifyInsightsRoutes } from './routes/shopify-insights';
 import { registerShopifyPostQualityRoutes } from './routes/shopify-post-quality';
 import { registerShopifyPostersRoutes } from './routes/shopify-posters';
+import { registerShopifyAutopilotRoutes } from './routes/shopify-autopilot';
+import { registerShopifyCampaignRoutes } from './routes/shopify-campaigns';
+import { registerShopifyFactsRoutes } from './routes/shopify-facts';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -141,6 +144,9 @@ registerShopifySocialConnectRoutes(app);
 registerShopifyInsightsRoutes(app);
 registerShopifyPostQualityRoutes(app);
 registerShopifyPostersRoutes(app);
+registerShopifyAutopilotRoutes(app);
+registerShopifyCampaignRoutes(app);
+registerShopifyFactsRoutes(app);
 
 export default {
   fetch: app.fetch,

@@ -147,6 +147,9 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `shopify-insights.ts` | Embedded-app: `GET /api/shopify/insights` — FB Page stats (followers, reach/interactions, engagement rate) + D1 post queue summary. Mirrors main-app's `getLivePageStats` logic in the worker. |
 | `shopify-post-quality.ts` | Embedded-app: `POST /api/shopify/critique-image-caption` — vision critique (Haiku 4.5) for shop posts. Session-token gated; persists onto `posts` row when `postId` is provided and owner matches. |
 | `shopify-posters.ts` | Embedded-app: shop-scoped poster gallery — `POST /api/shopify/posters` (generate via OpenRouter + save to R2), `GET /api/shopify/posters` (list), `GET /api/shopify/posters/:id/image` (stream), `DELETE /api/shopify/posters/:id`. Uses `shopify_posters` table (schema_v23). |
+| `shopify-autopilot.ts` | Embedded-app: bulk-content-calendar generator. `POST /api/shopify/autopilot/generate-one` composes (caption+image via shared `composeProductPost`) and inserts a Scheduled post. Supports `postType: 'image' \| 'video'` — video posts seed the existing prewarm-videos cron via `video_status='pending'`. Includes active-campaign context lookup. |
+| `shopify-campaigns.ts` | Embedded-app: shop-scoped marketing campaigns. CRUD via `/api/shopify/campaigns/*` plus `/active` convenience endpoint. `shopify_campaigns` table (schema_v24). Autopilot reads active campaign context into each compose call. |
+| `shopify-facts.ts` | Embedded-app: FB Page facts status + manual refresh. `GET /api/shopify/facts/status` returns `{total, by_type, last_verified_at, page_connected}`. `POST /api/shopify/facts/refresh` triggers `refreshFactsForShop` synchronously (rate-limited 3/min). `shopify_facts` table (schema_v24). |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -191,7 +194,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v23
+**Current schema version:** v24
 
 ### Migration process
 ```bash
@@ -218,6 +221,9 @@ New migrations go in `workers/api/schema_vN.sql`. Always use `IF NOT EXISTS` / `
 | `shopify_products` | Cached product catalog per shop (populated in Phase 2) |
 | `shopify_billing_events` | Audit log of every `app_subscriptions/update` transition + reconciliation cron decisions |
 | `shopify_admin_audit` | Owner-side admin actions on Shopify shops (force-cancel, force-reconcile, manual plan override) |
+| `shopify_posters` | Shop-scoped AI-poster gallery (schema_v23). R2 key prefix `shopify-posters/<id>.png`. |
+| `shopify_campaigns` | Shop-scoped marketing campaigns (schema_v24). Active campaign feeds into autopilot compose context. |
+| `shopify_facts` | Per-shop scrape of connected FB Page (about/posts/photos, schema_v24). Powers Autopilot "N facts ready" indicator. |
 
 ---
 

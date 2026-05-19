@@ -12,6 +12,8 @@ const Compose = lazy(() => import('./pages/Compose'));
 const Calendar = lazy(() => import('./pages/Calendar'));
 const Insights = lazy(() => import('./pages/Insights'));
 const Posters = lazy(() => import('./pages/Posters'));
+const Autopilot = lazy(() => import('./pages/Autopilot'));
+const Campaigns = lazy(() => import('./pages/Campaigns'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 // Top-level shell. Polaris <Page> gives us the standard embedded-app frame
@@ -49,6 +51,8 @@ export function App() {
       <ui-nav-menu>
         <a href="/" rel="home">Home</a>
         <a href="/products">Products</a>
+        <a href="/autopilot">Autopilot</a>
+        <a href="/campaigns">Campaigns</a>
         <a href="/compose">Compose</a>
         <a href="/calendar">Calendar</a>
         <a href="/insights">Insights</a>
@@ -60,6 +64,8 @@ export function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/products" element={<Products />} />
+            <Route path="/autopilot" element={<Autopilot />} />
+            <Route path="/campaigns" element={<Campaigns />} />
             <Route path="/compose" element={<Compose />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/insights" element={<Insights />} />

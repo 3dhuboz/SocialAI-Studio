@@ -83,6 +83,128 @@ export async function refreshFactsForUser(
   } catch { /* skip */ }
 }
 
+// Shop-tenant variant of refreshFactsForUser. Scopes everything by
+// shop_domain into shopify_facts (schema_v24) rather than the
+// (user_id, client_id)-keyed client_facts table. Same about/posts/photos
+// scrape set — comments/events skipped here, mirroring the lighter
+// onboarding-magic flow.
+//
+// Returns the count of rows inserted so the Autopilot "N facts ready"
+// indicator can surface freshness to the merchant.
+export async function refreshFactsForShop(
+  env: Env,
+  shopDomain: string,
+  pageId: string,
+  pageToken: string,
+): Promise<{ inserted: number; errors: string[] }> {
+  const base = 'https://graph.facebook.com/v21.0';
+  const errors: string[] = [];
+  let inserted = 0;
+
+  // Drop existing rows for this shop so we start clean. The UNIQUE
+  // (shop_domain, fb_id) constraint will catch any race with another
+  // refresh, but the wipe + re-insert keeps stale facts from lingering.
+  await env.DB.prepare(`DELETE FROM shopify_facts WHERE shop_domain = ?`).bind(shopDomain).run();
+
+  const stamp = new Date().toISOString();
+
+  // ── About / description ────────────────────────────────────────────
+  try {
+    const r = await fetch(
+      `${base}/${pageId}?fields=about,description,category,fan_count&access_token=${encodeURIComponent(pageToken)}`,
+      { signal: AbortSignal.timeout(15_000) },
+    );
+    const d: any = await r.json();
+    if (d?.error) {
+      errors.push(`about: ${d.error.message}`);
+    } else if (d?.about || d?.description) {
+      const result = await env.DB.prepare(
+        `INSERT OR IGNORE INTO shopify_facts (shop_domain, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+         VALUES (?, 'about', ?, ?, ?, 0, ?)`,
+      ).bind(
+        shopDomain,
+        d.about || d.description,
+        JSON.stringify({ category: d.category, fan_count: d.fan_count }),
+        pageId,
+        stamp,
+      ).run();
+      if (result?.meta?.changes) inserted++;
+    }
+  } catch (e: any) {
+    errors.push(`about: ${e?.message || String(e)}`);
+  }
+
+  // ── Posts (with engagement) ────────────────────────────────────────
+  try {
+    const r = await fetch(
+      `${base}/${pageId}/posts?fields=id,message,created_time,reactions.summary(true),shares,comments.summary(true)&limit=50&access_token=${encodeURIComponent(pageToken)}`,
+      { signal: AbortSignal.timeout(20_000) },
+    );
+    const d: any = await r.json();
+    if (d?.error) {
+      errors.push(`posts: ${d.error.message}`);
+    } else {
+      for (const p of d?.data || []) {
+        if (!p.message || p.message.length < 20) continue;
+        const eng = (p.reactions?.summary?.total_count || 0)
+                  + (p.shares?.count || 0) * 3
+                  + (p.comments?.summary?.total_count || 0) * 2;
+        const result = await env.DB.prepare(
+          `INSERT OR IGNORE INTO shopify_facts (shop_domain, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+           VALUES (?, 'own_post', ?, ?, ?, ?, ?)`,
+        ).bind(
+          shopDomain,
+          p.message,
+          JSON.stringify({
+            created_time: p.created_time,
+            reactions: p.reactions?.summary?.total_count,
+            shares: p.shares?.count,
+            comments: p.comments?.summary?.total_count,
+          }),
+          p.id,
+          eng,
+          stamp,
+        ).run();
+        if (result?.meta?.changes) inserted++;
+      }
+    }
+  } catch (e: any) {
+    errors.push(`posts: ${e?.message || String(e)}`);
+  }
+
+  // ── Photos (URLs for image-gen brand refs) ─────────────────────────
+  try {
+    const r = await fetch(
+      `${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${encodeURIComponent(pageToken)}`,
+      { signal: AbortSignal.timeout(15_000) },
+    );
+    const d: any = await r.json();
+    if (d?.error) {
+      errors.push(`photos: ${d.error.message}`);
+    } else {
+      for (const ph of d?.data || []) {
+        const url = ph.images?.[0]?.source;
+        if (!url) continue;
+        const result = await env.DB.prepare(
+          `INSERT OR IGNORE INTO shopify_facts (shop_domain, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+           VALUES (?, 'photo', ?, ?, ?, 0, ?)`,
+        ).bind(
+          shopDomain,
+          ph.name || 'Untitled photo',
+          JSON.stringify({ url }),
+          ph.id,
+          stamp,
+        ).run();
+        if (result?.meta?.changes) inserted++;
+      }
+    }
+  } catch (e: any) {
+    errors.push(`photos: ${e?.message || String(e)}`);
+  }
+
+  return { inserted, errors };
+}
+
 export async function refreshFactsForWorkspace(
   db: D1Database,
   uid: string,

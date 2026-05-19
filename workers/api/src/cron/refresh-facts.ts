@@ -9,7 +9,7 @@
 // Delegates the actual scrape to lib/facebook-facts → refreshFactsForWorkspace.
 
 import type { Env } from '../env';
-import { refreshFactsForWorkspace } from '../lib/facebook-facts';
+import { refreshFactsForWorkspace, refreshFactsForShop } from '../lib/facebook-facts';
 
 export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: number }> {
   const users = await env.DB.prepare(
@@ -18,6 +18,16 @@ export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: num
   const clients = await env.DB.prepare(
     `SELECT id, user_id FROM clients WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL AND COALESCE(status,'active') != 'on_hold'`
   ).all();
+
+  // Shopify shops (Phase 2+). Same scrape shape but scoped by shop_domain
+  // into shopify_facts. Skips uninstalled shops via the IS NULL guard.
+  const shops = await env.DB.prepare(
+    `SELECT shop_domain, social_tokens FROM shopify_stores
+     WHERE social_tokens IS NOT NULL
+       AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL
+       AND uninstalled_at IS NULL`
+  ).all<{ shop_domain: string; social_tokens: string }>();
+
   let processed = 0;
   for (const u of (users.results || [])) {
     try { await refreshFactsForWorkspace(env.DB, (u as any).id, null); processed++; }
@@ -27,6 +37,18 @@ export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: num
     try { await refreshFactsForWorkspace(env.DB, (cl as any).user_id, (cl as any).id); processed++; }
     catch (e: any) { console.warn(`[CRON facts] client ${(cl as any).id}: ${e.message}`); }
   }
-  console.log(`[CRON facts] refreshed ${processed} workspaces`);
+  for (const sh of (shops.results || [])) {
+    try {
+      const tokens = JSON.parse(sh.social_tokens);
+      const pageId = tokens?.facebookPageId;
+      const pageToken = tokens?.facebookPageAccessToken;
+      if (!pageId || !pageToken) continue;
+      await refreshFactsForShop(env, sh.shop_domain, pageId, pageToken);
+      processed++;
+    } catch (e: any) {
+      console.warn(`[CRON facts] shop ${sh.shop_domain}: ${e.message}`);
+    }
+  }
+  console.log(`[CRON facts] refreshed ${processed} workspaces (users+clients+shops)`);
   return { posts_processed: processed };
 }

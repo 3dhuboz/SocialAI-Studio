@@ -431,6 +431,115 @@ export async function deletePoster(id: string, signal?: AbortSignal) {
   );
 }
 
+// ── Autopilot ─────────────────────────────────────────────────────────────
+//
+// Bulk content-calendar generator. The frontend plans the schedule
+// (vibe → timestamps in local time, product round-robin), then calls
+// generate-one for each slot with concurrency-3 to fill in parallel.
+
+export interface AutopilotGeneratedPost {
+  id: string;
+  status: 'Scheduled';
+  caption: string;
+  image_url: string;
+  platform: 'facebook' | 'instagram' | 'both';
+  scheduled_for: string;
+  product: { id: string; title: string; price: string | null; currency: string | null };
+  campaign_used: boolean;
+  post_type: 'image' | 'video';
+  video_status: 'pending' | null;
+}
+
+// ── FB Facts (Autopilot grounding) ────────────────────────────────────────
+
+export interface FactsStatus {
+  total: number;
+  by_type: Record<string, number>;
+  last_verified_at: string | null;
+  page_connected: boolean;
+}
+
+export async function getFactsStatus(signal?: AbortSignal) {
+  return apiFetch<FactsStatus>('/api/shopify/facts/status', { signal });
+}
+
+export async function refreshFacts(signal?: AbortSignal) {
+  return apiFetch<{ inserted: number; errors: string[] }>(
+    '/api/shopify/facts/refresh',
+    { method: 'POST', signal },
+  );
+}
+
+// ── Campaigns ─────────────────────────────────────────────────────────────
+//
+// Date-ranged marketing campaigns (Black Friday, Summer Sale, etc) that
+// feed into Autopilot caption generation. The "active" campaign is the
+// one whose start_at <= now <= end_at.
+
+export interface ShopifyCampaign {
+  id: string;
+  name: string;
+  goal: string | null;
+  theme: string | null;
+  startAt: string;
+  endAt: string | null;
+  createdAt: string;
+  isActive: boolean;
+}
+
+export async function listCampaigns(signal?: AbortSignal) {
+  return apiFetch<{ items: ShopifyCampaign[] }>('/api/shopify/campaigns', { signal });
+}
+
+export async function getActiveCampaign(signal?: AbortSignal) {
+  return apiFetch<{ active: ShopifyCampaign | null }>('/api/shopify/campaigns/active', { signal });
+}
+
+export async function createCampaign(
+  body: { name: string; goal?: string | null; theme?: string | null; startAt: string; endAt?: string | null },
+  signal?: AbortSignal,
+) {
+  return apiFetch<ShopifyCampaign>(
+    '/api/shopify/campaigns',
+    { method: 'POST', body: JSON.stringify(body), signal },
+  );
+}
+
+export async function updateCampaign(
+  id: string,
+  body: Partial<{ name: string; goal: string | null; theme: string | null; startAt: string; endAt: string | null }>,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ShopifyCampaign>(
+    `/api/shopify/campaigns/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: JSON.stringify(body), signal },
+  );
+}
+
+export async function deleteCampaign(id: string, signal?: AbortSignal) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/shopify/campaigns/${encodeURIComponent(id)}`,
+    { method: 'DELETE', signal },
+  );
+}
+
+export async function generateAutopilotPost(
+  input: {
+    productId: string;
+    platform: 'facebook' | 'instagram' | 'both';
+    scheduledFor: string;
+    tone?: 'friendly' | 'professional' | 'playful';
+    postType?: 'image' | 'video';
+    motionPrompt?: string;
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<AutopilotGeneratedPost>(
+    '/api/shopify/autopilot/generate-one',
+    { method: 'POST', body: JSON.stringify(input), signal },
+  );
+}
+
 /** Fetch a session-token-gated image as a Blob so the UI can wrap it in
  *  a URL.createObjectURL() for use in `<img src>`. The Authorization
  *  header that apiFetch() injects is necessary; an unauthenticated

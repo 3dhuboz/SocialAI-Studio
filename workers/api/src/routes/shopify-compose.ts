@@ -203,6 +203,131 @@ function buildImagePrompt(product: ProductRow): string {
 // fallback from generating the same garbage anyone else's product page does.
 const IMAGE_NEGATIVE_PROMPT = 'text, watermark, logo, signature, low quality, blurry, distorted, deformed, extra limbs, cluttered background, busy patterns, harsh artificial lighting, cartoon, illustration, oversaturated';
 
+// ── Shared compose pipeline ───────────────────────────────────────────────
+//
+// Extracted so the bulk autopilot (`shopify-autopilot.ts`) can reuse the
+// same caption+image generation chain rather than duplicating the
+// prompt-engineering glue.
+//
+// Throws ComposeError on caption or image failure — caller decides whether
+// to surface as 502, retry, or skip this slot in a multi-post batch.
+
+export class ComposeError extends Error {
+  constructor(public stage: 'caption' | 'image' | 'product', message: string) {
+    super(message);
+    this.name = 'ComposeError';
+  }
+}
+
+export interface ComposeResult {
+  caption: string;
+  imageUrl: string;
+  modelUsed: string;
+  product: {
+    id: string;
+    title: string;
+    price: string | null;
+    currency: string | null;
+  };
+}
+
+export async function composeProductPost(
+  env: Env,
+  shop: string,
+  productId: string,
+  platform: Platform,
+  tone: Tone,
+  campaignContext?: string,
+): Promise<ComposeResult> {
+  // Look up the product — scoped to this shop. Cross-shop lookups are
+  // forbidden by the composite PK; this guard makes intent explicit.
+  const product = await env.DB.prepare(
+    `SELECT id, shop_domain, title, handle, description, product_type, vendor, tags,
+            price, currency, image_url, status
+       FROM shopify_products
+      WHERE id = ? AND shop_domain = ?`,
+  ).bind(productId, shop).first<ProductRow>();
+
+  if (!product) {
+    throw new ComposeError('product', 'Product not synced yet. Run sync first.');
+  }
+
+  // ── Stage 1: caption ──────────────────────────────────────────────
+  // Optional campaign context gets stitched into the user prompt so the
+  // LLM can incorporate the merchant's active marketing theme (e.g. a
+  // running Black Friday campaign) without changing the system prompt.
+  let userPrompt = buildCaptionUserPrompt(product, platform, tone);
+  if (campaignContext && campaignContext.trim().length > 0) {
+    userPrompt = `${userPrompt}\n\nActive marketing campaign — weave this naturally into the post (avoid sounding bolted-on):\n${campaignContext.trim()}`;
+  }
+
+  let caption: string;
+  try {
+    if (env.ANTHROPIC_API_KEY) {
+      const result = await callAnthropicDirect({
+        apiKey: env.ANTHROPIC_API_KEY,
+        model: 'anthropic/claude-haiku-4.5',
+        systemPrompt: SOCIAL_SYSTEM_PROMPT,
+        prompt: userPrompt,
+        temperature: 0.7,
+        maxTokens: 800,
+        responseFormat: 'text',
+      });
+      caption = (result.text || '').trim();
+    } else if (env.OPENROUTER_API_KEY) {
+      const result = await callOpenRouter(
+        env.OPENROUTER_API_KEY,
+        SOCIAL_SYSTEM_PROMPT,
+        userPrompt,
+        0.7,
+        800,
+      );
+      caption = (result.text || '').trim().replace(/^```[a-z]*\n?|```$/gi, '').trim();
+    } else {
+      throw new ComposeError('caption', 'No LLM API key configured');
+    }
+
+    if (!caption) {
+      throw new ComposeError('caption', 'LLM returned empty caption');
+    }
+  } catch (err: any) {
+    if (err instanceof ComposeError) throw err;
+    console.error('[shopify-compose] caption generation failed:', String(err?.stack ?? err));
+    throw new ComposeError('caption', String(err?.message ?? err).slice(0, 300));
+  }
+
+  // ── Stage 2: image ────────────────────────────────────────────────
+  const sentinelUserId = `shop:${shop}`;
+  const imagePrompt = buildImagePrompt(product);
+  try {
+    const result = await generateImageWithBrandRefs(
+      env,
+      sentinelUserId,
+      null,
+      { prompt: imagePrompt, negativePrompt: IMAGE_NEGATIVE_PROMPT },
+      { caption },
+    );
+    if (!result.imageUrl) {
+      throw new ComposeError('image', 'Image generation returned no URL');
+    }
+    return {
+      caption,
+      imageUrl: result.imageUrl,
+      modelUsed: result.modelUsed,
+      product: {
+        id: product.id,
+        title: product.title,
+        price: product.price ?? null,
+        currency: product.currency ?? null,
+      },
+    };
+  } catch (err: any) {
+    if (err instanceof ComposeError) throw err;
+    console.error('[shopify-compose] image generation failed:', String(err?.stack ?? err));
+    throw new ComposeError('image', String(err?.message ?? err).slice(0, 300));
+  }
+}
+
 // ── Route registration ─────────────────────────────────────────────────────
 
 export function registerShopifyComposeRoutes(app: Hono<{ Bindings: Env }>): void {
@@ -233,108 +358,21 @@ export function registerShopifyComposeRoutes(app: Hono<{ Bindings: Env }>): void
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const { product_id, platform, tone } = parsed.req;
 
-    // Look up the product — must be in shopify_products AND scoped to this
-    // shop. Cross-shop lookups are not allowed; the composite PK already
-    // enforces this but the WHERE shop_domain = ? guard makes the intent
-    // explicit and protects us if the schema ever drifts.
-    const product = await c.env.DB.prepare(
-      `SELECT id, shop_domain, title, handle, description, product_type, vendor, tags,
-              price, currency, image_url, status
-       FROM shopify_products
-       WHERE id = ? AND shop_domain = ?`,
-    ).bind(product_id, shop).first<ProductRow>();
-
-    if (!product) {
-      return c.json({ error: 'Product not synced yet. Run sync first.' }, 404);
-    }
-
-    // ── Stage 1: caption ──────────────────────────────────────────────
-    const userPrompt = buildCaptionUserPrompt(product, platform, tone);
-    let caption: string;
     try {
-      if (c.env.ANTHROPIC_API_KEY) {
-        const result = await callAnthropicDirect({
-          apiKey: c.env.ANTHROPIC_API_KEY,
-          model: 'anthropic/claude-haiku-4.5',
-          systemPrompt: SOCIAL_SYSTEM_PROMPT,
-          prompt: userPrompt,
-          temperature: 0.7,
-          maxTokens: 800,
-          responseFormat: 'text',
-        });
-        caption = (result.text || '').trim();
-      } else if (c.env.OPENROUTER_API_KEY) {
-        // OpenRouter fallback. callOpenRouter forces response_format:json_object
-        // for /api/score-post style callers, but it still works for plain text
-        // — the model honours the system-prompt directive to return raw text
-        // when no JSON schema is asked for. Strip stray code fences just in case.
-        const result = await callOpenRouter(
-          c.env.OPENROUTER_API_KEY,
-          SOCIAL_SYSTEM_PROMPT,
-          userPrompt,
-          0.7,
-          800,
-        );
-        caption = (result.text || '').trim().replace(/^```[a-z]*\n?|```$/gi, '').trim();
-      } else {
-        return c.json({ error: 'No LLM API key configured' }, 500);
-      }
-
-      if (!caption) {
-        return c.json({ stage: 'caption', error: 'LLM returned empty caption' }, 502);
-      }
-    } catch (err: any) {
-      console.error('[shopify-compose] caption generation failed:', String(err?.stack ?? err));
+      const result = await composeProductPost(c.env, shop, product_id, platform, tone);
       return c.json({
-        stage: 'caption',
-        message: String(err?.message ?? err).slice(0, 300),
-      }, 502);
-    }
-
-    // ── Stage 2: image ────────────────────────────────────────────────
-    // generateImageWithBrandRefs is the shared chokepoint — it applies
-    // archetype guardrails, pulls brand-ref photos when available, and routes
-    // to flux-pro-kontext (with refs) or flux-dev (no refs). For Shopify
-    // shops we pass a sentinel user_id of `shop:<domain>`; no client_id.
-    // The lib resolves archetype via resolveArchetypeSlug which will return
-    // null (no row), then falls back to sniffArchetypeFromCaption using the
-    // caption we pass through — typically lands on a sensible product slug.
-    const sentinelUserId = `shop:${shop}`;
-    const imagePrompt = buildImagePrompt(product);
-    let imageUrl: string | null = null;
-    let modelUsed = 'unknown';
-    try {
-      const result = await generateImageWithBrandRefs(
-        c.env,
-        sentinelUserId,
-        null,
-        { prompt: imagePrompt, negativePrompt: IMAGE_NEGATIVE_PROMPT },
-        { caption },
-      );
-      imageUrl = result.imageUrl;
-      modelUsed = result.modelUsed;
-
-      if (!imageUrl) {
-        return c.json({ stage: 'image', message: 'Image generation returned no URL' }, 502);
-      }
+        caption: result.caption,
+        image_url: result.imageUrl,
+        model_used: result.modelUsed,
+        product: result.product,
+      });
     } catch (err: any) {
-      console.error('[shopify-compose] image generation failed:', String(err?.stack ?? err));
-      return c.json({
-        stage: 'image',
-        message: String(err?.message ?? err).slice(0, 300),
-      }, 502);
+      if (err instanceof ComposeError) {
+        const code = err.stage === 'product' ? 404 : 502;
+        return c.json({ stage: err.stage, error: err.message }, code);
+      }
+      console.error('[shopify-compose] unexpected:', String(err?.stack ?? err));
+      return c.json({ error: String(err?.message ?? err).slice(0, 300) }, 500);
     }
-
-    return c.json({
-      caption,
-      image_url: imageUrl,
-      model_used: modelUsed,
-      product: {
-        id: product.id,
-        title: product.title,
-        price: product.price ?? null,
-        currency: product.currency ?? null,
-      },
-    });
   });
 }
