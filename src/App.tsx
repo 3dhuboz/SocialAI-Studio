@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'rea
 import { CLIENT } from './client.config';
 import { ToastProvider, useToast } from './components/Toast';
 import { SocialPost, BusinessProfile, ContentCalendarStats, PlanTier, SetupStatus, ClientWorkspace, SocialTokens, DEFAULT_SOCIAL_TOKENS, Campaign } from './types';
+import { applyIgConnected, applyIgDisconnected } from './utils/socialTokens';
 import { LoadingShell } from './components/LoadingShell';
 // LandingPage (~1.3k lines) only renders for unauthed visitors / trial-exhausted
 // users — lazy-load so signed-in dashboard users don't pay for it on first paint.
@@ -4673,7 +4674,9 @@ const Dashboard: React.FC = () => {
                             <span key={j} className="text-[11px] text-amber-400/70 font-medium">{t.startsWith('#') ? t : `#${t}`}</span>
                           ))}
                         </div>
-                        {sp.reasoning && <p className="text-[11px] text-white/25 italic border-t border-white/[0.05] pt-2">{sp.reasoning}</p>}
+                        {/* sp.reasoning is the AI's pre-write planning rationale ("X pillar + Y time + Z format...").
+                            It's stored in posts.reasoning for debugging but is internal scaffolding, not user copy.
+                            Surfacing it leaks template structure into the preview and signals AI-generated content. */}
                       </div>
                     </div>
                     {/* Video script section */}
@@ -6017,39 +6020,20 @@ const Dashboard: React.FC = () => {
                   }}
                 />
 
-                {/* ── Instagram (ig-wire) ─────────────────────────────
-                    Additive — workspaces can connect either platform,
-                    both, or neither. The publish cron routes per-post
-                    based on posts.platform → the matching mapping row.
-                    onConnected hits the IG-specific socialTokens fields
-                    so the FB button's "connected" state stays
-                    independent. */}
+                {/* Workspaces can connect FB, IG, both, or neither. The publish
+                    cron routes per-post based on posts.platform → matching mapping row. */}
                 <div className="border-t border-white/[0.05] pt-3">
                   <PostproxyConnectButton
                     platform="instagram"
                     clientId={activeClientId}
-                    connectedPlacementId={socialTokens.postproxyInstagramProfileId}
+                    connectedPlacementId={socialTokens.postproxyInstagramConnectedAt}
                     connectedPageName={socialTokens.postproxyInstagramName}
                     onConnected={(placement) => {
-                      const updated: SocialTokens = {
-                        ...socialTokens,
-                        postproxyInstagramProfileId: placement.id,
-                        postproxyInstagramConnectedAt: new Date().toISOString(),
-                        postproxyInstagramName: placement.name,
-                        instagramConnected: true,
-                      };
-                      saveSocialTokens(updated);
+                      saveSocialTokens(applyIgConnected(socialTokens, placement.name));
                       toast('Connected to Instagram!', 'success');
                     }}
                     onDisconnect={() => {
-                      const updated: SocialTokens = {
-                        ...socialTokens,
-                        postproxyInstagramProfileId: undefined,
-                        postproxyInstagramConnectedAt: undefined,
-                        postproxyInstagramName: undefined,
-                        instagramConnected: false,
-                      };
-                      saveSocialTokens(updated);
+                      saveSocialTokens(applyIgDisconnected(socialTokens));
                       toast('Instagram disconnected.', 'warning');
                     }}
                   />
