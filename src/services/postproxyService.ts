@@ -45,9 +45,14 @@ async function apiFetch(
   return res;
 }
 
+export type Platform = 'facebook' | 'instagram';
+
 export interface InitConnectionResponse {
   authUrl: string;
   oauthState: string;
+  /** Echoed back from the worker so the caller can confirm which
+   *  platform's OAuth URL it received. */
+  platform?: Platform;
 }
 
 export interface Placement {
@@ -57,12 +62,20 @@ export interface Placement {
 
 export interface ListPlacementsResponse {
   placements: Placement[];
+  /** ig-wire: IG has no placements (docs §3299). The worker returns
+   *  `placements: []` with `skipPicker: true` so the UI can short-circuit
+   *  Stage 2 instead of rendering an empty picker. */
+  platform?: Platform;
+  skipPicker?: boolean;
 }
 
 export interface SavePlacementArgs {
   clientId?: string | null;
   placementId: string;
   pageName: string;
+  /** Forwarded to the worker; for IG, save-placement is a no-op
+   *  (oauth-callback already flipped use_postproxy=1). */
+  platform?: Platform;
 }
 
 export interface PublishNowResponse {
@@ -83,29 +96,44 @@ export function createPostproxyService(getToken: GetToken, authMode: AuthMode = 
      *  pending postproxy_profiles row keyed on `oauthState` so the
      *  callback can resolve workspace ownership without any browser
      *  state. */
-    async initConnection(clientId?: string | null): Promise<InitConnectionResponse> {
-      const res = await f('/api/postproxy/init-connection', j({ clientId: clientId ?? null }));
+    async initConnection(
+      clientId?: string | null,
+      platform: Platform = 'facebook',
+    ): Promise<InitConnectionResponse> {
+      const res = await f('/api/postproxy/init-connection', j({
+        clientId: clientId ?? null,
+        platform,
+      }));
       return res.json() as Promise<InitConnectionResponse>;
     },
 
-    /** Stage 2 — list Facebook Pages the user just OAuth'd. Returns empty
-     *  array if the profile is connected but has no Pages (rare — handled
-     *  in the UI with a "create a Page first" hint). */
-    async listPlacements(clientId?: string | null): Promise<ListPlacementsResponse> {
-      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
-      const res = await f(`/api/postproxy/placements${qs}`);
+    /** Stage 2 — list placements for the connected profile. For Facebook,
+     *  returns the Pages the user just OAuth'd. For Instagram, the worker
+     *  short-circuits with `{ placements: [], skipPicker: true }` because
+     *  IG has no placements (docs §3299) — the UI should not render a
+     *  picker for IG. */
+    async listPlacements(
+      clientId?: string | null,
+      platform: Platform = 'facebook',
+    ): Promise<ListPlacementsResponse> {
+      const params = new URLSearchParams();
+      if (clientId) params.set('clientId', clientId);
+      params.set('platform', platform);
+      const res = await f(`/api/postproxy/placements?${params.toString()}`);
       return res.json() as Promise<ListPlacementsResponse>;
     },
 
     /** Stage 2 commit — persist the chosen Page and flip
      *  users.use_postproxy (or clients.use_postproxy) to 1 server-side.
-     *  The publish cron starts routing this workspace through Postproxy
-     *  on its next */
+     *  For Instagram, the worker already flipped the flag in the
+     *  oauth-callback (no picker step), so this call is a no-op success
+     *  for IG — included for parent-callsite uniformity. */
     async savePlacement(args: SavePlacementArgs): Promise<{ ok: true }> {
       const res = await f('/api/postproxy/save-placement', j({
         clientId: args.clientId ?? null,
         placementId: args.placementId,
         pageName: args.pageName,
+        platform: args.platform ?? 'facebook',
       }));
       return res.json() as Promise<{ ok: true }>;
     },

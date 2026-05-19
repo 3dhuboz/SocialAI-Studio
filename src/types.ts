@@ -76,6 +76,19 @@ export interface SocialTokens {
   postproxyProfileStatus?: 'pending' | 'active' | 'expired' | 'revoked';
   /** ISO timestamp when the Postproxy profile became active. */
   postproxyConnectedAt?: string;
+  // ── Postproxy Instagram mapping (schema_v24 / ig-wire) ──────────────
+  // Parallel to the Facebook fields above — a workspace can hold BOTH an
+  // FB profile AND an IG profile in postproxy_profiles, keyed by
+  // (user_id, client_id, platform). IG has no placement picker (docs
+  // §3299), so postproxyInstagramProfileId is the single sentinel for
+  // "this workspace has Instagram connected via Postproxy".
+  /** Postproxy's internal profile ID for Instagram — set after the
+   *  hosted OAuth callback completes for platform='instagram'. */
+  postproxyInstagramProfileId?: string;
+  /** ISO timestamp when the IG-via-Postproxy profile became active. */
+  postproxyInstagramConnectedAt?: string;
+  /** Display label for the connected IG account (handle/username). */
+  postproxyInstagramName?: string;
 }
 
 export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
@@ -92,6 +105,9 @@ export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
   postproxyGroupId: undefined,
   postproxyProfileStatus: undefined,
   postproxyConnectedAt: undefined,
+  postproxyInstagramProfileId: undefined,
+  postproxyInstagramConnectedAt: undefined,
+  postproxyInstagramName: undefined,
 };
 
 export interface BusinessProfile {
@@ -133,6 +149,32 @@ export interface BusinessProfile {
   socialGoal: string;
   contentTopics: string;
   videoEnabled: boolean;
+  /**
+   * REAL MATERIAL the owner has provided — the AI draws from these so
+   * it doesn't have to invent specifics. Added 2026-05 in response to
+   * fabrication issues caught in audit (made-up customer numbers,
+   * invented ROI percentages, etc.).
+   *
+   * Each is plain text, one item per line. Empty is OK — the
+   * post-writer prompt treats missing fields as "no material, fall
+   * back to tactical/observational content (never fabricate)".
+   */
+  /** Real customer stories with permission status — e.g.
+   *  "Mary at Carlton Café — 'Posts that used to take me an hour now take 10 minutes' — anonymous OK"
+   *  Used for testimonial-style posts. Without these, the model is
+   *  forbidden from inventing customer outcomes. */
+  customerStories?: string;
+  /** Strong opinions the owner holds about their industry —
+   *  one per line. Fuels "industry hot take" pillar content. */
+  hotTakes?: string;
+  /** Free tactical tips the owner can give their audience —
+   *  one per line. Fuels "tactical tip" pillar content (no product mention). */
+  tacticalTips?: string;
+  /** This week's "what happened worth posting about" — refreshed by the
+   *  owner regularly. Real launches, real fixes, real moments. Used for
+   *  founder-voice / behind-the-build posts. Without recent material,
+   *  the model falls back to evergreen pillar content. */
+  weeklyMaterial?: string;
 }
 
 export interface ContentCalendarStats {
