@@ -275,7 +275,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ error: 'No Postproxy profile connected for this workspace' }, 404);
     }
     try {
-      const placements = await listPlacements(c.env, row.postproxy_profile_id);
+      const placements = await listPlacements(c.env, row.postproxy_profile_id, row.postproxy_group_id);
       return c.json({ placements: placements.map((p) => ({ id: p.id, name: p.name })) });
     } catch (err: any) {
       console.error('[postproxy] placements failed:', err?.message);

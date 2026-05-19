@@ -219,14 +219,18 @@ export async function listProfiles(
   return rows.filter((p) => p.profile_group_id === groupId);
 }
 
-/** List placements (eligible FB Pages, etc.) for a connected profile. */
+/** List placements (eligible FB Pages, etc.) for a connected profile.
+ *  Postproxy requires the owning `profile_group_id` as a query param —
+ *  without it, returns 404 "Not found. Make sure you pass the correct
+ *  profile_group_id" (discovered live during PR #111 smoke test). */
 export async function listPlacements(
   env: Env,
   profileId: string,
+  groupId: string,
 ): Promise<PostproxyPlacement[]> {
   const data = await pfFetch<{ data: PostproxyPlacement[] }>(
     env,
-    `/profiles/${encodeURIComponent(profileId)}/placements`,
+    `/profiles/${encodeURIComponent(profileId)}/placements?profile_group_id=${encodeURIComponent(groupId)}`,
   );
   return data?.data ?? [];
 }
