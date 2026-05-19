@@ -67,14 +67,30 @@ const PosterManager = lazy(() => import('./pages/PosterManager').then(m => ({ de
  * Falls back to a generic "Create Post" button for legacy reports persisted
  * before the action field existed (rec.action == null).
  */
+/** Per-item result returned by the worker's /api/recommendations/auto-fix-checklist
+ *  endpoint. Kept loose here (no shared type with the worker) so adding a new
+ *  handler kind on the server doesn't require a frontend schema bump — the UI
+ *  only cares about kind/status for picking the icon + colour. */
+interface AutoFixResult {
+  item: string;
+  kind: 'audit' | 'auto_fix' | 'suggest' | 'manual';
+  status: 'ok' | 'finding' | 'fixed' | 'suggested' | 'failed';
+  details: string;
+  payload?: Record<string, any>;
+}
+
 const RecommendationActionButton: React.FC<{
   rec: { title: string; detail: string; action?: { type: string; label: string; payload?: any } };
   onGeneratePost: (topic: string, angle?: string) => void;
   onShiftPillars: (newPillars: string[], replacing?: string[]) => void;
   onEditProfile: (field: string, hint?: string) => void;
   onGenerateTest: (topic: string, style: string) => void;
-}> = ({ rec, onGeneratePost, onShiftPillars, onEditProfile, onGenerateTest }) => {
+  onAutoFixChecklist?: (items: string[]) => Promise<AutoFixResult[]>;
+}> = ({ rec, onGeneratePost, onShiftPillars, onEditProfile, onGenerateTest, onAutoFixChecklist }) => {
   const [checklistOpen, setChecklistOpen] = useState(false);
+  const [autoFixRunning, setAutoFixRunning] = useState(false);
+  const [autoFixResults, setAutoFixResults] = useState<AutoFixResult[] | null>(null);
+  const [autoFixError, setAutoFixError] = useState<string | null>(null);
   const action = rec.action;
 
   // Legacy fallback — rec was generated before the action schema. Keep the
@@ -129,6 +145,133 @@ const RecommendationActionButton: React.FC<{
             <ClipboardList size={11} /> {action.label || 'Open checklist'} ({items.length})
             <ChevronRight size={11} className={`transition-transform ${checklistOpen ? 'rotate-90' : ''}`} />
           </button>
+          {checklistOpen && items.length > 0 && (
+            <ol className="bg-black/25 border border-white/[0.08] rounded-xl p-3 space-y-1.5 list-decimal list-inside">
+              {items.map((item, i) => (
+                <li key={i} className="text-xs text-white/65 leading-relaxed">{item}</li>
+              ))}
+            </ol>
+          )}
+        </div>
+      );
+    }
+    case 'auto-fix-checklist': {
+      const p = action.payload || {};
+      const items: string[] = Array.isArray(p.items) ? p.items : [];
+      const statusIcon = (s: AutoFixResult['status']) => {
+        switch (s) {
+          case 'ok': return <CheckCircle size={11} className="text-emerald-400 shrink-0" />;
+          case 'finding': return <AlertCircle size={11} className="text-amber-400 shrink-0" />;
+          case 'fixed': return <Zap size={11} className="text-emerald-400 shrink-0" />;
+          case 'suggested': return <Lightbulb size={11} className="text-blue-400 shrink-0" />;
+          case 'failed': return <X size={11} className="text-rose-400 shrink-0" />;
+        }
+      };
+      const statusLabel = (s: AutoFixResult['status']) => {
+        switch (s) {
+          case 'ok': return 'OK';
+          case 'finding': return 'Finding';
+          case 'fixed': return 'Fixed';
+          case 'suggested': return 'Suggested';
+          case 'failed': return 'Failed';
+        }
+      };
+
+      const runAutoFix = async () => {
+        if (!onAutoFixChecklist) return;
+        setAutoFixRunning(true);
+        setAutoFixError(null);
+        try {
+          const results = await onAutoFixChecklist(items);
+          setAutoFixResults(results);
+        } catch (e: any) {
+          setAutoFixError(e?.message || 'Auto-fix failed.');
+        } finally {
+          setAutoFixRunning(false);
+        }
+      };
+
+      // Results view replaces the checklist + button once auto-fix has run.
+      if (autoFixResults) {
+        return (
+          <div className="space-y-2">
+            <div className="bg-black/25 border border-white/[0.08] rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">Auto-fix results ({autoFixResults.length})</p>
+                <button
+                  onClick={() => { setAutoFixResults(null); setAutoFixError(null); }}
+                  className="text-[10px] text-white/35 hover:text-white/65 transition"
+                >Reset</button>
+              </div>
+              {autoFixResults.map((r, i) => (
+                <details key={i} className="bg-white/[0.03] rounded-lg p-2 group" open={r.status === 'finding' || r.status === 'suggested' || r.status === 'fixed'}>
+                  <summary className="cursor-pointer flex items-start gap-2 list-none">
+                    {statusIcon(r.status)}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-white/80 leading-snug">{r.item}</p>
+                      <p className="text-[10px] text-white/40 mt-0.5">{statusLabel(r.status)} · {r.kind}</p>
+                    </div>
+                    <ChevronRight size={10} className="text-white/30 mt-1 transition-transform group-open:rotate-90" />
+                  </summary>
+                  <div className="mt-2 pl-5 space-y-2">
+                    <p className="text-[11px] text-white/55 leading-relaxed">{r.details}</p>
+                    {/* SUGGEST_REWRITE — show current vs proposed with an Apply hint */}
+                    {r.status === 'suggested' && r.payload?.proposed && (
+                      <div className="space-y-1.5">
+                        {r.payload.current ? (
+                          <div>
+                            <p className="text-[10px] text-white/35 uppercase tracking-wider mb-0.5">Current</p>
+                            <p className="text-[11px] text-white/55 bg-black/30 rounded p-1.5 leading-relaxed">{String(r.payload.current)}</p>
+                          </div>
+                        ) : null}
+                        <div>
+                          <p className="text-[10px] text-emerald-400/70 uppercase tracking-wider mb-0.5">Proposed</p>
+                          <p className="text-[11px] text-white/75 bg-emerald-500/8 border border-emerald-500/15 rounded p-1.5 leading-relaxed">{String(r.payload.proposed)}</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(String(r.payload?.proposed || '')).catch(() => {});
+                            alert('Copied. Paste into Facebook Page Settings → About to apply.');
+                          }}
+                          className="text-[11px] font-bold text-emerald-300 hover:text-emerald-200 bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-500/20 px-2.5 py-1 rounded-lg transition"
+                        >Copy proposed text</button>
+                      </div>
+                    )}
+                    {/* AUTO_FIX_SCHEDULE — show how many posts shifted */}
+                    {r.status === 'fixed' && typeof r.payload?.shifted === 'number' && (
+                      <p className="text-[10px] text-emerald-400/80">Shifted {r.payload.shifted} of {r.payload.total ?? '?'} scheduled post(s) into Mon-Fri 9am-5pm.</p>
+                    )}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        );
+      }
+
+      // Default view — show the same checklist as view-checklist PLUS the
+      // Auto-fix button. The button is disabled while a run is in flight.
+      return (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => setChecklistOpen(o => !o)} className={primary}>
+              <ClipboardList size={11} /> Open audit checklist ({items.length})
+              <ChevronRight size={11} className={`transition-transform ${checklistOpen ? 'rotate-90' : ''}`} />
+            </button>
+            <button
+              onClick={runAutoFix}
+              disabled={autoFixRunning || !onAutoFixChecklist || items.length === 0}
+              className={`${baseBtn} text-emerald-300 hover:text-emerald-200 bg-emerald-500/12 hover:bg-emerald-500/20 border border-emerald-500/20 hover:border-emerald-500/30 disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+              {autoFixRunning ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+              {autoFixRunning ? 'Auto-fixing…' : (action.label || 'Auto-fix this')}
+            </button>
+          </div>
+          {autoFixError && (
+            <p className="text-[11px] text-rose-400/80 bg-rose-500/8 border border-rose-500/15 rounded-lg p-2">
+              {autoFixError}
+            </p>
+          )}
           {checklistOpen && items.length > 0 && (
             <ol className="bg-black/25 border border-white/[0.08] rounded-xl p-3 space-y-1.5 list-decimal list-inside">
               {items.map((item, i) => (
@@ -4804,6 +4947,23 @@ const Dashboard: React.FC = () => {
                               setTopic(`${topic} — style: ${style}. Test post for engagement A/B.`);
                               setActiveTab('smart'); setSmartSubMode('quickpost');
                               toast(`Test post loaded (${style}) — generate and schedule.`, 'success');
+                            }}
+                            onAutoFixChecklist={async (items) => {
+                              // Hits the worker's /api/recommendations/auto-fix-checklist
+                              // endpoint via db.ts. clientId is sent through so agency
+                              // workspaces audit the right tenant. Errors propagate up
+                              // to the button's local catch block — the toast covers
+                              // the orchestration side, the inline error covers the run.
+                              try {
+                                const res = await db.autoFixChecklist({ items, clientId: activeClientId });
+                                if ((res.results || []).some(r => r.status === 'fixed')) {
+                                  toast('Auto-fix applied changes to your scheduled posts. Refresh Calendar to see updates.', 'success');
+                                }
+                                return res.results || [];
+                              } catch (e: any) {
+                                toast(`Auto-fix failed: ${e?.message || 'unknown error'}`, 'error');
+                                throw e;
+                              }
                             }}
                           />
                         </div>

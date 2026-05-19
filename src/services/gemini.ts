@@ -1625,25 +1625,30 @@ export const generateRecommendations = async (businessName: string, businessType
  *  contextual button per action type and dispatches to the matching handler.
  *
  *  Action types (extend cautiously — frontend handler must exist):
- *    'generate-post'   — prefill Quick Post with topic + angle, take user there.
- *    'shift-pillars'   — propose a content-pillar update, save to profile, then
- *                        run a fresh Smart Schedule.
- *    'view-checklist'  — open an inline checklist modal (no AI). For non-AI
- *                        recs like "audit page visibility".
- *    'edit-profile'    — switch to Settings + scroll to a specific field.
- *    'generate-test'   — generate one experimental post in a different style
- *                        as a discrete A/B test, schedule for next slot.
+ *    'generate-post'      — prefill Quick Post with topic + angle, take user there.
+ *    'shift-pillars'      — propose a content-pillar update, save to profile, then
+ *                           run a fresh Smart Schedule.
+ *    'view-checklist'     — open an inline checklist modal (no AI). For non-AI
+ *                           recs like "audit page visibility".
+ *    'auto-fix-checklist' — same items as view-checklist PLUS an "Auto-fix this"
+ *                           button that runs audits + safe fixes via the worker.
+ *                           Pick this over view-checklist when items are
+ *                           auditable + partially auto-fixable.
+ *    'edit-profile'       — switch to Settings + scroll to a specific field.
+ *    'generate-test'      — generate one experimental post in a different style
+ *                           as a discrete A/B test, schedule for next slot.
  *
  *  payload shape varies per type — kept loose to avoid a versioning mess. */
 export interface RecommendationAction {
-  type: 'generate-post' | 'shift-pillars' | 'view-checklist' | 'edit-profile' | 'generate-test';
+  type: 'generate-post' | 'shift-pillars' | 'view-checklist' | 'auto-fix-checklist' | 'edit-profile' | 'generate-test';
   label: string; // e.g. "Generate sample post" — drives the button label
   /** Loose payload. Examples per type:
-   *    generate-post:   { topic: string, angle: string }
-   *    shift-pillars:   { newPillars: string[], replacing?: string[] }
-   *    view-checklist:  { items: string[] }
-   *    edit-profile:    { field: 'description' | 'targetAudience' | 'productsServices' | 'tone', hint?: string }
-   *    generate-test:   { topic: string, style: string } */
+   *    generate-post:       { topic: string, angle: string }
+   *    shift-pillars:       { newPillars: string[], replacing?: string[] }
+   *    view-checklist:      { items: string[] }
+   *    auto-fix-checklist:  { items: string[] }   // same shape as view-checklist
+   *    edit-profile:        { field: 'description' | 'targetAudience' | 'productsServices' | 'tone', hint?: string }
+   *    generate-test:       { topic: string, style: string } */
   payload?: Record<string, unknown>;
 }
 
@@ -1721,6 +1726,9 @@ ACTION SCHEMA (every recommendation MUST include an "action" object — pick the
   { "type": "view-checklist",  "label": "Open audit checklist", "payload": { "items": ["step 1 — concrete action", "step 2 — concrete action", "step 3"] } }
     Use when the rec needs the human to do something OFFLINE (audit page settings, contact a customer, set up a tool). 3-7 concrete steps.
 
+  { "type": "auto-fix-checklist", "label": "Auto-fix this", "payload": { "items": ["item 1", "item 2", "item 3"] } }
+    Use when items are auditable + partially auto-fixable (page settings, posting schedule, description rewrites). Avoid for items requiring user payment or pure offline action — those belong in view-checklist instead.
+
   { "type": "edit-profile",    "label": "Update business description", "payload": { "field": "description" | "targetAudience" | "productsServices" | "tone", "hint": "<one-line suggested change>" } }
     Use when the rec is fundamentally a profile / positioning fix.
 
@@ -1782,7 +1790,7 @@ Return ONLY this exact JSON, no markdown:
       "title": "short action title based on real patterns found",
       "detail": "specific 1-2 sentence advice citing the actual data",
       "priority": "high",
-      "action": { "type": "<one of: generate-post|shift-pillars|view-checklist|edit-profile|generate-test>", "label": "<button label>", "payload": { /* type-specific — see ACTION SCHEMA below */ } }
+      "action": { "type": "<one of: generate-post|shift-pillars|view-checklist|auto-fix-checklist|edit-profile|generate-test>", "label": "<button label>", "payload": { /* type-specific — see ACTION SCHEMA below */ } }
     }
   ],
   "bestTimes": [
@@ -1805,6 +1813,9 @@ ACTION SCHEMA (every recommendation MUST include an "action" object — pick the
 
   { "type": "view-checklist",  "label": "Open audit checklist", "payload": { "items": ["step 1 — concrete action", "step 2", "step 3"] } }
     Use when the rec needs the human to do something OFFLINE (audit page settings, contact a customer, etc.). 3-7 concrete steps.
+
+  { "type": "auto-fix-checklist", "label": "Auto-fix this", "payload": { "items": ["item 1", "item 2", "item 3"] } }
+    Use when items are auditable + partially auto-fixable (page settings, posting schedule, description rewrites). Avoid for items requiring user payment or pure offline action — those belong in view-checklist instead.
 
   { "type": "edit-profile",    "label": "Update business description", "payload": { "field": "description" | "targetAudience" | "productsServices" | "tone", "hint": "<one-line suggested change>" } }
     Use when the rec is fundamentally a profile / positioning fix.

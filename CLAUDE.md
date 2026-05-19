@@ -137,6 +137,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `onboarding.ts` | Onboarding flow endpoints |
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
+| `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
