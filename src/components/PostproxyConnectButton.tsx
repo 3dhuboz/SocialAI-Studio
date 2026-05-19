@@ -36,37 +36,43 @@ interface Props {
    *  postproxy_profiles row (so a reconnect skips re-auth) but the UI
    *  acts as if disconnected until the user picks a Page again. */
   onDisconnect?: () => void;
-  /** Already-connected placement ID — when set, this component renders
-   *  the "Connected" state with a "Switch page" link. For IG (no
-   *  placements), pass any truthy string to indicate "already connected". */
+  /** Already-connected presence indicator — when truthy, this component
+   *  renders the "Connected" state. For FB it's the placement ID; for IG
+   *  (no placements) it's the connected-at timestamp. Either works since
+   *  the component only checks truthiness. */
   connectedPlacementId?: string;
   connectedPageName?: string;
   /** When true, the parent has manually navigated to Stage 2 (e.g. via
    *  the MigrationBanner's "Reconnect" button after a full-page reload
    *  finished OAuth). This bypasses the URL query-string check. */
   forcePickerStage?: boolean;
-  /** ig-wire (v2): which platform to connect. Defaults to 'facebook'
-   *  to preserve byte-identical behaviour for every existing call site.
-   *  When 'instagram', the component:
-   *    - Shows an Instagram icon + brand color (#E1306C) instead of FB blue
-   *    - Skips Stage 2 placement-picker entirely (IG has no placements
-   *      per docs §3299; the worker auto-flips use_postproxy=1 in the
-   *      oauth-callback)
-   *    - Treats `?step=connected` as the post-OAuth landing state
-   *      instead of `?step=pick-placement` */
+  /** Which platform to connect. Defaults to 'facebook' to preserve
+   *  byte-identical behaviour for existing call sites. When 'instagram',
+   *  the component skips Stage 2 entirely (IG has no placements per
+   *  Postproxy docs §3299; the worker auto-flips use_postproxy=1 in the
+   *  oauth-callback). */
   platform?: Platform;
 }
 
-/** Platform-specific UI tokens — colours, copy, icon. Keeps the branching
- *  inside the component to ONE place; the JSX below reads from `theme`
- *  instead of inline ternaries. */
+/** URL ?step= values emitted by the worker's oauth-callback. FB lands
+ *  on `picker` (placement-picker stage); IG lands on `connected` (no
+ *  picker, already saved server-side); both can land on `failed`. */
+const URL_STEP = {
+  picker: 'pick-placement',
+  connected: 'connected',
+  failed: 'connect-failed',
+} as const;
+
+/** Platform-specific UI tokens — colours, copy, icon, setup-link copy.
+ *  Keeps platform branching in ONE place; the JSX below reads from
+ *  `theme` instead of inline ternaries. */
 function platformTheme(platform: Platform) {
   if (platform === 'instagram') {
     return {
       label: 'Instagram',
-      // Instagram brand gradient (pink → orange → purple). We use a solid
-      // pink for the button hover state since gradients-on-hover are
-      // janky cross-browser; pure brand colour is `#E1306C`.
+      // Instagram brand gradient (pink → orange → purple). Solid pink
+      // for hover since gradient-on-hover is janky cross-browser;
+      // brand colour is #E1306C.
       bg: 'bg-gradient-to-r from-[#833AB4] via-[#E1306C] to-[#F77737]',
       bgHover: 'hover:opacity-90',
       shadow: 'shadow-lg shadow-pink-900/30',
@@ -74,13 +80,15 @@ function platformTheme(platform: Platform) {
       pillBg: 'bg-pink-500/8 border-pink-500/20',
       pillTextHover: 'text-pink-400',
       Icon: Instagram,
-      // IG has no placement picker; oauth-callback redirects to
-      // ?step=connected. The Stage-2 sniff in the useEffect below treats
-      // either step as a Stage-2-ish landing depending on platform.
-      stage2UrlStep: 'connected',
+      noun: 'account',
+      nounPlural: 'accounts',
+      adminOf: 'Business or Creator account',
+      setupUrl: 'https://help.instagram.com/502981923235522',
+      setupCta: 'Set up an Instagram Business account',
+      setupCtaShort: 'Switch to a Business account',
+      showOauthSteps: false,
     } as const;
   }
-  // Facebook (default — byte-identical to pre-ig-wire styling)
   return {
     label: 'Facebook',
     bg: 'bg-[#1877F2]',
@@ -90,7 +98,13 @@ function platformTheme(platform: Platform) {
     pillBg: 'bg-blue-500/5 border-blue-500/15',
     pillTextHover: 'text-blue-400',
     Icon: Facebook,
-    stage2UrlStep: 'pick-placement',
+    noun: 'Page',
+    nounPlural: 'Pages',
+    adminOf: 'Page',
+    setupUrl: 'https://www.facebook.com/pages/create',
+    setupCta: 'Create a Facebook Page (free, 2 minutes)',
+    setupCtaShort: 'Create a Page',
+    showOauthSteps: true,
   } as const;
 }
 
@@ -139,21 +153,20 @@ export const PostproxyConnectButton: React.FC<Props> = ({
   const [placements, setPlacements] = useState<Placement[]>([]);
   const [error, setError] = useState<string>('');
 
-  // Detect Stage 2 — either ?step=pick-placement in the URL (worker's
-  // oauth-callback redirect target) or forcePickerStage prop (e.g.
-  // Migration banner reconnect). Listed-placement workspace honours the
-  // ?workspace=<clientId|"own"> query-string so a multi-client agency
-  // doesn't accidentally save the placement to the wrong workspace.
+  // Detect Stage 2 — either the post-OAuth URL or forcePickerStage prop
+  // (Migration banner reconnect). The ?workspace=<clientId|"own"> param
+  // gates which workspace gets the save so a multi-client agency
+  // doesn't accidentally save to the wrong one.
   useEffect(() => {
     if (connectedPlacementId) return; // already-connected wins
     const url = new URL(window.location.href);
     const urlStep = url.searchParams.get('step');
     const urlError = url.searchParams.get('postproxy_error');
 
-    // OAuth failure path — worker redirects here with
+    // OAuth failure path — worker redirects with
     // ?step=connect-failed&postproxy_error=<code>. Render the friendly
     // error and clean up the URL so a refresh doesn't re-show it.
-    if (urlStep === 'connect-failed' && urlError) {
+    if (urlStep === URL_STEP.failed && urlError) {
       setError(friendlyPostproxyError(urlError));
       setStep('error');
       try {
@@ -167,27 +180,26 @@ export const PostproxyConnectButton: React.FC<Props> = ({
 
     const urlWorkspace = url.searchParams.get('workspace');
     const urlPlatform = url.searchParams.get('platform');
-    // ig-wire: IG's post-OAuth redirect uses ?step=connected (no picker
-    // needed since IG has no placements). FB uses ?step=pick-placement.
-    // Both land us in "Stage 2" semantically, but IG short-circuits to
-    // the saved/confirmation state instead of fetching placements.
+    // IG OAuth lands on ?step=connected (no picker; docs §3299).
+    // FB OAuth lands on ?step=pick-placement.
     const isStage2 = forcePickerStage
-      || urlStep === 'pick-placement'
-      || urlStep === 'connected';
+      || urlStep === URL_STEP.picker
+      || urlStep === URL_STEP.connected;
     if (!isStage2) return;
-    // Only act on a `?step=connected` redirect if it belongs to our
-    // platform — an IG `?step=connected` redirect should not trigger
-    // the FB button to flip to "saved".
-    if (urlStep === 'connected') {
-      const expectedPlatform = (urlPlatform || 'instagram').toLowerCase();
-      if (expectedPlatform !== platform) return;
+    // ?step=connected is emitted only by IG OAuth callbacks. The FB
+    // button must ignore it, and the IG button must ignore any
+    // mismatched ?platform= (defends against future cross-platform
+    // confusion if the worker ever emits ?step=connected for FB).
+    if (urlStep === URL_STEP.connected) {
+      if (platform !== 'instagram') return;
+      if (urlPlatform && urlPlatform !== 'instagram') return;
     }
 
     // If the URL specifies a workspace that doesn't match the active
-    // clientId prop, don't fetch — wait for the parent to re-render
-    // with the right activeClientId. This handles the case where the
-    // user starts a reconnect from a client workspace, then refreshes
-    // their browser on the agency view before the callback lands.
+    // clientId prop, wait for the parent to re-render with the right
+    // activeClientId. Handles the case where a user starts a reconnect
+    // from a client workspace then refreshes on the agency view before
+    // the callback lands.
     const expectsOwn = urlWorkspace === 'own';
     const expectsClient = urlWorkspace && urlWorkspace !== 'own';
     if (expectsOwn && clientId !== null) return;
@@ -195,24 +207,17 @@ export const PostproxyConnectButton: React.FC<Props> = ({
 
     let aborted = false;
     // IG short-circuit: no placement picker. The worker auto-flipped
-    // use_postproxy=1 in the oauth-callback, so we render the saved/
-    // confirmation state directly. Synthesise a Placement-shaped object
-    // so onConnected's existing contract still holds — the placementId
-    // doubles as "any truthy means connected" for IG since there's no
-    // real placement to track.
+    // use_postproxy=1 in the oauth-callback, so render saved directly.
+    // placement.id is empty — the parent helper doesn't read it.
     if (isInstagram) {
       setStep('saved');
-      // Clean up the URL so a refresh doesn't re-trigger.
       try {
         url.searchParams.delete('step');
         url.searchParams.delete('workspace');
         url.searchParams.delete('platform');
         window.history.replaceState({}, '', url.toString());
       } catch { /* non-fatal */ }
-      // Notify the parent. For IG, placementId is a sentinel — the cron
-      // checks postproxy_profile_id (not placement_id) for IG posts, so
-      // any non-empty value works to signal "this workspace has IG".
-      onConnected({ id: 'instagram-connected', name: 'Instagram' });
+      onConnected({ id: '', name: theme.label });
       return () => { aborted = true; };
     }
 
@@ -222,11 +227,10 @@ export const PostproxyConnectButton: React.FC<Props> = ({
       .then((res) => {
         if (aborted) return;
         if (res.skipPicker) {
-          // Defensive: the IG short-circuit above should already have
-          // caught this, but if the worker reports skipPicker for any
-          // platform we honour it instead of rendering an empty picker.
+          // Defensive: IG short-circuit above should have caught this,
+          // but honour worker-reported skipPicker for any platform.
           setStep('saved');
-          onConnected({ id: `${platform}-connected`, name: theme.label });
+          onConnected({ id: '', name: theme.label });
           return;
         }
         if (!res.placements || res.placements.length === 0) {
@@ -243,7 +247,11 @@ export const PostproxyConnectButton: React.FC<Props> = ({
         setStep('error');
       });
     return () => { aborted = true; };
-  }, [forcePickerStage, clientId, connectedPlacementId, service, platform, isInstagram, onConnected, theme.label]);
+    // onConnected + theme.label are event sinks — re-running on their
+    // identity change would cause duplicate saveSocialTokens calls
+    // whenever a parent re-render replaces the inline closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forcePickerStage, clientId, connectedPlacementId, service, platform]);
 
   const handleConnect = async () => {
     setStep('connecting');
@@ -307,7 +315,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
             <theme.Icon size={18} className="text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-white">{connectedPageName || `${theme.label} ${isInstagram ? 'account' : 'Page'}`}</p>
+            <p className="text-sm font-bold text-white">{connectedPageName || `${theme.label} ${theme.noun}`}</p>
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <CheckCircle size={11} /> Connected
             </p>
@@ -390,7 +398,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-white">All set!</p>
             <p className="text-xs text-white/55 mt-0.5">
-              Your {theme.label} {isInstagram ? 'account' : 'page'} is connected — auto-publishing is now active.
+              Your {theme.label} {theme.noun.toLowerCase()} is connected — auto-publishing is now active.
             </p>
           </div>
         </div>
@@ -409,18 +417,16 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           {error === 'NO_PLACEMENTS_FOUND' ? (
             <div className="text-xs text-red-300/80 leading-relaxed space-y-2">
               <p>
-                No {theme.label} {isInstagram ? 'accounts' : 'Pages'} were found on your account. To use this app you need to be an
-                {' '}<strong>admin of a {theme.label} {isInstagram ? 'Business or Creator account' : 'Page'}</strong> — a personal profile isn't enough.
+                No {theme.label} {theme.nounPlural} were found on your account. To use this app you need to be an
+                {' '}<strong>admin of a {theme.label} {theme.adminOf}</strong> — a personal profile isn't enough.
               </p>
               <a
-                href={isInstagram
-                  ? 'https://help.instagram.com/502981923235522'
-                  : 'https://www.facebook.com/pages/create'}
+                href={theme.setupUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200 underline"
               >
-                {isInstagram ? 'Set up an Instagram Business account' : 'Create a Facebook Page (free, 2 minutes)'} <ExternalLink size={11} />
+                {theme.setupCta} <ExternalLink size={11} />
               </a>
               <p className="text-white/30">After setup, come back and click Connect again.</p>
             </div>
@@ -435,18 +441,16 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           <AlertCircle size={14} className="flex-shrink-0 text-blue-400/70 mt-0.5" />
           <div className="text-[11px] text-white/60 leading-relaxed">
             <p>
-              You'll need to be an <strong className="text-white/80">admin of a {theme.label} {isInstagram ? 'Business or Creator account' : 'Page'}</strong>
+              You'll need to be an <strong className="text-white/80">admin of a {theme.label} {theme.adminOf}</strong>
               {' '}(a personal profile alone won't work).
             </p>
             <a
-              href={isInstagram
-                ? 'https://help.instagram.com/502981923235522'
-                : 'https://www.facebook.com/pages/create'}
+              href={theme.setupUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-blue-400/80 hover:text-blue-300 mt-1"
             >
-              Don't have one? {isInstagram ? 'Switch to a Business account' : 'Create a Page'} <ExternalLink size={10} />
+              Don't have one? {theme.setupCtaShort} <ExternalLink size={10} />
             </a>
           </div>
         </div>
@@ -463,7 +467,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
         }
       </button>
 
-      {step === 'idle' && (
+      {step === 'idle' && theme.showOauthSteps && (
         <details className="group">
           <summary className="text-[11px] text-white/40 hover:text-white/60 cursor-pointer list-none flex items-center gap-1.5 transition">
             <ChevronRight size={11} className="group-open:rotate-90 transition" />

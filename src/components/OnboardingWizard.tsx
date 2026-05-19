@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CLIENT } from '../client.config';
 import { BusinessProfile, SocialTokens, DEFAULT_SOCIAL_TOKENS } from '../types';
+import { applyIgConnected, applyIgDisconnected } from '../utils/socialTokens';
 import { AppLogo } from './AppLogo';
 import { PostproxyConnectButton } from './PostproxyConnectButton';
 import { useDb } from '../hooks/useDb';
@@ -417,42 +418,22 @@ export const OnboardingWizard: React.FC<Props> = ({
                 }}
               />
 
-              {/* ── Instagram (ig-wire) ─────────────────────────────────
-                  Optional second connect. Workspaces with FB-only get
-                  the existing FB-only experience; adding IG here is
-                  additive — connecting IG flips use_postproxy=1 on the
-                  workspace (the worker oauth-callback does it inline)
-                  so the publish cron starts routing IG posts via
-                  Postproxy on the next */}
+              {/* Optional second connect. instagramConnected lives on
+                  SocialTokens (not BusinessProfile), so there's no
+                  onUpdateProfile fallback here — early-return when the
+                  parent didn't wire onSaveSocialTokens. */}
               <div className="border-t border-white/[0.05] pt-4">
                 <PostproxyConnectButton
                   platform="instagram"
-                  connectedPlacementId={socialTokens.postproxyInstagramProfileId}
+                  connectedPlacementId={socialTokens.postproxyInstagramConnectedAt}
                   connectedPageName={socialTokens.postproxyInstagramName}
                   onConnected={(placement) => {
-                    // instagramConnected lives on SocialTokens (not
-                    // BusinessProfile), so we only have the
-                    // onSaveSocialTokens path here — there's no
-                    // BusinessProfile fallback like the FB button
-                    // above has via onUpdateProfile.
                     if (!onSaveSocialTokens) return;
-                    onSaveSocialTokens({
-                      ...socialTokens,
-                      postproxyInstagramProfileId: placement.id,
-                      postproxyInstagramConnectedAt: new Date().toISOString(),
-                      postproxyInstagramName: placement.name,
-                      instagramConnected: true,
-                    });
+                    onSaveSocialTokens(applyIgConnected(socialTokens, placement.name));
                   }}
                   onDisconnect={() => {
                     if (!onSaveSocialTokens) return;
-                    onSaveSocialTokens({
-                      ...socialTokens,
-                      postproxyInstagramProfileId: undefined,
-                      postproxyInstagramConnectedAt: undefined,
-                      postproxyInstagramName: undefined,
-                      instagramConnected: false,
-                    });
+                    onSaveSocialTokens(applyIgDisconnected(socialTokens));
                   }}
                 />
               </div>
