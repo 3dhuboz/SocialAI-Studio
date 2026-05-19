@@ -27,6 +27,7 @@ import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
+import { fireAlert } from '../lib/alerts';
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
 // Returns void; never throws (so a failure in one cron doesn't kill the worker).
@@ -46,6 +47,11 @@ async function trackCron(
     success = 0;
     error = (e?.message || String(e)).slice(0, 1000);
     console.error(`[CRON ${cronType}] FAILED:`, error);
+    // Fire a critical alert so Steve learns about cron crashes within an
+    // hour. fireAlert never throws — it logs internally on failure — so
+    // it can't cascade into a second exception here. Defaults to
+    // dark-launch (record-only) until the cron_alerts row is flipped.
+    await fireAlert(env, `cron_crashed:${cronType}`, 'critical', error || 'unknown');
   }
   const duration = Date.now() - start;
   try {
