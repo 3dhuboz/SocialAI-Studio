@@ -70,7 +70,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 
       // Pass caption so sniffArchetypeFromCaption fires for unclassified
       // workspaces. Reuse archetypeSlug from gen to skip a second DB call.
-      const gen = await generateImageWithGuardrails(env, uid, clientId, safe, { caption });
+      const gen = await generateImageWithGuardrails(env, uid, clientId, safe, { caption, seedHint: postId });
       let finalUrl = gen.imageUrl;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
@@ -88,7 +88,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
           finalCritique = critique;
           if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
-            const retry = await generateImageWithGuardrails(env, uid, clientId, safe, { forceFallback: true, caption });
+            const retry = await generateImageWithGuardrails(env, uid, clientId, safe, { forceFallback: true, caption, seedHint: postId });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
@@ -442,7 +442,7 @@ export async function runBacklogRegen(
       if (!safe) { failed++; continue; }
 
       const gen = await generateImageWithGuardrails(
-        env, post.user_id, post.client_id, safe, { forceFallback: true, caption: post.content },
+        env, post.user_id, post.client_id, safe, { forceFallback: true, caption: post.content, seedHint: post.id },
       );
       if (!gen.imageUrl) { failed++; continue; }
 

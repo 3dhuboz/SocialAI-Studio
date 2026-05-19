@@ -88,7 +88,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
     const denylistPromise = caption.length > 20
       ? loadForbiddenSubjects(env, userId, clientId)
       : Promise.resolve([] as string[]);
-    const gen = await generateImageWithGuardrails(env, userId, clientId, safe, { caption });
+    const gen = await generateImageWithGuardrails(env, userId, clientId, safe, { caption, seedHint: postId });
     let finalUrl = gen.imageUrl;
     let finalModel = gen.modelUsed;
     let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
@@ -117,7 +117,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
 
         if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
           console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} < ${CRITIQUE_ACCEPT_THRESHOLD})`);
-          const retry = await generateImageWithGuardrails(env, userId, clientId, safe, { forceFallback: true, caption });
+          const retry = await generateImageWithGuardrails(env, userId, clientId, safe, { forceFallback: true, caption, seedHint: postId });
           if (retry.imageUrl) {
             finalUrl = retry.imageUrl;
             finalModel = `${retry.modelUsed} (forced-fallback retry)`;
