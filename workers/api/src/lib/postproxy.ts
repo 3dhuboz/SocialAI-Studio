@@ -115,14 +115,16 @@ async function pfFetch<T>(
     const text = await res.text();
     if (!res.ok) {
       // Slice keeps logs bounded — a 5xx HTML page from a misbehaving
-      // edge proxy can be huge and pollute log search.
-      throw new Error(`Postproxy ${init.method} ${path} -> ${res.status}: ${text.slice(0, 400)}`);
+      // edge proxy can be huge and pollute log search. Branded as
+      // "Upstream" so this string is safe to bubble to the UI without
+      // leaking the third-party publisher's name.
+      throw new Error(`Upstream ${init.method} ${path} -> ${res.status}: ${text.slice(0, 400)}`);
     }
     if (!text) return undefined as unknown as T;
     try {
       return JSON.parse(text) as T;
     } catch {
-      throw new Error(`Postproxy ${init.method} ${path} -> non-JSON body: ${text.slice(0, 200)}`);
+      throw new Error(`Upstream ${init.method} ${path} -> non-JSON body: ${text.slice(0, 200)}`);
     }
   } finally {
     clearTimeout(timer);

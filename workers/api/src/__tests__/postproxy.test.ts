@@ -133,7 +133,9 @@ describe('createPost', () => {
         format: 'feed',
         pageId: 'z',
       }),
-    ).rejects.toThrow(/Postproxy POST \/posts -> 400/);
+    // Error prefix is "Upstream" not "Postproxy" — we strip the third-party
+    // name from any error string that might bubble to the UI.
+    ).rejects.toThrow(/Upstream POST \/posts -> 400/);
   });
 });
 

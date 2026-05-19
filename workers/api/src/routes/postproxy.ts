@@ -190,7 +190,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ authUrl, oauthState });
     } catch (err: any) {
       console.error('[postproxy] init-connection failed:', err?.message);
-      return c.json({ error: 'Postproxy init failed', message: String(err?.message || err) }, 502);
+      return c.json({ error: 'Connection setup failed', message: String(err?.message || err) }, 502);
     }
   });
 
@@ -272,7 +272,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const row = await selectProfileByWorkspace(c.env, uid, clientId);
     if (!row?.postproxy_profile_id) {
-      return c.json({ error: 'No Postproxy profile connected for this workspace' }, 404);
+      return c.json({ error: 'No social connection for this workspace' }, 404);
     }
     try {
       const placements = await listPlacements(c.env, row.postproxy_profile_id, row.postproxy_group_id);
@@ -299,7 +299,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const clientId = body.clientId ?? null;
 
     const row = await selectProfileByWorkspace(c.env, uid, clientId);
-    if (!row) return c.json({ error: 'No Postproxy profile row for this workspace — connect first' }, 404);
+    if (!row) return c.json({ error: 'No social connection for this workspace — connect Facebook first' }, 404);
 
     const nowIso = new Date().toISOString();
     await c.env.DB.prepare(
@@ -403,7 +403,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     // mark_failed
-    const reason = action.errorMessage || 'Postproxy reported publish failure';
+    const reason = action.errorMessage || 'Publish failed at the publishing layer';
     await c.env.DB.prepare(
       `UPDATE posts
        SET status = 'Missed',
@@ -466,7 +466,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     );
     if (!mapping?.postproxy_profile_id || !mapping?.postproxy_placement_id) {
       return c.json({
-        error: 'Postproxy not connected for this workspace — connect Facebook via Postproxy first',
+        error: 'No social connection for this workspace — connect Facebook first',
       }, 409);
     }
 
@@ -499,7 +499,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: true, postproxyPostId: result.id });
     } catch (err: any) {
       console.error('[postproxy] publish-now failed:', err?.message);
-      return c.json({ error: 'Postproxy publish failed', message: String(err?.message || err) }, 502);
+      return c.json({ error: 'Publish failed', message: String(err?.message || err) }, 502);
     }
   });
 }
