@@ -56,6 +56,19 @@ export interface PostproxyMappingRow {
   postproxy_group_id: string;
   fb_page_name: string | null;
   profile_status: string | null;
+  /** Platform the row belongs to. schema_v24 added this column with
+   *  DEFAULT 'facebook' so legacy rows backfill cleanly. */
+  platform: string;
+}
+
+/** Normalise a posts.platform string ('Facebook', 'Instagram', etc., or
+ *  undefined) to the lowercase token the rest of the postproxy code uses.
+ *  Defaults to 'facebook' for legacy rows where posts.platform is NULL —
+ *  matches the schema_v24 DEFAULT on postproxy_profiles.platform. */
+export function normalizePostPlatform(raw: string | null | undefined): 'facebook' | 'instagram' {
+  const s = (raw || '').toLowerCase();
+  if (s === 'instagram' || s === 'ig') return 'instagram';
+  return 'facebook';
 }
 
 export async function loadPostproxyMappingForPosts<
@@ -73,13 +86,20 @@ export async function loadPostproxyMappingForPosts<
   const map = new Map<string, PostproxyMappingRow>();
   if (ownerIds.size === 0 && tuples.size === 0) return map;
 
+  // ig-wire (schema_v24): the SELECTs now pull `platform` and the map
+  // key is widened from `${userId}::${clientId??''}` to include the
+  // platform suffix. A workspace can own both an FB and an IG row, and
+  // lookupPostproxyMapping picks the right one based on posts.platform.
+  // Don't filter by platform in the SQL — the same workspace may appear
+  // in multiple posts on different platforms within a single tick.
+
   const queries: Promise<{ results: PostproxyMappingRow[] }>[] = [];
 
   if (ownerIds.size > 0) {
     queries.push(
       env.DB.prepare(
         `SELECT user_id, client_id, postproxy_profile_id, postproxy_placement_id,
-                postproxy_group_id, fb_page_name, profile_status
+                postproxy_group_id, fb_page_name, profile_status, platform
          FROM postproxy_profiles
          WHERE client_id IS NULL
            AND user_id IN (${Array.from(ownerIds, () => '?').join(',')})`,
@@ -87,9 +107,6 @@ export async function loadPostproxyMappingForPosts<
     );
   }
   if (tuples.size > 0) {
-    // SQLite supports OR-of-equality for composite IN; we expand each tuple
-    // as `(user_id = ? AND client_id = ?)` joined by OR. For typical
-    // publish batches (1-3 distinct workspaces) this stays tiny.
     const userIds: string[] = [];
     const clientIds: string[] = [];
     for (const t of tuples) {
@@ -105,7 +122,7 @@ export async function loadPostproxyMappingForPosts<
     queries.push(
       env.DB.prepare(
         `SELECT user_id, client_id, postproxy_profile_id, postproxy_placement_id,
-                postproxy_group_id, fb_page_name, profile_status
+                postproxy_group_id, fb_page_name, profile_status, platform
          FROM postproxy_profiles WHERE ${orClauses}`,
       ).bind(...binds).all<PostproxyMappingRow>(),
     );
@@ -114,23 +131,43 @@ export async function loadPostproxyMappingForPosts<
   const allResults = await Promise.all(queries);
   for (const r of allResults) {
     for (const row of r.results ?? []) {
-      const key = `${row.user_id}::${row.client_id ?? ''}`;
-      map.set(key, row);
+      // Defensive: rows from schema_v24-migrated D1s will have platform
+      // set; pre-migration rows return NULL → normalise to 'facebook'.
+      const plat = normalizePostPlatform(row.platform);
+      const key = `${row.user_id}::${row.client_id ?? ''}::${plat}`;
+      map.set(key, { ...row, platform: plat });
     }
   }
   return map;
 }
 
 /** Lookup helper paired with loadPostproxyMappingForPosts. Returns the
- *  mapping row for a post's workspace tuple, or undefined when the
- *  workspace hasn't connected Postproxy yet. */
+ *  mapping row for a post's workspace tuple + platform, or undefined when
+ *  the workspace hasn't connected that platform yet. The `platform` arg
+ *  defaults to 'facebook' so legacy callers that don't pass it get the
+ *  same row they did pre-ig-wire (FB only).
+ *
+ *  Resolution order on miss-for-platform:
+ *    1. Exact (workspace + platform) match — preferred
+ *    2. Workspace + 'facebook' fallback — preserves byte-identical
+ *       behaviour for posts where post.platform is NULL/legacy
+ *    3. undefined — caller marks the post Missed with a reconnect prompt
+ */
 export function lookupPostproxyMapping(
   map: Map<string, PostproxyMappingRow>,
-  post: { user_id?: string | null; client_id?: string | null },
+  post: { user_id?: string | null; client_id?: string | null; platform?: string | null },
+  platform?: 'facebook' | 'instagram',
 ): PostproxyMappingRow | undefined {
   if (!post.user_id) return undefined;
-  const key = `${post.user_id}::${post.client_id ?? ''}`;
-  return map.get(key);
+  const plat = platform ?? normalizePostPlatform(post.platform);
+  const tupleKey = `${post.user_id}::${post.client_id ?? ''}`;
+  const exact = map.get(`${tupleKey}::${plat}`);
+  if (exact) return exact;
+  // Back-compat: for posts.platform=null or pre-schema_v24 rows, fall
+  // back to the FB mapping. This keeps every existing FB workspace
+  // publishing through the same code path it does today.
+  if (plat !== 'facebook') return undefined;
+  return map.get(`${tupleKey}::facebook`);
 }
 
 // Batch-load social_tokens for a set of posts in (worst case) two queries

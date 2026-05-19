@@ -27,6 +27,7 @@ import {
   lookupSocialTokens,
   loadPostproxyMappingForPosts,
   lookupPostproxyMapping,
+  normalizePostPlatform,
 } from './_shared';
 import { createPost as postproxyCreatePost } from '../lib/postproxy';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
@@ -349,10 +350,23 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // transitions arrive via the webhook (routes/postproxy.ts).
       const usePostproxy = !postproxyDisabled && Number((post as any).use_postproxy) === 1;
       if (usePostproxy) {
-        const mapping = lookupPostproxyMapping(postproxyMap, post as { user_id?: string | null; client_id?: string | null });
-        if (!mapping?.postproxy_profile_id || !mapping?.postproxy_placement_id) {
-          const reason = 'Postproxy not connected for this workspace — reconnect Facebook via Postproxy in Settings to fix.';
-          console.warn(`[CRON] No Postproxy mapping for post ${(post as any).id} — marking missed`);
+        // ig-wire (schema_v24): derive platform from posts.platform so an
+        // IG-targeted post resolves to the workspace's IG mapping row
+        // (not the FB row). Legacy posts with platform=NULL fall back to
+        // 'facebook' via normalizePostPlatform → lookupPostproxyMapping.
+        const postPlatform = normalizePostPlatform((post as any).platform as string | null);
+        const mapping = lookupPostproxyMapping(
+          postproxyMap,
+          post as { user_id?: string | null; client_id?: string | null; platform?: string | null },
+          postPlatform,
+        );
+        // FB requires a placement_id; IG does not (IG has no placements
+        // per docs §3299). For IG, only require profile_id.
+        const placementMissingForFb = postPlatform === 'facebook' && !mapping?.postproxy_placement_id;
+        if (!mapping?.postproxy_profile_id || placementMissingForFb) {
+          const platformLabel = postPlatform === 'instagram' ? 'Instagram' : 'Facebook';
+          const reason = `Postproxy not connected for ${platformLabel} on this workspace — reconnect ${platformLabel} via Postproxy in Settings to fix.`;
+          console.warn(`[CRON] No Postproxy mapping for post ${(post as any).id} (platform=${postPlatform}) — marking missed`);
           await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
             .bind('Missed', reason, (post as any).id).run();
           await notifyOwnerOnFailure(env, post as any, reason, 'post');
@@ -389,14 +403,28 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           continue;
         }
 
+        // Map post_type → format per platform. FB uses 'feed' (legacy alias
+        // for 'post' the Postproxy server backward-compats); IG uses the
+        // docs-canonical 'post' / 'reel'. Stories aren't a posts.post_type
+        // value today — when post-composer UI gains story support, this
+        // switch picks them up via the format union.
+        const format: 'feed' | 'post' | 'reel' =
+          isReel ? 'reel'
+          : postPlatform === 'instagram' ? 'post'
+          : 'feed';
+
         try {
           const result = await postproxyCreatePost(env, {
             profileId: mapping.postproxy_profile_id,
             body: fullTextPp,
             media: mediaUrl ? [mediaUrl] : [],
-            format: isReel ? 'reel' : 'feed',
-            pageId: mapping.postproxy_placement_id,
+            format,
+            // page_id is IG-irrelevant — the lib only emits it for FB.
+            // Pass an empty string for IG so the typed arg is satisfied;
+            // buildCreatePostPayload drops it from the IG payload.
+            pageId: mapping.postproxy_placement_id || '',
             title: isReel ? cleanContentPp.slice(0, 60) : undefined,
+            platform: postPlatform,
           });
           // Stay in Publishing — Postproxy will arrive with a webhook to
           // flip to Posted/Missed. Clear claim_id so a zombie-Publishing
