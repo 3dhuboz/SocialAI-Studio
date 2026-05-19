@@ -5750,6 +5750,66 @@ const Dashboard: React.FC = () => {
                   </p>
                 </div>
 
+                {/* ── REAL MATERIAL (2026-05) ──
+                    The post-writer's anti-fabrication rules ("no invented
+                    customers, no invented stats") need ground truth to work
+                    against. These fields are the authoritative source the
+                    AI quotes from for testimonial-style, hot-take, tip, and
+                    behind-the-build posts. Without them, the AI falls back
+                    to general/observational content — never fabricates. */}
+                <div className="mt-6 pt-5 border-t border-amber-500/15">
+                  <h3 className="text-xs font-black text-amber-300 uppercase tracking-widest mb-1.5">AI Material — what can the AI quote?</h3>
+                  <p className="text-[11px] text-white/40 mb-4 leading-relaxed">
+                    Anything you write here, the AI can quote in your posts. Anything you don't, the AI won't invent. Update <strong className="text-amber-300/80">this week's material</strong> regularly to keep posts fresh.
+                  </p>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">Real customer stories</label>
+                      <textarea
+                        value={profile.customerStories || ''}
+                        onChange={e => setProfile(prev => ({ ...prev, customerStories: e.target.value }))}
+                        placeholder={'Mary at Carlton Café — "Posts that took me an hour now take 10 minutes" — name OK\nTradie in Rocky — saved 4 hours a week — anonymous'}
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      />
+                      <p className="text-[10.5px] text-white/40 mt-1.5 leading-snug">Real quotes/outcomes. Mark each "anonymous OK" or "use their name". Leave blank if no customer feedback yet.</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">Hot takes</label>
+                      <textarea
+                        value={profile.hotTakes || ''}
+                        onChange={e => setProfile(prev => ({ ...prev, hotTakes: e.target.value }))}
+                        placeholder={'Most "engagement tips" are useless without consistency\nPosting daily is overrated — 3x/week with substance beats 7x/week of filler'}
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      />
+                      <p className="text-[10.5px] text-white/40 mt-1.5 leading-snug">Strong opinions about your industry. One per line. Fuels hot-take posts.</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">Tactical tips you can give</label>
+                      <textarea
+                        value={profile.tacticalTips || ''}
+                        onChange={e => setProfile(prev => ({ ...prev, tacticalTips: e.target.value }))}
+                        placeholder={'The best time to post is when your audience is awake, not "industry best practice"\nReply to every comment within 4 hours for the first week of a launch'}
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      />
+                      <p className="text-[10.5px] text-white/40 mt-1.5 leading-snug">Free value from your own playbook. One per line. Fuels free-value posts.</p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-1">This week's material <span className="text-white/40 normal-case font-medium">— update weekly</span></label>
+                      <textarea
+                        value={profile.weeklyMaterial || ''}
+                        onChange={e => setProfile(prev => ({ ...prev, weeklyMaterial: e.target.value }))}
+                        placeholder={'Shipped Instagram support this week\nLearned: when customers complain about onboarding length, it\'s usually the third field that\'s the problem\nFixed a publishing bug that was affecting 3 workspaces'}
+                        className="w-full bg-black/40 border border-white/[0.08] rounded-xl px-3 py-3 text-white text-sm min-h-[80px] resize-none placeholder:text-white/20 focus:outline-none focus:border-amber-500/40"
+                      />
+                      <p className="text-[10.5px] text-white/40 mt-1.5 leading-snug">Real moments worth posting. Refresh this Monday morning for the week ahead — keeps posts current.</p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Q8 — Social Goal pill selector */}
                 <div>
                   <label className="text-xs font-bold text-amber-400/80 uppercase tracking-wider block mb-2">8. What's your #1 goal for social media?</label>

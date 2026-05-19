@@ -149,6 +149,32 @@ export interface BusinessProfile {
   socialGoal: string;
   contentTopics: string;
   videoEnabled: boolean;
+  /**
+   * REAL MATERIAL the owner has provided — the AI draws from these so
+   * it doesn't have to invent specifics. Added 2026-05 in response to
+   * fabrication issues caught in audit (made-up customer numbers,
+   * invented ROI percentages, etc.).
+   *
+   * Each is plain text, one item per line. Empty is OK — the
+   * post-writer prompt treats missing fields as "no material, fall
+   * back to tactical/observational content (never fabricate)".
+   */
+  /** Real customer stories with permission status — e.g.
+   *  "Mary at Carlton Café — 'Posts that used to take me an hour now take 10 minutes' — anonymous OK"
+   *  Used for testimonial-style posts. Without these, the model is
+   *  forbidden from inventing customer outcomes. */
+  customerStories?: string;
+  /** Strong opinions the owner holds about their industry —
+   *  one per line. Fuels "industry hot take" pillar content. */
+  hotTakes?: string;
+  /** Free tactical tips the owner can give their audience —
+   *  one per line. Fuels "tactical tip" pillar content (no product mention). */
+  tacticalTips?: string;
+  /** This week's "what happened worth posting about" — refreshed by the
+   *  owner regularly. Real launches, real fixes, real moments. Used for
+   *  founder-voice / behind-the-build posts. Without recent material,
+   *  the model falls back to evergreen pillar content. */
+  weeklyMaterial?: string;
 }
 
 export interface ContentCalendarStats {

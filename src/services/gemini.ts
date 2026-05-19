@@ -835,6 +835,14 @@ export const generateSocialPost = async (
     socialGoal?: string;
     location?: string;
     contentTopics?: string;
+    // ── REAL MATERIAL (2026-05 anti-fabrication block) ──────────────────
+    // Owner-provided specifics that the post-writer treats as authoritative
+    // source. When present, the model draws from these; when empty, the
+    // model is forbidden from inventing equivalents.
+    customerStories?: string;
+    hotTakes?: string;
+    tacticalTips?: string;
+    weeklyMaterial?: string;
   },
   contentFormat?: string,
   /** When provided, AI is restricted to citing only these scraped FB facts. */
@@ -875,6 +883,30 @@ export const generateSocialPost = async (
     safeProfile.location && `Location: ${safeProfile.location}`,
     safeProfile.contentTopics && `Content topics & themes to focus on: ${safeProfile.contentTopics}`,
   ].filter(Boolean).join('\n') : '';
+
+  // ── REAL MATERIAL BLOCK (2026-05 anti-fabrication) ────────────────────
+  // The post-writer's anti-fabrication golden rules ("no invented customers,
+  // no invented stats") only work if the model has SOMEthing real to draw
+  // from. Without this block the model fabricates "customer success" posts
+  // and aggregate ROI stats. With it, the model has explicit verbatim
+  // material to quote, AND we can say "if this block is empty for the
+  // angle you want, pick a different angle — DON'T invent."
+  const realMaterialLines: string[] = [];
+  if (safeProfile?.customerStories?.trim()) {
+    realMaterialLines.push(`REAL CUSTOMER STORIES (use verbatim; do not invent extras):\n${safeProfile.customerStories.trim()}`);
+  }
+  if (safeProfile?.hotTakes?.trim()) {
+    realMaterialLines.push(`REAL HOT TAKES (the owner's actual opinions — quote/paraphrase, don't fabricate new ones):\n${safeProfile.hotTakes.trim()}`);
+  }
+  if (safeProfile?.tacticalTips?.trim()) {
+    realMaterialLines.push(`REAL TACTICAL TIPS (the owner's actual playbook — draw from these for tip posts):\n${safeProfile.tacticalTips.trim()}`);
+  }
+  if (safeProfile?.weeklyMaterial?.trim()) {
+    realMaterialLines.push(`THIS WEEK'S MATERIAL (real moments worth posting — use as primary source for behind-the-build / founder-voice posts):\n${safeProfile.weeklyMaterial.trim()}`);
+  }
+  const realMaterialBlock = realMaterialLines.length > 0
+    ? `\n\nREAL MATERIAL FROM THE OWNER — this is your AUTHORITATIVE SOURCE. Treat as ground truth. You may quote, paraphrase, or extract specifics from these lines. You may NOT invent additional customers, stats, opinions, or moments beyond what's written here:\n\n${realMaterialLines.join('\n\n')}`
+    : `\n\nREAL MATERIAL FROM THE OWNER: none provided. This means you have NO customer stories, NO testimonials, NO verified opinions, and NO this-week material to draw from. If your assigned angle/format/topic would require any of those, write a tactical or observational post instead — never invent specifics to fill the gap.`;
 
   // Owner-declared HARD exclusions. Built from BusinessProfile.forbiddenSubjects
   // — the brisket-only-BBQ-getting-pork-images failure mode. Surfaced as an
@@ -934,22 +966,34 @@ export const generateSocialPost = async (
 GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 ═══════════════════════════════════════════════════════════════════
 
-1. NO INVENTED CUSTOMERS, REVIEWS, OR STORIES.
-   You do NOT have real customer data. NEVER write phrases like:
+1. NO INVENTED CUSTOMERS, REVIEWS, OR STORIES — INCLUDING AGGREGATES.
+   Real customer stories ONLY come from the REAL MATERIAL block below.
+   If that block has none, you have NONE. NEVER write phrases like:
      ✗ "A local cafe in [city] said..."
      ✗ "Rockhampton owner saw..."
      ✗ "One of our happy clients..."
      ✗ "A customer told us..."
      ✗ "Sarah J., Brisbane, says..."
-   You have NO testimonials. Don't invent any. Period.
+     ✗ "We've seen X happen when customers switch to..." (aggregate claim)
+     ✗ "Our customers post 7-14 times a week" (aggregate metric)
+     ✗ "Food truck owner. Constantly moving. Problem solved." (composite/hypothetical)
+   Aggregate "our customers do X" claims are JUST AS FORBIDDEN as named
+   testimonials. If REAL MATERIAL is empty, do not write a customer-results
+   post — switch to a tactical/observational angle instead.
 
-2. NO INVENTED STATISTICS OR PERCENTAGES.
+2. NO INVENTED STATISTICS OR PERCENTAGES — INCLUDING "INDUSTRY" STATS.
    You do NOT have analytics data. NEVER write phrases like:
      ✗ "increased engagement by 30%"
      ✗ "saw a 45% boost"
      ✗ "saved them 10 hours a week"
      ✗ "generated 5x more leads"
-   No numbers unless they appear verbatim in BRAND CONTEXT below.
+     ✗ "Posting once per week beats posting once per month by 1,200%"
+     ✗ "Captions with emojis get 25% more engagement"
+     ✗ "3,735% ROI"
+   This includes "industry statistics" that sound official ("studies show
+   X%", "research finds Y%") — those are fabricated unless cited verbatim
+   from REAL MATERIAL or BRAND CONTEXT. No numbers unless they appear
+   verbatim in REAL MATERIAL or BRAND CONTEXT below.
 
 3. NO INVENTED EVENTS, CAMPAIGNS, COUNTDOWNS, URLS.
    No "tomorrow!", no "this weekend only", no "limited spots left",
@@ -979,7 +1023,7 @@ GOLDEN RULES — IF YOU BREAK THESE THE POST WILL BE REJECTED:
 
 You are a senior social media strategist managing ${platform} for "${businessName}" (${businessType}).
 Your writing voice: ${tone}. You write like a real human — never generic, never corporate, never AI-sounding.${voiceCuesLine}${bannedTropeLine}
-${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}${exclusionMandate}
+${buildRegionalVoiceBlock(safeProfile?.location || '')}${groundTruthBlock}${profileContext ? `\nBRAND CONTEXT (the ONLY facts you may reference — anything else is fabrication):\n${profileContext}` : ''}${realMaterialBlock}${exclusionMandate}
 
 CREATIVE ANGLE FOR THIS POST: ${angle}
 ${formatInstr ? `\n${formatInstr}` : ''}
@@ -1445,6 +1489,13 @@ export const generateVideoScript = async (
     socialGoal?: string;
     contentTopics?: string;
     location?: string;
+    // REAL MATERIAL (2026-05 anti-fabrication) — same fields as
+    // generateSocialPost so video scripts can also draw from authoritative
+    // source instead of inventing customer outcomes / stats.
+    customerStories?: string;
+    hotTakes?: string;
+    tacticalTips?: string;
+    weeklyMaterial?: string;
   },
   hashtags?: string[],
   contentFormat?: string
@@ -1459,6 +1510,16 @@ export const generateVideoScript = async (
   if (profile?.location) profileLines.push(`Location: ${profile.location}`);
   if (profile?.contentTopics) profileLines.push(`Content topics & themes: ${profile.contentTopics}`);
   const profileContext = profileLines.length > 0 ? `\nBUSINESS CONTEXT:\n${profileLines.join('\n')}` : '';
+  // REAL MATERIAL block (mirrors generateSocialPost) — explicit ground truth
+  // for video scripts so the script doesn't invent customer outcomes.
+  const realMaterialPieces: string[] = [];
+  if (profile?.customerStories?.trim()) realMaterialPieces.push(`Real customer stories (verbatim, do not invent extras): ${profile.customerStories.trim()}`);
+  if (profile?.hotTakes?.trim()) realMaterialPieces.push(`Real hot takes: ${profile.hotTakes.trim()}`);
+  if (profile?.tacticalTips?.trim()) realMaterialPieces.push(`Real tactical tips: ${profile.tacticalTips.trim()}`);
+  if (profile?.weeklyMaterial?.trim()) realMaterialPieces.push(`This week's material: ${profile.weeklyMaterial.trim()}`);
+  const realMaterialContext = realMaterialPieces.length > 0
+    ? `\n\nREAL MATERIAL FROM THE OWNER (authoritative source — quote/paraphrase, never invent beyond this):\n${realMaterialPieces.join('\n')}`
+    : '';
   // Same EXCLUSION MANDATE pattern as generateSocialPost — keep both prompt
   // paths product-safe so a brisket-only BBQ doesn't get pork shots in its
   // Reel either.
@@ -1472,7 +1533,7 @@ export const generateVideoScript = async (
   try {
     const prompt = `You are a senior video content strategist and creative director for "${businessName}", a ${businessType}.
 Your job: create a COMPELLING short-form video brief for a ${platform} Reel that will stop the scroll and drive engagement.
-${profileContext}${videoExclusion}
+${profileContext}${realMaterialContext}${videoExclusion}
 
 TOPIC: "${topic}"
 ACCOMPANYING CAPTION: "${caption}"

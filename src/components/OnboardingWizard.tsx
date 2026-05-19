@@ -26,13 +26,14 @@ interface Props {
   onAdvanceSetup?: (status: string) => void;
 }
 
-type Step = 'welcome' | 'business' | 'facebook' | 'firstposts' | 'done';
+type Step = 'welcome' | 'business' | 'material' | 'facebook' | 'firstposts' | 'done';
 
-const STEPS: Step[] = ['welcome', 'business', 'facebook', 'firstposts', 'done'];
+const STEPS: Step[] = ['welcome', 'business', 'material', 'facebook', 'firstposts', 'done'];
 
 const stepLabel: Record<Step, string> = {
   welcome: 'Welcome',
   business: 'Your Business',
+  material: 'Real Material',
   facebook: 'Facebook',
   firstposts: 'First Posts',
   done: 'Done',
@@ -357,6 +358,117 @@ export const OnboardingWizard: React.FC<Props> = ({
                 >
                   {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
                   {isSaving ? 'Saving…' : <>Save & Continue <ArrowRight size={16} /></>}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── REAL MATERIAL ──
+              The AI's post-writer follows strict anti-fabrication rules: it
+              won't invent customer stories, stats, opinions, or this-week
+              moments. That means it needs REAL material to draw from for
+              testimonial-style, hot-take, tip, and behind-the-build posts.
+              Without this step it falls back to generic observational
+              content (which works, but is thinner than founder-voice posts).
+
+              All fields optional — users can skip and add later via Settings,
+              but the more they fill in here, the more specific posts they
+              get from day one. */}
+          {step === 'material' && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-xl font-black text-white mb-1 flex items-center gap-2">
+                  <Wand2 className="text-amber-400" size={20} /> What can the AI quote?
+                </h2>
+                <p className="text-xs text-white/40 leading-relaxed">
+                  Anything you write here, the AI can quote in your posts. Anything you DON'T write, the AI won't invent — it'll fall back to general content instead. Two minutes here = much sharper posts.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-white/70 mb-1.5 block">
+                    Real customer stories <span className="text-white/30 font-normal">(optional)</span>
+                  </label>
+                  <p className="text-[11px] text-white/35 mb-1.5 leading-relaxed">
+                    Real quotes, outcomes, or moments. Mark each "anonymous OK" or "use their name" — one per line. Skip if you don't have customer feedback yet.
+                  </p>
+                  <textarea
+                    value={profile.customerStories || ''}
+                    onChange={e => onUpdateProfile({ customerStories: e.target.value })}
+                    placeholder={'e.g.\nMary at Carlton Café — "Posts that took me an hour now take 10 minutes" — name OK\nTradie in Rocky — saved 4 hours a week — anonymous'}
+                    rows={3}
+                    className="w-full bg-black/30 border border-white/[0.08] focus:border-amber-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/15 outline-none resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-white/70 mb-1.5 block">
+                    Hot takes <span className="text-white/30 font-normal">(optional)</span>
+                  </label>
+                  <p className="text-[11px] text-white/35 mb-1.5 leading-relaxed">
+                    Strong opinions you hold about your industry. One per line. The AI will paraphrase these into hot-take posts.
+                  </p>
+                  <textarea
+                    value={profile.hotTakes || ''}
+                    onChange={e => onUpdateProfile({ hotTakes: e.target.value })}
+                    placeholder={'e.g.\nMost "engagement tips" are useless without consistency\nPosting daily is overrated — 3x/week with substance beats 7x/week of filler'}
+                    rows={3}
+                    className="w-full bg-black/30 border border-white/[0.08] focus:border-amber-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/15 outline-none resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-white/70 mb-1.5 block">
+                    Tactical tips you can give <span className="text-white/30 font-normal">(optional)</span>
+                  </label>
+                  <p className="text-[11px] text-white/35 mb-1.5 leading-relaxed">
+                    Useful tactics from your own playbook — the things you'd tell a friend. One per line. These fuel free-value posts (no product mention).
+                  </p>
+                  <textarea
+                    value={profile.tacticalTips || ''}
+                    onChange={e => onUpdateProfile({ tacticalTips: e.target.value })}
+                    placeholder={'e.g.\nThe best time to post is when your audience is awake, not "industry best practice"\nReply to every comment within 4 hours for the first week of a launch'}
+                    rows={3}
+                    className="w-full bg-black/30 border border-white/[0.08] focus:border-amber-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/15 outline-none resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-white/70 mb-1.5 block">
+                    What's worth posting THIS week? <span className="text-white/30 font-normal">(optional — update weekly)</span>
+                  </label>
+                  <p className="text-[11px] text-white/35 mb-1.5 leading-relaxed">
+                    Real moments from this week: launches, fixes, lessons, conversations. Update this regularly in Settings to keep posts fresh.
+                  </p>
+                  <textarea
+                    value={profile.weeklyMaterial || ''}
+                    onChange={e => onUpdateProfile({ weeklyMaterial: e.target.value })}
+                    placeholder={'e.g.\nShipped Instagram support this week\nLearned: when customers complain about onboarding length, it\'s usually the third field that\'s the problem'}
+                    rows={3}
+                    className="w-full bg-black/30 border border-white/[0.08] focus:border-amber-500/30 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/15 outline-none resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl px-3 py-2.5">
+                <p className="text-[11px] text-amber-300/80 leading-relaxed">
+                  💡 <strong>You can always come back.</strong> These fields are editable in Settings → AI Material any time. The AI re-reads them on every post generation.
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => next(false)}
+                  disabled={isSaving}
+                  className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-50 text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
+                >
+                  {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
+                  {isSaving
+                    ? 'Saving…'
+                    : (profile.customerStories || profile.hotTakes || profile.tacticalTips || profile.weeklyMaterial)
+                      ? <>Save & Continue <ArrowRight size={16} /></>
+                      : <>Skip for now <ArrowRight size={16} /></>}
                 </button>
               </div>
             </div>
