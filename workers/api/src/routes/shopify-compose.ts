@@ -33,6 +33,7 @@ import {
 } from '../lib/shopify-auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { loadShopFactsForPrompt } from '../lib/facebook-facts';
 
 // ── Config helpers (mirror shopify-oauth.ts so the route file stays self-contained) ──
 
@@ -253,10 +254,26 @@ export async function composeProductPost(
   }
 
   // ── Stage 1: caption ──────────────────────────────────────────────
-  // Optional campaign context gets stitched into the user prompt so the
-  // LLM can incorporate the merchant's active marketing theme (e.g. a
-  // running Black Friday campaign) without changing the system prompt.
+  // Build the user prompt and layer on optional grounding signals:
+  //   - shop facts: about + top high-engagement posts, scraped from the
+  //     merchant's connected Facebook Page. Grounds voice in real history
+  //     and lets the LLM lean on what's already worked. Best-effort —
+  //     `null` if no FB page connected or scrape hasn't run yet.
+  //   - campaign context: optional active-marketing-campaign theme/goal,
+  //     passed in by the caller (autopilot looks this up from the
+  //     shopify_campaigns table).
+  //
+  // We deliberately fetch facts INSIDE composeProductPost rather than have
+  // each caller (single-compose + autopilot) re-derive them, so the prompt
+  // shape stays consistent. The shopify_facts query is cheap (~1ms) and
+  // bounded (LIMIT 4 rows).
   let userPrompt = buildCaptionUserPrompt(product, platform, tone);
+
+  const factsContext = await loadShopFactsForPrompt(env, shop);
+  if (factsContext) {
+    userPrompt = `${userPrompt}\n\nMerchant's Facebook page context — use this to ground voice and avoid inventing claims. Echo themes from high-engagement past posts, but write FRESH copy. Do not copy or paraphrase verbatim:\n${factsContext}`;
+  }
+
   if (campaignContext && campaignContext.trim().length > 0) {
     userPrompt = `${userPrompt}\n\nActive marketing campaign — weave this naturally into the post (avoid sounding bolted-on):\n${campaignContext.trim()}`;
   }

@@ -205,6 +205,66 @@ export async function refreshFactsForShop(
   return { inserted, errors };
 }
 
+// Load the merchant's strongest Facebook-page signals for stitching into a
+// compose prompt. Returns a compact, human-readable string the LLM can use
+// to ground voice and avoid fabricating claims — or `null` if no facts are
+// available yet (table empty, page not connected, or scrape hasn't run).
+//
+// Shape:
+//   - 1× 'about' row (page description / category)
+//   - up to N 'own_post' rows ordered by engagement_score DESC
+//
+// Each post is trimmed to ~220 chars so the prompt stays bounded even when
+// the merchant has 50 huge posts in the table. Photos are deliberately
+// excluded — they're useful for image-gen brand refs, not for caption
+// grounding.
+//
+// Degrades silently if the shopify_facts table doesn't exist (deploys where
+// schema_v24 hasn't run yet), returning null instead of throwing — autopilot
+// generation must keep working with or without facts.
+export async function loadShopFactsForPrompt(
+  env: Env,
+  shopDomain: string,
+  topPostLimit = 3,
+): Promise<string | null> {
+  try {
+    const about = await env.DB.prepare(
+      `SELECT content, metadata FROM shopify_facts
+        WHERE shop_domain = ? AND fact_type = 'about'
+        ORDER BY verified_at DESC
+        LIMIT 1`,
+    ).bind(shopDomain).first<{ content: string; metadata: string | null }>();
+
+    const { results: posts } = await env.DB.prepare(
+      `SELECT content, engagement_score, metadata FROM shopify_facts
+        WHERE shop_domain = ? AND fact_type = 'own_post' AND engagement_score > 0
+        ORDER BY engagement_score DESC
+        LIMIT ?`,
+    ).bind(shopDomain, topPostLimit).all<{ content: string; engagement_score: number; metadata: string | null }>();
+
+    if (!about && (!posts || posts.length === 0)) return null;
+
+    const lines: string[] = [];
+    if (about?.content) {
+      const trimmed = about.content.length > 400
+        ? about.content.slice(0, 400) + '…'
+        : about.content;
+      lines.push(`Page about: ${trimmed}`);
+    }
+    for (const p of posts || []) {
+      const trimmed = p.content.length > 220 ? p.content.slice(0, 220) + '…' : p.content;
+      // Strip newlines so the bullet list stays compact in the prompt.
+      const oneLine = trimmed.replace(/\s+/g, ' ').trim();
+      lines.push(`Past high-engagement post (engagement ${p.engagement_score}): "${oneLine}"`);
+    }
+    if (lines.length === 0) return null;
+    return lines.join('\n');
+  } catch {
+    // Table missing or query failed — degrade silently.
+    return null;
+  }
+}
+
 export async function refreshFactsForWorkspace(
   db: D1Database,
   uid: string,
