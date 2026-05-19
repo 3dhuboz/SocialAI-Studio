@@ -82,6 +82,20 @@ function postOauthRedirect(env: Env, clientId: string | null): string {
   return `${base}/onboarding?step=pick-placement&workspace=${workspace}`;
 }
 
+/** Build the failure-case redirect target. Postproxy appends
+ *  `failure=true&error_code=...` to our callback URL when OAuth fails
+ *  at Meta (account already in another group, user cancelled, scope
+ *  denied, etc). We pass the code through to the frontend so the UI can
+ *  render a friendly message instead of a raw JSON error page. */
+function postOauthFailureRedirect(env: Env, clientId: string | null, errorCode: string): string {
+  const base = env.ENVIRONMENT === 'staging'
+    ? 'https://staging.socialaistudio.au'
+    : 'https://socialaistudio.au';
+  const workspace = clientId ? encodeURIComponent(clientId) : 'own';
+  const code = encodeURIComponent(errorCode || 'unknown');
+  return `${base}/onboarding?step=connect-failed&workspace=${workspace}&postproxy_error=${code}`;
+}
+
 interface PostproxyProfileRow {
   id: string;
   user_id: string;
@@ -176,7 +190,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ authUrl, oauthState });
     } catch (err: any) {
       console.error('[postproxy] init-connection failed:', err?.message);
-      return c.json({ error: 'Postproxy init failed', message: String(err?.message || err) }, 502);
+      return c.json({ error: 'Connection setup failed', message: String(err?.message || err) }, 502);
     }
   });
 
@@ -195,6 +209,20 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     ).bind(state).first<{ id: string; user_id: string; client_id: string | null; postproxy_group_id: string }>();
     if (!row) return c.json({ error: 'Unknown oauth state' }, 404);
 
+    // Postproxy signals OAuth failure via `failure=true&error_code=...`
+    // (common codes: account_is_already_in_group, access_denied,
+    // user_cancelled, scope_denied). Clear oauth_state so the user can
+    // retry from Stage 1, then redirect to the frontend with the code so
+    // the UI can render a friendly error instead of a raw JSON page.
+    const failure = c.req.query('failure');
+    const errorCode = c.req.query('error_code');
+    if (failure === 'true' || errorCode) {
+      await c.env.DB.prepare('UPDATE postproxy_profiles SET oauth_state = NULL, updated_at = ? WHERE id = ?')
+        .bind(new Date().toISOString(), row.id).run();
+      console.warn(`[postproxy:oauth-callback] failure code=${errorCode || 'unknown'} user=${row.user_id} client=${row.client_id ?? 'own'}`);
+      return c.redirect(postOauthFailureRedirect(c.env, row.client_id, errorCode || 'unknown'), 303);
+    }
+
     try {
       // List profiles in this group; pick the newest (the one we just connected).
       // Postproxy doesn't surface a "freshly-connected" marker — best heuristic
@@ -203,9 +231,12 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const profiles = await listProfiles(c.env, row.postproxy_group_id);
       const fresh = profiles.find((p) => p.status === 'active') ?? profiles[0];
       if (!fresh) {
-        return c.json({
-          error: 'No profile found in group after OAuth — Postproxy callback may have failed mid-flight',
-        }, 502);
+        // Same redirect pattern as the explicit-failure case — but with a
+        // synthesised error_code so the UI can still render the friendly
+        // banner instead of a raw JSON response.
+        await c.env.DB.prepare('UPDATE postproxy_profiles SET oauth_state = NULL, updated_at = ? WHERE id = ?')
+          .bind(new Date().toISOString(), row.id).run();
+        return c.redirect(postOauthFailureRedirect(c.env, row.client_id, 'no_profile_after_oauth'), 303);
       }
 
       const nowIso = new Date().toISOString();
@@ -241,10 +272,10 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const row = await selectProfileByWorkspace(c.env, uid, clientId);
     if (!row?.postproxy_profile_id) {
-      return c.json({ error: 'No Postproxy profile connected for this workspace' }, 404);
+      return c.json({ error: 'No social connection for this workspace' }, 404);
     }
     try {
-      const placements = await listPlacements(c.env, row.postproxy_profile_id);
+      const placements = await listPlacements(c.env, row.postproxy_profile_id, row.postproxy_group_id);
       return c.json({ placements: placements.map((p) => ({ id: p.id, name: p.name })) });
     } catch (err: any) {
       console.error('[postproxy] placements failed:', err?.message);
@@ -268,7 +299,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const clientId = body.clientId ?? null;
 
     const row = await selectProfileByWorkspace(c.env, uid, clientId);
-    if (!row) return c.json({ error: 'No Postproxy profile row for this workspace — connect first' }, 404);
+    if (!row) return c.json({ error: 'No social connection for this workspace — connect Facebook first' }, 404);
 
     const nowIso = new Date().toISOString();
     await c.env.DB.prepare(
@@ -372,7 +403,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     // mark_failed
-    const reason = action.errorMessage || 'Postproxy reported publish failure';
+    const reason = action.errorMessage || 'Publish failed at the publishing layer';
     await c.env.DB.prepare(
       `UPDATE posts
        SET status = 'Missed',
@@ -435,7 +466,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     );
     if (!mapping?.postproxy_profile_id || !mapping?.postproxy_placement_id) {
       return c.json({
-        error: 'Postproxy not connected for this workspace — connect Facebook via Postproxy first',
+        error: 'No social connection for this workspace — connect Facebook first',
       }, 409);
     }
 
@@ -468,7 +499,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: true, postproxyPostId: result.id });
     } catch (err: any) {
       console.error('[postproxy] publish-now failed:', err?.message);
-      return c.json({ error: 'Postproxy publish failed', message: String(err?.message || err) }, 502);
+      return c.json({ error: 'Publish failed', message: String(err?.message || err) }, 502);
     }
   });
 }

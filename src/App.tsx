@@ -1550,7 +1550,7 @@ const Dashboard: React.FC = () => {
         // attempt Facebook here — Instagram + multi-platform fan-out
         // through Postproxy is a P1 follow-up the cleanup PR adds.
         if (!platforms.includes('facebook')) {
-          toast('Instagram publishing via Postproxy is coming soon — Facebook only for now.', 'warning');
+          toast('Instagram publishing is coming soon — Facebook only for now.', 'warning');
         } else {
           const newId = await db.createPost({
             content: _postNowBase,
@@ -3835,7 +3835,7 @@ const Dashboard: React.FC = () => {
                   if (socialTokens.postproxyPlacementId) {
                     await postproxyService.publishNow(post.id);
                     setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                    toast('Publishing via Postproxy — Facebook will confirm in moments.', 'success');
+                    toast('Publishing to Facebook — confirmation in moments.', 'success');
                     return;
                   }
                   const _pubBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
@@ -3865,7 +3865,7 @@ const Dashboard: React.FC = () => {
                   if (socialTokens.postproxyPlacementId) {
                     await postproxyService.publishNow(post.id);
                     setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                    toast('Retrying via Postproxy — Facebook will confirm in moments.', 'success');
+                    toast('Retrying publish — Facebook will confirm in moments.', 'success');
                     return;
                   }
                   const _retryBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
@@ -5814,7 +5814,7 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-white">Social Media Connection</h3>
-                  <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page via Postproxy — handles token refresh, reels, and stories</p>
+                  <p className="text-xs text-white/30 mt-0.5">Connect your Facebook Page to publish posts, reels, and stories automatically</p>
                 </div>
               </div>
 
@@ -5837,7 +5837,7 @@ const Dashboard: React.FC = () => {
                     };
                     saveSocialTokens(updated);
                     setForcePostproxyReconnect(false);
-                    toast(`Connected to ${placement.name} via Postproxy!`, 'success');
+                    toast(`Connected to ${placement.name}!`, 'success');
                   }}
                   onDisconnect={() => {
                     // Clear postproxy fields only — leave legacy facebook* fields
@@ -5853,7 +5853,7 @@ const Dashboard: React.FC = () => {
                     };
                     saveSocialTokens(updated);
                     setForcePostproxyReconnect(false);
-                    toast('Postproxy disconnected. You can reconnect anytime.', 'warning');
+                    toast('Disconnected. You can reconnect anytime.', 'warning');
                   }}
                 />
               </div>

@@ -115,14 +115,16 @@ async function pfFetch<T>(
     const text = await res.text();
     if (!res.ok) {
       // Slice keeps logs bounded — a 5xx HTML page from a misbehaving
-      // edge proxy can be huge and pollute log search.
-      throw new Error(`Postproxy ${init.method} ${path} -> ${res.status}: ${text.slice(0, 400)}`);
+      // edge proxy can be huge and pollute log search. Branded as
+      // "Upstream" so this string is safe to bubble to the UI without
+      // leaking the third-party publisher's name.
+      throw new Error(`Upstream ${init.method} ${path} -> ${res.status}: ${text.slice(0, 400)}`);
     }
     if (!text) return undefined as unknown as T;
     try {
       return JSON.parse(text) as T;
     } catch {
-      throw new Error(`Postproxy ${init.method} ${path} -> non-JSON body: ${text.slice(0, 200)}`);
+      throw new Error(`Upstream ${init.method} ${path} -> non-JSON body: ${text.slice(0, 200)}`);
     }
   } finally {
     clearTimeout(timer);
@@ -219,14 +221,18 @@ export async function listProfiles(
   return rows.filter((p) => p.profile_group_id === groupId);
 }
 
-/** List placements (eligible FB Pages, etc.) for a connected profile. */
+/** List placements (eligible FB Pages, etc.) for a connected profile.
+ *  Postproxy requires the owning `profile_group_id` as a query param —
+ *  without it, returns 404 "Not found. Make sure you pass the correct
+ *  profile_group_id" (discovered live during PR #111 smoke test). */
 export async function listPlacements(
   env: Env,
   profileId: string,
+  groupId: string,
 ): Promise<PostproxyPlacement[]> {
   const data = await pfFetch<{ data: PostproxyPlacement[] }>(
     env,
-    `/profiles/${encodeURIComponent(profileId)}/placements`,
+    `/profiles/${encodeURIComponent(profileId)}/placements?profile_group_id=${encodeURIComponent(groupId)}`,
   );
   return data?.data ?? [];
 }

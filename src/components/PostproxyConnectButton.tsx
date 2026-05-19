@@ -48,6 +48,26 @@ interface Props {
 
 type Step = 'idle' | 'connecting' | 'picking' | 'saving' | 'saved' | 'error';
 
+/** Map OAuth-callback failure codes (passed through by our worker's
+ *  oauth-callback failure-redirect) to user-readable messages. Defaults
+ *  to a generic retry prompt for unknown codes. Keep the strings
+ *  actionable — they're the user's only signal when OAuth bombs at Meta. */
+function friendlyPostproxyError(code: string): string {
+  if (code.startsWith('account_is_already')) {
+    return 'This Facebook account is already connected to another SocialAI Studio workspace. Disconnect it from that workspace first, or contact support if you need help.';
+  }
+  if (code === 'access_denied' || code === 'user_cancelled') {
+    return 'You cancelled the Facebook authorisation. Click Connect to try again.';
+  }
+  if (code === 'scope_denied') {
+    return 'Some required Facebook permissions were declined. We need them to publish to your Page. Click Connect and approve all requested permissions.';
+  }
+  if (code === 'no_profile_after_oauth') {
+    return 'Facebook authorisation completed but the new connection didn\'t register. Wait a few seconds and click Connect to retry — if it persists, contact support.';
+  }
+  return `Facebook connection failed (code: ${code}). Click Connect to try again, or contact support if it persists.`;
+}
+
 export const PostproxyConnectButton: React.FC<Props> = ({
   clientId,
   onConnected,
@@ -77,6 +97,23 @@ export const PostproxyConnectButton: React.FC<Props> = ({
     if (connectedPlacementId) return; // already-connected wins
     const url = new URL(window.location.href);
     const urlStep = url.searchParams.get('step');
+    const urlError = url.searchParams.get('postproxy_error');
+
+    // OAuth failure path — worker redirects here with
+    // ?step=connect-failed&postproxy_error=<code>. Render the friendly
+    // error and clean up the URL so a refresh doesn't re-show it.
+    if (urlStep === 'connect-failed' && urlError) {
+      setError(friendlyPostproxyError(urlError));
+      setStep('error');
+      try {
+        url.searchParams.delete('step');
+        url.searchParams.delete('postproxy_error');
+        url.searchParams.delete('workspace');
+        window.history.replaceState({}, '', url.toString());
+      } catch { /* non-fatal */ }
+      return;
+    }
+
     const urlWorkspace = url.searchParams.get('workspace');
     const isStage2 = forcePickerStage || urlStep === 'pick-placement';
     if (!isStage2) return;
@@ -176,11 +213,11 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-white">{connectedPageName || 'Facebook Page'}</p>
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
-              <CheckCircle size={11} /> Connected via Postproxy
+              <CheckCircle size={11} /> Connected
             </p>
             <p className="text-[11px] mt-0.5">
               <span className="text-emerald-400/80 flex items-center gap-1">
-                <Shield size={10} /> Token refresh + reel/story publishing handled by Postproxy
+                <Shield size={10} /> Token refresh, reels, and story publishing handled automatically
               </span>
             </p>
           </div>
@@ -199,7 +236,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           disabled={step === 'connecting'}
           className="text-xs text-blue-400/60 hover:text-blue-400 transition flex items-center gap-1.5 disabled:opacity-50"
         >
-          <ChevronRight size={12} /> {step === 'connecting' ? 'Opening Postproxy…' : 'Switch to a different page'}
+          <ChevronRight size={12} /> {step === 'connecting' ? 'Opening Facebook…' : 'Switch to a different page'}
         </button>
       </div>
     );
@@ -252,7 +289,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-white">All set!</p>
             <p className="text-xs text-white/55 mt-0.5">
-              Your Facebook page is connected via Postproxy — auto-publishing is now active.
+              Your Facebook page is connected — auto-publishing is now active.
             </p>
           </div>
         </div>
@@ -316,7 +353,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
         className="w-full flex items-center justify-center gap-3 bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 text-white font-bold py-4 px-6 rounded-2xl text-sm transition shadow-lg shadow-blue-900/30 press"
       >
         {step === 'connecting'
-          ? <><Loader2 size={18} className="animate-spin" /> Opening Postproxy…</>
+          ? <><Loader2 size={18} className="animate-spin" /> Opening Facebook…</>
           : <><Facebook size={18} /> Connect with Facebook</>
         }
       </button>
@@ -328,8 +365,8 @@ export const PostproxyConnectButton: React.FC<Props> = ({
             What happens when I click Connect?
           </summary>
           <ol className="mt-2 ml-4 text-[11px] text-white/45 leading-relaxed space-y-1 list-decimal list-inside">
-            <li>You'll be sent to Postproxy's secure connect page</li>
-            <li>Postproxy walks you through Facebook's official OAuth (it's a real Facebook page — not us)</li>
+            <li>You'll be sent to a secure Facebook OAuth page</li>
+            <li>Facebook will ask you to log in and approve the permissions we need</li>
             <li>You'll see a list of Pages you admin — tick the one for this business</li>
             <li>You'll see a summary of permissions — click <strong className="text-white/60">Continue</strong></li>
             <li>You'll be redirected back here to pick which Facebook Page to publish to</li>
@@ -338,8 +375,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
       )}
 
       <p className="text-[11px] text-white/25 text-center leading-relaxed">
-        Powered by <strong className="text-white/40">Postproxy</strong> — handles Facebook token refresh, reels, and story publishing on your behalf.
-        <br />No passwords are stored. You can disconnect anytime.
+        No passwords are stored. You can disconnect anytime.
       </p>
     </div>
   );

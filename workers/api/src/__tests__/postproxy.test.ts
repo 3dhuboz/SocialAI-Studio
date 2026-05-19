@@ -133,7 +133,9 @@ describe('createPost', () => {
         format: 'feed',
         pageId: 'z',
       }),
-    ).rejects.toThrow(/Postproxy POST \/posts -> 400/);
+    // Error prefix is "Upstream" not "Postproxy" — we strip the third-party
+    // name from any error string that might bubble to the UI.
+    ).rejects.toThrow(/Upstream POST \/posts -> 400/);
   });
 });
 
@@ -201,15 +203,20 @@ describe('listProfiles + listPlacements', () => {
     expect(result[0].id).toBe('pA');
   });
 
-  it('listPlacements returns the placements array', async () => {
-    vi.stubGlobal('fetch', mockFetch({
-      body: { data: [
+  it('listPlacements returns the placements array and forwards profile_group_id', async () => {
+    let capturedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({ data: [
         { id: '108234567890123', name: 'My Page' },
         { id: '108999000', name: 'My Other Page' },
-      ]},
+      ]}), { status: 200, headers: { 'content-type': 'application/json' } });
     }));
-    const result = await listPlacements(env, 'pA');
+    const result = await listPlacements(env, 'pA', 'grp_match');
     expect(result.map((p) => p.id)).toEqual(['108234567890123', '108999000']);
+    // Regression guard: Postproxy returns 404 without this query param.
+    expect(capturedUrl).toContain('profile_group_id=grp_match');
+    expect(capturedUrl).toContain('/profiles/pA/placements');
   });
 });
 
