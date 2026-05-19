@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { createPostproxyService, type Placement } from '../services/postproxyService';
+import { createPostproxyService, type Placement, type Platform } from '../services/postproxyService';
 import {
-  Facebook, Loader2, CheckCircle, ChevronRight, AlertCircle, ExternalLink, X, Shield,
+  Facebook, Instagram, Loader2, CheckCircle, ChevronRight, AlertCircle, ExternalLink, X, Shield,
 } from 'lucide-react';
 
 /**
@@ -37,13 +37,61 @@ interface Props {
    *  acts as if disconnected until the user picks a Page again. */
   onDisconnect?: () => void;
   /** Already-connected placement ID — when set, this component renders
-   *  the "Connected" state with a "Switch page" link. */
+   *  the "Connected" state with a "Switch page" link. For IG (no
+   *  placements), pass any truthy string to indicate "already connected". */
   connectedPlacementId?: string;
   connectedPageName?: string;
   /** When true, the parent has manually navigated to Stage 2 (e.g. via
    *  the MigrationBanner's "Reconnect" button after a full-page reload
    *  finished OAuth). This bypasses the URL query-string check. */
   forcePickerStage?: boolean;
+  /** ig-wire (v2): which platform to connect. Defaults to 'facebook'
+   *  to preserve byte-identical behaviour for every existing call site.
+   *  When 'instagram', the component:
+   *    - Shows an Instagram icon + brand color (#E1306C) instead of FB blue
+   *    - Skips Stage 2 placement-picker entirely (IG has no placements
+   *      per docs §3299; the worker auto-flips use_postproxy=1 in the
+   *      oauth-callback)
+   *    - Treats `?step=connected` as the post-OAuth landing state
+   *      instead of `?step=pick-placement` */
+  platform?: Platform;
+}
+
+/** Platform-specific UI tokens — colours, copy, icon. Keeps the branching
+ *  inside the component to ONE place; the JSX below reads from `theme`
+ *  instead of inline ternaries. */
+function platformTheme(platform: Platform) {
+  if (platform === 'instagram') {
+    return {
+      label: 'Instagram',
+      // Instagram brand gradient (pink → orange → purple). We use a solid
+      // pink for the button hover state since gradients-on-hover are
+      // janky cross-browser; pure brand colour is `#E1306C`.
+      bg: 'bg-gradient-to-r from-[#833AB4] via-[#E1306C] to-[#F77737]',
+      bgHover: 'hover:opacity-90',
+      shadow: 'shadow-lg shadow-pink-900/30',
+      iconBg: 'bg-gradient-to-br from-[#833AB4] via-[#E1306C] to-[#F77737]',
+      pillBg: 'bg-pink-500/8 border-pink-500/20',
+      pillTextHover: 'text-pink-400',
+      Icon: Instagram,
+      // IG has no placement picker; oauth-callback redirects to
+      // ?step=connected. The Stage-2 sniff in the useEffect below treats
+      // either step as a Stage-2-ish landing depending on platform.
+      stage2UrlStep: 'connected',
+    } as const;
+  }
+  // Facebook (default — byte-identical to pre-ig-wire styling)
+  return {
+    label: 'Facebook',
+    bg: 'bg-[#1877F2]',
+    bgHover: 'hover:bg-[#166FE5]',
+    shadow: 'shadow-lg shadow-blue-900/30',
+    iconBg: 'bg-[#1877F2]',
+    pillBg: 'bg-blue-500/5 border-blue-500/15',
+    pillTextHover: 'text-blue-400',
+    Icon: Facebook,
+    stage2UrlStep: 'pick-placement',
+  } as const;
 }
 
 type Step = 'idle' | 'connecting' | 'picking' | 'saving' | 'saved' | 'error';
@@ -75,6 +123,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
   connectedPlacementId,
   connectedPageName,
   forcePickerStage = false,
+  platform = 'facebook',
 }) => {
   const { getApiToken, authMode } = useAuth();
   // Memoise so the service identity stays stable across renders — otherwise
@@ -83,6 +132,8 @@ export const PostproxyConnectButton: React.FC<Props> = ({
     () => createPostproxyService(getApiToken, authMode),
     [getApiToken, authMode],
   );
+  const theme = useMemo(() => platformTheme(platform), [platform]);
+  const isInstagram = platform === 'instagram';
 
   const [step, setStep] = useState<Step>('idle');
   const [placements, setPlacements] = useState<Placement[]>([]);
@@ -115,8 +166,22 @@ export const PostproxyConnectButton: React.FC<Props> = ({
     }
 
     const urlWorkspace = url.searchParams.get('workspace');
-    const isStage2 = forcePickerStage || urlStep === 'pick-placement';
+    const urlPlatform = url.searchParams.get('platform');
+    // ig-wire: IG's post-OAuth redirect uses ?step=connected (no picker
+    // needed since IG has no placements). FB uses ?step=pick-placement.
+    // Both land us in "Stage 2" semantically, but IG short-circuits to
+    // the saved/confirmation state instead of fetching placements.
+    const isStage2 = forcePickerStage
+      || urlStep === 'pick-placement'
+      || urlStep === 'connected';
     if (!isStage2) return;
+    // Only act on a `?step=connected` redirect if it belongs to our
+    // platform — an IG `?step=connected` redirect should not trigger
+    // the FB button to flip to "saved".
+    if (urlStep === 'connected') {
+      const expectedPlatform = (urlPlatform || 'instagram').toLowerCase();
+      if (expectedPlatform !== platform) return;
+    }
 
     // If the URL specifies a workspace that doesn't match the active
     // clientId prop, don't fetch — wait for the parent to re-render
@@ -129,11 +194,41 @@ export const PostproxyConnectButton: React.FC<Props> = ({
     if (expectsClient && clientId !== urlWorkspace) return;
 
     let aborted = false;
+    // IG short-circuit: no placement picker. The worker auto-flipped
+    // use_postproxy=1 in the oauth-callback, so we render the saved/
+    // confirmation state directly. Synthesise a Placement-shaped object
+    // so onConnected's existing contract still holds — the placementId
+    // doubles as "any truthy means connected" for IG since there's no
+    // real placement to track.
+    if (isInstagram) {
+      setStep('saved');
+      // Clean up the URL so a refresh doesn't re-trigger.
+      try {
+        url.searchParams.delete('step');
+        url.searchParams.delete('workspace');
+        url.searchParams.delete('platform');
+        window.history.replaceState({}, '', url.toString());
+      } catch { /* non-fatal */ }
+      // Notify the parent. For IG, placementId is a sentinel — the cron
+      // checks postproxy_profile_id (not placement_id) for IG posts, so
+      // any non-empty value works to signal "this workspace has IG".
+      onConnected({ id: 'instagram-connected', name: 'Instagram' });
+      return () => { aborted = true; };
+    }
+
     setStep('picking');
     setError('');
-    service.listPlacements(clientId)
+    service.listPlacements(clientId, platform)
       .then((res) => {
         if (aborted) return;
+        if (res.skipPicker) {
+          // Defensive: the IG short-circuit above should already have
+          // caught this, but if the worker reports skipPicker for any
+          // platform we honour it instead of rendering an empty picker.
+          setStep('saved');
+          onConnected({ id: `${platform}-connected`, name: theme.label });
+          return;
+        }
         if (!res.placements || res.placements.length === 0) {
           setError('NO_PLACEMENTS_FOUND');
           setStep('error');
@@ -148,13 +243,13 @@ export const PostproxyConnectButton: React.FC<Props> = ({
         setStep('error');
       });
     return () => { aborted = true; };
-  }, [forcePickerStage, clientId, connectedPlacementId, service]);
+  }, [forcePickerStage, clientId, connectedPlacementId, service, platform, isInstagram, onConnected, theme.label]);
 
   const handleConnect = async () => {
     setStep('connecting');
     setError('');
     try {
-      const { authUrl } = await service.initConnection(clientId);
+      const { authUrl } = await service.initConnection(clientId, platform);
       // Full navigation — Postproxy's OAuth flow requires referrer +
       // cookie context that a popup window misses. The user comes back
       // via the worker's oauth-callback 303 redirect to
@@ -176,6 +271,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
         clientId: clientId ?? null,
         placementId: p.id,
         pageName: p.name,
+        platform,
       });
       setStep('saved');
       onConnected(p);
@@ -207,11 +303,11 @@ export const PostproxyConnectButton: React.FC<Props> = ({
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-3 bg-green-500/8 border border-green-500/20 rounded-2xl p-4">
-          <div className="w-10 h-10 bg-[#1877F2] rounded-xl flex items-center justify-center flex-shrink-0">
-            <Facebook size={18} className="text-white" />
+          <div className={`w-10 h-10 ${theme.iconBg} rounded-xl flex items-center justify-center flex-shrink-0`}>
+            <theme.Icon size={18} className="text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-white">{connectedPageName || 'Facebook Page'}</p>
+            <p className="text-sm font-bold text-white">{connectedPageName || `${theme.label} ${isInstagram ? 'account' : 'Page'}`}</p>
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <CheckCircle size={11} /> Connected
             </p>
@@ -231,25 +327,30 @@ export const PostproxyConnectButton: React.FC<Props> = ({
             </button>
           )}
         </div>
-        <button
-          onClick={handleConnect}
-          disabled={step === 'connecting'}
-          className="text-xs text-blue-400/60 hover:text-blue-400 transition flex items-center gap-1.5 disabled:opacity-50"
-        >
-          <ChevronRight size={12} /> {step === 'connecting' ? 'Opening Facebook…' : 'Switch to a different page'}
-        </button>
+        {/* "Switch page" only makes sense for FB (where there's an actual
+            placement to switch). IG has no placements — re-clicking is a
+            re-OAuth of the same account, which isn't useful here. */}
+        {!isInstagram && (
+          <button
+            onClick={handleConnect}
+            disabled={step === 'connecting'}
+            className={`text-xs text-blue-400/60 hover:${theme.pillTextHover} transition flex items-center gap-1.5 disabled:opacity-50`}
+          >
+            <ChevronRight size={12} /> {step === 'connecting' ? `Opening ${theme.label}…` : 'Switch to a different page'}
+          </button>
+        )}
       </div>
     );
   }
 
-  // ─── Stage 2 — placement picker ──────────────────────
+  // ─── Stage 2 — placement picker (FB only; IG short-circuits to 'saved') ──
   if (step === 'picking' || step === 'saving') {
     return (
       <div className="space-y-3">
         <p className="text-sm font-semibold text-white">Select the page to connect:</p>
         {placements.length === 0 ? (
           <div className="flex items-center justify-center py-6 text-white/40 text-sm">
-            <Loader2 size={14} className="animate-spin mr-2" /> Loading your Facebook pages…
+            <Loader2 size={14} className="animate-spin mr-2" /> Loading your {theme.label} pages…
           </div>
         ) : (
           <div className="space-y-2">
@@ -260,12 +361,12 @@ export const PostproxyConnectButton: React.FC<Props> = ({
                 disabled={step === 'saving'}
                 className="w-full flex items-center gap-3 p-3.5 rounded-xl glass card-hover hover:bg-blue-500/10 hover:border-blue-500/30 text-left group disabled:opacity-50"
               >
-                <div className="w-9 h-9 rounded-lg bg-[#1877F2] flex items-center justify-center flex-shrink-0">
-                  <Facebook size={16} className="text-white" />
+                <div className={`w-9 h-9 rounded-lg ${theme.iconBg} flex items-center justify-center flex-shrink-0`}>
+                  <theme.Icon size={16} className="text-white" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-white truncate">{p.name}</p>
-                  <p className="text-xs text-white/30">Facebook Page · ID {p.id}</p>
+                  <p className="text-xs text-white/30">{theme.label} Page · ID {p.id}</p>
                 </div>
                 {step === 'saving' ? (
                   <Loader2 size={15} className="text-blue-400 animate-spin flex-shrink-0" />
@@ -289,7 +390,7 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-white">All set!</p>
             <p className="text-xs text-white/55 mt-0.5">
-              Your Facebook page is connected — auto-publishing is now active.
+              Your {theme.label} {isInstagram ? 'account' : 'page'} is connected — auto-publishing is now active.
             </p>
           </div>
         </div>
@@ -308,18 +409,20 @@ export const PostproxyConnectButton: React.FC<Props> = ({
           {error === 'NO_PLACEMENTS_FOUND' ? (
             <div className="text-xs text-red-300/80 leading-relaxed space-y-2">
               <p>
-                No Facebook Pages were found on your account. To use this app you need to be an
-                {' '}<strong>admin of a Facebook Page</strong> — a personal profile isn't enough.
+                No {theme.label} {isInstagram ? 'accounts' : 'Pages'} were found on your account. To use this app you need to be an
+                {' '}<strong>admin of a {theme.label} {isInstagram ? 'Business or Creator account' : 'Page'}</strong> — a personal profile isn't enough.
               </p>
               <a
-                href="https://www.facebook.com/pages/create"
+                href={isInstagram
+                  ? 'https://help.instagram.com/502981923235522'
+                  : 'https://www.facebook.com/pages/create'}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200 underline"
               >
-                Create a Facebook Page (free, 2 minutes) <ExternalLink size={11} />
+                {isInstagram ? 'Set up an Instagram Business account' : 'Create a Facebook Page (free, 2 minutes)'} <ExternalLink size={11} />
               </a>
-              <p className="text-white/30">After your Page is created, come back and click Connect again.</p>
+              <p className="text-white/30">After setup, come back and click Connect again.</p>
             </div>
           ) : (
             <p className="text-xs text-red-300/70 leading-relaxed">{error}</p>
@@ -328,20 +431,22 @@ export const PostproxyConnectButton: React.FC<Props> = ({
       )}
 
       {step === 'idle' && (
-        <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-3 flex gap-2.5">
+        <div className={`${theme.pillBg} border rounded-xl p-3 flex gap-2.5`}>
           <AlertCircle size={14} className="flex-shrink-0 text-blue-400/70 mt-0.5" />
           <div className="text-[11px] text-white/60 leading-relaxed">
             <p>
-              You'll need to be an <strong className="text-white/80">admin of a Facebook Page</strong>
+              You'll need to be an <strong className="text-white/80">admin of a {theme.label} {isInstagram ? 'Business or Creator account' : 'Page'}</strong>
               {' '}(a personal profile alone won't work).
             </p>
             <a
-              href="https://www.facebook.com/pages/create"
+              href={isInstagram
+                ? 'https://help.instagram.com/502981923235522'
+                : 'https://www.facebook.com/pages/create'}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-blue-400/80 hover:text-blue-300 mt-1"
             >
-              Don't have one? Create a Page <ExternalLink size={10} />
+              Don't have one? {isInstagram ? 'Switch to a Business account' : 'Create a Page'} <ExternalLink size={10} />
             </a>
           </div>
         </div>
@@ -350,11 +455,11 @@ export const PostproxyConnectButton: React.FC<Props> = ({
       <button
         onClick={handleConnect}
         disabled={step === 'connecting'}
-        className="w-full flex items-center justify-center gap-3 bg-[#1877F2] hover:bg-[#166FE5] disabled:opacity-60 text-white font-bold py-4 px-6 rounded-2xl text-sm transition shadow-lg shadow-blue-900/30 press"
+        className={`w-full flex items-center justify-center gap-3 ${theme.bg} ${theme.bgHover} disabled:opacity-60 text-white font-bold py-4 px-6 rounded-2xl text-sm transition ${theme.shadow} press`}
       >
         {step === 'connecting'
-          ? <><Loader2 size={18} className="animate-spin" /> Opening Facebook…</>
-          : <><Facebook size={18} /> Connect with Facebook</>
+          ? <><Loader2 size={18} className="animate-spin" /> Opening {theme.label}…</>
+          : <><theme.Icon size={18} /> Connect with {theme.label}</>
         }
       </button>
 
