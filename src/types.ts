@@ -76,6 +76,19 @@ export interface SocialTokens {
   postproxyProfileStatus?: 'pending' | 'active' | 'expired' | 'revoked';
   /** ISO timestamp when the Postproxy profile became active. */
   postproxyConnectedAt?: string;
+  // ── Postproxy Instagram mapping (schema_v24 / ig-wire) ──────────────
+  // Parallel to the Facebook fields above — a workspace can hold BOTH an
+  // FB profile AND an IG profile in postproxy_profiles, keyed by
+  // (user_id, client_id, platform). IG has no placement picker (docs
+  // §3299), so postproxyInstagramProfileId is the single sentinel for
+  // "this workspace has Instagram connected via Postproxy".
+  /** Postproxy's internal profile ID for Instagram — set after the
+   *  hosted OAuth callback completes for platform='instagram'. */
+  postproxyInstagramProfileId?: string;
+  /** ISO timestamp when the IG-via-Postproxy profile became active. */
+  postproxyInstagramConnectedAt?: string;
+  /** Display label for the connected IG account (handle/username). */
+  postproxyInstagramName?: string;
 }
 
 export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
@@ -92,6 +105,9 @@ export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
   postproxyGroupId: undefined,
   postproxyProfileStatus: undefined,
   postproxyConnectedAt: undefined,
+  postproxyInstagramProfileId: undefined,
+  postproxyInstagramConnectedAt: undefined,
+  postproxyInstagramName: undefined,
 };
 
 export interface BusinessProfile {

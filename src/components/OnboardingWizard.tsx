@@ -417,6 +417,46 @@ export const OnboardingWizard: React.FC<Props> = ({
                 }}
               />
 
+              {/* ── Instagram (ig-wire) ─────────────────────────────────
+                  Optional second connect. Workspaces with FB-only get
+                  the existing FB-only experience; adding IG here is
+                  additive — connecting IG flips use_postproxy=1 on the
+                  workspace (the worker oauth-callback does it inline)
+                  so the publish cron starts routing IG posts via
+                  Postproxy on the next */}
+              <div className="border-t border-white/[0.05] pt-4">
+                <PostproxyConnectButton
+                  platform="instagram"
+                  connectedPlacementId={socialTokens.postproxyInstagramProfileId}
+                  connectedPageName={socialTokens.postproxyInstagramName}
+                  onConnected={(placement) => {
+                    // instagramConnected lives on SocialTokens (not
+                    // BusinessProfile), so we only have the
+                    // onSaveSocialTokens path here — there's no
+                    // BusinessProfile fallback like the FB button
+                    // above has via onUpdateProfile.
+                    if (!onSaveSocialTokens) return;
+                    onSaveSocialTokens({
+                      ...socialTokens,
+                      postproxyInstagramProfileId: placement.id,
+                      postproxyInstagramConnectedAt: new Date().toISOString(),
+                      postproxyInstagramName: placement.name,
+                      instagramConnected: true,
+                    });
+                  }}
+                  onDisconnect={() => {
+                    if (!onSaveSocialTokens) return;
+                    onSaveSocialTokens({
+                      ...socialTokens,
+                      postproxyInstagramProfileId: undefined,
+                      postproxyInstagramConnectedAt: undefined,
+                      postproxyInstagramName: undefined,
+                      instagramConnected: false,
+                    });
+                  }}
+                />
+              </div>
+
               {/* ── 90-second Magic Onboarding status panel ──
                   Shows: spinner while scraping → Brand DNA card when complete →
                   error with graceful fallback if the scrape fails. */}

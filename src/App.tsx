@@ -6016,6 +6016,44 @@ const Dashboard: React.FC = () => {
                     toast('Disconnected. You can reconnect anytime.', 'warning');
                   }}
                 />
+
+                {/* ── Instagram (ig-wire) ─────────────────────────────
+                    Additive — workspaces can connect either platform,
+                    both, or neither. The publish cron routes per-post
+                    based on posts.platform → the matching mapping row.
+                    onConnected hits the IG-specific socialTokens fields
+                    so the FB button's "connected" state stays
+                    independent. */}
+                <div className="border-t border-white/[0.05] pt-3">
+                  <PostproxyConnectButton
+                    platform="instagram"
+                    clientId={activeClientId}
+                    connectedPlacementId={socialTokens.postproxyInstagramProfileId}
+                    connectedPageName={socialTokens.postproxyInstagramName}
+                    onConnected={(placement) => {
+                      const updated: SocialTokens = {
+                        ...socialTokens,
+                        postproxyInstagramProfileId: placement.id,
+                        postproxyInstagramConnectedAt: new Date().toISOString(),
+                        postproxyInstagramName: placement.name,
+                        instagramConnected: true,
+                      };
+                      saveSocialTokens(updated);
+                      toast('Connected to Instagram!', 'success');
+                    }}
+                    onDisconnect={() => {
+                      const updated: SocialTokens = {
+                        ...socialTokens,
+                        postproxyInstagramProfileId: undefined,
+                        postproxyInstagramConnectedAt: undefined,
+                        postproxyInstagramName: undefined,
+                        instagramConnected: false,
+                      };
+                      saveSocialTokens(updated);
+                      toast('Instagram disconnected.', 'warning');
+                    }}
+                  />
+                </div>
               </div>
 
               {/* Legacy Facebook Graph connection — kept visible while the
