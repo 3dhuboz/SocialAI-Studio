@@ -2055,6 +2055,13 @@ export const generateSmartSchedule = async (
     forbiddenSubjects?: string;
     socialGoal?: string;
     contentTopics?: string;
+    // REAL MATERIAL (2026-05) — owner-provided ground truth. Same fields
+    // as generateSocialPost so the bulk batch path doesn't fabricate
+    // when the single-post path wouldn't. Code-review caught the gap.
+    customerStories?: string;
+    hotTakes?: string;
+    tacticalTips?: string;
+    weeklyMaterial?: string;
   },
   includeVideos: boolean = false,
   scheduleMode: 'smart' | 'saturation' | 'quick24h' | 'highlights' = 'smart',
@@ -2114,6 +2121,20 @@ export const generateSmartSchedule = async (
       return `ACTIVE CAMPAIGN: "${c.name}" runs ${c.startDate} to ${c.endDate}${countdown}\nCampaign rules: ${c.rules}${imageLine}`;
     }).join('\n\n') : '';
 
+    // REAL MATERIAL block (2026-05) — same as single-post path.
+    // CRITICAL: this is the bulk batch generator (21 posts at once). Without
+    // these fields injected here, the material the owner provides only
+    // benefits single-post regeneration via auto-recovery — the initial
+    // batch generation runs blind. Caught in code review.
+    const bulkRealMaterialLines: string[] = [];
+    if (safeProfile?.customerStories?.trim()) bulkRealMaterialLines.push(`REAL CUSTOMER STORIES (use verbatim across the batch; do not invent extras):\n${safeProfile.customerStories.trim()}`);
+    if (safeProfile?.hotTakes?.trim()) bulkRealMaterialLines.push(`REAL HOT TAKES (the owner's actual opinions):\n${safeProfile.hotTakes.trim()}`);
+    if (safeProfile?.tacticalTips?.trim()) bulkRealMaterialLines.push(`REAL TACTICAL TIPS (the owner's actual playbook):\n${safeProfile.tacticalTips.trim()}`);
+    if (safeProfile?.weeklyMaterial?.trim()) bulkRealMaterialLines.push(`THIS WEEK'S MATERIAL (real moments — primary source for behind-the-build / founder-voice posts):\n${safeProfile.weeklyMaterial.trim()}`);
+    const bulkRealMaterialBlock = bulkRealMaterialLines.length > 0
+      ? `\n\nREAL MATERIAL FROM THE OWNER — your AUTHORITATIVE SOURCE across this whole batch. Treat as ground truth. You may quote/paraphrase/extract specifics from these lines. You may NOT invent additional customers, stats, opinions, or moments beyond what's written here. Distribute the material across posts so one customer story isn't repeated 5 times:\n\n${bulkRealMaterialLines.join('\n\n')}`
+      : `\n\nREAL MATERIAL FROM THE OWNER: none provided. This means you have NO customer stories, NO testimonials, NO verified opinions, and NO this-week material to draw from for THIS BATCH. Any post whose angle would require those must switch to a tactical/observational angle — never invent specifics to fill the gap.`;
+
     const profileBlock = [
       safeProfile?.description && `Business description: ${safeProfile.description}`,
       safeProfile?.targetAudience && `Target audience: ${safeProfile.targetAudience}`,
@@ -2121,6 +2142,7 @@ export const generateSmartSchedule = async (
       safeProfile?.productsServices && `Products/services: ${safeProfile.productsServices}`,
       safeProfile?.socialGoal && `Social media goal: ${safeProfile.socialGoal}`,
       safeProfile?.contentTopics && `Preferred content topics: ${safeProfile.contentTopics}`,
+      bulkRealMaterialBlock,
       campaignBlock && `\n${campaignBlock}\nIMPORTANT: Weave the active campaign themes into your posts. Use countdown language where appropriate ("X days to go!", "Only X days left!", "Coming soon!"). At least 30% of posts should reference the campaign.`,
     ].filter(Boolean).join('\n');
 

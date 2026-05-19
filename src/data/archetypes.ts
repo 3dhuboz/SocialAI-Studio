@@ -159,9 +159,12 @@ export const ARCHETYPES: Archetype[] = [
       'professional building exterior at golden hour, candid streetscape',
       'window office at twilight with city lights visible, calm atmosphere',
     ],
-    imageAvoidNotes: 'NEVER include people, suits, or handshakes — the cliché stock-photo aesthetic. Focus on tools-of-trade, considered interiors, and material details.',
-    voiceCues: 'Considered, precise, jargon-aware. Cite frameworks, regulatory bodies, and case-specific advice without crossing into general guidance. Plain-language explanations land best.',
-    contentPillars: ['Regulatory Update', 'Client FAQ', 'Case Study (anonymised)', 'Tax/Compliance Calendar', 'Industry Commentary'],
+    imageAvoidNotes: 'NEVER include people, suits, or handshakes — the cliché stock-photo aesthetic. NEVER ask FLUX to render readable text on blueprints, contracts, or documents (the output will be gibberish). Focus on tools-of-trade, considered interiors, and material details.',
+    voiceCues: 'Considered, precise, jargon-aware. Cite frameworks, regulatory bodies, and case-specific advice without crossing into general guidance. Plain-language explanations land best. HARD RULE — regulated industry: NEVER fabricate client outcomes ("saved X $Y", "won X% of cases"), regulatory percentages ("ATO rejects 73% of…"), or industry statistics. Case-study posts ONLY come from REAL MATERIAL provided by the owner — if empty, switch to regulatory-update or plain-language-explainer angles.',
+    contentPillars: ['Regulatory Update', 'Client FAQ', 'Plain-Language Explainer', 'Tax/Compliance Calendar', 'Industry Commentary'],
+    bannedTropeExtras: [
+      'saved client', 'won X% of', 'X% of clients', 'trusted by N businesses', 'industry-leading', 'best-in-class', 'most accountants don\'t', 'most lawyers don\'t', 'studies show', 'research finds', 'X% of businesses fail', 'top-rated', 'award-winning',
+    ],
   },
   {
     slug: 'retail-ecommerce',
@@ -177,8 +180,11 @@ export const ARCHETYPES: Archetype[] = [
       'floral arrangement on a marble counter, soft natural light',
     ],
     imageAvoidNotes: 'NEVER include people, hands modelling products, or shop assistants. NEVER render price tags or sale signs. Focus on the product itself, styled.',
-    voiceCues: 'Style-led, specific (call out colourway, size, materials). Reference current collection, limited run, sourcing story. Cash-and-collect / shipping facts important.',
-    contentPillars: ['New Arrival', 'Styled Outfit / Display', 'Behind the Source', 'Customer Wears (no faces)', 'Sale / Limited Run'],
+    voiceCues: 'Style-led, specific (call out colourway, size, materials). Reference current collection, limited run, sourcing story. Cash-and-collect / shipping facts important. HARD RULE — never fabricate sales numbers ("best-seller", "sold out twice"), customer counts ("trusted by 10,000 customers"), star ratings ("5-star reviews"), or aggregate claims. Customer-wears posts ONLY come from REAL MATERIAL — if empty, switch to styling-idea or new-arrival angles.',
+    contentPillars: ['New Arrival', 'Styled Outfit / Display', 'Behind the Source', 'Styling Idea', 'Sale / Limited Run'],
+    bannedTropeExtras: [
+      'best-seller', 'sold out twice', 'X happy customers', 'trusted by', '5-star reviews', 'most-loved', 'fan favourite', 'flying off the shelves', 'selling fast', 'X% off (made up)', 'studies show', 'research finds', 'X% of customers',
+    ],
   },
   {
     slug: 'health-wellness',
@@ -194,8 +200,11 @@ export const ARCHETYPES: Archetype[] = [
       'close-up of hands holding warm ceramic mug, cozy lighting (hands acceptable for tea/treatment shots)',
     ],
     imageAvoidNotes: 'NEVER include people exercising, in treatment, or in poses. NEVER render before/after comparison shots. Focus on calm space, ritual tools, daylight.',
-    voiceCues: 'Grounded, body-respectful, non-prescriptive. Avoid medical claims unless registered. Reference movement, breath, recovery rituals.',
-    contentPillars: ['Move of the Week', 'Recovery Tips', 'Class Schedule', 'Member Story (anonymised)', 'Studio Update'],
+    voiceCues: 'Grounded, body-respectful, non-prescriptive. Avoid medical claims unless registered. Reference movement, breath, recovery rituals. HARD RULE — regulated/health-adjacent: NEVER fabricate transformation stories ("lost 15kg", "back pain disappeared", "after 8 weeks she…"), aggregate outcomes ("X% of members see…"), or medical/efficacy claims. Member-story posts ONLY come from REAL MATERIAL with explicit permission — if empty, switch to move-of-the-week, recovery-tips, or studio-update angles. Never imply medical results.',
+    contentPillars: ['Move of the Week', 'Recovery Tips', 'Class Schedule', 'Studio Ritual', 'Studio Update'],
+    bannedTropeExtras: [
+      'lost X kg', 'lost N pounds', 'X% improvement', 'before:', 'after:', 'after N sessions', 'X% of members', 'transformed her life', 'changed his life', 'pain disappeared', 'cured', 'guaranteed results', 'lose weight fast', 'studies show', 'research finds', 'doctors recommend',
+    ],
   },
   {
     slug: 'wellness-mindfulness',
