@@ -116,32 +116,34 @@ export const ARCHETYPES: Archetype[] = [
   {
     slug: 'tech-saas-agency',
     name: 'Tech, SaaS & Marketing Agency',
-    description: 'Software products, marketing/social/creative agencies, IT consultancies, web designers, automation services, AI tools. Sells digital services or subscriptions. NO physical venue. Risk: AI defaults to SaaS-marketing tropes ("Ready to automate?", "Scale without scaling"); voice and imagery need active anchoring to the specific tool/service.',
+    description: 'Software products, marketing/social/creative agencies, IT consultancies, web designers, automation services, AI tools. Sells digital services or subscriptions. NO physical venue. HIGHEST-RISK ARCHETYPE: most SaaS workspaces have no real customer stories, no verified ROI numbers, no testimonials. The model\'s default failure mode is to INVENT them — fake percentages ("3,735% ROI"), fake before/after ("80 → 1,240 followers in 90 days"), fake customer outcomes. Voice MUST be tactical (free value, real lessons, building in public) rather than feature-led (what the product does). Pillars must be writable WITHOUT customer proof points.',
     keywords: ['saas', 'software', 'tech', 'agency', 'marketing agency', 'social media agency', 'social media studio', 'creative studio', 'creative agency', 'web design', 'web designer', 'digital agency', 'consultancy', 'consulting', 'automation', 'it services', 'i.t.', 'ai tools', 'platform'],
     imageExamples: [
-      // Automation / hands-off theme — the tool works while nobody is watching
+      // Generic SMB target-customer scenes — what the reader's day looks like
       'matte black smartphone face-down beside a flat white coffee on a white marble surface, bright top-down daylight, no person',
       'single closed notebook centred on a clean white desk, sharp morning light from the left, nothing else on the surface',
-      // Content planning / scheduling — organised posts, calendars, pillars
-      'weekly content planner spread open on a light desk with handwritten topics in each day box, bright overhead daylight, no person',
-      'corkboard filled with printed content cards pinned in columns, sticky-note dates, colour-coded labels, bright office light',
-      'printed monthly calendar page pinned flat on a desk with several dates circled in red marker, crisp overhead light',
-      // Small business context — the target customer, not a tech company
       'small retail shop counter with a potted succulent and a closed notebook beside a takeaway coffee, warm daylight through a shopfront window',
       'café bench at opening time — clean surface, single ceramic mug, blurred menu chalkboard in background, bright natural light',
-      // Brainstorm / strategy / ideas
-      'whiteboard with handwritten content pillar columns in coloured marker, clean bright studio, no person in frame',
+      // Brainstorm / strategy / behind-the-build — real work, not staged
+      'whiteboard with handwritten columns in coloured marker, clean bright studio, no person in frame',
       'overhead flatlay of open notebook with handwritten brainstorm clusters, uncapped pen, and coffee mug, soft natural daylight',
-      // Output / consistency — the tangible result of automated posting
-      'neat stack of printed square social media post layouts on a white desk, overhead bright light, clean composition',
+      'weekly planner spread open on a light desk with handwritten topics in each day box, bright overhead daylight, no person',
+      'corkboard with printed cards pinned in columns, sticky-note dates, colour-coded labels, bright office light',
+      // Output / focus / consistency — the tangible result
+      'neat stack of printed square layouts on a white desk, overhead bright light, clean composition',
+      'printed monthly calendar page pinned flat on a desk with several dates circled in red marker, crisp overhead light',
     ],
-    imageAvoidNotes: 'NEVER render UI mockups, dashboards, pricing tables, app screenshots, wireframes, or marketing graphics. NEVER use dark, moody, neon, or underexposed lighting — every scene must be bright natural daylight. NEVER include people, hands, or faces. NEVER use server racks, fibre optic cables, or data-centre imagery — they look like infrastructure, not social media or small business. NO glowing screens or monitors.',
-    voiceCues: 'Specific. Name the actual tool, the actual integration, the actual feature. Resist the urge to say "transform your business" — say what your tool does in the next 30 seconds. Pricing should be concrete, not "from competitive rates".',
-    contentPillars: ['Feature Showcase', 'Workflow Tutorial', 'Customer Story (verified)', 'Behind the Build', 'Industry Take'],
+    imageAvoidNotes: 'NEVER render UI mockups, dashboards, pricing tables, app screenshots, wireframes, infographics, comparison charts, or marketing graphics — FLUX cannot render text or UI reliably, the output will be garbage. NEVER ask the image to "show" the product, the dashboard, the pricing, or any feature — the image is the SCENE around the post (customer\'s desk, abstract concept, finished work), not the product itself. NEVER mention the product name, brand name, app name, or feature name in the image prompt. NEVER include people, hands, or faces. NEVER use dark, moody, neon, or underexposed lighting — every scene must be bright natural daylight. NEVER use server racks, fibre optic cables, glowing screens, monitors, or data-centre imagery.',
+    voiceCues: 'HARD RULE — NEVER fabricate stats, ROI percentages, customer outcomes, growth numbers, follower counts, revenue lifts, or testimonials. If the workspace owner hasn\'t provided real numbers in their profile or in the post brief, do NOT invent them. Tactical content (a tip the reader can use right now, an industry observation, a lesson learned building this) is ALWAYS better than feature-led content. The product name should appear at most ONCE per post, only when relevant — never repeated as a hashtag-style mention. Voice is founder-honest (real maker, real opinions, real work), not marketing-team-polished. Never write "we built X because we got sick of...", "most business owners don\'t think about...", "here\'s what\'s possible with...", "ready to automate?". Concrete pricing OK if explicit; never "starting at" / "from competitive rates" without a number.',
+    contentPillars: ['Tactical SMB Tip (no product mention)', 'Industry Hot Take (one strong opinion)', 'Behind the Build (real moment, no pitch)', 'Free Resource or Framework', 'Personal Lesson Learned (founder voice)'],
     // SaaS-genre tropes that the global BANNED_PATTERNS already covers, but
-    // worth being extra-aggressive about for this archetype specifically
+    // worth being extra-aggressive about for this archetype specifically.
+    // Includes the LinkedIn-bro openers and fabricated-success patterns
+    // that 2026-05 audit caught in real SaaS posts.
     bannedTropeExtras: [
       'thought leadership', 'paradigm shift', 'mission-critical', 'enterprise-grade', 'best-in-class', 'world-class', 'cutting-edge', 'turnkey', 'end-to-end', 'frictionless', 'seamless integration', 'value proposition',
+      'ready to automate', 'trusted by', 'loved by', 'most business owners don\'t', 'most X don\'t realise', 'here\'s something most', 'half the battle', 'we built X because', 'we got sick of watching', 'imagine if', 'unlock your potential', 'level up', 'game-changer', 'transform your business',
+      'X% growth', 'X% increase', 'X% ROI', '+X followers', 'before:', 'after:', 'in N days', 'in N weeks',
     ],
   },
   {
@@ -157,9 +159,12 @@ export const ARCHETYPES: Archetype[] = [
       'professional building exterior at golden hour, candid streetscape',
       'window office at twilight with city lights visible, calm atmosphere',
     ],
-    imageAvoidNotes: 'NEVER include people, suits, or handshakes — the cliché stock-photo aesthetic. Focus on tools-of-trade, considered interiors, and material details.',
-    voiceCues: 'Considered, precise, jargon-aware. Cite frameworks, regulatory bodies, and case-specific advice without crossing into general guidance. Plain-language explanations land best.',
-    contentPillars: ['Regulatory Update', 'Client FAQ', 'Case Study (anonymised)', 'Tax/Compliance Calendar', 'Industry Commentary'],
+    imageAvoidNotes: 'NEVER include people, suits, or handshakes — the cliché stock-photo aesthetic. NEVER ask FLUX to render readable text on blueprints, contracts, or documents (the output will be gibberish). Focus on tools-of-trade, considered interiors, and material details.',
+    voiceCues: 'Considered, precise, jargon-aware. Cite frameworks, regulatory bodies, and case-specific advice without crossing into general guidance. Plain-language explanations land best. HARD RULE — regulated industry: NEVER fabricate client outcomes ("saved X $Y", "won X% of cases"), regulatory percentages ("ATO rejects 73% of…"), or industry statistics. Case-study posts ONLY come from REAL MATERIAL provided by the owner — if empty, switch to regulatory-update or plain-language-explainer angles.',
+    contentPillars: ['Regulatory Update', 'Client FAQ', 'Plain-Language Explainer', 'Tax/Compliance Calendar', 'Industry Commentary'],
+    bannedTropeExtras: [
+      'saved client', 'won X% of', 'X% of clients', 'trusted by N businesses', 'industry-leading', 'best-in-class', 'most accountants don\'t', 'most lawyers don\'t', 'studies show', 'research finds', 'X% of businesses fail', 'top-rated', 'award-winning',
+    ],
   },
   {
     slug: 'retail-ecommerce',
@@ -175,8 +180,11 @@ export const ARCHETYPES: Archetype[] = [
       'floral arrangement on a marble counter, soft natural light',
     ],
     imageAvoidNotes: 'NEVER include people, hands modelling products, or shop assistants. NEVER render price tags or sale signs. Focus on the product itself, styled.',
-    voiceCues: 'Style-led, specific (call out colourway, size, materials). Reference current collection, limited run, sourcing story. Cash-and-collect / shipping facts important.',
-    contentPillars: ['New Arrival', 'Styled Outfit / Display', 'Behind the Source', 'Customer Wears (no faces)', 'Sale / Limited Run'],
+    voiceCues: 'Style-led, specific (call out colourway, size, materials). Reference current collection, limited run, sourcing story. Cash-and-collect / shipping facts important. HARD RULE — never fabricate sales numbers ("best-seller", "sold out twice"), customer counts ("trusted by 10,000 customers"), star ratings ("5-star reviews"), or aggregate claims. Customer-wears posts ONLY come from REAL MATERIAL — if empty, switch to styling-idea or new-arrival angles.',
+    contentPillars: ['New Arrival', 'Styled Outfit / Display', 'Behind the Source', 'Styling Idea', 'Sale / Limited Run'],
+    bannedTropeExtras: [
+      'best-seller', 'sold out twice', 'X happy customers', 'trusted by', '5-star reviews', 'most-loved', 'fan favourite', 'flying off the shelves', 'selling fast', 'X% off (made up)', 'studies show', 'research finds', 'X% of customers',
+    ],
   },
   {
     slug: 'health-wellness',
@@ -192,8 +200,11 @@ export const ARCHETYPES: Archetype[] = [
       'close-up of hands holding warm ceramic mug, cozy lighting (hands acceptable for tea/treatment shots)',
     ],
     imageAvoidNotes: 'NEVER include people exercising, in treatment, or in poses. NEVER render before/after comparison shots. Focus on calm space, ritual tools, daylight.',
-    voiceCues: 'Grounded, body-respectful, non-prescriptive. Avoid medical claims unless registered. Reference movement, breath, recovery rituals.',
-    contentPillars: ['Move of the Week', 'Recovery Tips', 'Class Schedule', 'Member Story (anonymised)', 'Studio Update'],
+    voiceCues: 'Grounded, body-respectful, non-prescriptive. Avoid medical claims unless registered. Reference movement, breath, recovery rituals. HARD RULE — regulated/health-adjacent: NEVER fabricate transformation stories ("lost 15kg", "back pain disappeared", "after 8 weeks she…"), aggregate outcomes ("X% of members see…"), or medical/efficacy claims. Member-story posts ONLY come from REAL MATERIAL with explicit permission — if empty, switch to move-of-the-week, recovery-tips, or studio-update angles. Never imply medical results.',
+    contentPillars: ['Move of the Week', 'Recovery Tips', 'Class Schedule', 'Studio Ritual', 'Studio Update'],
+    bannedTropeExtras: [
+      'lost X kg', 'lost N pounds', 'X% improvement', 'before:', 'after:', 'after N sessions', 'X% of members', 'transformed her life', 'changed his life', 'pain disappeared', 'cured', 'guaranteed results', 'lose weight fast', 'studies show', 'research finds', 'doctors recommend',
+    ],
   },
   {
     slug: 'wellness-mindfulness',
