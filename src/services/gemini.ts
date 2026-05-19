@@ -2402,9 +2402,21 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     };
 
     const hashtagPool = buildHashtagPool(research);
-    const pillarsForPrompt = saturationMode
-      ? (research.contentPillars || saturationFallback.contentPillars)
-      : (research.contentPillars?.map((p: any) => typeof p === 'object' ? p.name : p) || normalFallback.contentPillars);
+    // Pillar precedence: archetype.contentPillars (when set in src/data/archetypes.ts)
+    // ALWAYS wins over LLM-invented research pillars. Without this, Smart
+    // Scheduler's research stage invents SaaS-marketing-shaped pillars
+    // ("Pain Points & Solutions", "ROI & Business Outcomes" etc.) regardless
+    // of the archetype's hand-curated set. For tech-saas-agency that means
+    // every fresh schedule produces the same template-shaped pillars no matter
+    // how strong the archetype's voice cues are. Fall back to research pillars
+    // only when the archetype doesn't define its own (most don't yet — only
+    // tech-saas-agency, professional-services, retail-ecommerce, health-wellness).
+    const archetypeObj = activeArchetypeSlug ? getArchetypeBySlug(activeArchetypeSlug) : undefined;
+    const archetypePillars = archetypeObj?.contentPillars?.length ? archetypeObj.contentPillars : null;
+    const pillarsForPrompt = archetypePillars
+      ?? (saturationMode
+        ? (research.contentPillars || saturationFallback.contentPillars)
+        : (research.contentPillars?.map((p: any) => typeof p === 'object' ? p.name : p) || normalFallback.contentPillars));
 
     const videoCount = includeVideos ? Math.max(1, Math.round(effectivePosts * 0.3)) : 0;
     const videoInstructions = includeVideos ? `
