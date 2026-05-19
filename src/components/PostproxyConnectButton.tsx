@@ -48,6 +48,26 @@ interface Props {
 
 type Step = 'idle' | 'connecting' | 'picking' | 'saving' | 'saved' | 'error';
 
+/** Map Postproxy error codes (passed through by our worker's oauth-callback
+ *  failure-redirect) to user-readable messages. Defaults to a generic
+ *  retry prompt for unknown codes. Keep the strings actionable — they're
+ *  the user's only signal when OAuth bombs at Meta. */
+function friendlyPostproxyError(code: string): string {
+  if (code.startsWith('account_is_already')) {
+    return 'This Facebook account is already connected to another Postproxy profile group. Sign in to postproxy.dev, remove the Facebook profile from the other group, then click Connect to retry.';
+  }
+  if (code === 'access_denied' || code === 'user_cancelled') {
+    return 'You cancelled the Facebook authorisation. Click Connect to try again.';
+  }
+  if (code === 'scope_denied') {
+    return 'Some required Facebook permissions were declined. We need them to publish to your Page. Click Connect and approve all requested permissions.';
+  }
+  if (code === 'no_profile_after_oauth') {
+    return 'Facebook authorisation completed but Postproxy didn\'t register the new profile. Wait a few seconds and click Connect to retry — if it persists, contact support.';
+  }
+  return `Facebook connection failed (code: ${code}). Click Connect to try again, or contact support if it persists.`;
+}
+
 export const PostproxyConnectButton: React.FC<Props> = ({
   clientId,
   onConnected,
@@ -77,6 +97,23 @@ export const PostproxyConnectButton: React.FC<Props> = ({
     if (connectedPlacementId) return; // already-connected wins
     const url = new URL(window.location.href);
     const urlStep = url.searchParams.get('step');
+    const urlError = url.searchParams.get('postproxy_error');
+
+    // OAuth failure path — worker redirects here with
+    // ?step=connect-failed&postproxy_error=<code>. Render the friendly
+    // error and clean up the URL so a refresh doesn't re-show it.
+    if (urlStep === 'connect-failed' && urlError) {
+      setError(friendlyPostproxyError(urlError));
+      setStep('error');
+      try {
+        url.searchParams.delete('step');
+        url.searchParams.delete('postproxy_error');
+        url.searchParams.delete('workspace');
+        window.history.replaceState({}, '', url.toString());
+      } catch { /* non-fatal */ }
+      return;
+    }
+
     const urlWorkspace = url.searchParams.get('workspace');
     const isStage2 = forcePickerStage || urlStep === 'pick-placement';
     if (!isStage2) return;

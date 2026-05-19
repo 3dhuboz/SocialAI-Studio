@@ -82,6 +82,20 @@ function postOauthRedirect(env: Env, clientId: string | null): string {
   return `${base}/onboarding?step=pick-placement&workspace=${workspace}`;
 }
 
+/** Build the failure-case redirect target. Postproxy appends
+ *  `failure=true&error_code=...` to our callback URL when OAuth fails
+ *  at Meta (account already in another group, user cancelled, scope
+ *  denied, etc). We pass the code through to the frontend so the UI can
+ *  render a friendly message instead of a raw JSON error page. */
+function postOauthFailureRedirect(env: Env, clientId: string | null, errorCode: string): string {
+  const base = env.ENVIRONMENT === 'staging'
+    ? 'https://staging.socialaistudio.au'
+    : 'https://socialaistudio.au';
+  const workspace = clientId ? encodeURIComponent(clientId) : 'own';
+  const code = encodeURIComponent(errorCode || 'unknown');
+  return `${base}/onboarding?step=connect-failed&workspace=${workspace}&postproxy_error=${code}`;
+}
+
 interface PostproxyProfileRow {
   id: string;
   user_id: string;
@@ -195,6 +209,20 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     ).bind(state).first<{ id: string; user_id: string; client_id: string | null; postproxy_group_id: string }>();
     if (!row) return c.json({ error: 'Unknown oauth state' }, 404);
 
+    // Postproxy signals OAuth failure via `failure=true&error_code=...`
+    // (common codes: account_is_already_in_group, access_denied,
+    // user_cancelled, scope_denied). Clear oauth_state so the user can
+    // retry from Stage 1, then redirect to the frontend with the code so
+    // the UI can render a friendly error instead of a raw JSON page.
+    const failure = c.req.query('failure');
+    const errorCode = c.req.query('error_code');
+    if (failure === 'true' || errorCode) {
+      await c.env.DB.prepare('UPDATE postproxy_profiles SET oauth_state = NULL, updated_at = ? WHERE id = ?')
+        .bind(new Date().toISOString(), row.id).run();
+      console.warn(`[postproxy:oauth-callback] failure code=${errorCode || 'unknown'} user=${row.user_id} client=${row.client_id ?? 'own'}`);
+      return c.redirect(postOauthFailureRedirect(c.env, row.client_id, errorCode || 'unknown'), 303);
+    }
+
     try {
       // List profiles in this group; pick the newest (the one we just connected).
       // Postproxy doesn't surface a "freshly-connected" marker — best heuristic
@@ -203,9 +231,12 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const profiles = await listProfiles(c.env, row.postproxy_group_id);
       const fresh = profiles.find((p) => p.status === 'active') ?? profiles[0];
       if (!fresh) {
-        return c.json({
-          error: 'No profile found in group after OAuth — Postproxy callback may have failed mid-flight',
-        }, 502);
+        // Same redirect pattern as the explicit-failure case — but with a
+        // synthesised error_code so the UI can still render the friendly
+        // banner instead of a raw JSON response.
+        await c.env.DB.prepare('UPDATE postproxy_profiles SET oauth_state = NULL, updated_at = ? WHERE id = ?')
+          .bind(new Date().toISOString(), row.id).run();
+        return c.redirect(postOauthFailureRedirect(c.env, row.client_id, 'no_profile_after_oauth'), 303);
       }
 
       const nowIso = new Date().toISOString();
