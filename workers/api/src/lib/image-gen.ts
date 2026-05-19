@@ -31,6 +31,7 @@ import {
   extractCaptionSubjectPhrase,
   injectCaptionSubject,
 } from './image-safety';
+import { hashStringToSceneSeed } from '../../../../shared/archetype-scenes';
 import { resolveArchetypeSlug } from './archetypes';
 import { logAiUsage } from './ai-usage';
 
@@ -38,6 +39,12 @@ import { logAiUsage } from './ai-usage';
 // fal.ai invoice settles each month — these are the published per-MP rates
 // for square_hd outputs at the steps/guidance defaults used here.
 const FLUX_DEV_COST_USD = 0.025;
+// tech-saas-agency posts are inherently abstract (no inventory to photograph,
+// no location, no people in action) so flux-dev at default 35 steps often
+// rolls a soft/blurry render. We bump steps to 50 and guidance to 8.0 for
+// this archetype only — same model, sharper output, stronger prompt
+// adherence. Cost scales roughly with step count: ~$0.011 extra per image.
+const FLUX_DEV_SAAS_COST_USD = 0.036;
 
 // When `forceFallback` is true, skip the LLM-generated prompt entirely and
 // pick a guaranteed-safe scene from the archetype's fallback bank. Used by
@@ -55,7 +62,7 @@ export async function generateImageWithGuardrails(
   userId: string,
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
-  options: { forceFallback?: boolean; caption?: string | null } = {},
+  options: { forceFallback?: boolean; caption?: string | null; seedHint?: string | null } = {},
 ): Promise<{ imageUrl: string | null; modelUsed: string; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
 
@@ -83,7 +90,15 @@ export async function generateImageWithGuardrails(
       console.warn(`[image-gen] forceFallback=true archetype=${archetypeSlug} has no fallbackScenes — using normal guardrail path`);
       guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug, options.caption ?? null);
     } else {
-      const scene = fallback.fallbackScenes[Math.floor(Math.random() * fallback.fallbackScenes.length)];
+      // Scene selection: deterministic by post-ID hash when seedHint is
+      // supplied (cron prewarm + JIT publish pass post.id), random otherwise
+      // (manual fal-proxy invocation). Deterministic mode is idempotent on
+      // cron retries AND spreads a week's batch across the scene bank
+      // instead of random-colliding on 2-3 of the same scene.
+      const sceneIdx = options.seedHint
+        ? hashStringToSceneSeed(options.seedHint) % fallback.fallbackScenes.length
+        : Math.floor(Math.random() * fallback.fallbackScenes.length);
+      const scene = fallback.fallbackScenes[sceneIdx];
       // Inject the caption-derived subject into the chosen scene so the
       // forced-fallback path doesn't ship a generic "closed laptop on desk"
       // for every regen — same fix as the normal-path applyArchetypeGuardrails
@@ -96,14 +111,26 @@ export async function generateImageWithGuardrails(
         negativePrompt: `${safePrompt.negativePrompt}, ${fallback.extraNegatives}`,
         swappedForFallback: true,
       };
-      console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene${captionSubject ? ' (caption subject injected)' : ''}`);
+      console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene${captionSubject ? ' (caption subject injected)' : ''}${options.seedHint ? ` (seeded idx=${sceneIdx})` : ''}`);
     }
   } else {
-    guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug, options.caption ?? null);
+    guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug, options.caption ?? null, options.seedHint ?? null);
     if (guarded.swappedForFallback) {
-      console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene`);
+      console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene${options.seedHint ? ' (seeded)' : ''}`);
     }
   }
+
+  // tech-saas-agency posts ship through this chokepoint with abstract,
+  // people-less scenes that flux-dev underspecifies at default settings —
+  // result is soft/blurry renders that look stocky. Bump steps + guidance
+  // for this one archetype to force sharper, more prompt-coherent output.
+  // Cost goes from ~$0.025 → ~$0.036 per image (~$0.15/week per SaaS
+  // workspace at 14 posts/week).
+  const isSaaS = archetypeSlug === 'tech-saas-agency';
+  const numSteps = isSaaS ? 50 : 35;
+  const guidance = isSaaS ? 8.0 : 7.0;
+  const costUsd = isSaaS ? FLUX_DEV_SAAS_COST_USD : FLUX_DEV_COST_USD;
+  const modelName = isSaaS ? 'flux-dev-hq' : 'flux-dev';
 
   const res = await fetch('https://fal.run/fal-ai/flux/dev', {
     method: 'POST', headers: authHeader,
@@ -111,39 +138,39 @@ export async function generateImageWithGuardrails(
       prompt: guarded.prompt,
       negative_prompt: guarded.negativePrompt,
       image_size: 'square_hd',
-      num_inference_steps: 35,
+      num_inference_steps: numSteps,
       num_images: 1,
       enable_safety_checker: true,
-      guidance_scale: 7.0,
+      guidance_scale: guidance,
     }),
   });
   const data = await res.json() as any;
   if (!res.ok) {
-    console.warn(`[image-gen] flux-dev failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
+    console.warn(`[image-gen] ${modelName} failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
     // Log the failed call too — useful for understanding which prompt
     // patterns trigger fal.ai 4xx/5xx responses.
     await logAiUsage(env, {
       userId,
       clientId,
       provider: 'fal',
-      model: 'flux-dev',
+      model: modelName,
       operation: 'image-gen',
       imagesGenerated: 0,
       estCostUsd: 0,
       ok: false,
     });
-    return { imageUrl: null, modelUsed: 'flux-dev', archetypeSlug };
+    return { imageUrl: null, modelUsed: modelName, archetypeSlug };
   }
   const imageUrl = data?.images?.[0]?.url || null;
   await logAiUsage(env, {
     userId,
     clientId,
     provider: 'fal',
-    model: 'flux-dev',
+    model: modelName,
     operation: 'image-gen',
     imagesGenerated: imageUrl ? 1 : 0,
-    estCostUsd: imageUrl ? FLUX_DEV_COST_USD : 0,
+    estCostUsd: imageUrl ? costUsd : 0,
     ok: !!imageUrl,
   });
-  return { imageUrl, modelUsed: 'flux-dev', archetypeSlug };
+  return { imageUrl, modelUsed: modelName, archetypeSlug };
 }

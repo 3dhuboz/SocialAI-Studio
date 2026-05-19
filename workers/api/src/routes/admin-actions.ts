@@ -198,7 +198,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
         // Pass the caption so image-gen can sniff the archetype if the
         // workspace's archetype_slug is NULL.
         const gen = await generateImageWithGuardrails(
-          c.env, uid, post.client_id, safe, { forceFallback: true, caption: post.content },
+          c.env, uid, post.client_id, safe, { forceFallback: true, caption: post.content, seedHint: post.id },
         );
         if (!gen.imageUrl) {
           failed++;

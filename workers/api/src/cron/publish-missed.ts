@@ -483,7 +483,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             (post as any).user_id,
             (post as any).client_id || null,
             safe,
-            { caption: cleanContent },
+            { caption: cleanContent, seedHint: (post as any).id },
           );
           if (gen.imageUrl) {
             imageUrl = gen.imageUrl;

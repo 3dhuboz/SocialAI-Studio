@@ -27,6 +27,7 @@ import {
   SAFE_FALLBACK_SCENES,
   ARCHETYPE_IMAGE_GUARDRAILS,
   CAPTION_ARCHETYPE_KEYWORDS,
+  hashStringToSceneSeed,
 } from '../../../../shared/archetype-scenes';
 
 export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt, rewriteAbstractUIAsPhotography };
@@ -57,6 +58,7 @@ export function applyArchetypeGuardrails(
   safe: { prompt: string; negativePrompt: string },
   archetypeSlug: string | null,
   caption?: string | null,
+  seedHint?: string | null,
 ): { prompt: string; negativePrompt: string; swappedForFallback: boolean } {
   if (!archetypeSlug) return { ...safe, swappedForFallback: false };
   const guardrails = ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug];
@@ -65,7 +67,14 @@ export function applyArchetypeGuardrails(
   const negative = `${safe.negativePrompt}, ${guardrails.extraNegatives}`;
 
   if (guardrails.forbidden.test(safe.prompt)) {
-    const fallback = guardrails.fallbackScenes[Math.floor(Math.random() * guardrails.fallbackScenes.length)];
+    // Scene selection: deterministic by hash(post.id) when seedHint is
+    // supplied so a week of bulk-generated posts spreads across the bank
+    // instead of random-colliding on 2-3 duplicates. Falls back to random
+    // when no seedHint (e.g. manual fal-proxy invocation).
+    const sceneIdx = seedHint
+      ? hashStringToSceneSeed(seedHint) % guardrails.fallbackScenes.length
+      : Math.floor(Math.random() * guardrails.fallbackScenes.length);
+    const fallback = guardrails.fallbackScenes[sceneIdx];
     const captionSubject = extractCaptionSubjectPhrase(caption);
     const injected = injectCaptionSubject(fallback, captionSubject);
     return {

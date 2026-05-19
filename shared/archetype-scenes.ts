@@ -18,6 +18,22 @@
 // classifier itself (resolveArchetypeSlug) still lives on the worker side
 // because it needs DB access.
 
+// ── Deterministic scene-selection seed ───────────────────────────────────
+//
+// FNV-1a 32-bit hash so the same post ID always picks the same fallback
+// scene (idempotent on cron retries), and a week of 7-14 posts spreads
+// predictably across the scene bank instead of random-colliding. Used by
+// both worker (image-gen.ts force-fallback path) and image-safety.ts
+// (normal applyArchetypeGuardrails path) for consistent behaviour.
+export function hashStringToSceneSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 // ── Neutral-scene fallback bank ──────────────────────────────────────────
 //
 // Used when isAbstractUIPrompt matches and the caller needs to swap a UI /
@@ -64,12 +80,34 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
   'tech-saas-agency': {
     forbidden: /\b(?:food|restaurant|plated|plating|dining|kitchen|meal|breakfast|lunch|dinner|cuisine|cocktail|wine|pastry|pastries|loaf|loaves|sourdough|farm|paddock|livestock|cattle|sheep|tractor|crops|harvest|bbq|brisket|smoker|smoked|grill|grilled|charcoal|gym|treadmill|barbell|dumbbell|massage|salon|spa|garage|engine|axle|wrench)\b/i,
     extraNegatives: 'food, plate, plated, restaurant, dining, kitchen, meal, beverage, candlelit, rustic wood board, bbq, smoker, grill, agriculture, farm, livestock, gym, yoga mat, automotive, garage',
+    // 15 scenes covering: workspaces, hands-on-objects, regional Australian
+    // context, books/reading, founder/maker moments, travel, pure objects,
+    // abstract. Wider variety so a week of bulk-generated SaaS posts doesn't
+    // ship five flatlay-laptop shots in a row. Selection is deterministic by
+    // post-id hash (see image-gen.ts) so the same week's posts spread
+    // predictably across this bank instead of random-colliding.
     fallbackScenes: [
+      // Workspace settings (curated, varied lighting + angle)
       'modern co-working studio with closed laptop on a clean desk, soft abstract blue and purple gradient on the wall behind, geometric paper shapes scattered, morning daylight',
       'overhead flatlay of an open notebook, smartphone face-down, ceramic mug and pen on a matte white desk, soft natural daylight',
       'minimal home office windowsill with a small potted plant, closed laptop and geometric wall art, sunrise light through window',
-      'abstract layered gradient of blue, purple and soft pink with subtle geometric shapes, low-poly aesthetic, suggesting connectivity and workflow',
       'sleek desk corner with brushed metal lamp, leather notebook and brass pen, golden hour shadows across the surface',
+      // Hands-on / human-element close-ups
+      'close-up of hands typing on a mechanical keyboard, warm desk lamp glow, blurred background of evening lights through a window, shallow depth of field',
+      'a single hand holding a smartphone face-down on a wooden table, white ceramic latte cup nearby, candid morning daylight, shallow depth of field',
+      'close-up of a fountain pen writing on lined notebook paper, soft morning light, blurred warm-toned background, shallow depth of field',
+      // Regional Australian / local context
+      'regional Australian main street at golden hour, weatherboard shopfronts and wide footpath, warm late-afternoon sun, no people in frame',
+      'a single mug of black coffee on a windowsill beside dried eucalyptus leaves in a glass jar, sunrise light, suburban Australian backdrop softly blurred',
+      'a smartphone face-down on a car dashboard, country highway view through the windshield at sunrise, no driver visible, soft golden light',
+      // Founder / maker scenes (analog tools, slower mood)
+      'leather-bound journal open to a page of handwritten notes, fountain pen resting on the spine, warm desk lamp light, calm evening mood',
+      'overhead shot of a sketch pad with rough wireframe diagrams drawn in pencil, eraser and mechanical pencil beside it, natural daylight, no UI screens visible',
+      'stack of business and design books on a side table, folded reading glasses on top, single linen armchair partially in frame, soft lamp light',
+      // Pure-object stills (no humans, no UI) — versatile abstract context
+      'two leather-bound notebooks stacked on a marble table, a brass pen and folded reading glasses beside them, single ceramic vase with native gum leaves, soft window light',
+      // Abstract (genuine fallback for purely conceptual posts)
+      'abstract layered gradient of blue, purple and soft pink with subtle geometric shapes, low-poly aesthetic, suggesting connectivity and workflow',
     ],
   },
   'professional-services': {
