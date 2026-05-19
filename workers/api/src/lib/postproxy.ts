@@ -291,3 +291,104 @@ export async function getPost(
 ): Promise<PostproxyPostStatus> {
   return pfFetch<PostproxyPostStatus>(env, `/posts/${encodeURIComponent(postId)}`);
 }
+
+// ── Stats + comments (powers refresh-facts via Postproxy) ───────────────
+
+/** Per-platform stats snapshot for one post. Field shape varies by platform
+ *  — FB returns `impressions/clicks/likes`, IG returns
+ *  `impressions/likes/comments/saved/profile_visits/follows`, etc. We keep
+ *  the typed value loose so we don't have to maintain a platform-by-platform
+ *  union — the cron consumer reads only the fields it knows about. */
+export interface PostproxyStatsSnapshot {
+  stats: Record<string, number | string>;
+  recorded_at?: string;
+}
+
+export interface PostproxyPostPlatformStats {
+  profile_id: string;
+  platform: string;
+  records: PostproxyStatsSnapshot[];
+}
+
+export interface PostproxyPostStatsResponse {
+  data: Record<string, { platforms: PostproxyPostPlatformStats[] }>;
+}
+
+export interface PostproxyProfileWithStats extends PostproxyProfile {
+  latest_stats?: Array<{
+    placement_id: string | null;
+    stats: Record<string, number | string>;
+    recorded_at?: string;
+  }>;
+  summary_stats?: {
+    stats: Record<string, number | string>;
+    recorded_at?: string;
+  } | null;
+}
+
+export interface PostproxyComment {
+  id: string;
+  body: string;
+  like_count: number;
+  author_username?: string | null;
+  posted_at?: string | null;
+}
+
+export interface PostproxyCommentsResponse {
+  total?: number;
+  page?: number;
+  per_page?: number;
+  data: PostproxyComment[];
+}
+
+/** Fetch per-post engagement snapshots from Postproxy. Postproxy caps the
+ *  request at 50 post IDs per call (docs §post-stats), so the caller is
+ *  expected to chunk. We throw a clear error instead of silently truncating
+ *  to help diagnose batch-size mistakes upstream. */
+export async function getPostStats(
+  env: Env,
+  postIds: string[],
+  opts: { profiles?: string; from?: string; to?: string } = {},
+): Promise<PostproxyPostStatsResponse> {
+  if (postIds.length === 0) {
+    return { data: {} };
+  }
+  if (postIds.length > 50) {
+    throw new Error(`Postproxy getPostStats: max 50 post IDs per call (got ${postIds.length}); caller must chunk`);
+  }
+  const params = new URLSearchParams();
+  params.set('post_ids', postIds.join(','));
+  if (opts.profiles) params.set('profiles', opts.profiles);
+  if (opts.from) params.set('from', opts.from);
+  if (opts.to) params.set('to', opts.to);
+  return pfFetch<PostproxyPostStatsResponse>(env, `/posts/stats?${params.toString()}`);
+}
+
+/** Fetch profile + latest_stats + summary_stats. Used by the facts cron to
+ *  build the `about` row (fan_count from `summary_stats`). */
+export async function getProfileWithLatestStats(
+  env: Env,
+  profileId: string,
+): Promise<PostproxyProfileWithStats> {
+  return pfFetch<PostproxyProfileWithStats>(env, `/profiles/${encodeURIComponent(profileId)}`);
+}
+
+/** List comments on a published post. Used by the facts cron to mine real
+ *  customer voice for the `comment` fact_type. Postproxy requires the
+ *  owning `profile_id` as a query param (analogous to listPlacements). */
+export async function listPostComments(
+  env: Env,
+  postId: string,
+  profileId: string,
+  opts: { page?: number; perPage?: number } = {},
+): Promise<PostproxyCommentsResponse> {
+  const params = new URLSearchParams();
+  params.set('profile_id', profileId);
+  if (opts.page) params.set('page', String(opts.page));
+  if (opts.perPage) params.set('per_page', String(opts.perPage));
+  const data = await pfFetch<PostproxyCommentsResponse | { data?: PostproxyComment[] }>(
+    env,
+    `/posts/${encodeURIComponent(postId)}/comments?${params.toString()}`,
+  );
+  return { data: (data as any)?.data ?? [], ...(data as any) };
+}
