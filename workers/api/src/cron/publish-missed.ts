@@ -473,7 +473,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         && promptForGen !== 'N/A'
         && promptForGen.length > 5;
       if (needsImage && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
-        const safe = buildSafeImagePrompt(promptForGen);
+        const safe = buildSafeImagePrompt(promptForGen, cleanContent);
         if (safe) try {
           // 2026-05 image-stack upgrade: route through generateImageWithGuardrails
           // so JIT generation gets the same brand-grounded path the manual

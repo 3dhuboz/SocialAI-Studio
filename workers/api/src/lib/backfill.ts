@@ -62,12 +62,11 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 
   for (const post of posts) {
     try {
-      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''));
-      if (!safe) { failed++; continue; }
-
       const postId = (post as any).id as string;
       const clientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
+      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption);
+      if (!safe) { failed++; continue; }
 
       // Pass caption so sniffArchetypeFromCaption fires for unclassified
       // workspaces. Reuse archetypeSlug from gen to skip a second DB call.
@@ -439,7 +438,7 @@ export async function runBacklogRegen(
     ).bind(post.id).run();
 
     try {
-      const safe = buildSafeImagePrompt(post.image_prompt);
+      const safe = buildSafeImagePrompt(post.image_prompt, post.content);
       if (!safe) { failed++; continue; }
 
       const gen = await generateImageWithGuardrails(

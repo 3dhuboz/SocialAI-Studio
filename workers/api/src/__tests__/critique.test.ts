@@ -109,4 +109,42 @@ describe('buildCritiqueSystemPrompt', () => {
     const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
     expect(prompt).toMatch(/blended|composited/i);
   });
+
+  // ── GENERIC-SUBSTITUTE RULE (added 2026-05-19) ────────────────────────
+  // The existing TOPIC-MISMATCH rule only flagged cross-domain mismatches
+  // (a completely different scene from the same business category). It
+  // didn't catch the failure mode where the image is on-archetype but
+  // GENERIC — a closed laptop on a SaaS post whose caption named a specific
+  // dashboard feature. Those used to score 6-8 and pass the gate.
+
+  it('includes the GENERIC-SUBSTITUTE RULE (2026-05-19)', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toContain('GENERIC-SUBSTITUTE RULE');
+  });
+
+  it('GENERIC-SUBSTITUTE rule lists the generic-stock cases (closed laptop, blank notebook, etc.)', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toMatch(/closed laptop/i);
+    expect(prompt).toMatch(/blank notebook|notebook/i);
+    expect(prompt).toMatch(/empty/i);
+    expect(prompt).toMatch(/coffee/i);
+  });
+
+  it('GENERIC-SUBSTITUTE rule scores 3 with match="partial" (regen-trigger but not catastrophic)', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toContain('score 3');
+    expect(prompt).toMatch(/match="partial"/);
+  });
+
+  it('GENERIC-SUBSTITUTE rule requires reasoning to name what is missing', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toMatch(/reasoning must name|reasoning MUST name|specific feature/i);
+  });
+
+  it('GENERIC-SUBSTITUTE rule fires even when image is on-archetype', () => {
+    // The whole point of this rule is that "on-archetype but generic stock"
+    // is the failure mode the original cross-domain rule missed.
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toMatch(/on-archetype|even when the image is on-archetype/i);
+  });
 });

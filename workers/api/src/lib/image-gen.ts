@@ -28,6 +28,8 @@ import {
   FLUX_STYLE_SUFFIX,
   applyArchetypeGuardrails,
   sniffArchetypeFromCaption,
+  extractCaptionSubjectPhrase,
+  injectCaptionSubject,
 } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 import { logAiUsage } from './ai-usage';
@@ -79,18 +81,25 @@ export async function generateImageWithGuardrails(
       // Archetype registered but no fallback scenes defined — fall through to
       // normal guardrail path rather than generating "undefined, candid iPhone…"
       console.warn(`[image-gen] forceFallback=true archetype=${archetypeSlug} has no fallbackScenes — using normal guardrail path`);
-      guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
+      guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug, options.caption ?? null);
     } else {
       const scene = fallback.fallbackScenes[Math.floor(Math.random() * fallback.fallbackScenes.length)];
+      // Inject the caption-derived subject into the chosen scene so the
+      // forced-fallback path doesn't ship a generic "closed laptop on desk"
+      // for every regen — same fix as the normal-path applyArchetypeGuardrails
+      // injection below. Without this, every critique-failure retry produces
+      // visually identical generic scenes regardless of post topic.
+      const captionSubject = extractCaptionSubjectPhrase(options.caption);
+      const injected = injectCaptionSubject(scene, captionSubject);
       guarded = {
-        prompt: `${scene}, ${FLUX_STYLE_SUFFIX}`,
+        prompt: `${injected}, ${FLUX_STYLE_SUFFIX}`,
         negativePrompt: `${safePrompt.negativePrompt}, ${fallback.extraNegatives}`,
         swappedForFallback: true,
       };
-      console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene`);
+      console.log(`[image-gen] forceFallback=true archetype=${archetypeSlug} — using curated scene${captionSubject ? ' (caption subject injected)' : ''}`);
     }
   } else {
-    guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug);
+    guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug, options.caption ?? null);
     if (guarded.swappedForFallback) {
       console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene`);
     }
