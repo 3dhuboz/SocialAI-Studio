@@ -145,6 +145,8 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `shopify-posts.ts` | Embedded-app: shop-scoped post CRUD + publish-now (owner_kind='shop' rows). All endpoints session-token gated. |
 | `shopify-social-connect.ts` | Embedded-app: FB/IG connect for Shopify merchants — exchange token, connect, disconnect, status. Writes shopify_stores.social_tokens. |
 | `shopify-insights.ts` | Embedded-app: `GET /api/shopify/insights` — FB Page stats (followers, reach/interactions, engagement rate) + D1 post queue summary. Mirrors main-app's `getLivePageStats` logic in the worker. |
+| `shopify-post-quality.ts` | Embedded-app: `POST /api/shopify/critique-image-caption` — vision critique (Haiku 4.5) for shop posts. Session-token gated; persists onto `posts` row when `postId` is provided and owner matches. |
+| `shopify-posters.ts` | Embedded-app: shop-scoped poster gallery — `POST /api/shopify/posters` (generate via OpenRouter + save to R2), `GET /api/shopify/posters` (list), `GET /api/shopify/posters/:id/image` (stream), `DELETE /api/shopify/posters/:id`. Uses `shopify_posters` table (schema_v23). |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -189,7 +191,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v22
+**Current schema version:** v23
 
 ### Migration process
 ```bash

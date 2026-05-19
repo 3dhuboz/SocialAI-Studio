@@ -370,3 +370,84 @@ export interface ShopifyInsightsResponse {
 export async function getInsights(signal?: AbortSignal) {
   return apiFetch<ShopifyInsightsResponse>('/api/shopify/insights', { signal });
 }
+
+// ── Post quality (vision critique) ────────────────────────────────────────
+//
+// Called right after compose lands so the merchant gets an instant
+// "is this image relevant to this caption?" signal before publishing.
+// Score is 0-10; `regenerate: true` (score ≤ 4) is the worker's hint to
+// recommend trying again rather than tweaking the caption.
+
+export interface CritiqueResponse {
+  score: number;       // 0–10
+  match: 'yes' | 'partial' | 'no';
+  reasoning: string;
+  regenerate: boolean;
+}
+
+export async function critiqueImageCaption(
+  input: { imageUrl: string; caption: string; postId?: string; businessType?: string; archetype?: string },
+  signal?: AbortSignal,
+) {
+  return apiFetch<CritiqueResponse>(
+    '/api/shopify/critique-image-caption',
+    { method: 'POST', body: JSON.stringify(input), signal },
+  );
+}
+
+// ── Posters ───────────────────────────────────────────────────────────────
+//
+// Shop-scoped AI poster gallery. The worker generates the image via
+// OpenRouter, persists it to R2, and surfaces a streaming URL — but the
+// streaming URL is session-token gated, so the frontend can't drop it
+// straight into `<img src>`. fetchAuthImageBlob() handles that.
+
+export interface ShopifyPoster {
+  id: string;
+  prompt: string;
+  aspectRatio: '1:1' | '9:16' | '16:9';
+  imageUrl: string;       // worker-relative path (needs auth via header)
+  createdAt: string;
+}
+
+export async function listPosters(signal?: AbortSignal) {
+  return apiFetch<{ items: ShopifyPoster[] }>('/api/shopify/posters', { signal });
+}
+
+export async function generatePoster(
+  input: { prompt: string; aspectRatio?: '1:1' | '9:16' | '16:9' },
+  signal?: AbortSignal,
+) {
+  return apiFetch<ShopifyPoster>(
+    '/api/shopify/posters',
+    { method: 'POST', body: JSON.stringify(input), signal },
+  );
+}
+
+export async function deletePoster(id: string, signal?: AbortSignal) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/shopify/posters/${encodeURIComponent(id)}`,
+    { method: 'DELETE', signal },
+  );
+}
+
+/** Fetch a session-token-gated image as a Blob so the UI can wrap it in
+ *  a URL.createObjectURL() for use in `<img src>`. The Authorization
+ *  header that apiFetch() injects is necessary; an unauthenticated
+ *  `<img>` request would 401. */
+export async function fetchAuthImageBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  if (!window.shopify) {
+    throw new ApiError(0, 'App Bridge not loaded');
+  }
+  const token = await window.shopify.idToken();
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    signal,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new ApiError(res.status, text || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
