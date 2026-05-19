@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { CLIENT } from '../client.config';
 import { BusinessProfile, SocialTokens, DEFAULT_SOCIAL_TOKENS } from '../types';
 import { AppLogo } from './AppLogo';
-import { FacebookConnectButton } from './FacebookConnectButton';
+import { PostproxyConnectButton } from './PostproxyConnectButton';
 import { useDb } from '../hooks/useDb';
 import type { MagicOnboardingResponse } from '../services/db';
 import {
@@ -372,26 +372,32 @@ export const OnboardingWizard: React.FC<Props> = ({
                   Connect your Facebook Page to enable one-click publishing. Instagram will be linked automatically if connected to your page.
                 </p>
               </div>
-              <FacebookConnectButton
-                connectedPageId={socialTokens.facebookPageId}
-                connectedPageName={profile.name}
-                onConnected={async (pageId, pageAccessToken, pageName) => {
-                  const updated = { ...socialTokens, facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true, connectedAt: new Date().toISOString(), facebookPageName: pageName };
+              <PostproxyConnectButton
+                connectedPlacementId={socialTokens.postproxyPlacementId}
+                connectedPageName={socialTokens.facebookPageName || profile.name}
+                onConnected={async (placement) => {
+                  // Persist the new Postproxy placement onto socialTokens.
+                  // facebookConnected flag stays in sync so downstream UI
+                  // gates (platform pickers, dashboard CTAs) light up.
+                  const updated = {
+                    ...socialTokens,
+                    postproxyPlacementId: placement.id,
+                    postproxyConnectedAt: new Date().toISOString(),
+                    postproxyProfileStatus: 'active' as const,
+                    facebookPageName: placement.name,
+                    facebookConnected: true,
+                  };
                   if (onSaveSocialTokens) onSaveSocialTokens(updated);
-                  else onUpdateProfile({ facebookPageId: pageId, facebookPageAccessToken: pageAccessToken, facebookConnected: true });
+                  else onUpdateProfile({ facebookConnected: true });
 
                   // ── 90-second Magic Onboarding (2026-05 Tier 3) ──
-                  // Replaces the old "grab last 5 posts + append to
-                  // description" flow. The new endpoint does the FULL
-                  // server-side scrape (about + 30 posts + 30 photos),
-                  // classifies the business archetype via Haiku 4.5, and
-                  // returns a Brand DNA Card. Persists archetype on the
-                  // user row so subsequent generations route through
-                  // archetype-aware guardrails immediately.
+                  // Same scrape-and-classify flow as the legacy path. The
+                  // worker reads its own postproxy_profiles row to pick
+                  // up the right page tokens; no facebookPageAccessToken
+                  // needs to be threaded through the client anymore.
                   setIsLearningVoice(true);
                   setVoiceLearnError(null);
                   setBrandDna(null);
-                  // Save tokens FIRST so the worker can scrape with them
                   await onSave().catch(() => {});
                   try {
                     const result = await db.magicOnboarding();
@@ -405,7 +411,7 @@ export const OnboardingWizard: React.FC<Props> = ({
                 onDisconnect={() => {
                   const cleared = { ...DEFAULT_SOCIAL_TOKENS };
                   if (onSaveSocialTokens) onSaveSocialTokens(cleared);
-                  else onUpdateProfile({ facebookPageId: '', facebookPageAccessToken: '', facebookConnected: false });
+                  else onUpdateProfile({ facebookConnected: false });
                   setBrandDna(null);
                   setVoiceLearnError(null);
                 }}

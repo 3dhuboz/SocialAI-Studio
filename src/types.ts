@@ -37,7 +37,18 @@ export interface SocialPost {
   imageCritiqueAt?: string;           // ISO timestamp
 }
 
-/** Social platform tokens — stored in dedicated D1 column, never cached in localStorage */
+/**
+ * Social platform tokens — stored in dedicated D1 column, never cached in localStorage.
+ *
+ * Postproxy migration (schema_v22): the postproxy* fields below are added
+ * to support the cutover off direct Facebook Graph publishing onto
+ * Postproxy's hosted layer. They live alongside the legacy facebook*
+ * fields so the worker can read either path during the dual-path
+ * migration window. The legacy fields are NOT deprecated yet — they
+ * remain authoritative for any workspace whose `users.use_postproxy` is
+ * still 0. A future cleanup PR drops both the legacy fields here and the
+ * corresponding columns in schema_v23 once every workspace is on Postproxy.
+ */
 export interface SocialTokens {
   facebookPageId: string;
   facebookPageAccessToken: string;
@@ -50,6 +61,21 @@ export interface SocialTokens {
   connectedAt?: string;
   /** Name of the connected page, for display only */
   facebookPageName?: string;
+  // ── Postproxy mapping (schema_v22) ───────────────────────────────────
+  // Populated as the OAuth + placement-picker flow progresses. All
+  // optional during the dual-path migration window — a workspace may
+  // have legacy facebook* fields set with no postproxy* fields (yet)
+  // while it's still on the Graph publish path.
+  /** Postproxy's internal profile ID — set after the hosted OAuth callback completes. */
+  postproxyProfileId?: string;
+  /** FB page numeric ID chosen by the user in the placement picker (= Postproxy placement.id). */
+  postproxyPlacementId?: string;
+  /** Postproxy profile_group ID — one per (user, client) workspace tuple. */
+  postproxyGroupId?: string;
+  /** Lifecycle state of the Postproxy profile. */
+  postproxyProfileStatus?: 'pending' | 'active' | 'expired' | 'revoked';
+  /** ISO timestamp when the Postproxy profile became active. */
+  postproxyConnectedAt?: string;
 }
 
 export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
@@ -61,6 +87,11 @@ export const DEFAULT_SOCIAL_TOKENS: SocialTokens = {
   longLivedUserToken: undefined,
   connectedAt: undefined,
   facebookPageName: undefined,
+  postproxyProfileId: undefined,
+  postproxyPlacementId: undefined,
+  postproxyGroupId: undefined,
+  postproxyProfileStatus: undefined,
+  postproxyConnectedAt: undefined,
 };
 
 export interface BusinessProfile {

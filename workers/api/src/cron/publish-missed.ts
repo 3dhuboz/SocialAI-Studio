@@ -21,7 +21,14 @@ import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
-import { ACTIVE_CLIENT_FILTER, loadSocialTokensForPosts, lookupSocialTokens } from './_shared';
+import {
+  ACTIVE_CLIENT_FILTER,
+  loadSocialTokensForPosts,
+  lookupSocialTokens,
+  loadPostproxyMappingForPosts,
+  lookupPostproxyMapping,
+} from './_shared';
+import { createPost as postproxyCreatePost } from '../lib/postproxy';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
@@ -221,11 +228,21 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // Round-robin by user_id would prevent one workspace from monopolising a
   // tick's 20-slot budget, but FIFO is the simpler correct default — if we
   // see one workspace starve others we can revisit with a window function.
+  // Postproxy cutover join (schema_v22). LEFT JOIN both users + clients so
+  // we can read use_postproxy off whichever workspace owns the post — the
+  // flag lives on clients for agency-managed posts and on users for
+  // own-workspace posts. COALESCE picks whichever one is set; missing
+  // (legacy, pre-v22) → 0 = legacy Graph path.
   const rows = await env.DB.prepare(
-    `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id,
-            post_type, video_url, video_status, audio_mixed_url
-     FROM posts WHERE status = 'Publishing' AND claim_id = ?
-     ORDER BY scheduled_for ASC
+    `SELECT p.id, p.content, p.hashtags, p.image_url, p.image_prompt, p.platform,
+            p.user_id, p.client_id, p.post_type, p.video_url, p.video_status,
+            p.audio_mixed_url,
+            COALESCE(c.use_postproxy, u.use_postproxy, 0) AS use_postproxy
+     FROM posts p
+     LEFT JOIN users   u ON u.id = p.user_id
+     LEFT JOIN clients c ON c.id = p.client_id
+     WHERE p.status = 'Publishing' AND p.claim_id = ?
+     ORDER BY p.scheduled_for ASC
      LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
@@ -238,6 +255,20 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // workspaces' tokens (most batches are dominated by a single owner's posts).
   // See cron/_shared.ts:loadSocialTokensForPosts for the IN-list query shape.
   const tokensMap = await loadSocialTokensForPosts(env, posts as { user_id?: string | null; client_id?: string | null }[]);
+
+  // Same batch loader for the Postproxy mapping table — populated only
+  // for workspaces that have completed the Postproxy connect flow. Posts
+  // with use_postproxy=1 read from here; legacy posts ignore the map.
+  const postproxyMap = await loadPostproxyMappingForPosts(
+    env,
+    posts as { user_id?: string | null; client_id?: string | null }[],
+  );
+
+  // Global kill switch — env override forces every post back onto the
+  // legacy Graph path regardless of the per-workspace flag. Used for
+  // emergency rollback mid-cutover. ENABLE_POSTPROXY=false is the kill
+  // signal; any other value (or unset) means Postproxy stays enabled.
+  const postproxyDisabled = env.ENABLE_POSTPROXY === 'false';
 
   // Cap on JIT image generations per cron run. fal.ai can be slow (~10-15s per
   // image on cold start) and the worker has a wall-time budget, so we don't let
@@ -304,6 +335,96 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         await notifyOwnerOnFailure(env, post as any, reason, 'post');
         continue;
       }
+
+      // ── Postproxy cutover branch (schema_v22) ───────────────────────────
+      // Per-workspace flag use_postproxy=1 routes this post through the new
+      // hosted-publishing layer instead of the legacy Graph multipart path.
+      // Global kill switch (ENABLE_POSTPROXY='false') forces every post back
+      // to legacy regardless of the per-workspace flag — used for emergency
+      // rollback.
+      //
+      // The Postproxy path is intentionally a complete short-circuit: it
+      // never touches the legacy `tokens` lookup, the JIT image gen, the
+      // FB reel kick-poll, or the multipart upload code paths below. Status
+      // transitions arrive via the webhook (routes/postproxy.ts).
+      const usePostproxy = !postproxyDisabled && Number((post as any).use_postproxy) === 1;
+      if (usePostproxy) {
+        const mapping = lookupPostproxyMapping(postproxyMap, post as { user_id?: string | null; client_id?: string | null });
+        if (!mapping?.postproxy_profile_id || !mapping?.postproxy_placement_id) {
+          const reason = 'Postproxy not connected for this workspace — reconnect Facebook via Postproxy in Settings to fix.';
+          console.warn(`[CRON] No Postproxy mapping for post ${(post as any).id} — marking missed`);
+          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind('Missed', reason, (post as any).id).run();
+          await notifyOwnerOnFailure(env, post as any, reason, 'post');
+          continue;
+        }
+
+        // Build the Postproxy payload from the post row. Same hashtag-strip
+        // idiom as the legacy path so captions stay byte-identical between
+        // the two code paths during the dual-window.
+        const hashtagsPp = (post as any).hashtags ? JSON.parse((post as any).hashtags as string) : [];
+        const contentTextPp = (post as any).content as string;
+        const cleanContentPp = contentTextPp.replace(/(\s+#\w+)+\s*$/, '').trim();
+        const fullTextPp = hashtagsPp.length > 0
+          ? `${cleanContentPp}\n\n${hashtagsPp.join(' ')}`
+          : cleanContentPp;
+
+        // Pick the first non-null media URL. Audio-mixed > raw video > image
+        // matches the legacy path's preference order, just routed through
+        // Postproxy's `media` array instead of Graph's multipart body.
+        const mediaUrl = ((post as any).audio_mixed_url
+          ?? (post as any).video_url
+          ?? (post as any).image_url) as string | null;
+
+        const postTypePp = (post as any).post_type as string | null;
+        const isReel = postTypePp === 'video';
+        // Reels need media — without it Postproxy returns a 400 we can't
+        // recover from. Fall through to "Missed" rather than retry forever.
+        if (isReel && !mediaUrl) {
+          const reason = 'Reel post has no video URL — open Calendar to regenerate or convert to image post.';
+          console.warn(`[CRON] Reel ${(post as any).id} missing video — marking missed`);
+          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind('Missed', reason, (post as any).id).run();
+          await notifyOwnerOnFailure(env, post as any, reason, 'post');
+          continue;
+        }
+
+        try {
+          const result = await postproxyCreatePost(env, {
+            profileId: mapping.postproxy_profile_id,
+            body: fullTextPp,
+            media: mediaUrl ? [mediaUrl] : [],
+            format: isReel ? 'reel' : 'feed',
+            pageId: mapping.postproxy_placement_id,
+            title: isReel ? cleanContentPp.slice(0, 60) : undefined,
+          });
+          // Stay in Publishing — Postproxy will arrive with a webhook to
+          // flip to Posted/Missed. Clear claim_id so a zombie-Publishing
+          // sweep doesn't re-claim before the webhook arrives.
+          const nowIso = new Date().toISOString();
+          await env.DB.prepare(
+            `UPDATE posts
+             SET postproxy_post_id = ?, postproxy_sent_at = ?,
+                 postproxy_status = 'pending', status = 'Publishing',
+                 claim_id = NULL
+             WHERE id = ?`
+          ).bind(result.id, nowIso, (post as any).id).run();
+          console.log(`[CRON] Postproxy publish initiated for ${(post as any).id} -> postproxy_id=${result.id}`);
+        } catch (err: any) {
+          const reason = friendlyPublishReason(err?.message || String(err));
+          console.error(`[CRON] Postproxy publish failed for ${(post as any).id}:`, err?.message);
+          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind('Missed', reason, (post as any).id).run();
+          await notifyOwnerOnFailure(env, post as any, reason, 'post');
+        }
+        continue;
+      }
+
+      // ── Legacy Graph path (use_postproxy=0) ─────────────────────────────
+      // Everything below this line is the original code path — left
+      // BYTE-IDENTICAL to pre-v22 behaviour so workspaces that haven't
+      // reconnected still publish exactly as they did before the cutover.
+      // schema_v23 will delete this block once every workspace has migrated.
 
       // Social tokens come from the batch-loaded map (see preload above) —
       // collapses what used to be a per-post DB round-trip into a single

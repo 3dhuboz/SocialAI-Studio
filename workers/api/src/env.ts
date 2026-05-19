@@ -89,4 +89,31 @@ export type Env = {
   // observability helpers can no-op outside prod (see lib/ai-usage.ts).
   // This is a `[vars]` value in wrangler.toml, not a binding.
   ENVIRONMENT?: string;
+
+  // ── Postproxy integration (schema_v22, 2026-05) ─────────────────────────
+  // Hosted publishing layer replacing direct FB Graph publishing. See
+  // docs/POSTPROXY_INTEGRATION_PLAN.md + workers/api/src/lib/postproxy.ts.
+  //
+  // POSTPROXY_API_KEY — Bearer-prefixed onto every Postproxy request. Set
+  //   with `wrangler secret put POSTPROXY_API_KEY` (this is required for the
+  //   integration to function at all — non-secret env vars below override
+  //   defaults safely).
+  POSTPROXY_API_KEY: string;
+  // POSTPROXY_BASE_URL — defaults to https://api.postproxy.dev/api when
+  //   unset. Override only for staging / local-mock environments.
+  POSTPROXY_BASE_URL?: string;
+  // POSTPROXY_WEBHOOK_SECRET — shared HMAC-SHA256 secret used to verify
+  //   inbound webhooks. Preferred over the query-string fallback. Set with
+  //   `wrangler secret put POSTPROXY_WEBHOOK_SECRET`.
+  POSTPROXY_WEBHOOK_SECRET?: string;
+  // POSTPROXY_WEBHOOK_QUERY_SECRET — fallback shared secret carried in a
+  //   `?secret=<value>` query string for environments where Postproxy can't
+  //   sign webhook bodies. Either this OR HMAC verification must succeed.
+  POSTPROXY_WEBHOOK_QUERY_SECRET?: string;
+  // ENABLE_POSTPROXY — global kill switch. When set literally to the string
+  //   'false', the publish cron forces every workspace back onto the legacy
+  //   Graph path regardless of users.use_postproxy. Used for emergency
+  //   rollback mid-cutover. Defaults to enabled (any other value treated as
+  //   on, including unset).
+  ENABLE_POSTPROXY?: string;
 };

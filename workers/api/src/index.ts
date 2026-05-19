@@ -36,6 +36,7 @@ import { registerPostQualityRoutes } from './routes/post-quality';
 import { registerPostersRoutes } from './routes/posters';
 import { registerProxyRoutes } from './routes/proxies';
 import { registerPennybuildRoutes } from './routes/pennybuilder';
+import { registerPostproxyRoutes } from './routes/postproxy';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -98,6 +99,7 @@ registerPostQualityRoutes(app);
 registerPostersRoutes(app);
 registerProxyRoutes(app);
 registerPennybuildRoutes(app);
+registerPostproxyRoutes(app);
 
 // ── Global error handler ──────────────────────────────────────────────────
 // Without this, a thrown error in any handler falls through to Hono's
