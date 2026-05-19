@@ -144,6 +144,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `shopify-compose.ts` | Embedded-app: `POST /api/shopify/compose` — Claude Haiku caption + brand-grounded image for a Shopify product |
 | `shopify-posts.ts` | Embedded-app: shop-scoped post CRUD + publish-now (owner_kind='shop' rows). All endpoints session-token gated. |
 | `shopify-social-connect.ts` | Embedded-app: FB/IG connect for Shopify merchants — exchange token, connect, disconnect, status. Writes shopify_stores.social_tokens. |
+| `shopify-insights.ts` | Embedded-app: `GET /api/shopify/insights` — FB Page stats (followers, reach/interactions, engagement rate) + D1 post queue summary. Mirrors main-app's `getLivePageStats` logic in the worker. |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |

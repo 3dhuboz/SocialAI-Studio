@@ -321,3 +321,52 @@ export async function connectSocial(
     { method: 'POST', body: JSON.stringify(body), signal },
   );
 }
+
+// ── Insights ──────────────────────────────────────────────────────────────
+//
+// Returns a combined snapshot for the Insights tab:
+//   * connection      — connected/page name/IG flag (so the page can render
+//                       a "Connect Facebook" CTA when not yet wired up)
+//   * liveStats       — pulled from FB Graph by the worker (null when not
+//                       connected). Source = 'insights' when read_insights
+//                       was available, 'posts' when we fell back to post
+//                       interactions (the publish scopes we already have
+//                       are enough for the fallback path).
+//   * posts           — D1-derived counts of the shop's drafts/scheduled/
+//                       posted/missed posts + platform split
+//   * fetchedAt       — server timestamp for "last updated" display
+
+export interface ShopifyInsightsResponse {
+  connection: {
+    connected: boolean;
+    pageName: string | null;
+    instagramConnected: boolean;
+  };
+  liveStats: {
+    fanCount: number;
+    followersCount: number;
+    reach28d: number;
+    engagedUsers28d: number;
+    interactions28d: number;
+    engagementRate: number;
+    source: 'insights' | 'posts';
+  } | null;
+  posts: {
+    total: number;
+    drafts: number;
+    scheduled: number;
+    posted: number;
+    missed: number;
+    thisWeek: number;
+    byPlatform: {
+      facebook: number;
+      instagram: number;
+      both: number;
+    };
+  };
+  fetchedAt: string;
+}
+
+export async function getInsights(signal?: AbortSignal) {
+  return apiFetch<ShopifyInsightsResponse>('/api/shopify/insights', { signal });
+}

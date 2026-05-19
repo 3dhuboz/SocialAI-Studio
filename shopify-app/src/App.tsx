@@ -10,6 +10,7 @@ import { Home } from './pages/Home';
 const Products = lazy(() => import('./pages/Products'));
 const Compose = lazy(() => import('./pages/Compose'));
 const Calendar = lazy(() => import('./pages/Calendar'));
+const Insights = lazy(() => import('./pages/Insights'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 // Top-level shell. Polaris <Page> gives us the standard embedded-app frame
@@ -49,6 +50,7 @@ export function App() {
         <a href="/products">Products</a>
         <a href="/compose">Compose</a>
         <a href="/calendar">Calendar</a>
+        <a href="/insights">Insights</a>
         <a href="/settings">Settings</a>
       </ui-nav-menu>
       <Page title="SocialAI Studio">
@@ -58,6 +60,7 @@ export function App() {
             <Route path="/products" element={<Products />} />
             <Route path="/compose" element={<Compose />} />
             <Route path="/calendar" element={<Calendar />} />
+            <Route path="/insights" element={<Insights />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </Suspense>

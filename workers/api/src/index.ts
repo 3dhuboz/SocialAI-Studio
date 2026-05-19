@@ -41,6 +41,7 @@ import { registerShopifyProductsRoutes } from './routes/shopify-products';
 import { registerShopifyComposeRoutes } from './routes/shopify-compose';
 import { registerShopifyPostsRoutes } from './routes/shopify-posts';
 import { registerShopifySocialConnectRoutes } from './routes/shopify-social-connect';
+import { registerShopifyInsightsRoutes } from './routes/shopify-insights';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -135,6 +136,7 @@ registerShopifyProductsRoutes(app);
 registerShopifyComposeRoutes(app);
 registerShopifyPostsRoutes(app);
 registerShopifySocialConnectRoutes(app);
+registerShopifyInsightsRoutes(app);
 
 export default {
   fetch: app.fetch,
