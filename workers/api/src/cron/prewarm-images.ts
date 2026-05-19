@@ -67,7 +67,8 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
   const prompt = rawPrompt ? rawPrompt.split('|claim:')[0].trim() : '';
   if (!prompt || prompt.length < 5) return false;
   try {
-    const safe = buildSafeImagePrompt(prompt);
+    const caption = post.content || '';
+    const safe = buildSafeImagePrompt(prompt, caption);
     if (!safe) {
       console.warn(`[CRON prewarm] skipped post ${post.id}: prompt too short or invalid`);
       return false;
@@ -76,7 +77,6 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
     const userId = post.user_id;
     const clientId = post.client_id;
     const postId = post.id;
-    const caption = post.content || '';
 
     // Pass caption so the in-helper guardrail fires even when archetype_slug
     // is NULL. archetypeSlug is returned from gen so the critique block

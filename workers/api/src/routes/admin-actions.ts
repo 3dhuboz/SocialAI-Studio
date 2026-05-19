@@ -190,7 +190,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
 
     for (const post of posts) {
       try {
-        const safe = buildSafeImagePrompt(post.image_prompt);
+        const safe = buildSafeImagePrompt(post.image_prompt, post.content);
         if (!safe) { failed++; continue; }
 
         // Force fallback — these posts already scored badly, so trust the

@@ -494,8 +494,9 @@ import {
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
   needsSafeFallback,
+  rewriteAbstractUIAsPhotography,
 } from '../../shared/flux-prompts';
-export { isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX };
+export { isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX, rewriteAbstractUIAsPhotography };
 
 // SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS
 // live in shared/archetype-scenes.ts so the frontend image-prompt swap path
@@ -585,6 +586,24 @@ const PEOPLE_REGEX_VIDEO = /\b(woman|women|man|men|person|people|portrait|face|f
 export function buildSafeImagePromptClient(rawPrompt: string, businessType: string = 'small business'): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
   const needsFallback = needsSafeFallback(prompt);
+
+  // 2026-05-19: when the prompt is a UI/dashboard/screenshot, prefer the
+  // rewriteAbstractUIAsPhotography helper BEFORE the fail-closed path.
+  // Without this, SaaS posts that LITERALLY are about a dashboard get nuked
+  // when businessType happens to be "small business" — the rewrite keeps
+  // the post intent ("show a dashboard") and renders it as a real photo
+  // of a phone-on-marble-desk, which is what FLUX actually does well.
+  // Worker-side counterpart in workers/api/src/lib/image-safety.ts.
+  if (needsFallback && isAbstractUIPrompt(prompt)) {
+    const rewritten = rewriteAbstractUIAsPhotography(prompt);
+    if (rewritten) {
+      const cleanRewritten = rewritten.replace(PEOPLE_REGEX, '').replace(/\s+/g, ' ').trim();
+      return {
+        prompt: `${cleanRewritten || rewritten}, ${FLUX_STYLE_SUFFIX}`,
+        negativePrompt: FLUX_NEGATIVE_PROMPT,
+      };
+    }
+  }
 
   // Fail-closed if we'd be picking a random scene against a generic business
   // type. This is the audit fix that stops "pizza on a tech post" — the old

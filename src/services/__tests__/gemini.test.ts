@@ -72,14 +72,24 @@ describe('buildSafeImagePromptClient', () => {
     expect(buildSafeImagePromptClient('', 'small business')).toBeNull();
   });
 
-  it('fails closed for abstract-UI prompt + generic businessType', () => {
-    expect(buildSafeImagePromptClient('dashboard with pricing tiers', 'small business')).toBeNull();
+  it('rewrites abstract-UI prompt as photographable scene (was fail-closed pre-2026-05-19)', () => {
+    // BEHAVIOR CHANGE (2026-05-19): "dashboard with pricing tiers" used to
+    // return null when businessType was generic (no scene bank to pick from
+    // safely). Now rewriteAbstractUIAsPhotography keeps the topic intent
+    // ("show a pricing dashboard") and renders it as a real phone-on-desk
+    // photo — better than failing closed because SaaS posts legitimately
+    // ARE about dashboards.
+    const r = buildSafeImagePromptClient('dashboard with pricing tiers', 'small business');
+    expect(r).not.toBeNull();
+    expect(r!.prompt).not.toMatch(/^dashboard with pricing tiers/);
+    // Rewrite anchors to physical desk/phone context so FLUX renders a photo
+    expect(r!.prompt.toLowerCase()).toMatch(/smartphone|phone|desk|marble/);
   });
 
   it('falls back to industry scene for abstract-UI + specific businessType', () => {
     const r = buildSafeImagePromptClient('dashboard with pricing tiers', 'bakery & café');
     expect(r).not.toBeNull();
-    expect(r!.prompt).not.toMatch(/dashboard/);
+    expect(r!.prompt).not.toMatch(/^dashboard with pricing tiers/);
   });
 
   it('does NOT inline negatives in the positive prompt', () => {

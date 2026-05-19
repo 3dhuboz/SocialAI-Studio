@@ -79,3 +79,98 @@ export function isAbstractUIPrompt(prompt: string): boolean {
   if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
   return false;
 }
+
+// ── Abstract-UI → photographable scene rewrite ───────────────────────────
+//
+// Background: SaaS posts that LITERALLY are about a dashboard / screenshot
+// were previously detected by isAbstractUIPrompt() and nuked — replaced
+// wholesale by a generic SAFE_FALLBACK_SCENES entry that has nothing to do
+// with the post topic. The result was 3 recent posts where the caption was
+// specific (multi-client agency dashboard / AI captions / behind-the-scenes
+// app dev) but the image was a closed laptop on a white desk.
+//
+// Fix: instead of nuking, REWRITE the UI noun as a photographable scene
+// anchored to physical context. FLUX renders a real iPhone photo of a phone
+// screen instead of attempting (and failing) a vector UI mockup.
+//
+// Approach is deterministic string templates keyed off the UI noun. We
+// always anchor to a physical surface (marble desk, hand-held, overhead
+// daylight) so FLUX produces a photo, not a wireframe.
+//
+// Returns the rewritten prompt, or null if no rewrite applies (caller
+// falls back to the SAFE_FALLBACK_SCENES path). The `caption` arg is
+// reserved for future caption-aware rewrites; not used yet but kept on
+// the signature so callers don't need to refactor when we add it.
+export function rewriteAbstractUIAsPhotography(
+  prompt: string,
+  _caption?: string | null,
+): string | null {
+  if (!prompt) return null;
+  const lc = prompt.toLowerCase();
+
+  // Order matters: more specific patterns first. The first match wins so
+  // a "comparison dashboard screenshot" gets the comparison treatment
+  // rather than the generic dashboard rewrite.
+
+  // ── Multi-item comparison (two/three/four ... side-by-side) ──
+  if (/\b(comparison|side[\s-]by[\s-]side|two|three|four)\b/i.test(prompt)
+      && /\b(dashboard|screenshot|app|screen|interface|pricing|table|column|tier|plan)\b/i.test(prompt)) {
+    return 'two smartphones lying side-by-side on a marble desk, each displaying a colorful tile grid, soft overhead daylight, candid flatlay';
+  }
+
+  // ── Chart / graph / analytics / data visualisation ──
+  if (/\b(bar|pie|line)\s+(chart|graph)\b/i.test(prompt)
+      || /\b(chart|graph|analytics|data\s+vis|metric)\b/i.test(prompt)) {
+    return 'smartphone resting on a marble desk displaying a colorful bar graph with bright accent bars, overhead daylight, candid flatlay';
+  }
+
+  // ── Pricing / feature table ──
+  if (/\b(pricing|feature)\s+(table|tier|grid|plan|chart|page|column)/i.test(prompt)) {
+    return 'smartphone on a marble desk displaying a three-column pricing card layout with subtle pastel accents, overhead daylight, candid flatlay';
+  }
+
+  // ── Architecture / flow / workflow diagram ──
+  if (/\b(architecture|flow|workflow|org|system)\s+(diagram|map)\b/i.test(prompt)
+      || /\bdiagram\s+(of|showing|depicting)/i.test(prompt)) {
+    return 'open notebook on a wooden desk with a hand-drawn flow diagram in pen, ceramic mug beside it, overhead daylight';
+  }
+
+  // ── Infographic ──
+  if (/\binfographic\b/i.test(prompt)) {
+    return 'smartphone on a marble desk displaying a clean tile grid with colorful icons, overhead daylight, candid flatlay';
+  }
+
+  // ── Landing page / website screenshot ──
+  if (/\b(landing\s+page|website\s+screenshot|webpage)\b/i.test(prompt)) {
+    return 'laptop open on a wooden desk displaying a colorful website hero with a bold accent stripe, ceramic mug beside it, overhead daylight';
+  }
+
+  // ── App screen / mobile UI / interface ──
+  if (/\b(app\s+screen|mobile\s+app|interface|UI|UX|user\s+interface)\b/i.test(prompt)) {
+    return 'smartphone resting on a marble desk displaying a colorful app interface with bright tile cards, overhead daylight, candid flatlay';
+  }
+
+  // ── Dashboard (generic catchall) ──
+  if (/\bdashboard\b/i.test(lc)) {
+    return 'smartphone on a marble desk displaying a colorful tile grid with bright accent panels, overhead daylight, candid flatlay';
+  }
+
+  // ── Screenshot (generic catchall — used last so more specific patterns
+  //    above get a chance to fire first) ──
+  if (/\bscreenshot\b/i.test(prompt)) {
+    return 'smartphone resting on a marble desk displaying a colorful app screen with bright tile cards, overhead daylight, candid flatlay';
+  }
+
+  // ── Wireframe / mockup ──
+  if (/\b(wireframe|mockup)\b/i.test(prompt)) {
+    return 'open notebook on a wooden desk with hand-drawn UI sketches in pen, smartphone beside it, overhead daylight';
+  }
+
+  // ── 3D render / marketing graphic / logo design ──
+  if (/\b(3D\s+render|marketing\s+graphic|logo\s+design)\b/i.test(prompt)) {
+    return 'open notebook on a wooden desk with colorful brand swatches and a brass pen, overhead daylight';
+  }
+
+  // No rewrite applied — caller should fall back to SAFE_FALLBACK_SCENES.
+  return null;
+}
