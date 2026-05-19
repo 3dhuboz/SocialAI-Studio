@@ -57,12 +57,18 @@ function escapeHtml(s: string): string {
 // for this workspace at this run_at." Query the latest within 1h to throttle.
 async function notifyOwnerOnPublishFailure(
   env: Env,
-  post: { id: string; user_id?: string | null; client_id?: string | null },
+  post: { id: string; user_id?: string | null; client_id?: string | null; owner_kind?: string | null; owner_id?: string | null },
   reason: string,
 ): Promise<void> {
   if (!env.RESEND_API_KEY) return;
   try {
-    const wsKey = post.client_id ? `client:${post.client_id}` : `user:${post.user_id ?? 'unknown'}`;
+    // Workspace key for the throttle. Shop-owned posts (Phase 2 of the
+    // embedded Shopify app) key off the shop domain — they don't have a
+    // users.id / clients.id to attribute to.
+    const isShop = post.owner_kind === 'shop' && !!post.owner_id;
+    const wsKey = isShop
+      ? `shop:${post.owner_id}`
+      : (post.client_id ? `client:${post.client_id}` : `user:${post.user_id ?? 'unknown'}`);
     const cronType = `alert:fb_failure:${wsKey}`.slice(0, 80);
 
     // Throttle — skip if we sent for this workspace in the last hour
@@ -74,7 +80,15 @@ async function notifyOwnerOnPublishFailure(
     // Look up owner email + workspace name
     let email: string | null = null;
     let workspaceName = 'your workspace';
-    if (post.client_id) {
+    if (isShop) {
+      // Shopify shop — pull merchant email + shop name from shopify_stores.
+      // Falls back to the shop domain if shop_name is null.
+      const row = await env.DB.prepare(
+        `SELECT shop_email, shop_name FROM shopify_stores WHERE shop_domain = ?`,
+      ).bind(post.owner_id).first<{ shop_email: string | null; shop_name: string | null }>();
+      email = row?.shop_email ?? null;
+      workspaceName = row?.shop_name || (post.owner_id as string) || workspaceName;
+    } else if (post.client_id) {
       const row = await env.DB.prepare(
         `SELECT u.email as email, c.name as name FROM clients c JOIN users u ON u.id = c.user_id WHERE c.id = ?`,
       ).bind(post.client_id).first<{ email: string | null; name: string | null }>();
@@ -261,6 +275,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
 
   const rows = await env.DB.prepare(
     `SELECT id, content, hashtags, image_url, image_prompt, platform, user_id, client_id,
+            owner_kind, owner_id,
             post_type, video_url, video_status, audio_mixed_url
      FROM posts WHERE status = 'Publishing' AND claim_id = ? LIMIT 20`
   ).bind(claimId).all();
@@ -278,6 +293,17 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
 
   for (const post of posts) {
     try {
+      // Shop-owned posts (Phase 2 of the embedded Shopify app, schema_v22):
+      //   owner_kind='shop', owner_id=shop_domain, client_id=NULL,
+      //   user_id=shop_domain sentinel. Their FB/IG tokens live in
+      //   shopify_stores.social_tokens (JSON column) instead of
+      //   users.social_tokens / clients.social_tokens. Branch the
+      //   denylist + token-resolution paths so we don't accidentally
+      //   query the users/clients tables for a sentinel id.
+      const ownerKind = (post as any).owner_kind as string | null;
+      const ownerId = (post as any).owner_id as string | null;
+      const isShopPost = ownerKind === 'shop' && !!ownerId;
+
       // ── Owner-declared exclusion guard (defense layer 5) ────────────────
       // Final safety net before auto-publish. The gen prompts (layers 1+2)
       // and vision critique (layer 4) should already have caught any
@@ -290,30 +316,43 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // Pre-fix this only checked the user-level denylist, which is why
       // Seamus's brisket-only exclusion silently no-opped for a managed
       // client even after the system was nominally "configured" with one.
-      const denylist = await loadForbiddenSubjects(
-        env,
-        (post as any).user_id as string,
-        (post as any).client_id as string | null,
-      );
-      if (denylist.length > 0) {
-        const captionHit = scanForForbidden((post as any).content as string, denylist);
-        const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);
-        const hit = captionHit || promptHit;
-        if (hit) {
-          const where = captionHit ? 'caption' : 'image_prompt';
-          const reason = `Auto-publish blocked: post ${where} mentions "${hit}" which the business has flagged as a forbidden subject. Edit the post or update the denylist in Settings.`;
-          console.warn(`[CRON] Post ${(post as any).id} blocked by forbiddenSubjects guard: "${hit}" in ${where}`);
-          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
-            .bind('NeedsReview', reason, (post as any).id).run();
-          await notifyOwnerOnPublishFailure(env, post as any, reason);
-          continue;
+      //
+      // Shop-owned posts skip the denylist for Phase 2 — there is no UI for
+      // a Shopify merchant to declare forbidden subjects yet. Add a shop
+      // denylist surface in Settings (and a column on shopify_stores) before
+      // wiring this in.
+      if (!isShopPost) {
+        const denylist = await loadForbiddenSubjects(
+          env,
+          (post as any).user_id as string,
+          (post as any).client_id as string | null,
+        );
+        if (denylist.length > 0) {
+          const captionHit = scanForForbidden((post as any).content as string, denylist);
+          const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);
+          const hit = captionHit || promptHit;
+          if (hit) {
+            const where = captionHit ? 'caption' : 'image_prompt';
+            const reason = `Auto-publish blocked: post ${where} mentions "${hit}" which the business has flagged as a forbidden subject. Edit the post or update the denylist in Settings.`;
+            console.warn(`[CRON] Post ${(post as any).id} blocked by forbiddenSubjects guard: "${hit}" in ${where}`);
+            await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+              .bind('NeedsReview', reason, (post as any).id).run();
+            await notifyOwnerOnPublishFailure(env, post as any, reason);
+            continue;
+          }
         }
       }
 
-      // Get social tokens for this workspace
-      const tokensRaw = (post as any).client_id
-        ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind((post as any).client_id).first<{ social_tokens: string | null }>()
-        : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind((post as any).user_id).first<{ social_tokens: string | null }>();
+      // Get social tokens for this workspace. Shopify shop posts pull from
+      // shopify_stores.social_tokens (JSON, schema_v22); everyone else uses
+      // the legacy users/clients social_tokens columns. Same JSON shape in
+      // all three places ({facebookPageId, facebookPageAccessToken, ...}),
+      // so the downstream publish code doesn't care which table we read from.
+      const tokensRaw = isShopPost
+        ? await env.DB.prepare('SELECT social_tokens FROM shopify_stores WHERE shop_domain = ? AND uninstalled_at IS NULL').bind(ownerId).first<{ social_tokens: string | null }>()
+        : ((post as any).client_id
+          ? await env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ?').bind((post as any).client_id).first<{ social_tokens: string | null }>()
+          : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind((post as any).user_id).first<{ social_tokens: string | null }>());
       const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
       if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
         const reason = 'No Facebook page connected — go to Settings → Connect Facebook to fix.';

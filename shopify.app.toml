@@ -1,0 +1,96 @@
+# Shopify app manifest — read by Shopify CLI (`shopify app deploy`).
+#
+# Phase 1 of the App Store path. Edit `client_id` after creating the app in
+# Partners dashboard; the CLI will sync this file with Partners on each
+# `shopify app deploy`.
+#
+# Required reading: https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration
+
+# Set this to your Shopify app's Client ID (Partners → Apps → API credentials).
+client_id = "f191b1dcbd73ce52f9c4b0d27591545e"
+
+name = "SocialAI Studio"
+handle = "socialai-studio"
+# Must match SHOPIFY_APP_URL in workers/api/wrangler.toml exactly. On
+# pages.dev for now; flip both files in lockstep when the custom domain
+# (shopify.socialaistudio.au) is wired up.
+application_url = "https://socialai-shopify.pages.dev"
+embedded = true
+
+[build]
+# Shopify CLI uses this to keep Partners in sync with the local toml on deploy.
+include_config_on_deploy = true
+# Phase 1: no automatic preinstall script; merchants land in the embedded app
+# immediately after consent.
+automatically_update_urls_on_dev = true
+
+[access_scopes]
+# Phase 1: read-only product access powers the "compose a post from a product"
+# flow that lands in Phase 2. We deliberately do NOT request `write_products`
+# yet — App Store reviewers ask why each scope is needed and the answer for a
+# social-marketing app must be "I read product info to write captions about it".
+scopes = "read_products"
+
+[auth]
+# Worker callback for legacy OAuth code-grant flow. Token Exchange (the
+# current install path via Managed Install) does not use redirect URLs —
+# this entry is retained as a fallback only. The Pages-domain callback
+# has been removed (no such route exists on the embedded-app project).
+redirect_urls = [
+  "https://socialai-api.steve-700.workers.dev/api/shopify/auth/callback"
+]
+
+[webhooks]
+api_version = "2025-01"
+
+# ── Mandatory app/uninstall webhook ──────────────────────────────────────
+# When a merchant uninstalls, we mark shopify_stores.uninstalled_at. The
+# data deletion follows ~48h later via shop/redact below.
+[[webhooks.subscriptions]]
+topics = [ "app/uninstalled" ]
+uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app/uninstalled"
+
+# ── Mandatory GDPR compliance webhooks ────────────────────────────────────
+# App Store reviewers test these by installing on a test shop and triggering
+# the lifecycle events. They MUST be implemented even if you don't store
+# customer data (Phase 1 doesn't) — Shopify just needs proof you respond.
+[[webhooks.subscriptions]]
+topics = [ "customers/data_request" ]
+uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/customers/data_request"
+compliance_topics = [ "customers/data_request" ]
+
+[[webhooks.subscriptions]]
+topics = [ "customers/redact" ]
+uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/customers/redact"
+compliance_topics = [ "customers/redact" ]
+
+[[webhooks.subscriptions]]
+topics = [ "shop/redact" ]
+uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/shop/redact"
+compliance_topics = [ "shop/redact" ]
+
+# Billing API (schema_v18) — fired on every subscription state transition
+# (PENDING → ACTIVE on approval, ACTIVE → CANCELLED on uninstall, FROZEN on
+# payment failure, etc.). The handler reconciles shopify_stores and writes
+# an audit row in shopify_billing_events.
+[[webhooks.subscriptions]]
+topics = [ "app_subscriptions/update" ]
+uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app_subscriptions/update"
+
+# Fires when the merchant approves a scope change (e.g. moving from
+# read_products to read_products,read_orders). The handler must persist
+# the new granted scope set against shopify_stores. TODO: implement the
+# webhook handler — out of scope for this config-hygiene pass.
+[[webhooks.subscriptions]]
+topics = [ "app/scopes_update" ]
+uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app/scopes_update"
+
+[pos]
+embedded = false
+
+[app_proxy]
+# Not used in Phase 1 — placeholder commented out so a copy-paste of this
+# file doesn't accidentally register a public storefront proxy.
+# url = "https://socialai-api.steve-700.workers.dev/api/shopify/proxy"
+# subpath = "social-ai"
+# prefix = "apps"

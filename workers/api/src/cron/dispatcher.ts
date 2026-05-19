@@ -24,6 +24,7 @@ import { cronRefreshFacts } from './refresh-facts';
 import { cronPublishMissedPosts } from './publish-missed';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
+import { reconcileSubscriptions } from './reconcile-subscriptions';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
@@ -77,6 +78,10 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
       const r = await runBacklogRegen(env);
       return { posts_processed: r.regenerated };
     });
+    return;
+  }
+  if (cron === '*/15 * * * *') {
+    await trackCron(env, 'reconcile_subscriptions', () => reconcileSubscriptions(env));
     return;
   }
   if (cron === '0 3 * * *') {

@@ -405,6 +405,19 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<{ payments: PaymentEvent[] }>;
     },
 
+    // Shopify Stores — admin-only tenant view (schema_v17/v18). Each row is
+    // one Shopify merchant who's ever installed our app. `bucket` is a
+    // derived filter category (active/trial/pending/cancelled/uninstalled).
+    async getShopifyStores(): Promise<ShopifyStoresResponse> {
+      const res = await f('/api/admin/shopify-stores');
+      return res.json() as Promise<ShopifyStoresResponse>;
+    },
+
+    async getShopifyStore(domain: string): Promise<{ store: ShopifyStore; events: ShopifyBillingEvent[] }> {
+      const res = await f(`/api/admin/shopify-stores/${encodeURIComponent(domain)}`);
+      return res.json() as Promise<{ store: ShopifyStore; events: ShopifyBillingEvent[] }>;
+    },
+
     /** Per-user add-on overrides + credit balances (schema_v13). Admin-gated.
      *  GET returns the current state so the admin UI can render it before
      *  editing. PATCH supports both absolute SET and relative DELTA on credit
@@ -742,6 +755,57 @@ export interface PaymentEvent {
   paypal_subscription_id?: string | null;
   paypal_capture_id?: string | null;
   created_at: string;
+}
+
+export type ShopifyStoreBucket = 'active' | 'trial' | 'pending' | 'cancelled' | 'uninstalled' | 'none';
+
+export interface ShopifyStore {
+  shop_domain: string;
+  shop_name: string | null;
+  shop_email: string | null;
+  country_code: string | null;
+  currency: string | null;
+  plan_name: string | null;
+  scopes: string;
+  installed_at: string;
+  uninstalled_at: string | null;
+  subscription_id: string | null;
+  subscription_status: string | null;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  price_amount: string | null;
+  price_currency: string | null;
+  is_test: boolean;
+  bucket: ShopifyStoreBucket;
+}
+
+export interface ShopifyBillingEvent {
+  id: number;
+  event_type: string;
+  subscription_id: string | null;
+  status_from: string | null;
+  status_to: string | null;
+  payload: string | null;
+  created_at: string;
+}
+
+export interface ShopifyStoresResponse {
+  plan: {
+    name: string;
+    price: number;
+    currency: string;
+    trialDays: number;
+    interval: string;
+  };
+  counts: {
+    total: number;
+    active: number;
+    trial: number;
+    pending: number;
+    cancelled: number;
+    uninstalled: number;
+  };
+  stores: ShopifyStore[];
 }
 
 export interface BillingInfo {

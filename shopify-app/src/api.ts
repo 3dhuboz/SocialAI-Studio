@@ -1,0 +1,323 @@
+// Authenticated fetch helper for the embedded Shopify app.
+//
+// Every API call out of the embedded app must carry a session token in the
+// Authorization header so the worker can verify the request originated from
+// inside the Shopify admin iframe. App Bridge mints these tokens on demand
+// via `shopify.idToken()`; we wrap the fetch so individual components don't
+// have to know about it.
+//
+// API_BASE is the worker URL — pinned at build time via VITE_API_BASE_URL
+// so dev points at the staging worker without changing code.
+
+declare global {
+  interface Window {
+    shopify?: {
+      idToken: () => Promise<string>;
+      config: { apiKey: string; host: string; shop?: string; locale?: string };
+      // App Bridge v4 runtime exposes redirectTo for top-level navigation
+      // out of the admin iframe. Not yet declared on the official
+      // ShopifyGlobal type in @shopify/app-bridge-types 0.7, so we narrow
+      // it locally here.
+      redirectTo?: (url: string, opts?: { newContext?: 'top' | 'self' }) => void;
+    };
+  }
+}
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)
+  ?? 'https://socialai-api.steve-700.workers.dev';
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public body?: unknown) {
+    super(message);
+  }
+}
+
+export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  if (!window.shopify) {
+    throw new ApiError(0, 'App Bridge not loaded — is this page inside the Shopify admin?');
+  }
+
+  const token = await window.shopify.idToken();
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+
+  // AbortSignal is forwarded from `init` so callers can cancel in-flight
+  // requests on unmount. fetch() honours the signal natively — passing
+  // `undefined` is a no-op.
+  const res = await fetch(url, {
+    ...init,
+    signal: init?.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  // Try to parse JSON either way — the worker returns structured errors.
+  let parsed: unknown = null;
+  const text = await res.text();
+  if (text) {
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+  }
+
+  if (!res.ok) {
+    const msg = (parsed as any)?.error ?? `HTTP ${res.status}`;
+    throw new ApiError(res.status, msg, parsed);
+  }
+
+  return parsed as T;
+}
+
+// ── Domain endpoints ───────────────────────────────────────────────────
+
+export interface ShopInfo {
+  shop: string;
+  shop_name: string | null;
+  shop_email: string | null;
+  country_code: string | null;
+  currency: string | null;
+  plan_name: string | null;
+  scopes: string;
+  installed_at: string;
+  subscription_id: string | null;
+  subscription_status: string | null;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+}
+
+export interface SetupSubscriptionResult {
+  already: boolean;
+  subscription_id?: string;
+  subscription_status?: string;
+  confirmation_url?: string;
+  is_test?: boolean;
+}
+
+/** First call after embedded app mount. Exchanges the App Bridge session
+ *  token for an expiring offline access token + refreshes shop info in D1. */
+export async function tokenExchange(signal?: AbortSignal) {
+  return apiFetch<{ shop: string; shop_name: string | null; plan_name: string | null; scope: string }>(
+    '/api/shopify/token-exchange',
+    { method: 'POST', signal },
+  );
+}
+
+export async function fetchMe(signal?: AbortSignal) {
+  return apiFetch<ShopInfo>('/api/shopify/me', { signal });
+}
+
+export async function setupSubscription(signal?: AbortSignal) {
+  return apiFetch<SetupSubscriptionResult>(
+    '/api/shopify/setup-subscription',
+    { method: 'POST', signal },
+  );
+}
+
+// ── Product catalog + AI composer ──────────────────────────────────────
+//
+// These endpoints back the Products browse page and the AI Compose page.
+// Products are pulled once from the Shopify Admin GraphQL API on demand
+// (sync) and cached in D1; the merchant can refresh whenever they add new
+// SKUs upstream. The compose endpoint hands the picked product to the
+// SocialAI generation pipeline and returns a caption + product-aware
+// image for the merchant to edit before saving.
+
+export interface Product {
+  id: string;            // gid://shopify/Product/12345
+  title: string;
+  handle: string;
+  description: string;
+  product_type: string | null;
+  vendor: string | null;
+  tags: string | null;   // comma-separated
+  price: string | null;
+  currency: string | null;
+  image_url: string | null;
+  status: string | null;
+}
+
+export interface ProductsResponse {
+  products: Product[];
+  last_synced_at: string | null;
+}
+
+export interface ComposeResponse {
+  caption: string;
+  image_url: string;
+  model_used: string;
+  product: { id: string; title: string; price: string | null };
+}
+
+export async function listProducts(signal?: AbortSignal) {
+  return apiFetch<ProductsResponse>('/api/shopify/products', { signal });
+}
+
+export async function syncProducts(signal?: AbortSignal) {
+  return apiFetch<{ synced: number; total_pages: number }>(
+    '/api/shopify/products/sync',
+    { method: 'POST', signal },
+  );
+}
+
+export async function composePost(
+  input: { product_id: string; platform?: 'facebook' | 'instagram' | 'both'; tone?: string },
+  signal?: AbortSignal,
+) {
+  return apiFetch<ComposeResponse>(
+    '/api/shopify/compose',
+    { method: 'POST', body: JSON.stringify(input), signal },
+  );
+}
+
+export async function createPost(
+  input: { content: string; image_url?: string; platform: 'facebook' | 'instagram' | 'both'; product_id?: string },
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ id: string; status: string }>(
+    '/api/shopify/posts',
+    { method: 'POST', body: JSON.stringify(input), signal },
+  );
+}
+
+/** Top-level redirect out of the Shopify Admin iframe. Used to send the
+ *  merchant to the billing-approval URL on shopify.com.
+ *
+ *  App Bridge v4 documents `shopify.redirectTo(url, { newContext: 'top' })`
+ *  as the canonical way to break out of the admin iframe. Fall back to a
+ *  plain `window.top.location` assignment if the runtime hasn't exposed
+ *  redirectTo yet — only happens in stale CDN caches. */
+export function topLevelRedirect(url: string): void {
+  if (window.shopify?.redirectTo) {
+    window.shopify.redirectTo(url, { newContext: 'top' });
+    return;
+  }
+  // Fallback: replace the top-level location directly. This is allowed
+  // because shopify.com and the embedded app share the same allowlisted
+  // navigation surface.
+  if (window.top) {
+    window.top.location.href = url;
+  } else {
+    window.location.href = url;
+  }
+}
+
+// ── Posts (Calendar) ───────────────────────────────────────────────────
+//
+// The Calendar page lists every post the shop has ever created — drafts,
+// scheduled, posted, and missed. Status comes back as one of four discrete
+// states; scheduled_for is only meaningful for Scheduled/Posted. The patch
+// endpoint accepts the same union so the merchant can reschedule a post or
+// flip a draft into Scheduled inline. publish-now is the fast path: skip the
+// cron and trigger the FB/IG publish pipeline immediately.
+
+export interface Post {
+  id: string;
+  content: string;
+  image_url: string | null;
+  platform: 'facebook' | 'instagram' | 'both';
+  status: 'Draft' | 'Scheduled' | 'Posted' | 'Missed';
+  scheduled_for: string | null;
+  created_at: string;
+}
+
+export async function listPosts(params?: { status?: string }, signal?: AbortSignal) {
+  const qs = params?.status ? `?status=${encodeURIComponent(params.status)}` : '';
+  return apiFetch<{ posts: Post[] }>(`/api/shopify/posts${qs}`, { signal });
+}
+
+export async function updatePost(
+  id: string,
+  patch: Partial<Pick<Post, 'content' | 'image_url' | 'status' | 'scheduled_for'>>,
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/shopify/posts/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body: JSON.stringify(patch), signal },
+  );
+}
+
+export async function deletePost(id: string, signal?: AbortSignal) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/shopify/posts/${encodeURIComponent(id)}`,
+    { method: 'DELETE', signal },
+  );
+}
+
+export async function publishPostNow(id: string, signal?: AbortSignal) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/shopify/posts/${encodeURIComponent(id)}/publish-now`,
+    { method: 'POST', signal },
+  );
+}
+
+// ── Social connect (Settings) ──────────────────────────────────────────
+//
+// Settings page surfaces the Facebook/Instagram connection state for the
+// current shop. Connect happens via FB JS SDK on the client (TODO Phase 2)
+// and gets posted to the worker; disconnect revokes the stored token.
+
+export interface SocialStatus {
+  connected: boolean;
+  facebookPageName: string | null;
+  instagramConnected: boolean;
+  connectedAt: string | null;
+}
+
+// Returned by the worker's POST /api/shopify/social/facebook-exchange-token.
+// `pages` is the FB-Graph response flattened with instagramBusinessAccountId
+// surfaced (so the page-picker UI doesn't have to dig into nested shapes).
+export interface FacebookPageOption {
+  id: string;
+  name: string;
+  access_token: string;
+  category?: string;
+  picture?: { data: { url: string } };
+  instagramBusinessAccountId?: string | null;
+}
+
+export interface FacebookExchangeResult {
+  longLivedUserToken: string;
+  expiresInSeconds: number;
+  pages: FacebookPageOption[];
+  pageTokensNeverExpire: boolean;
+}
+
+export async function getSocialStatus(signal?: AbortSignal) {
+  return apiFetch<SocialStatus>('/api/shopify/social/status', { signal });
+}
+
+export async function disconnectSocial(signal?: AbortSignal) {
+  return apiFetch<{ ok: boolean }>(
+    '/api/shopify/social/disconnect',
+    { method: 'POST', signal },
+  );
+}
+
+/** Trade a short-lived FB user token for a long-lived one + the merchant's
+ *  manageable pages with IG biz IDs flattened on. No DB writes — the caller
+ *  shows a page picker, then POSTs the chosen page to connectSocial(). */
+export async function exchangeFacebookToken(accessToken: string, signal?: AbortSignal) {
+  return apiFetch<FacebookExchangeResult>(
+    '/api/shopify/social/facebook-exchange-token',
+    { method: 'POST', body: JSON.stringify({ access_token: accessToken }), signal },
+  );
+}
+
+/** Persist the merchant's chosen FB Page + (optional) linked Instagram Business
+ *  Account into shopify_stores.social_tokens. After this resolves, the publish
+ *  cron has everything it needs to ship Scheduled posts to FB/IG. */
+export async function connectSocial(
+  body: {
+    facebookUserToken?: string;
+    facebookPageId: string;
+    facebookPageAccessToken: string;
+    facebookPageName?: string;
+    instagramBusinessAccountId?: string | null;
+  },
+  signal?: AbortSignal,
+) {
+  return apiFetch<{ ok: boolean; page_name: string | null; connected_at: string }>(
+    '/api/shopify/social/connect',
+    { method: 'POST', body: JSON.stringify(body), signal },
+  );
+}

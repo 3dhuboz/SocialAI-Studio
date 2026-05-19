@@ -35,6 +35,12 @@ import { registerPostQualityRoutes } from './routes/post-quality';
 import { registerPostersRoutes } from './routes/posters';
 import { registerProxyRoutes } from './routes/proxies';
 import { registerPennybuildRoutes } from './routes/pennybuilder';
+import { registerShopifyOauthRoutes } from './routes/shopify-oauth';
+import { registerAdminShopifyRoutes } from './routes/admin-shopify';
+import { registerShopifyProductsRoutes } from './routes/shopify-products';
+import { registerShopifyComposeRoutes } from './routes/shopify-compose';
+import { registerShopifyPostsRoutes } from './routes/shopify-posts';
+import { registerShopifySocialConnectRoutes } from './routes/shopify-social-connect';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -42,7 +48,10 @@ app.use(
   '*',
   cors({
     origin: (origin) => {
-      if (!origin) return 'https://socialaistudio.au';
+      const DEFAULT = 'https://socialaistudio.au';
+      if (!origin) return DEFAULT;
+      // Fully-specified allowlist — each entry is matched as an exact string,
+      // including scheme + host (+ port for localhost). Safe to compare raw.
       const allowed = [
         'http://localhost:5173', 'http://localhost:5174',
         'https://socialaistudio.au',
@@ -53,11 +62,39 @@ app.use(
         'https://social.jonesysgarage.com.au', 'https://social.jenniannesjewels.com.au',
         'https://littlestomp.com.au', 'https://www.littlestomp.com.au',
         'https://streetmeatzbbq.com.au', 'https://www.streetmeatzbbq.com.au',
+        // Shopify embedded app — admin host + the embedded-app's own bounce host.
+        'https://admin.shopify.com',
+        'https://shopify.socialaistudio.au',
       ];
       if (allowed.includes(origin)) return origin;
-      // Allow all *.pages.dev subdomains (CF Pages preview/prod deployments)
-      if (origin.endsWith('.pages.dev')) return origin;
-      return 'https://socialaistudio.au';
+      // For any wildcard branch, parse the origin as a URL and require HTTPS.
+      // Raw-string suffix matching is brittle (URL-encoded hosts, ports, paths,
+      // newline-smuggled headers); URL parsing normalises the host and rejects
+      // malformed input outright.
+      let url: URL;
+      try {
+        url = new URL(origin);
+      } catch {
+        return DEFAULT;
+      }
+      if (url.protocol !== 'https:') return DEFAULT;
+      const host = url.hostname;
+      // Shopify embedded app — Phase 1. The embedded React app loads inside
+      // an iframe served from <shop>.myshopify.com. Require an exact 3-label
+      // host (shop.myshopify.com) so e.g. evil.myshopify.com.attacker.tld
+      // — were that ever to parse with myshopify.com as a parent label — is
+      // rejected, and a literal "myshopify.com" alone is also rejected.
+      if (host.endsWith('.myshopify.com') && host.split('.').length === 3) {
+        return origin;
+      }
+      // CF Pages: tight match for the Shopify embedded app's own Pages project
+      // (used by Shopify-aware routes). The general *.pages.dev branch below
+      // is intentionally loose for main-app preview deploys — anyone can ship
+      // a pages.dev project, so this is info-leak-by-design rather than a
+      // trust boundary. Tighten if/when these routes carry sensitive data.
+      if (host === 'socialai-shopify.pages.dev') return origin;
+      if (host.endsWith('.pages.dev')) return origin;
+      return DEFAULT;
     },
     // X-Portal-Secret is sent by whitelabel portal frontends to authenticate
     // their slug-based portal lookup. Without this, browser preflight blocks
@@ -92,6 +129,12 @@ registerPostQualityRoutes(app);
 registerPostersRoutes(app);
 registerProxyRoutes(app);
 registerPennybuildRoutes(app);
+registerShopifyOauthRoutes(app);
+registerAdminShopifyRoutes(app);
+registerShopifyProductsRoutes(app);
+registerShopifyComposeRoutes(app);
+registerShopifyPostsRoutes(app);
+registerShopifySocialConnectRoutes(app);
 
 export default {
   fetch: app.fetch,

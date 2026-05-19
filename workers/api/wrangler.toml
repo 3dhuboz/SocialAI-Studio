@@ -13,9 +13,34 @@ ENVIRONMENT = "production"
 # for reels scheduled within the next ~24h. Custom domain preferred long-term.
 R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev"
 
+# ── Shopify embedded app (schema_v17, Phase 1) ──
+# SHOPIFY_APP_URL is where the embedded React app lives — CF Pages will
+# serve shopify-app/dist at this hostname (project `socialai-shopify`).
+# Used by the Token Exchange handler / Managed Install flow to bounce
+# merchants into the embedded admin UI after install. Set to the
+# pages.dev URL until the custom domain (shopify.socialaistudio.au) is
+# wired up — must match `application_url` in shopify.app.toml exactly.
+SHOPIFY_APP_URL = "https://socialai-shopify.pages.dev"
+# Comma-separated OAuth scopes requested at install. Phase 1: read-only
+# product access powers the "compose post for product" flow. Keep this
+# list minimal — App Store reviewers ask why each scope is needed.
+SHOPIFY_APP_SCOPES = "read_products"
+# Comma-separated shop domains that must use `test: true` on Billing API
+# charges (even if shop.plan_name comes back as a real paid plan like
+# "basic"/"shopify"/"advanced"). Use for Partner dev stores whose plan
+# reports as real but which have no payment method on file. See
+# lib/shopify-billing.ts shouldForceTestMode.
+SHOPIFY_FORCE_TEST_SHOPS = "socialai-dev-store.myshopify.com"
+# Shopify Client ID — PUBLIC value (appears in OAuth URLs, embedded
+# app's <meta name="shopify-api-key">, and partner-listed install link).
+# Lives in [vars] not as a secret. Must match `client_id` in
+# shopify.app.toml exactly. Rotate via Partners dashboard → API credentials.
+SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e"
+
 # Secrets — set via: npx wrangler secret put KEY_NAME
-# OPENROUTER_API_KEY  (OpenRouter API key for AI generation)
-# CLERK_SECRET_KEY    (Clerk secret key for JWT verification — sk_live_... for production)
+# OPENROUTER_API_KEY    (OpenRouter API key for AI generation)
+# CLERK_SECRET_KEY      (Clerk secret key for JWT verification — sk_live_... for production)
+# SHOPIFY_API_SECRET    (Shopify Client Secret — signs OAuth HMACs, webhook HMACs, session JWTs)
 
 [[d1_databases]]
 binding = "DB"
@@ -72,13 +97,21 @@ bucket_name = "socialai-posters"
 
 # Cron triggers:
 # */5 * * * *   — prewarm videos + publish missed posts (every 5 min)
+# */15 * * * *  — reconcile Shopify subscriptions (every 15 min)
 # 0 3 * * *    — refresh Facebook tokens (daily 3am UTC)
 # 0 4 * * *    — refresh client_facts from connected FB Pages (daily 4am UTC)
 # 0 */6 * * *  — check fal.ai credits (every 6 hours)
 # 0 21 * * SUN  — Autonomous Weekly Review (Monday 7am AEST = Sun 21:00 UTC).
 #                 CF cron parser rejects "0" for day-of-week — use "SUN".
 [triggers]
-crons = ["*/5 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *", "0 21 * * SUN"]
+crons = ["*/5 * * * *", "*/15 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *", "0 21 * * SUN"]
+
+# Observability — full sampling for now. Workers Logs (formerly Logpush)
+# captures every invocation with bindings + console output. Drop the
+# sampling rate if/when invocation volume justifies it.
+[observability]
+enabled = true
+head_sampling_rate = 1.0
 
 [dev]
 port = 8787

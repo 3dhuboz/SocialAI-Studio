@@ -9,6 +9,7 @@ Quick reference for navigating the codebase. Read this before touching anything.
 ```
 GitHub repo
 ├── src/                  React frontend (Vite + Tailwind + Clerk)
+├── shopify-app/          Embedded Shopify app (Vite + React + Polaris + App Bridge) — Phase 1
 ├── functions/            Cloudflare Pages Functions (legacy proxies — mostly superseded)
 ├── workers/api/          Cloudflare Worker (Hono, the real API)
 └── dist/                 Vite build output (CF Pages serves this)
@@ -137,6 +138,12 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `onboarding.ts` | Onboarding flow endpoints |
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
+| `shopify-oauth.ts` | Shopify embedded-app: install/callback, GDPR + uninstall webhooks, `GET /api/shopify/me` |
+| `admin-shopify.ts` | Owner admin endpoints for Shopify shops — list, force-reconcile, audit trail |
+| `shopify-products.ts` | Embedded-app: `POST /api/shopify/products/sync` (Admin GraphQL pagination, 500-product cap), `GET /api/shopify/products` (cached LIMIT 250) |
+| `shopify-compose.ts` | Embedded-app: `POST /api/shopify/compose` — Claude Haiku caption + brand-grounded image for a Shopify product |
+| `shopify-posts.ts` | Embedded-app: shop-scoped post CRUD + publish-now (owner_kind='shop' rows). All endpoints session-token gated. |
+| `shopify-social-connect.ts` | Embedded-app: FB/IG connect for Shopify merchants — exchange token, connect, disconnect, status. Writes shopify_stores.social_tokens. |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -156,6 +163,10 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `prompt-safety.ts` | Prompt injection detection |
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
+| `shopify-auth.ts` | Shopify HMAC verification (OAuth + webhooks), session-token JWT verification, shop-domain sanitizer |
+| `shopify-billing.ts` | Shopify Billing API helpers — create/cancel app subscription, billing-status lookup, plan→price mapping |
+| `shopify-token-exchange.ts` | Token Exchange flow — swap session token for offline access token (replaces OAuth code-grant for fresh installs) |
+| `shopify-admin-api.ts` | `shopifyGraphQL<T>(shop, accessToken, query, variables)` — discriminated-union GraphQL helper, 15s timeout, distinct network/http/graphql failure stages |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |
@@ -163,11 +174,12 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `dispatcher.ts` | — | Routes `scheduled()` events to the right cron handler |
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
-| `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
+| `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG (handles Clerk user/client AND Shopify shop posts via `owner_kind`) |
 | `refresh-tokens.ts` | `0 3 * * *` | Refresh 60-day Facebook tokens |
 | `refresh-facts.ts` | `0 4 * * *` | Scrape FB Pages → `client_facts` engagement history |
 | `check-fal-credits.ts` | `0 */6 * * *` | Alert when fal.ai balance < $5 |
 | `weekly-review.ts` | `0 21 * * SUN` | Autonomous weekly review (Mon 7am AEST) |
+| `reconcile-subscriptions.ts` | `*/15 * * * *` | Reconcile Shopify app subscriptions — catch missed `app_subscriptions/update` webhooks, downgrade lapsed shops |
 | `_shared.ts` | — | Shared cron utilities |
 
 ---
@@ -176,7 +188,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v16
+**Current schema version:** v22
 
 ### Migration process
 ```bash
@@ -197,6 +209,12 @@ New migrations go in `workers/api/schema_vN.sql`. Always use `IF NOT EXISTS` / `
 | `posters` | AI poster metadata + R2 key |
 | `activations` | Account activation codes |
 | `portals` | White-label portal configs |
+| `shopify_stores` | Installed Shopify shops — offline access token, scopes, install/uninstall timestamps |
+| `shopify_oauth_state` | Short-lived OAuth state nonces (10-min TTL, GC'd opportunistically) |
+| `shopify_webhooks_log` | Inbound Shopify webhook audit trail (GDPR + app/uninstalled) |
+| `shopify_products` | Cached product catalog per shop (populated in Phase 2) |
+| `shopify_billing_events` | Audit log of every `app_subscriptions/update` transition + reconciliation cron decisions |
+| `shopify_admin_audit` | Owner-side admin actions on Shopify shops (force-cancel, force-reconcile, manual plan override) |
 
 ---
 
@@ -221,7 +239,9 @@ npm run build    # outputs to dist/
 ```bash
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
-Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`
+Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
+
+Shopify-specific vars (set in `wrangler.toml [vars]`, not secrets): `SHOPIFY_APP_URL`, `SHOPIFY_APP_SCOPES`. See `SHOPIFY_SETUP.md` for the full embedded-app setup flow.
 
 ---
 

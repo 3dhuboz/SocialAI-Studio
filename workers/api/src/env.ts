@@ -84,4 +84,47 @@ export type Env = {
   // /api/admin/provision-from-pennybuilder endpoint AND to verify the
   // HMAC-signed embed token on GET /embed.
   PENNYBUILDER_PROVISION_SECRET?: string;
+
+  // ── Shopify embedded app (Phase 1, schema_v17) ─────────────────────────
+  // SHOPIFY_API_KEY is the Client ID from your Shopify Partners dashboard
+  // (also called the "API key"). Public — appears in the embedded app's
+  // HTML <meta> tag and in the OAuth authorize URL. Safe to ship in vars.
+  SHOPIFY_API_KEY?: string;
+  // SHOPIFY_API_SECRET is the Client Secret. Used to:
+  //   1. Verify HMAC on OAuth callbacks (query-string HMAC)
+  //   2. Verify HMAC on inbound webhooks (X-Shopify-Hmac-Sha256 header)
+  //   3. Verify session token JWTs from App Bridge (HS256 with this key)
+  // MUST be set as a secret: `wrangler secret put SHOPIFY_API_SECRET`.
+  SHOPIFY_API_SECRET?: string;
+  // Public base URL where the embedded React app is hosted (CF Pages).
+  // The OAuth callback handler redirects merchants here after install.
+  // Default during setup: "https://shopify.socialaistudio.au".
+  SHOPIFY_APP_URL?: string;
+  // OAuth scopes requested at install. Comma-separated. Phase 1 uses
+  // "read_products" only; Phase 2 adds "write_products" if we need
+  // product-tagging back. Keep the scope list minimal — the App Store
+  // reviewer asks why each scope is needed.
+  SHOPIFY_APP_SCOPES?: string;
+  // Comma-separated shop domains where Shopify Billing API charges MUST
+  // be created with `test: true`. Use this for dev stores whose plan_name
+  // reports as a real paid plan ("basic", "shopify", etc.) but which can't
+  // be charged for real (no payment method on file). isTestStore handles
+  // the well-known dev plan names; this var is the escape hatch for
+  // edge cases. Read by shouldForceTestMode in lib/shopify-billing.ts.
+  SHOPIFY_FORCE_TEST_SHOPS?: string;
+
+  // ── At-rest encryption for D1-stored OAuth tokens ──────────────────────
+  // 32-byte (256-bit) master key, hex-encoded. Used by lib/crypto.ts to
+  // AES-GCM-encrypt Shopify access_tokens (and any future OAuth refresh
+  // tokens) before they hit D1. Generate with:
+  //   node -e "console.log(crypto.randomBytes(32).toString('hex'))"
+  // Set as a worker secret:
+  //   npx wrangler secret put MASTER_ENCRYPTION_KEY
+  //
+  // OPTIONAL: when this is not set, the route + cron code logs a warning
+  // and falls back to storing/reading plaintext (so a missing secret does
+  // NOT take down installs). Once it IS set, new writes are encrypted and
+  // existing plaintext rows decrypt to themselves transparently and get
+  // upgraded on their next write.
+  MASTER_ENCRYPTION_KEY?: string;
 };

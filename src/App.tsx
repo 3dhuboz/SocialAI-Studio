@@ -37,6 +37,7 @@ import {
   Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock, CalendarPlus
 } from 'lucide-react';
 import { AdminCustomers } from './components/AdminCustomers';
+import { AdminShopifyStores } from './components/AdminShopifyStores';
 import { BrandKitProvider } from './contexts/BrandKitContext';
 // PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
 // the user actually clicks the Posters tab — keeps the home/calendar bundle small.
@@ -406,7 +407,7 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers' | 'shopify-stores'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
@@ -2366,6 +2367,7 @@ const Dashboard: React.FC = () => {
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
     ...(!CLIENT.clientMode && isAdminMode ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
+    ...(!CLIENT.clientMode && isAdminMode ? [{ id: 'shopify-stores' as const, label: 'Shopify', icon: ShoppingCart }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -5139,6 +5141,10 @@ const Dashboard: React.FC = () => {
         {/* ═══ CUSTOMERS TAB ═══ — admin-only, see tabs array gate above */}
         {activeTab === 'customers' && isAdminMode && (
           <AdminCustomers />
+        )}
+
+        {activeTab === 'shopify-stores' && isAdminMode && (
+          <AdminShopifyStores />
         )}
 
         {/* ═══ SETTINGS TAB ═══ */}

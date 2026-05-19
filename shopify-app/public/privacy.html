@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="index,follow" />
+  <title>Privacy Policy — SocialAI Studio for Shopify</title>
+  <meta name="description" content="Privacy policy for SocialAI Studio, a Shopify app by Penny Wise I.T. We request read_products only, store no customer data, and encrypt access tokens at rest." />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #111827;
+      --subdued: #6b7280;
+      --link: #2563eb;
+      --border: #e5e7eb;
+      --accent: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 48px 24px 96px; }
+    header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }
+    .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+    h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .updated { color: var(--subdued); font-size: 14px; }
+    h2 { font-size: 22px; margin: 40px 0 12px; letter-spacing: -0.01em; }
+    h3 { font-size: 17px; margin: 24px 0 8px; }
+    p, li { font-size: 16px; }
+    a { color: var(--link); text-decoration: underline; }
+    a:hover { text-decoration: none; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 15px; }
+    th, td { border: 1px solid var(--border); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: #f9fafb; font-weight: 600; }
+    code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+    ul { padding-left: 22px; }
+    li { margin-bottom: 6px; }
+    footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--subdued); font-size: 14px; }
+    footer a { color: var(--subdued); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div class="eyebrow">SocialAI Studio</div>
+      <h1>Privacy Policy</h1>
+      <div class="updated">Last updated: 19 May 2026</div>
+    </header>
+
+    <p>This privacy policy describes how SocialAI Studio (&ldquo;the App&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) collects, uses, retains, and protects information from merchants and shop data when our App is installed on a Shopify store.</p>
+    <p>The App is published by <strong>Penny Wise I.T</strong> (Australia). Questions about this policy: <a href="mailto:steve@pennywiseit.com.au">steve@pennywiseit.com.au</a>.</p>
+
+    <h2>1. Information we access from your shop</h2>
+    <p>When you install the App, we request the following permissions from Shopify:</p>
+    <table>
+      <thead><tr><th>Scope</th><th>Why we need it</th></tr></thead>
+      <tbody>
+        <tr><td><code>read_products</code></td><td>Read your product catalog (title, description, images, price, handle, vendor, tags) so the App can generate AI-written social media posts featuring your products.</td></tr>
+      </tbody>
+    </table>
+    <p>We do <strong>not</strong> request <code>read_customers</code>, <code>read_orders</code>, or any other customer-data scope. We never see customer names, email addresses, phone numbers, shipping addresses, order history, or payment information.</p>
+
+    <h2>2. Information we store</h2>
+    <p>For each installed shop, we store:</p>
+    <ul>
+      <li><strong>Shop identity</strong> &mdash; <code>shop_domain</code>, shop name, shop email (the merchant contact email from Shopify&rsquo;s <code>shop.json</code>), country code, currency, and Shopify plan name.</li>
+      <li><strong>Authorization</strong> &mdash; a Shopify-issued offline access token (AES-GCM-256 encrypted at rest), the OAuth scopes you granted, and timestamps for install / uninstall.</li>
+      <li><strong>Subscription state</strong> &mdash; the App subscription ID, status (PENDING / ACTIVE / CANCELLED / etc.), trial end date, and current period end. All billing is handled by Shopify&rsquo;s Billing API; we do not see or store payment-card information.</li>
+      <li><strong>Product catalog cache</strong> (Phase 2 &mdash; not yet active) &mdash; a cached copy of your product catalog. Refreshed via Shopify&rsquo;s product webhooks.</li>
+    </ul>
+    <p>We never store: customer personal data of any kind, order data, storefront visitor analytics, or payment-card details.</p>
+
+    <h2>3. How we use the information</h2>
+    <ul>
+      <li>Generate AI-written social media post drafts about your products</li>
+      <li>Display your shop&rsquo;s subscription status inside the App</li>
+      <li>Send Shopify-side billing requests for your subscription</li>
+      <li>Maintain an audit log of webhook deliveries and admin actions for security and compliance</li>
+    </ul>
+
+    <h2>4. How we protect the information</h2>
+    <ul>
+      <li><strong>Encryption at rest</strong> &mdash; Shopify offline access tokens are AES-GCM-256 encrypted before storage in Cloudflare D1. Encryption keys are stored as Cloudflare Workers Secrets, separate from the database.</li>
+      <li><strong>Encryption in transit</strong> &mdash; all traffic uses TLS 1.2+. HSTS is enforced with a 2-year max-age.</li>
+      <li><strong>Authentication</strong> &mdash; App Bridge session tokens (HS256 JWT) authenticate every API call from the embedded app. Webhooks are HMAC-SHA256 verified against the raw payload before any processing.</li>
+      <li><strong>Access control</strong> &mdash; only authorized administrators can view aggregate merchant data. Every admin action is logged.</li>
+      <li><strong>Iframe security</strong> &mdash; the embedded app&rsquo;s CSP <code>frame-ancestors</code> directive restricts loading to <code>*.myshopify.com</code> and <code>admin.shopify.com</code>.</li>
+    </ul>
+
+    <h2>5. Data retention</h2>
+    <ul>
+      <li><strong>While installed</strong> &mdash; we retain shop data, authorization tokens, and subscription state.</li>
+      <li><strong>On uninstall</strong> (<code>app/uninstalled</code> webhook) &mdash; we mark the shop as uninstalled and stop using the data. The access token remains until the GDPR deletion window closes.</li>
+      <li><strong>48 hours after uninstall</strong> (<code>shop/redact</code> webhook from Shopify) &mdash; we permanently delete the shop row, all cached products, all OAuth state, all webhook log entries, and all billing event records. Only the audit-log row showing we honored the redact remains.</li>
+    </ul>
+
+    <h2>6. GDPR mandatory webhooks</h2>
+    <p>Per Shopify&rsquo;s App Store policy, we implement the three GDPR-compliance webhooks:</p>
+    <ul>
+      <li><strong><code>customers/data_request</code></strong> &mdash; acknowledged with 200. We do not store any customer-keyed data, so there is nothing to export.</li>
+      <li><strong><code>customers/redact</code></strong> &mdash; acknowledged with 200. We additionally purge any logged webhook payloads that match the customer identifier in the request, as defense-in-depth.</li>
+      <li><strong><code>shop/redact</code></strong> &mdash; purges all shop data as described in Section 5.</li>
+    </ul>
+
+    <h2>7. Sub-processors</h2>
+    <p>We use the following sub-processors to provide the service:</p>
+    <ul>
+      <li><strong>Cloudflare, Inc.</strong> &mdash; Workers, D1, Pages, R2. <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare&rsquo;s privacy practices</a>.</li>
+      <li><strong>Shopify, Inc.</strong> &mdash; App platform, OAuth, Billing API, webhook delivery. <a href="https://www.shopify.com/legal/privacy">Shopify&rsquo;s privacy practices</a>.</li>
+      <li><strong>Anthropic / OpenRouter</strong> &mdash; AI model inference for caption generation. No customer or order data is sent &mdash; only product titles + descriptions you&rsquo;ve granted us via <code>read_products</code>.</li>
+      <li><strong>fal.ai</strong> &mdash; AI image generation. No customer data is sent.</li>
+    </ul>
+
+    <h2>8. Your rights</h2>
+    <p>If you are a merchant whose shop has installed the App, you may at any time:</p>
+    <ul>
+      <li><strong>Uninstall the App</strong> from your Shopify admin &rarr; Apps menu. This triggers the deletion timeline described in Section 5.</li>
+      <li><strong>Request immediate deletion</strong> by emailing <a href="mailto:steve@pennywiseit.com.au">steve@pennywiseit.com.au</a> with your shop domain. We will action this within 48 hours.</li>
+      <li><strong>Export your data</strong> &mdash; email us; we will return a JSON export of the shop&rsquo;s stored data within 30 days.</li>
+    </ul>
+
+    <h2>9. Changes to this policy</h2>
+    <p>We will update this document if our data practices change. The &ldquo;Last updated&rdquo; date at the top reflects the current version. Material changes that affect the data we collect will be communicated to active merchants via the embedded app interface before they take effect.</p>
+
+    <h2>10. Contact</h2>
+    <p><strong>Email</strong>: <a href="mailto:steve@pennywiseit.com.au">steve@pennywiseit.com.au</a><br /><strong>Business</strong>: Penny Wise I.T (Australia)<br /><strong>App on Shopify App Store</strong>: SocialAI Studio</p>
+
+    <footer>
+      &copy; 2026 Penny Wise I.T. &middot; <a href="/support">Support</a> &middot; <a href="https://socialaistudio.au">Main site</a>
+    </footer>
+  </main>
+</body>
+</html>

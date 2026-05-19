@@ -1,0 +1,340 @@
+// Shopify embedded app — AI post composer.
+//
+// Phase 2 of the App Store path: once a merchant has installed + synced their
+// product catalog, the embedded UI calls POST /api/shopify/compose with a
+// product GID and gets back a generated caption + image. The merchant then
+// edits the result and saves it as a draft via a separate /api/shopify/posts
+// endpoint (owned by another agent). This route is pure compose — no D1
+// writes, no draft persistence, no scheduling.
+//
+// Auth: App Bridge session token (Bearer <jwt>) — same pattern as the rest
+// of the embedded surface. requireSession resolves it to a verified
+// shopDomain which we use to scope the product lookup.
+//
+// Rate limit: 10/min per shop. Caption + image generation hits two upstreams
+// (Anthropic / fal.ai) that we pay per-call for — a chatty embedded-app retry
+// loop or a buggy merchant integration could otherwise burn through credit
+// fast. 10/min is well above any plausible human composer cadence.
+//
+// Tenant model: the image-gen library is shared with the main SaaS workspaces
+// (which key off Clerk uid). To reuse it without rewriting, we pass the shop
+// domain as a sentinel user_id of the form `shop:<shop>.myshopify.com`. That
+// has no archetype row in users.archetype_slug, so the lib falls through to
+// sniffArchetypeFromCaption — which is why we pass the generated caption into
+// the options. For Shopify product posts the caption will almost always sniff
+// as e-commerce / product imagery, which is the right behaviour.
+
+import type { Hono } from 'hono';
+import type { Env } from '../env';
+import { isRateLimited } from '../auth';
+import {
+  verifySessionToken,
+  type VerifiedSession,
+} from '../lib/shopify-auth';
+import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
+import { generateImageWithBrandRefs } from '../lib/image-gen';
+
+// ── Config helpers (mirror shopify-oauth.ts so the route file stays self-contained) ──
+
+function requireShopifyConfig(env: Env): { key: string; secret: string } | null {
+  if (!env.SHOPIFY_API_KEY || !env.SHOPIFY_API_SECRET) return null;
+  return { key: env.SHOPIFY_API_KEY, secret: env.SHOPIFY_API_SECRET };
+}
+
+async function requireSession(c: any): Promise<VerifiedSession | Response> {
+  const cfg = requireShopifyConfig(c.env);
+  if (!cfg) return c.json({ error: 'Shopify app not configured' }, 500);
+  const auth = c.req.header('Authorization') || '';
+  if (!auth.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401);
+  const session = await verifySessionToken(auth.slice(7), cfg.key, cfg.secret);
+  if (!session) return c.json({ error: 'Invalid session token' }, 401);
+  return session;
+}
+
+// ── Request validation ─────────────────────────────────────────────────────
+
+type Platform = 'facebook' | 'instagram' | 'both';
+type Tone = 'friendly' | 'professional' | 'playful';
+
+const VALID_PLATFORMS: ReadonlySet<Platform> = new Set(['facebook', 'instagram', 'both']);
+const VALID_TONES: ReadonlySet<Tone> = new Set(['friendly', 'professional', 'playful']);
+
+interface ComposeRequest {
+  product_id: string;
+  platform: Platform;
+  tone: Tone;
+}
+
+function parseComposeBody(body: any): { ok: true; req: ComposeRequest } | { ok: false; error: string } {
+  if (!body || typeof body !== 'object') return { ok: false, error: 'Missing JSON body' };
+  const product_id = body.product_id;
+  if (typeof product_id !== 'string' || !product_id.trim()) {
+    return { ok: false, error: 'product_id is required' };
+  }
+  // Be permissive on the GID format — we trust shopify_products as the source
+  // of truth and match against it as an opaque string. A bad product_id will
+  // surface as a 404 from the DB lookup, which is the right shape anyway.
+
+  const platform = body.platform ?? 'both';
+  if (!VALID_PLATFORMS.has(platform)) {
+    return { ok: false, error: `platform must be one of: ${[...VALID_PLATFORMS].join(', ')}` };
+  }
+  const tone = body.tone ?? 'friendly';
+  if (!VALID_TONES.has(tone)) {
+    return { ok: false, error: `tone must be one of: ${[...VALID_TONES].join(', ')}` };
+  }
+  return { ok: true, req: { product_id: product_id.trim(), platform, tone } };
+}
+
+// ── Prompt construction ────────────────────────────────────────────────────
+
+// Platform-specific caption guidance. Length + hashtag policy is what changes
+// most across platforms; the brand voice + product framing carries through.
+function platformGuidance(platform: Platform): string {
+  switch (platform) {
+    case 'facebook':
+      return 'Target 80-150 words. Conversational and story-driven. Use hashtags sparingly (0-2 max) — Facebook reach does not reward heavy tagging. End with a soft, low-pressure call-to-action.';
+    case 'instagram':
+      return 'Target 30-80 words in the main body, then 5-8 relevant hashtags on a new line. Hashtags should be specific (product category, niche audience), not generic (#love, #instagood). Snappy opening line — Instagram cuts the caption after one line in feed.';
+    case 'both':
+      return 'Target 60-100 words. Conversational, suitable for either Facebook or Instagram. Include 3-5 relevant hashtags at the end. Avoid platform-specific references.';
+  }
+}
+
+function toneGuidance(tone: Tone): string {
+  switch (tone) {
+    case 'friendly':    return 'Warm, approachable, like a small-business owner talking to a regular customer.';
+    case 'professional': return 'Polished and confident. Concrete product benefits over hype. Avoid casual interjections.';
+    case 'playful':     return 'Light, witty, a little cheeky. Wordplay welcome. Still grounded in real product facts.';
+  }
+}
+
+// System prompt is the same shape across all requests so it stays cacheable
+// (when callAnthropicDirect is used). Tone + platform + product info live in
+// the user prompt where they vary per request.
+const SOCIAL_SYSTEM_PROMPT = [
+  'You are a senior social-media copywriter for small e-commerce brands.',
+  'You write captions that move product, not Instagram poetry.',
+  '',
+  'STRICT RULES — these are non-negotiable:',
+  '  1. NEVER invent statistics, percentages, counts, "studies show", or testimonial-style quotes. If a stat is not in the product info given, do not include one.',
+  '  2. NEVER fake urgency. No "selling out fast", "only X left", "limited time" unless the merchant explicitly provides those facts in the product info.',
+  '  3. NEVER use generic AI tropes: "elevate your", "game-changer", "level up", "must-have", "obsessed", "literally", "in today\'s fast-paced world", "look no further".',
+  '  4. NEVER fabricate testimonials, customer quotes, or social proof.',
+  '  5. NEVER claim certifications, awards, or partnerships not stated in the product info.',
+  '  6. NEVER make medical, financial, or absolute performance claims.',
+  '',
+  'WHAT TO DO instead:',
+  '  - Lead with one specific, concrete thing about the product (a material, a use case, a sensory detail).',
+  '  - Anchor in real product facts: the title, description, tags, type, price.',
+  '  - Write like a human running a small shop, not a brand marketing department.',
+  '  - End with a clear, simple call-to-action.',
+  '',
+  'OUTPUT FORMAT:',
+  '  Return ONLY the caption text. No preamble, no "Here\'s your caption:", no markdown code fences, no JSON wrapping. Just the caption a merchant can paste straight into Meta Business Suite.',
+].join('\n');
+
+interface ProductRow {
+  id: string;
+  shop_domain: string;
+  title: string;
+  handle: string | null;
+  description: string | null;
+  product_type: string | null;
+  vendor: string | null;
+  tags: string | null;
+  price: string | null;
+  currency: string | null;
+  image_url: string | null;
+  status: string | null;
+}
+
+function buildCaptionUserPrompt(product: ProductRow, platform: Platform, tone: Tone): string {
+  const facts: string[] = [];
+  facts.push(`Title: ${product.title}`);
+  if (product.product_type) facts.push(`Type: ${product.product_type}`);
+  if (product.vendor) facts.push(`Vendor: ${product.vendor}`);
+  if (product.price) {
+    facts.push(`Price: ${product.price}${product.currency ? ` ${product.currency}` : ''}`);
+  }
+  if (product.tags && product.tags.trim()) facts.push(`Tags: ${product.tags}`);
+  if (product.description && product.description.trim()) {
+    // Cap description at ~1500 chars to keep the prompt bounded — some Shopify
+    // descriptions are full-on landing-page HTML. The LLM doesn't need all of
+    // it to write a caption.
+    const desc = product.description.length > 1500
+      ? product.description.slice(0, 1500) + '…'
+      : product.description;
+    facts.push(`Description:\n${desc}`);
+  }
+
+  return [
+    `Write ONE social media post promoting this product.`,
+    '',
+    `Tone: ${toneGuidance(tone)}`,
+    `Platform: ${platformGuidance(platform)}`,
+    '',
+    'Product info:',
+    facts.join('\n'),
+    '',
+    'Remember: no fabricated stats, no fake urgency, no AI tropes, no fake testimonials. Return ONLY the caption text.',
+  ].join('\n');
+}
+
+// Image prompt is short and product-grounded — no marketing language. The
+// downstream image-gen lib applies archetype guardrails + brand-ref grounding
+// on top of this.
+function buildImagePrompt(product: ProductRow): string {
+  const parts: string[] = [];
+  parts.push(`Professional product photograph of ${product.title}`);
+  if (product.product_type) parts.push(`(${product.product_type})`);
+  if (product.description) {
+    // Pull the first sentence of the description for a visual hint, capped short.
+    const firstSentence = product.description.split(/[.!?\n]/)[0]?.trim();
+    if (firstSentence && firstSentence.length > 0 && firstSentence.length < 200) {
+      parts.push(`— ${firstSentence}`);
+    }
+  }
+  parts.push('clean composition, soft natural lighting, e-commerce hero shot, no text overlays, no logos, no watermarks');
+  return parts.join(' ');
+}
+
+// Negative prompt is shared across all product images — keeps the FLUX-dev
+// fallback from generating the same garbage anyone else's product page does.
+const IMAGE_NEGATIVE_PROMPT = 'text, watermark, logo, signature, low quality, blurry, distorted, deformed, extra limbs, cluttered background, busy patterns, harsh artificial lighting, cartoon, illustration, oversaturated';
+
+// ── Route registration ─────────────────────────────────────────────────────
+
+export function registerShopifyComposeRoutes(app: Hono<{ Bindings: Env }>): void {
+  // ── POST /api/shopify/compose ─────────────────────────────────────────
+  // Compose endpoint — given a product GID, generate a caption + image for
+  // the merchant to review. Does NOT save anything to D1 — the merchant
+  // edits the result and posts to /api/shopify/posts to persist a draft.
+  app.post('/api/shopify/compose', async (c) => {
+    const sessionOrResp = await requireSession(c);
+    if (sessionOrResp instanceof Response) return sessionOrResp;
+    const shop = sessionOrResp.shopDomain;
+
+    // Rate limit: 10/min/shop. Each compose call does an LLM call + an image
+    // generation, both of which we pay per-call for. Burst protection beats
+    // the apology email when a merchant accidentally builds a retry loop.
+    if (await isRateLimited(c.env.DB, `shopify-compose:${shop}`, 10)) {
+      return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);
+    }
+
+    // Parse + validate body.
+    let rawBody: any;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    const parsed = parseComposeBody(rawBody);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const { product_id, platform, tone } = parsed.req;
+
+    // Look up the product — must be in shopify_products AND scoped to this
+    // shop. Cross-shop lookups are not allowed; the composite PK already
+    // enforces this but the WHERE shop_domain = ? guard makes the intent
+    // explicit and protects us if the schema ever drifts.
+    const product = await c.env.DB.prepare(
+      `SELECT id, shop_domain, title, handle, description, product_type, vendor, tags,
+              price, currency, image_url, status
+       FROM shopify_products
+       WHERE id = ? AND shop_domain = ?`,
+    ).bind(product_id, shop).first<ProductRow>();
+
+    if (!product) {
+      return c.json({ error: 'Product not synced yet. Run sync first.' }, 404);
+    }
+
+    // ── Stage 1: caption ──────────────────────────────────────────────
+    const userPrompt = buildCaptionUserPrompt(product, platform, tone);
+    let caption: string;
+    try {
+      if (c.env.ANTHROPIC_API_KEY) {
+        const result = await callAnthropicDirect({
+          apiKey: c.env.ANTHROPIC_API_KEY,
+          model: 'anthropic/claude-haiku-4.5',
+          systemPrompt: SOCIAL_SYSTEM_PROMPT,
+          prompt: userPrompt,
+          temperature: 0.7,
+          maxTokens: 800,
+          responseFormat: 'text',
+        });
+        caption = (result.text || '').trim();
+      } else if (c.env.OPENROUTER_API_KEY) {
+        // OpenRouter fallback. callOpenRouter forces response_format:json_object
+        // for /api/score-post style callers, but it still works for plain text
+        // — the model honours the system-prompt directive to return raw text
+        // when no JSON schema is asked for. Strip stray code fences just in case.
+        const result = await callOpenRouter(
+          c.env.OPENROUTER_API_KEY,
+          SOCIAL_SYSTEM_PROMPT,
+          userPrompt,
+          0.7,
+          800,
+        );
+        caption = (result.text || '').trim().replace(/^```[a-z]*\n?|```$/gi, '').trim();
+      } else {
+        return c.json({ error: 'No LLM API key configured' }, 500);
+      }
+
+      if (!caption) {
+        return c.json({ stage: 'caption', error: 'LLM returned empty caption' }, 502);
+      }
+    } catch (err: any) {
+      console.error('[shopify-compose] caption generation failed:', String(err?.stack ?? err));
+      return c.json({
+        stage: 'caption',
+        message: String(err?.message ?? err).slice(0, 300),
+      }, 502);
+    }
+
+    // ── Stage 2: image ────────────────────────────────────────────────
+    // generateImageWithBrandRefs is the shared chokepoint — it applies
+    // archetype guardrails, pulls brand-ref photos when available, and routes
+    // to flux-pro-kontext (with refs) or flux-dev (no refs). For Shopify
+    // shops we pass a sentinel user_id of `shop:<domain>`; no client_id.
+    // The lib resolves archetype via resolveArchetypeSlug which will return
+    // null (no row), then falls back to sniffArchetypeFromCaption using the
+    // caption we pass through — typically lands on a sensible product slug.
+    const sentinelUserId = `shop:${shop}`;
+    const imagePrompt = buildImagePrompt(product);
+    let imageUrl: string | null = null;
+    let modelUsed = 'unknown';
+    try {
+      const result = await generateImageWithBrandRefs(
+        c.env,
+        sentinelUserId,
+        null,
+        { prompt: imagePrompt, negativePrompt: IMAGE_NEGATIVE_PROMPT },
+        { caption },
+      );
+      imageUrl = result.imageUrl;
+      modelUsed = result.modelUsed;
+
+      if (!imageUrl) {
+        return c.json({ stage: 'image', message: 'Image generation returned no URL' }, 502);
+      }
+    } catch (err: any) {
+      console.error('[shopify-compose] image generation failed:', String(err?.stack ?? err));
+      return c.json({
+        stage: 'image',
+        message: String(err?.message ?? err).slice(0, 300),
+      }, 502);
+    }
+
+    return c.json({
+      caption,
+      image_url: imageUrl,
+      model_used: modelUsed,
+      product: {
+        id: product.id,
+        title: product.title,
+        price: product.price ?? null,
+        currency: product.currency ?? null,
+      },
+    });
+  });
+}

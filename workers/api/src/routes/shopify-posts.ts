@@ -1,0 +1,328 @@
+// Shopify embedded-app post storage + publish flow.
+//
+// Phase 2 of the Shopify embedded app. Mirrors the Clerk-user posts CRUD in
+// routes/posts.ts but scoped to a Shopify shop instead of a Clerk uid.
+// Authentication is session-token (JWT) only — every request must carry
+// `Authorization: Bearer <session token>` from App Bridge.
+//
+//   POST   /api/shopify/posts             — create a draft for the current shop
+//   GET    /api/shopify/posts             — list shop's posts (optional ?status)
+//   PATCH  /api/shopify/posts/:id         — edit a Draft (content/image/schedule/status)
+//   DELETE /api/shopify/posts/:id         — delete (Draft or Scheduled only; not Posted)
+//   POST   /api/shopify/posts/:id/publish-now — flip a Draft into the publish queue
+//
+// ── Tenant isolation ──────────────────────────────────────────────────────
+// Every query scopes by `owner_kind='shop' AND owner_id=?` (the verified
+// shop domain from the session token). The shop NEVER receives or modifies
+// any other shop's posts; the JWT signature is the only source of authority
+// for `shop` (we never trust a body/query param).
+//
+// ── Posts table contract ──────────────────────────────────────────────────
+// Per TENANT_ABSTRACTION.md (schema_v20), new code MUST write BOTH legacy
+// columns (user_id, client_id) AND new owner_kind/owner_id columns. For
+// shop-owned posts:
+//   user_id   = shopDomain  (sentinel — posts.user_id is NOT NULL today)
+//   client_id = NULL
+//   owner_kind = 'shop'
+//   owner_id   = shopDomain
+// A follow-up schema migration will relax user_id's NOT NULL constraint and
+// drop the sentinel pattern.
+//
+// product_id from the request body is intentionally NOT persisted — there is
+// no posts column to hold it (no `metadata` JSON column today). When the
+// composer needs to remember which product a post came from, add a
+// posts.metadata or shopify_post_products column in schema_v23.
+//
+// ── ⚠ CRON DEPENDENCY — READ BEFORE LANDING ───────────────────────────────
+// The publish-now endpoint sets status='Scheduled' + scheduled_for=now-1ms
+// expecting `workers/api/src/cron/publish-missed.ts` to pick it up within
+// 5 minutes. **That cron currently filters by user_id and assumes a Clerk
+// user.** It must be extended to also handle `owner_kind='shop'` rows by:
+//   1. SELECTing posts WHERE owner_kind='shop' AND status='Scheduled' AND
+//      scheduled_for <= now, *in addition to* the existing user-scoped query.
+//   2. Resolving the shop's FB Page + IG Business Account tokens from
+//      `shopify_stores.social_tokens` (the JSON column added in schema_v22)
+//      instead of the per-user/per-client social_tokens path it uses today.
+//   3. On success: mark status='Posted'. On failure: status='Missed' +
+//      preserve any per-post error/late_post_id fields you already use.
+// Until that cron change lands, shop-owned scheduled posts will sit at
+// status='Scheduled' indefinitely. The /api/shopify/posts/:id/publish-now
+// route will return 202-ish (we ack with the new state) regardless — the
+// dependency is purely cron-side.
+//
+// ── Rate limiting ─────────────────────────────────────────────────────────
+// 60 req/min per shop on every endpoint. Key: `shopify-posts:<shop>`.
+
+import type { Hono } from 'hono';
+import type { Env } from '../env';
+import { isRateLimited } from '../auth';
+import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
+
+// Match the OAuth route — keep both files in sync if the limit changes.
+const RATE_LIMIT_PER_MIN = 60;
+
+// Allowed platform values on the wire. We never trust the raw body.
+const ALLOWED_PLATFORMS = new Set(['facebook', 'instagram', 'both']);
+
+// Status transitions allowed on PATCH. Anything else is rejected with 400.
+const ALLOWED_PATCH_STATUSES = new Set(['Draft', 'Scheduled']);
+
+// Editable status — only Draft posts are editable via PATCH or deletable
+// from-anywhere via DELETE. The DELETE handler ALSO allows 'Scheduled' (a
+// merchant should be able to cancel a scheduled post); PATCH does not (to
+// avoid race conditions where the publish-missed cron is mid-flight on a
+// row the merchant is editing). The Posted state is terminal.
+const EDITABLE_VIA_PATCH = 'Draft';
+
+// requireSession — mirrors the pattern in routes/shopify-oauth.ts. Returns
+// either a VerifiedSession (auth passed) or a Response (already-built error).
+// Caller does `instanceof Response` to fan-out.
+//
+// Kept private to this file because the spec forbids exporting a shared
+// helper from lib/ (lib is owned by the OAuth agent). Duplication here is
+// 8 lines and changes very rarely.
+async function requireSession(c: any): Promise<VerifiedSession | Response> {
+  if (!c.env.SHOPIFY_API_KEY || !c.env.SHOPIFY_API_SECRET) {
+    return c.json({ error: 'Shopify app not configured' }, 500);
+  }
+  const auth = c.req.header('Authorization') || '';
+  if (!auth.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401);
+  const session = await verifySessionToken(auth.slice(7), c.env.SHOPIFY_API_KEY, c.env.SHOPIFY_API_SECRET);
+  if (!session) return c.json({ error: 'Invalid session token' }, 401);
+  return session;
+}
+
+// Common gate — auth + per-shop rate limit. Returns either the verified
+// shop domain or a Response (already-built error response to return).
+async function gate(c: any): Promise<string | Response> {
+  const sessionOrResp = await requireSession(c);
+  if (sessionOrResp instanceof Response) return sessionOrResp;
+  const shop = sessionOrResp.shopDomain;
+  if (await isRateLimited(c.env.DB, `shopify-posts:${shop}`, RATE_LIMIT_PER_MIN)) {
+    return c.json({ error: 'Rate limit exceeded' }, 429);
+  }
+  return shop;
+}
+
+// Narrow type for the row shape we return on GET. We hand-pick columns so
+// callers (the embedded app calendar / composer) don't accidentally see
+// columns reserved for the Clerk-user pipeline (e.g. late_post_id, video_*).
+interface ShopPostRow {
+  id: string;
+  content: string | null;
+  image_url: string | null;
+  platform: string | null;
+  status: string | null;
+  scheduled_for: string | null;
+  created_at: string | null;
+}
+
+export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
+  // ── POST /api/shopify/posts ──────────────────────────────────────────
+  // Create a Draft post for the current shop.
+  // Body: { content, image_url?, platform: 'facebook' | 'instagram' | 'both',
+  //         product_id? (currently dropped — no column for it yet) }
+  // Always status='Draft', scheduled_for=NULL on create. To schedule, the
+  // merchant PATCHes the row.
+  app.post('/api/shopify/posts', async (c) => {
+    const shopOrResp = await gate(c);
+    if (shopOrResp instanceof Response) return shopOrResp;
+    const shop = shopOrResp;
+
+    let body: { content?: unknown; image_url?: unknown; platform?: unknown; product_id?: unknown };
+    try { body = await c.req.json(); }
+    catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+    const content = typeof body.content === 'string' ? body.content : '';
+    if (!content.trim()) return c.json({ error: 'content is required' }, 400);
+
+    const imageUrl = typeof body.image_url === 'string' && body.image_url ? body.image_url : null;
+    const platform = typeof body.platform === 'string' ? body.platform : '';
+    if (!ALLOWED_PLATFORMS.has(platform)) {
+      return c.json({ error: "platform must be one of: 'facebook', 'instagram', 'both'" }, 400);
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    // Write BOTH legacy + tri-tenant columns (TENANT_ABSTRACTION.md contract).
+    // user_id is the shop domain sentinel because the column is NOT NULL today.
+    await c.env.DB.prepare(
+      `INSERT INTO posts (id, user_id, client_id, owner_kind, owner_id, content, image_url, platform, status, scheduled_for, created_at)
+       VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Draft', NULL, ?)`,
+    ).bind(id, shop, shop, content, imageUrl, platform, now).run();
+
+    return c.json({ id, status: 'Draft' });
+  });
+
+  // ── GET /api/shopify/posts ───────────────────────────────────────────
+  // List up to 100 most-recent posts for the current shop, newest first.
+  // Optional ?status=Draft|Scheduled|Posted|Missed filter.
+  app.get('/api/shopify/posts', async (c) => {
+    const shopOrResp = await gate(c);
+    if (shopOrResp instanceof Response) return shopOrResp;
+    const shop = shopOrResp;
+
+    const statusFilter = c.req.query('status');
+    let stmt;
+    if (statusFilter) {
+      stmt = c.env.DB.prepare(
+        `SELECT id, content, image_url, platform, status, scheduled_for, created_at
+         FROM posts
+         WHERE owner_kind = 'shop' AND owner_id = ? AND status = ?
+         ORDER BY created_at DESC LIMIT 100`,
+      ).bind(shop, statusFilter);
+    } else {
+      stmt = c.env.DB.prepare(
+        `SELECT id, content, image_url, platform, status, scheduled_for, created_at
+         FROM posts
+         WHERE owner_kind = 'shop' AND owner_id = ?
+         ORDER BY created_at DESC LIMIT 100`,
+      ).bind(shop);
+    }
+
+    const { results } = await stmt.all<ShopPostRow>();
+    return c.json({ posts: results ?? [] });
+  });
+
+  // ── PATCH /api/shopify/posts/:id ─────────────────────────────────────
+  // Edit a Draft. Allowed fields: content, image_url, scheduled_for, status.
+  // Status transitions allowed: 'Draft' → 'Scheduled' (schedule), 'Scheduled'
+  // → 'Draft' (unschedule).
+  //
+  // We reject 409 if the current row is anything other than Draft to avoid
+  // racing the publish-missed cron — once a row is Scheduled, the cron may
+  // pick it up at any moment and a concurrent PATCH would create a confusing
+  // intermediate state. The merchant can DELETE a Scheduled post (which the
+  // cron skips because we delete the row, not just status-flip it) if they
+  // want to abort.
+  app.patch('/api/shopify/posts/:id', async (c) => {
+    const shopOrResp = await gate(c);
+    if (shopOrResp instanceof Response) return shopOrResp;
+    const shop = shopOrResp;
+
+    const postId = c.req.param('id');
+
+    let body: { content?: unknown; image_url?: unknown; scheduled_for?: unknown; status?: unknown };
+    try { body = await c.req.json(); }
+    catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+    // Read current row first — we need status to gate the edit, AND we need
+    // to fail-fast 404 if the row doesn't belong to this shop (so we never
+    // leak the existence of another shop's row via a generic "no rows
+    // updated" response).
+    const current = await c.env.DB.prepare(
+      `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(postId, shop).first<{ status: string | null }>();
+    if (!current) return c.json({ error: 'Post not found' }, 404);
+    if (current.status !== EDITABLE_VIA_PATCH) {
+      return c.json({ error: `Only Draft posts can be edited (current status: ${current.status})` }, 409);
+    }
+
+    // Build the UPDATE dynamically — only set fields the caller actually sent.
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+
+    if ('content' in body) {
+      if (typeof body.content !== 'string') return c.json({ error: 'content must be a string' }, 400);
+      sets.push('content = ?');
+      vals.push(body.content);
+    }
+    if ('image_url' in body) {
+      const v = body.image_url;
+      if (v !== null && typeof v !== 'string') return c.json({ error: 'image_url must be a string or null' }, 400);
+      sets.push('image_url = ?');
+      vals.push(v ?? null);
+    }
+    if ('scheduled_for' in body) {
+      const v = body.scheduled_for;
+      if (v !== null && typeof v !== 'string') return c.json({ error: 'scheduled_for must be an ISO string or null' }, 400);
+      sets.push('scheduled_for = ?');
+      vals.push(v ?? null);
+    }
+    if ('status' in body) {
+      const v = body.status;
+      if (typeof v !== 'string' || !ALLOWED_PATCH_STATUSES.has(v)) {
+        return c.json({ error: "status must be 'Draft' or 'Scheduled'" }, 400);
+      }
+      sets.push('status = ?');
+      vals.push(v);
+    }
+
+    if (!sets.length) return c.json({ error: 'No editable fields supplied' }, 400);
+
+    // Re-assert tenant scope in the WHERE so a malicious id-guess + an
+    // open-handle race can't hit somebody else's row.
+    vals.push(postId, shop);
+    await c.env.DB.prepare(
+      `UPDATE posts SET ${sets.join(', ')}
+       WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(...vals).run();
+
+    return c.json({ ok: true });
+  });
+
+  // ── DELETE /api/shopify/posts/:id ────────────────────────────────────
+  // Remove a Draft or Scheduled post. Posted is terminal — we don't allow
+  // re-deletion of a published post from the embedded app (the merchant
+  // should unpublish/delete on FB/IG directly; mirroring that into our DB
+  // would require a Graph API call beyond Phase 2 scope).
+  app.delete('/api/shopify/posts/:id', async (c) => {
+    const shopOrResp = await gate(c);
+    if (shopOrResp instanceof Response) return shopOrResp;
+    const shop = shopOrResp;
+
+    const postId = c.req.param('id');
+
+    const current = await c.env.DB.prepare(
+      `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(postId, shop).first<{ status: string | null }>();
+    if (!current) return c.json({ error: 'Post not found' }, 404);
+    if (current.status !== 'Draft' && current.status !== 'Scheduled') {
+      return c.json({ error: `Cannot delete a ${current.status} post (only Draft or Scheduled)` }, 409);
+    }
+
+    await c.env.DB.prepare(
+      `DELETE FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(postId, shop).run();
+
+    return c.json({ ok: true });
+  });
+
+  // ── POST /api/shopify/posts/:id/publish-now ──────────────────────────
+  // Force a Draft into the publish queue immediately. We set scheduled_for
+  // to (now - 1ms) so the publish-missed cron's "WHERE scheduled_for <= now"
+  // predicate picks it up on the next 5-minute tick.
+  //
+  // NOTE — this is half of a contract. The other half is the cron change
+  // documented at the top of this file: publish-missed.ts currently filters
+  // by user_id and won't see owner_kind='shop' rows until extended. Without
+  // that cron change, this endpoint flips the status correctly but no
+  // actual FB/IG publish will happen. Surface this clearly in the UI as
+  // "Scheduled for next publish tick" until the cron lands.
+  app.post('/api/shopify/posts/:id/publish-now', async (c) => {
+    const shopOrResp = await gate(c);
+    if (shopOrResp instanceof Response) return shopOrResp;
+    const shop = shopOrResp;
+
+    const postId = c.req.param('id');
+
+    const current = await c.env.DB.prepare(
+      `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(postId, shop).first<{ status: string | null }>();
+    if (!current) return c.json({ error: 'Post not found' }, 404);
+    if (current.status !== 'Draft') {
+      return c.json({ error: `Only Draft posts can be force-published (current: ${current.status})` }, 409);
+    }
+
+    // now - 1ms in ISO form. The -1ms ensures we're strictly < now() at
+    // cron-comparison time even if the cron runs in the same millisecond.
+    const triggerAt = new Date(Date.now() - 1).toISOString();
+    await c.env.DB.prepare(
+      `UPDATE posts SET status = 'Scheduled', scheduled_for = ?
+       WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(triggerAt, postId, shop).run();
+
+    return c.json({ id: postId, status: 'Scheduled', scheduled_for: triggerAt });
+  });
+}
