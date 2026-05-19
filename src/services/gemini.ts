@@ -2418,6 +2418,21 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
         ? (research.contentPillars || saturationFallback.contentPillars)
         : (research.contentPillars?.map((p: any) => typeof p === 'object' ? p.name : p) || normalFallback.contentPillars));
 
+    // Strict-match block: when pillars come from the archetype, the LLM still
+    // drifts ~20% of the time and emits SaaS-marketing-shaped pillar names
+    // ("Pain Points & Solutions", "ROI & Business Outcomes") from training
+    // data. Without this block the soft "exact content pillar name" hint
+    // doesn't bind. With it we get 5/7 → 7/7 archetype-pillar compliance.
+    // Only enforced when archetypePillars is set — research-derived pillars
+    // are the LLM's own invention so it has no reason to deviate.
+    const pillarValues = pillarsForPrompt.map((p: any) => typeof p === 'object' ? p.name : p);
+    const strictPillarsBlock = archetypePillars
+      ? `\nSTRICT PILLAR CONSTRAINT (NON-NEGOTIABLE):
+Every post's "pillar" field MUST exactly match one of these values (case-sensitive, character-for-character):
+${pillarValues.map((p: string) => `  - "${p}"`).join('\n')}
+Do NOT invent your own pillar names. Do NOT abbreviate. Do NOT add parenthetical hints. Do NOT combine pillars. If your "pillar" value is not one of the exact strings above, the post is invalid and will be rejected. Reuse the exact strings verbatim.`
+      : '';
+
     const videoCount = includeVideos ? Math.max(1, Math.round(effectivePosts * 0.3)) : 0;
     const videoInstructions = includeVideos ? `
 VIDEO POST RULES (${videoCount} posts should be "video" type Reels):
@@ -2447,7 +2462,7 @@ CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "
 SATURATION RESEARCH (apply precisely):
 - Daily time windows: ${postingWindows.join(', ')} — use ALL of them, never repeat same time on same day
 - Content variety strategy: ${research.contentVarietyStrategy || saturationFallback.contentVarietyStrategy}
-- Content pillars — ROTATE ALL: ${pillarsForPrompt.join(' | ')}
+- Content pillars — ROTATE ALL: ${pillarValues.join(' | ')}${strictPillarsBlock}
 - Hashtag pool (mix ALL tiers per post, Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}): ${hashtagPool || (saturationFallback as any).hashtagThemes?.join(', ')}
 - Local hashtags to include: ${(research.localHashtags || []).join(', ')}
 - Image aesthetic: ${research.imageStyle || saturationFallback.imageStyle}
@@ -2490,7 +2505,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       "hashtags": ["#mega", "#large", "#medium", "#niche", "#local"],
       "imagePrompt": "vivid, specific image description matching the aesthetic",
       "reasoning": "content pillar used + time window chosen + why this format at this time",
-      "pillar": "exact content pillar name",
+      "pillar": "MUST exactly match one of the Content pillars listed above (verbatim string)",
       "videoScript": "(only for video postType) 30-60 second spoken script with hook, body, CTA",
       "videoShots": "(only for video postType) numbered shot list e.g. 1. Close-up of product, 3s...",
       "videoMood": "(only for video postType) music mood/genre e.g. Upbeat pop, 120BPM"
@@ -2506,7 +2521,7 @@ CRITICAL: ALL posts must feature SPECIFIC products, services, or outcomes from "
 RESEARCH INSIGHTS — apply every finding precisely:
 - Peak posting times: ${postingWindows.join(', ')} (researched for this business type + location)
 - Best days: ${(research.bestDays || normalFallback.bestDays).join(', ')} | Avoid: ${(research.worstDays || []).join(', ')}
-- Content pillars: ${pillarsForPrompt.join(' | ')}
+- Content pillars: ${pillarValues.join(' | ')}${strictPillarsBlock}
 - Caption style: ${research.captionStyle || 'conversational, question at end, 3-4 sentences max'}
 - Image aesthetic: ${research.imageStyle || 'vibrant, natural lighting, authentic'} 
 - Hashtag pool (mix ALL tiers, Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}): ${hashtagPool || (normalFallback as any).hashtagThemes?.join(', ')}
@@ -2552,7 +2567,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       "hashtags": ["#mega", "#large", "#medium", "#niche", "#local"],
       "imagePrompt": "vivid, specific, production-quality image description",
       "reasoning": "exact research insight that drove this: pillar + time + day + format choice",
-      "pillar": "content pillar name from researched list",
+      "pillar": "MUST exactly match one of the Content pillars listed above (verbatim string)",
       "videoScript": "(only for video postType) 30-60 second spoken script with hook, body, CTA",
       "videoShots": "(only for video postType) numbered shot list e.g. 1. Close-up of product, 3s...",
       "videoMood": "(only for video postType) music mood/genre e.g. Upbeat pop, 120BPM"
