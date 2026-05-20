@@ -35,6 +35,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
+import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
 import { composeProductPost, ComposeError } from './shopify-compose';
 
 const RATE_LIMIT_PER_MIN = 20;
@@ -111,6 +112,11 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     if (await isRateLimited(c.env.DB, `shopify-autopilot:${shop}`, RATE_LIMIT_PER_MIN)) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);
     }
+
+    // Required by the FK constraint on posts.user_id → users(id). See
+    // lib/shopify-tenancy.ts for the rationale. Idempotent — costs a D1
+    // round-trip but only writes once per shop.
+    await ensureShopSentinelUser(c.env, shop);
 
     const body = await c.req.json().catch(() => null) as {
       productId?: string;

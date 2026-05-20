@@ -173,6 +173,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `shopify-billing.ts` | Shopify Billing API helpers — create/cancel app subscription, billing-status lookup, plan→price mapping |
 | `shopify-token-exchange.ts` | Token Exchange flow — swap session token for offline access token (replaces OAuth code-grant for fresh installs) |
 | `shopify-admin-api.ts` | `shopifyGraphQL<T>(shop, accessToken, query, variables)` — discriminated-union GraphQL helper, 15s timeout, distinct network/http/graphql failure stages |
+| `shopify-tenancy.ts` | `ensureShopSentinelUser(env, shop)` — `INSERT OR IGNORE` a users row keyed by shop domain so the `posts.user_id → users(id)` FK is satisfied for shop-owned writes. Idempotent. Call before any shop-tenant INSERT into posts. |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |

@@ -57,6 +57,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
+import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
 
 // Match the OAuth route — keep both files in sync if the limit changes.
 const RATE_LIMIT_PER_MIN = 60;
@@ -144,6 +145,11 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
+
+    // Required by the FK constraint on posts.user_id → users(id). See
+    // lib/shopify-tenancy.ts for the rationale. Idempotent — no-op when the
+    // sentinel already exists.
+    await ensureShopSentinelUser(c.env, shop);
 
     // Write BOTH legacy + tri-tenant columns (TENANT_ABSTRACTION.md contract).
     // user_id is the shop domain sentinel because the column is NOT NULL today.
