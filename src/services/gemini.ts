@@ -1387,7 +1387,12 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
         reader.onerror = () => r(null);
         reader.readAsDataURL(blob);
       });
-      return dataUrl ? await compressImage(dataUrl, 700, 0.65) : null;
+      // flux-dev outputs sharp 1024×1024 images. Bumped from 700/0.65 to
+      // 1024/0.88 — at 0.65 quality the calendar previews looked aggressively
+      // blurry to the point where users (Steve, 2026-05-20) called the image
+      // quality "horrid". The bumped settings still keep each preview under
+      // ~250KB so a 14-post week stays under ~3.5MB in React state.
+      return dataUrl ? await compressImage(dataUrl, 1024, 0.88) : null;
     } catch { return null; }
   };
 
