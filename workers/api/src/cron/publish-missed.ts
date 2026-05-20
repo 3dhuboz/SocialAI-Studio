@@ -20,7 +20,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
-import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
+import { loadForbiddenSubjects, resolveBusinessType, scanForForbidden } from '../lib/profile-guards';
 import {
   ACTIVE_CLIENT_FILTER,
   loadSocialTokensForPosts,
@@ -529,7 +529,15 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         && promptForGen !== 'N/A'
         && promptForGen.length > 5;
       if (needsImage && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
-        const safe = buildSafeImagePrompt(promptForGen, cleanContent);
+        // Resolve businessType so buildSafeImagePrompt's fail-closed gate
+        // catches generic-workspace + abstract-UI prompts on the JIT path.
+        // See cron/prewarm-images.ts for the failure mode this fixes.
+        const businessType = await resolveBusinessType(
+          env,
+          (post as any).user_id,
+          (post as any).client_id || null,
+        );
+        const safe = buildSafeImagePrompt(promptForGen, cleanContent, businessType);
         if (safe) try {
           // 2026-05 image-stack upgrade: route through generateImageWithGuardrails
           // so JIT generation gets the same brand-grounded path the manual

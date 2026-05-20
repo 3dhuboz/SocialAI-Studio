@@ -180,14 +180,21 @@ describe('buildSafeImagePrompt', () => {
     expect(result!.prompt).not.toMatch(/\b(smiling|chef|holding)\b/i);
   });
 
-  it('rewrites abstract UI prompts as photographable scenes (2026-05-19 update)', () => {
+  it('rewrites abstract UI prompts as photographable scenes (2026-05-19 update, businessType-gated 2026-05-21)', () => {
     // Previous behavior: UI terms got swapped for a random SAFE_FALLBACK_SCENES
     // entry (closed laptop / notebook). This made SaaS posts that LITERALLY
     // were about a dashboard ship a generic mismatched image.
     // New behavior: rewriteAbstractUIAsPhotography produces a phone-on-marble-
     // desk scene that FLUX renders as a real photo of a UI on a screen, not a
     // wireframe and not a generic substitute.
-    const result = buildSafeImagePrompt('dashboard mockup of the analytics screen');
+    //
+    // 2026-05-21: the rewrite path is now gated behind a SPECIFIC businessType
+    // (mirror of the client-side gate hardened in PR #136). Pass
+    // 'tech-saas-agency' to exercise the rewrite path here — without an
+    // explicit businessType the prompt fails closed (covered by the new
+    // companion tests in src/lib/image-safety.test.ts).
+    const result = buildSafeImagePrompt('dashboard mockup of the analytics screen', null, 'tech-saas-agency');
+    expect(result).not.toBeNull();
     // The original UI terms should NOT appear verbatim in the prompt
     expect(result!.prompt).not.toMatch(/^dashboard mockup/);
     // But the rewrite should anchor to a physical phone-on-desk context
@@ -201,9 +208,14 @@ describe('buildSafeImagePrompt', () => {
     // the rewriteAbstractUIAsPhotography helper. The caption itself is
     // currently used as a reserved hook (not consumed by the rewrite yet
     // beyond contextual signal) — this test guards the signature.
+    //
+    // Same 2026-05-21 update applies: pass a specific businessType so the
+    // rewrite path actually fires (generic businessType fails closed by
+    // design — covered in image-safety.test.ts).
     const result = buildSafeImagePrompt(
       'dashboard mockup of the analytics screen',
       'Our new agency dashboard shows all 5 client brands at a glance.',
+      'tech-saas-agency',
     );
     expect(result).not.toBeNull();
     expect(result!.prompt).toContain(FLUX_STYLE_SUFFIX);
@@ -635,9 +647,13 @@ describe('end-to-end: caption injection on the 3 example posts', () => {
   it('Behind-the-scenes app dev caption: dashboard rewrite still beats fallback', () => {
     // Caption mentions "behind-the-scenes" and "app". The buildSafeImagePrompt
     // path with caption should rewrite the abstract-UI part rather than nuking.
+    //
+    // 2026-05-21: rewrite path now gated by a specific businessType. Pass
+    // 'tech-saas-agency' since the caption is about a SaaS feature.
     const result = buildSafeImagePrompt(
       'app screen showing the brand voice picker UI',
       'Behind the scenes — building our new brand voice picker app screen.',
+      'tech-saas-agency',
     );
     expect(result).not.toBeNull();
     expect(result!.prompt.toLowerCase()).toMatch(/smartphone|phone|app|desk/);

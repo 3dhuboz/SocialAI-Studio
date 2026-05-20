@@ -21,7 +21,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { critiqueImageInternal } from '../lib/critique';
-import { loadForbiddenSubjects } from '../lib/profile-guards';
+import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
@@ -68,9 +68,16 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
   if (!prompt || prompt.length < 5) return false;
   try {
     const caption = post.content || '';
-    const safe = buildSafeImagePrompt(prompt, caption);
+    // Resolve businessType so buildSafeImagePrompt can fail-closed for the
+    // (generic workspace + abstract-UI prompt) case. Without this the cron
+    // would happily ship a random flatlay for the Penny Wise I.T failure
+    // mode (businessType='small business' + image_prompt='dashboard mockup').
+    // Mirrors the buildSafeImagePromptClient gate hardened in PR #136 —
+    // until this commit, only frontend-initiated image requests respected it.
+    const businessType = await resolveBusinessType(env, post.user_id, post.client_id);
+    const safe = buildSafeImagePrompt(prompt, caption, businessType);
     if (!safe) {
-      console.warn(`[CRON prewarm] skipped post ${post.id}: prompt too short or invalid`);
+      console.warn(`[CRON prewarm] skipped post ${post.id}: prompt too short, invalid, or fail-closed for generic businessType`);
       return false;
     }
 

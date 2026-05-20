@@ -84,6 +84,71 @@ export async function loadForbiddenSubjects(
 }
 
 /**
+ * Look up the workspace's businessType from D1. Two-tier resolution mirrors
+ * loadForbiddenSubjects:
+ *
+ *   - Client-level: clients.business_type (the dedicated column populated by
+ *     POST /api/clients onboarding). Falls back to clients.profile JSON's
+ *     `businessType` / `business_type` key for older rows that pre-date the
+ *     dedicated column.
+ *
+ *   - User-level: users.profile JSON's `businessType` / `business_type` key.
+ *     This is the only path for non-agency workspaces (clientId is null).
+ *
+ * Returns 'small business' (the canonical default used by campaigns.ts +
+ * post-quality.ts) when nothing is set anywhere. Callers that want to
+ * fail-closed when the result is generic should compare with
+ * isGenericBusinessType from shared/flux-prompts.
+ *
+ * Errors are swallowed + logged with the same rationale as
+ * loadForbiddenSubjects: failing closed at the lookup would halt the cron
+ * publish path entirely, which is worse than falling through to the default
+ * and letting downstream gates (buildSafeImagePrompt's generic-businessType
+ * gate, archetype guardrails) make the safety call.
+ */
+export async function resolveBusinessType(
+  env: Env,
+  userId: string,
+  clientId?: string | null,
+): Promise<string> {
+  const DEFAULT = 'small business';
+  if (clientId) {
+    try {
+      const row = await env.DB
+        .prepare('SELECT business_type, profile FROM clients WHERE id = ? AND user_id = ?')
+        .bind(clientId, userId)
+        .first<{ business_type: string | null; profile: string | null }>();
+      if (row?.business_type) return row.business_type;
+      if (row?.profile) {
+        try {
+          const p = JSON.parse(row.profile);
+          if (p?.businessType) return String(p.businessType);
+          if (p?.business_type) return String(p.business_type);
+        } catch { /* malformed JSON — fall through to user tier */ }
+      }
+    } catch (err) {
+      console.warn(`[profile-guards] resolveBusinessType client lookup failed for ${clientId}:`, err);
+    }
+  }
+  try {
+    const row = await env.DB
+      .prepare('SELECT profile FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ profile: string | null }>();
+    if (row?.profile) {
+      try {
+        const p = JSON.parse(row.profile);
+        if (p?.businessType) return String(p.businessType);
+        if (p?.business_type) return String(p.business_type);
+      } catch { /* malformed user JSON — return default */ }
+    }
+  } catch (err) {
+    console.warn(`[profile-guards] resolveBusinessType user lookup failed for ${userId}:`, err);
+  }
+  return DEFAULT;
+}
+
+/**
  * Scan a block of text for the first occurrence of any denylisted subject.
  * Returns the matched subject (lowercase) so the caller can log/persist a
  * specific reason, or null if no match.

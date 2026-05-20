@@ -34,6 +34,38 @@ export const FLUX_STYLE_SUFFIX = 'candid iPhone photo taken at the venue, BRIGHT
 // catches lingering subject words before they reach the diffusion model.
 export const PEOPLE_REGEX = /\b(woman|women|man|men|person|people|portrait|face|faces|facial|smiling|smile|looking|standing|sitting|holding|posing|gazing|wearing|chef|farmer|barista|customer|owner|team|staff|employee|worker|girl|boy|lady|guy|couple|family|child|children|hand|hands|finger|fingers|happy|customers|interior shot)\b/gi;
 
+// Identify a workspace whose businessType is too generic to anchor an image
+// to. When the AI's `image_prompt` is also abstract-UI (dashboard, chart,
+// app screen, etc.) AND the workspace has no specific business identity to
+// fall back on, there's nothing for the rewrite/fallback path to ground in
+// — the resulting image would be a random flatlay with no connection to
+// the post. The safe move is to skip image generation entirely and let
+// the post publish text-only.
+//
+// Matches the worker / cron path's behaviour for the historical Penny Wise
+// I.T failure mode: businessType='small business' (the default) + abstract
+// AI-content image prompt → no specific industry to fall back to, so any
+// random fallback scene would be off-topic. Better to publish text-only.
+//
+// Single source of truth: imported by both the client (buildSafeImagePromptClient
+// in src/services/gemini.ts) and the worker (buildSafeImagePrompt in
+// workers/api/src/lib/image-safety.ts). Previously the client had this
+// regex inline as `isGenericType` and the worker had no equivalent at all
+// — so cron-initiated requests bypassed the fail-closed gate that the
+// frontend enforced.
+//
+// Null / empty input returns true (no businessType set is the most-generic
+// state possible).
+export function isGenericBusinessType(businessType: string | null | undefined): boolean {
+  if (!businessType) return true;
+  const trimmed = businessType.trim();
+  // Whitespace-only counts as the most-generic state (no businessType set)
+  // so the fail-closed gate bites for fresh workspaces that haven't run
+  // classify-business yet.
+  if (!trimmed) return true;
+  return /^(small business|business|company|service provider|local business)$/i.test(trimmed);
+}
+
 // Test whether a prompt needs to be swapped for a fallback scene before
 // being sent to FLUX. Returns true when the prompt is missing, too short to
 // be descriptive, a single word, a literal "N/A" / "none", looks like a

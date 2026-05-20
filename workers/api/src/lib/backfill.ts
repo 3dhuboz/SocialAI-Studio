@@ -16,7 +16,7 @@ import { buildSafeImagePrompt } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
 import { generateImageWithGuardrails } from './image-gen';
-import { loadForbiddenSubjects } from './profile-guards';
+import { loadForbiddenSubjects, resolveBusinessType } from './profile-guards';
 import { callAnthropicVision } from './anthropic';
 import {
   CRITIQUE_ACCEPT_THRESHOLD,
@@ -59,13 +59,25 @@ export async function backfillImagesForUser(env: Env, uid: string) {
 
   const posts = rows.results || [];
   let succeeded = 0; let failed = 0; let critiqueRetries = 0; const errors: string[] = [];
+  // Cache businessType lookups per-workspace within the batch. Two D1 reads
+  // per workspace, amortised across every post in that workspace. Same shape
+  // as the denylist cache used elsewhere in this file.
+  const businessTypeCache = new Map<string, string>();
+  const resolveBT = async (clientId: string | null): Promise<string> => {
+    const key = clientId || '__user__';
+    if (!businessTypeCache.has(key)) {
+      businessTypeCache.set(key, await resolveBusinessType(env, uid, clientId));
+    }
+    return businessTypeCache.get(key)!;
+  };
 
   for (const post of posts) {
     try {
       const postId = (post as any).id as string;
       const clientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
-      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption);
+      const businessType = await resolveBT(clientId);
+      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption, businessType);
       if (!safe) { failed++; continue; }
 
       // Pass caption so sniffArchetypeFromCaption fires for unclassified
@@ -192,13 +204,24 @@ export async function backfillImagesForPastDrafts(
 
   const posts = rows.results || [];
   let succeeded = 0; let failed = 0; let critiqueRetries = 0; const errors: string[] = [];
+  // Cache businessType per-workspace within the batch (same pattern as the
+  // user-scoped backfill above).
+  const businessTypeCache = new Map<string, string>();
+  const resolveBT = async (clientId: string | null): Promise<string> => {
+    const key = clientId || '__user__';
+    if (!businessTypeCache.has(key)) {
+      businessTypeCache.set(key, await resolveBusinessType(env, uid, clientId));
+    }
+    return businessTypeCache.get(key)!;
+  };
 
   for (const post of posts) {
     try {
       const postId = (post as any).id as string;
       const postClientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
-      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption);
+      const businessType = await resolveBT(postClientId);
+      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption, businessType);
       if (!safe) { failed++; continue; }
 
       const gen = await generateImageWithGuardrails(env, uid, postClientId, safe, { caption });
@@ -546,10 +569,11 @@ export async function runBacklogRegen(
   const posts = rows.results || [];
   let regenerated = 0;
   let failed = 0;
-  // Cache denylist lookups within a tick — posts often share a workspace,
-  // and loadForbiddenSubjects is two D1 queries (user + client). Mirrors
-  // the cache pattern in runBacklogCritique.
+  // Cache denylist + businessType lookups within a tick — posts often share
+  // a workspace and these are 2 D1 queries each. Mirrors the cache pattern
+  // in runBacklogCritique.
   const denylistCache = new Map<string, string[]>();
+  const businessTypeCache = new Map<string, string>();
 
   for (const post of posts) {
     // Bump regen_count up front so a mid-loop throw or transient FAL
@@ -560,7 +584,12 @@ export async function runBacklogRegen(
     ).bind(post.id).run();
 
     try {
-      const safe = buildSafeImagePrompt(post.image_prompt, post.content);
+      const btKey = `${post.user_id}:${post.client_id || '__user__'}`;
+      if (!businessTypeCache.has(btKey)) {
+        businessTypeCache.set(btKey, await resolveBusinessType(env, post.user_id, post.client_id));
+      }
+      const businessType = businessTypeCache.get(btKey)!;
+      const safe = buildSafeImagePrompt(post.image_prompt, post.content, businessType);
       if (!safe) { failed++; continue; }
 
       const gen = await generateImageWithGuardrails(

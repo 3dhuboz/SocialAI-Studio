@@ -24,7 +24,7 @@ import { generateImageWithGuardrails } from '../lib/image-gen';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from '../lib/image-safety';
 import { tryCreateClerkUser, tryCreateCFPagesProject } from '../lib/provisioning';
 import { refreshFactsForWorkspace } from '../lib/facebook-facts';
-import { loadForbiddenSubjects } from '../lib/profile-guards';
+import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 
 export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   // Backfill images for any Scheduled post that has an image_prompt but no image_url.
@@ -227,9 +227,22 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     let failed = 0;
     const errors: string[] = [];
 
+    // Cache businessType lookups per (uid, clientId) — a single regen run
+    // typically covers a handful of workspaces; without this we'd hit the
+    // DB once per post for the same workspace.
+    const businessTypeCache = new Map<string, string>();
+    const resolveBT = async (clientId: string | null): Promise<string> => {
+      const key = clientId || '__user__';
+      if (!businessTypeCache.has(key)) {
+        businessTypeCache.set(key, await resolveBusinessType(c.env, uid, clientId));
+      }
+      return businessTypeCache.get(key)!;
+    };
+
     for (const post of posts) {
       try {
-        const safe = buildSafeImagePrompt(post.image_prompt, post.content);
+        const businessType = await resolveBT(post.client_id);
+        const safe = buildSafeImagePrompt(post.image_prompt, post.content, businessType);
         if (!safe) { failed++; continue; }
 
         // Force fallback — these posts already scored badly, so trust the
