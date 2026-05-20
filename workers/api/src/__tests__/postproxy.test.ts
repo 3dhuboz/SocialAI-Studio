@@ -16,8 +16,11 @@ import {
   createPost,
   ensureProfileGroup,
   getPost,
+  getPostStats,
+  getProfileWithLatestStats,
   initializeConnection,
   listPlacements,
+  listPostComments,
   listProfiles,
 } from '../lib/postproxy';
 import type { Env } from '../env';
@@ -311,6 +314,105 @@ describe('listProfiles + listPlacements', () => {
     // Regression guard: Postproxy returns 404 without this query param.
     expect(capturedUrl).toContain('profile_group_id=grp_match');
     expect(capturedUrl).toContain('/profiles/pA/placements');
+  });
+});
+
+describe('getPostStats', () => {
+  it('returns the typed nested platforms.records payload', async () => {
+    vi.stubGlobal('fetch', mockFetch({
+      body: {
+        data: {
+          pp_abc: {
+            platforms: [{
+              profile_id: 'adUxm7',
+              platform: 'facebook',
+              records: [
+                { stats: { impressions: 1200, likes: 34, clicks: 8 }, recorded_at: '2026-05-19T03:00:00Z' },
+              ],
+            }],
+          },
+        },
+      },
+    }));
+    const result = await getPostStats(env, ['pp_abc'], { profiles: 'adUxm7' });
+    expect(result.data.pp_abc.platforms[0].platform).toBe('facebook');
+    expect(result.data.pp_abc.platforms[0].records[0].stats.impressions).toBe(1200);
+  });
+
+  it('passes post_ids and profiles query params', async () => {
+    let capturedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      capturedUrl = url;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ data: {} }) };
+    }));
+    await getPostStats(env, ['a', 'b', 'c'], { profiles: 'profX' });
+    expect(capturedUrl).toContain('/posts/stats');
+    expect(capturedUrl).toContain('post_ids=a%2Cb%2Cc');
+    expect(capturedUrl).toContain('profiles=profX');
+  });
+
+  it('no-ops on empty post_ids without an HTTP call', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await getPostStats(env, []);
+    expect(result).toEqual({ data: {} });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('throws when post_ids exceed 50 (caller must chunk)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(getPostStats(env, Array.from({ length: 51 }, (_, i) => `pp_${i}`))).rejects.toThrow(/max 50 post IDs/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('getProfileWithLatestStats', () => {
+  it('returns profile + summary_stats', async () => {
+    vi.stubGlobal('fetch', mockFetch({
+      body: {
+        id: 'adUxm7',
+        name: 'My Page',
+        platform: 'facebook',
+        status: 'active',
+        profile_group_id: 'grp_X',
+        post_count: 12,
+        latest_stats: [{ placement_id: '108234567890123', stats: { fan_count: 412 }, recorded_at: '2026-05-19T01:00:00Z' }],
+        summary_stats: { stats: { fan_count: 412, page_impressions: 9300 }, recorded_at: '2026-05-19T01:00:00Z' },
+      },
+    }));
+    const result = await getProfileWithLatestStats(env, 'adUxm7');
+    expect(result.id).toBe('adUxm7');
+    expect(result.summary_stats?.stats.fan_count).toBe(412);
+    expect(result.latest_stats?.[0].placement_id).toBe('108234567890123');
+  });
+});
+
+describe('listPostComments', () => {
+  it('forwards profile_id and returns the data array', async () => {
+    let capturedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      capturedUrl = url;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          total: 2,
+          page: 1,
+          per_page: 20,
+          data: [
+            { id: 'c1', body: 'Looks delicious!', like_count: 3, author_username: 'jane.doe' },
+            { id: 'c2', body: 'Hours tomorrow?', like_count: 0, author_username: 'mark.k' },
+          ],
+        }),
+      };
+    }));
+    const result = await listPostComments(env, 'pp_abc', 'adUxm7', { perPage: 20 });
+    expect(result.data).toHaveLength(2);
+    expect(result.data[0].body).toBe('Looks delicious!');
+    expect(capturedUrl).toContain('/posts/pp_abc/comments');
+    expect(capturedUrl).toContain('profile_id=adUxm7');
+    expect(capturedUrl).toContain('per_page=20');
   });
 });
 
