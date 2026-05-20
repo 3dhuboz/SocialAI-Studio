@@ -102,9 +102,24 @@ async function notifyOwnerOnPublishFailure(
     if (!email) return;
 
     const isTokenIssue = /token|expired|reconnect|permission|forbidden|connect facebook|page not found|manage_pages/i.test(reason);
+    // Deep-link to the right app: Shopify merchants live in their Shopify
+    // Admin (https://admin.shopify.com/store/<shop>/apps/<handle>), Clerk
+    // tenants live on socialaistudio.au. Sending a Shopify merchant to the
+    // Clerk login page is a dead-end — they have no Clerk account and
+    // bounce. The `isShop` branch synthesises the correct admin URL from
+    // the post.owner_id (which carries the shop_domain). The Shopify app
+    // handle "socialai-studio" is fixed for this app in the Partner dashboard.
+    let calendarUrl = 'https://socialaistudio.au';
+    let settingsUrl = 'https://socialaistudio.au/admin';
+    if (isShop && typeof post.owner_id === 'string') {
+      const shopHandle = post.owner_id.replace('.myshopify.com', '');
+      const appBase = `https://admin.shopify.com/store/${shopHandle}/apps/socialai-studio`;
+      calendarUrl = `${appBase}/calendar`;
+      settingsUrl = `${appBase}/settings`;
+    }
     const fixCta = isTokenIssue
-      ? `<a href="https://socialaistudio.au/admin" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Reconnect Facebook</a>`
-      : `<a href="https://socialaistudio.au" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Open Calendar</a>`;
+      ? `<a href="${settingsUrl}" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Reconnect Facebook</a>`
+      : `<a href="${calendarUrl}" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 22px;border-radius:8px;text-decoration:none;">Open Calendar</a>`;
 
     await sendResendEmail(env, {
       to: email,
@@ -152,6 +167,27 @@ async function postReelToFacebookPage(
   const base = 'https://graph.facebook.com/v21.0';
   if (description.length > 2200) {
     throw new Error(`FB reel description exceeds 2200 char limit (got ${description.length})`);
+  }
+
+  // Validate the video URL before passing it as a header value. The URL
+  // originates from the prewarm-videos cron writing into the posts table
+  // (sourced from Kling output), so server-controlled — BUT defense in
+  // depth: a malformed value (CRLF, non-HTTPS scheme, missing host) could
+  // smuggle headers into the FB API call. Reject explicitly.
+  let parsedVideo: URL;
+  try {
+    parsedVideo = new URL(videoUrl);
+  } catch {
+    throw new Error(`FB reel videoUrl is not a valid URL: ${String(videoUrl).slice(0, 80)}`);
+  }
+  if (parsedVideo.protocol !== 'https:') {
+    throw new Error(`FB reel videoUrl must use https:// (got ${parsedVideo.protocol})`);
+  }
+  // CRLF / control-char check on the raw string. URL constructor strips
+  // many of these but a CR/LF embedded as %0D / %0A round-trips through
+  // .href — fail closed on anything that smells like header injection.
+  if (/[\r\n\x00-\x1f]/.test(videoUrl)) {
+    throw new Error(`FB reel videoUrl contains control characters`);
   }
 
   // Phase 1 — start: get a video_id + upload_url.
@@ -290,6 +326,15 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // tick re-claims them via the missed-post sweep).
   const MAX_JIT_IMAGES_PER_RUN = 5;
   let jitGenerated = 0;
+
+  // Reel publishing inside postReelToFacebookPage polls up to 180s for FB
+  // processing. With up to 20 posts claimed per tick, a Reel-heavy batch
+  // could spend the entire cron budget on video polling and starve image
+  // posts. Cap reel work to 2 per tick — remaining reel posts wait for the
+  // next 5-min tick. Image / text-only posts in the same batch still
+  // process normally.
+  const MAX_REELS_PER_RUN = 2;
+  let reelsProcessed = 0;
 
   for (const post of posts) {
     try {
@@ -441,6 +486,22 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       const videoStatus = (post as any).video_status as string | null;
 
       if (postType === 'video' && videoStatus === 'ready' && videoUrl) {
+        // Cron-budget guard: each reel publish can spin up to 180s on FB
+        // processing polls. To keep image/text posts in the same batch from
+        // starving, defer surplus reels to the next tick. They stay in the
+        // queue (status='Scheduled', scheduled_for unchanged) so the next
+        // 5-min sweep picks them up via the same "scheduled_for <= now"
+        // predicate. The 2-per-tick cap gives us at most 6 minutes of
+        // reel polling budget while leaving room for the rest of the batch.
+        if (reelsProcessed >= MAX_REELS_PER_RUN) {
+          console.log(`[CRON] Skipping reel ${(post as any).id} — MAX_REELS_PER_RUN (${MAX_REELS_PER_RUN}) reached, will retry next tick`);
+          // Release the claim so the next tick can pick it up. Don't change
+          // status — the post is still legitimately Scheduled, just deferred.
+          await env.DB.prepare('UPDATE posts SET claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind((post as any).id).run();
+          continue;
+        }
+        reelsProcessed++;
         try {
           // Reel caption — strip trailing hashtags from content (idempotent)
           // and append clean hashtag block. Same idiom as fullText above.

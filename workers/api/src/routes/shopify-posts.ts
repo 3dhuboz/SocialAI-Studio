@@ -107,7 +107,9 @@ async function gate(c: any): Promise<string | Response> {
 
 // Narrow type for the row shape we return on GET. We hand-pick columns so
 // callers (the embedded app calendar / composer) don't accidentally see
-// columns reserved for the Clerk-user pipeline (e.g. late_post_id, video_*).
+// columns reserved for the Clerk-user pipeline (e.g. late_post_id).
+// video_* + image_critique_* ARE exposed — the Shopify Calendar needs them
+// to render Reel chips and AI-quality badges.
 interface ShopPostRow {
   id: string;
   content: string | null;
@@ -116,6 +118,14 @@ interface ShopPostRow {
   status: string | null;
   scheduled_for: string | null;
   created_at: string | null;
+  // Reel fields (autopilot can schedule video posts; calendar needs to render
+  // them differently from images).
+  post_type: string | null;       // 'image' | 'video' | 'reel'
+  video_url: string | null;       // R2-hosted URL after prewarm-videos cron
+  video_status: string | null;    // 'pending' | 'ready' | 'failed'
+  // Image critique fields (lets the calendar show "AI 8/10" badges).
+  image_critique_score: number | null;       // 0-10
+  image_critique_reasoning: string | null;
 }
 
 export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
@@ -170,17 +180,33 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const shop = shopOrResp;
 
     const statusFilter = c.req.query('status');
+    // We surface every column the Calendar needs to render correctly:
+    //   - post_type / video_url / video_status: lets the Calendar show a
+    //     reel chip vs an image chip, and a "rendering" pill on pending
+    //     reels. Without these, autopilot-generated Reels look identical to
+    //     image posts on the calendar grid — confusing.
+    //   - image_critique_score / image_critique_reasoning: lets the calendar
+    //     render a small "AI 8/10" badge so merchants can spot low-quality
+    //     posts before they publish. The critique cron + the Compose page's
+    //     manual critique both write these values; surfacing them on listing
+    //     closes the loop.
+    // All five columns exist on schema_v22+ — for older rows they're NULL,
+    // which the frontend renders as "no badge".
     let stmt;
     if (statusFilter) {
       stmt = c.env.DB.prepare(
-        `SELECT id, content, image_url, platform, status, scheduled_for, created_at
+        `SELECT id, content, image_url, platform, status, scheduled_for, created_at,
+                post_type, video_url, video_status,
+                image_critique_score, image_critique_reasoning
          FROM posts
          WHERE owner_kind = 'shop' AND owner_id = ? AND status = ?
          ORDER BY created_at DESC LIMIT 100`,
       ).bind(shop, statusFilter);
     } else {
       stmt = c.env.DB.prepare(
-        `SELECT id, content, image_url, platform, status, scheduled_for, created_at
+        `SELECT id, content, image_url, platform, status, scheduled_for, created_at,
+                post_type, video_url, video_status,
+                image_critique_score, image_critique_reasoning
          FROM posts
          WHERE owner_kind = 'shop' AND owner_id = ?
          ORDER BY created_at DESC LIMIT 100`,
@@ -317,8 +343,19 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
     ).bind(postId, shop).first<{ status: string | null }>();
     if (!current) return c.json({ error: 'Post not found' }, 404);
-    if (current.status !== 'Draft') {
-      return c.json({ error: `Only Draft posts can be force-published (current: ${current.status})` }, 409);
+    // Allow publish-now from:
+    //   - Draft    — normal "skip the schedule, publish right now" path
+    //   - Missed   — retry a post that the cron couldn't publish at the
+    //                originally-scheduled time (FB token expired, FB API
+    //                outage, image-gen timeout, etc.). The merchant has now
+    //                resolved the upstream issue (e.g. reconnected FB) and
+    //                wants the post to ship. Without this branch, Missed
+    //                posts were effectively un-publishable from the UI —
+    //                merchants had to delete + recompose.
+    // We reject Scheduled / Posted to avoid racing the cron / re-publishing
+    // something already on Facebook.
+    if (current.status !== 'Draft' && current.status !== 'Missed') {
+      return c.json({ error: `Only Draft or Missed posts can be force-published (current: ${current.status})` }, 409);
     }
 
     // now - 1ms in ISO form. The -1ms ensures we're strictly < now() at
