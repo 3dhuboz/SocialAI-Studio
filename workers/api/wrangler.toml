@@ -80,6 +80,10 @@ bucket_name = "socialai-posters"
 # Cron triggers:
 # */5 * * * *   — prewarm images + prewarm videos + publish missed posts.
 #                  Latency-sensitive lane only.
+# */15 * * * *  — health sweep (threshold-based alerts via lib/alerts.ts).
+#                  Detects publish_failure_burst (5+ Missed in 30 min) and
+#                  publish_zombie (stuck-Publishing > 30 min). Near-free
+#                  when nothing's wrong — one COUNT(*) per check.
 # 0 */6 * * *   — backlog critique + backlog regen + fal.ai credits check.
 #                  "Catch up later" lane. Throttled from */5 → every 6h to
 #                  cap worst-case FLUX Pro Kontext spend (was $9.60/hr at
@@ -89,7 +93,7 @@ bucket_name = "socialai-posters"
 # 0 21 * * SUN  — Autonomous Weekly Review (Monday 7am AEST = Sun 21:00 UTC).
 #                 CF cron parser rejects "0" for day-of-week — use "SUN".
 [triggers]
-crons = ["*/5 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *", "0 21 * * SUN"]
+crons = ["*/5 * * * *", "*/15 * * * *", "0 3 * * *", "0 4 * * *", "0 */6 * * *", "0 21 * * SUN"]
 
 [dev]
 port = 8787

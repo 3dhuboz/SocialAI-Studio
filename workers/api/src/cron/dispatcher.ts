@@ -4,6 +4,7 @@
 //
 // Maps Cloudflare's cron-expression triggers to the right cron function:
 //   */5 * * * *   → prewarm images + videos + publish missed posts + poll reels
+//   */15 * * * *  → health sweep (threshold-based observability alerts)
 //   0 */6 * * *   → backlog critique + backlog regen + fal.ai credits check
 //   0 3 * * *     → token refresh
 //   0 4 * * *     → daily fact refresh
@@ -27,6 +28,8 @@ import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
+import { fireAlert } from '../lib/alerts';
+import { cronHealthSweep } from './health-sweep';
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
 // Returns void; never throws (so a failure in one cron doesn't kill the worker).
@@ -46,6 +49,11 @@ async function trackCron(
     success = 0;
     error = (e?.message || String(e)).slice(0, 1000);
     console.error(`[CRON ${cronType}] FAILED:`, error);
+    // Fire a critical alert so Steve learns about cron crashes within an
+    // hour. fireAlert never throws — it logs internally on failure — so
+    // it can't cascade into a second exception here. Defaults to
+    // dark-launch (record-only) until the cron_alerts row is flipped.
+    await fireAlert(env, `cron_crashed:${cronType}`, 'critical', error || 'unknown');
   }
   const duration = Date.now() - start;
   try {
@@ -100,6 +108,17 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   }
   if (cron === '0 4 * * *') {
     await trackCron(env, 'facts_refresh', () => cronRefreshFacts(env));
+    return;
+  }
+  if (cron === '*/15 * * * *') {
+    // Threshold-based observability sweep — runs every 15 min, near-free
+    // when nothing's wrong (one COUNT(*) per check). Fires alerts via
+    // lib/alerts.ts when publish failures cluster or posts go zombie.
+    // See cron/health-sweep.ts for the per-check rationale + thresholds.
+    await trackCron(env, 'health_sweep', async () => {
+      const r = await cronHealthSweep(env);
+      return { posts_processed: r.posts_processed };
+    });
     return;
   }
   // Monday 7am AEST (Sunday 21:00 UTC) — Autonomous Weekly Review.
