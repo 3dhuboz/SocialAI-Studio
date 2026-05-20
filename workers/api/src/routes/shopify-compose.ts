@@ -32,7 +32,7 @@ import {
   type VerifiedSession,
 } from '../lib/shopify-auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
-import { generateImageWithBrandRefs } from '../lib/image-gen';
+import { generateImageWithGuardrails } from '../lib/image-gen';
 import { loadShopFactsForPrompt } from '../lib/facebook-facts';
 import { loadForbiddenSubjectsForShop, scanForForbidden } from '../lib/profile-guards';
 import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from '../lib/prompt-safety';
@@ -464,7 +464,7 @@ export async function composeProductPost(
     }
   }
   try {
-    const result = await generateImageWithBrandRefs(
+    const result = await generateImageWithGuardrails(
       env,
       sentinelUserId,
       null,

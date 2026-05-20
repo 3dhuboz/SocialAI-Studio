@@ -49,6 +49,8 @@ import {
 } from 'lucide-react';
 // AdminCustomers is tab-gated (only mounted when activeTab === 'customers' && isAdminMode).
 const AdminCustomers = lazy(() => import('./components/AdminCustomers').then(m => ({ default: m.AdminCustomers })));
+// AdminShopifyStores is tab-gated (only mounted when activeTab === 'shopify-stores' && isAdminMode).
+const AdminShopifyStores = lazy(() => import('./components/AdminShopifyStores').then(m => ({ default: m.AdminShopifyStores })));
 import { BrandKitProvider } from './contexts/BrandKitContext';
 // PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
 // the user actually clicks the Posters tab — keeps the home/calendar bundle small.
@@ -561,7 +563,7 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers' | 'shopify-stores'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   // ── Billing summary cache (I4 fix) ────────────────────────────────────
   // Lazily-loaded the first time the user navigates to the Settings tab
@@ -2623,6 +2625,7 @@ const Dashboard: React.FC = () => {
     // Customers tab — admin-only. Shows self-serve signups + payment activity
     // pulled from /api/admin/*. Hidden in clientMode (whitelabel deployments).
     ...(!CLIENT.clientMode && isAdminMode ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
+    ...(!CLIENT.clientMode && isAdminMode ? [{ id: 'shopify-stores' as const, label: 'Shopify', icon: ShoppingCart }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -5461,6 +5464,13 @@ const Dashboard: React.FC = () => {
         {activeTab === 'customers' && isAdminMode && (
           <Suspense fallback={<LoadingShell />}>
             <AdminCustomers />
+          </Suspense>
+        )}
+
+        {/* ═══ SHOPIFY STORES TAB ═══ — admin-only Shopify-merchant tenant view */}
+        {activeTab === 'shopify-stores' && isAdminMode && (
+          <Suspense fallback={<LoadingShell />}>
+            <AdminShopifyStores />
           </Suspense>
         )}
 
