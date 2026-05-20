@@ -29,3 +29,13 @@
 .settings-publish-row:hover {
   background: var(--p-color-bg-surface-hover, #f6f6f7);
 }
+
+/* Privacy callout — subtle green tint that pairs with the success-toned
+   LockIcon. Polaris 13 doesn't expose a `bg-surface-success-subdued`
+   Box token, so we paint it ourselves with the surface-success token
+   (or a hard-coded fallback that matches Polaris's success palette). */
+.settings-privacy-callout {
+  background: var(--p-color-bg-surface-success, #e8f5e8);
+  border-radius: 8px;
+  padding: 12px;
+}

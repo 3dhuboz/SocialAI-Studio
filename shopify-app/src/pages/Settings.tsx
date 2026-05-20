@@ -549,7 +549,9 @@ function WhatWePublishCard() {
             <div key={it.title} className="settings-publish-row">
               <InlineStack gap="300" blockAlign="center" wrap={false} align="start">
                 <Box>
-                  <Icon source={it.icon} tone="subdued" />
+                  {/* tone="base" gives ~#5c5f62 — strong enough to read against
+                      the white card. tone="subdued" was rendering as near-white. */}
+                  <Icon source={it.icon} tone="base" />
                 </Box>
                 <BlockStack gap="050">
                   <Text as="span" variant="bodyMd" fontWeight="semibold">{it.title}</Text>
@@ -559,15 +561,21 @@ function WhatWePublishCard() {
             </div>
           ))}
         </BlockStack>
-        <InlineStack gap="200" blockAlign="center" align="start" wrap={false}>
-          <Box>
-            <Icon source={LockIcon} tone="subdued" />
-          </Box>
-          <Text as="p" variant="bodySm" tone="subdued">
-            We never publish without your explicit save. You can edit or delete
-            any Draft or Scheduled post from the Calendar.
-          </Text>
-        </InlineStack>
+        {/* Privacy callout — tinted background so it visually anchors as a
+            "your safety net" footer, not a 5th list item disguised as white.
+            settings-privacy-callout is defined in settings.css and gives us
+            a subtle green tint that matches the success-toned lock icon. */}
+        <div className="settings-privacy-callout">
+          <InlineStack gap="200" blockAlign="center" align="start" wrap={false}>
+            <Box>
+              <Icon source={LockIcon} tone="success" />
+            </Box>
+            <Text as="p" variant="bodySm">
+              We never publish without your explicit save. You can edit or delete
+              any Draft or Scheduled post from the Calendar.
+            </Text>
+          </InlineStack>
+        </div>
       </BlockStack>
     </Card>
   );
