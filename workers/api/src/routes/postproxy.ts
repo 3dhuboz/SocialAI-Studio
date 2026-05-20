@@ -40,6 +40,7 @@ import {
   planWebhookAction,
   verifyWebhookSignature,
 } from '../lib/postproxy-webhook';
+import { normalizePostPlatform } from '../cron/_shared';
 
 const uuid = () => crypto.randomUUID();
 
@@ -82,6 +83,19 @@ function postOauthRedirect(env: Env, clientId: string | null): string {
   return `${base}/onboarding?step=pick-placement&workspace=${workspace}`;
 }
 
+/** Build the "connected, no picker needed" redirect target. Used by the
+ *  IG path post-OAuth — IG has no placements, so we skip Stage 2 entirely
+ *  and land the user on a success state. The frontend reads
+ *  `?step=connected&platform=instagram` and renders a small confirmation
+ *  instead of the placement-picker UI. */
+function postOauthConnectedRedirect(env: Env, clientId: string | null, platform: 'facebook' | 'instagram'): string {
+  const base = env.ENVIRONMENT === 'staging'
+    ? 'https://staging.socialaistudio.au'
+    : 'https://socialaistudio.au';
+  const workspace = clientId ? encodeURIComponent(clientId) : 'own';
+  return `${base}/onboarding?step=connected&workspace=${workspace}&platform=${platform}`;
+}
+
 /** Build the failure-case redirect target. Postproxy appends
  *  `failure=true&error_code=...` to our callback URL when OAuth fails
  *  at Meta (account already in another group, user cancelled, scope
@@ -106,27 +120,41 @@ interface PostproxyProfileRow {
   fb_page_name: string | null;
   profile_status: string | null;
   oauth_state: string | null;
+  platform: string;
 }
 
-/** Look up the postproxy_profiles row for a workspace tuple. NULL
- *  client_id is handled with `IS NULL` (param binding won't match). */
+/** Parse + validate the `platform` body/query param. Defaults to 'facebook'
+ *  so existing callers that don't pass a platform get byte-identical
+ *  behaviour. Wraps `normalizePostPlatform` (already platform-aware +
+ *  tested in cron-shared.test.ts) so we don't duplicate the string-
+ *  normalisation logic across the codebase. */
+function parsePlatform(raw: unknown): 'facebook' | 'instagram' {
+  return normalizePostPlatform(typeof raw === 'string' ? raw : null);
+}
+
+/** Look up the postproxy_profiles row for a workspace tuple + platform.
+ *  NULL client_id is handled with `IS NULL` (param binding won't match).
+ *  Platform defaults to 'facebook' for back-compat with pre-ig-wire
+ *  callers — schema_v24 backfills existing rows with platform='facebook'
+ *  so the lookup remains semantically identical for legacy data. */
 async function selectProfileByWorkspace(
   env: Env,
   uid: string,
   clientId: string | null,
+  platform: 'facebook' | 'instagram' = 'facebook',
 ): Promise<PostproxyProfileRow | null> {
   if (clientId) {
     return env.DB.prepare(
       `SELECT id, user_id, client_id, postproxy_group_id, postproxy_profile_id,
-              postproxy_placement_id, fb_page_name, profile_status, oauth_state
-       FROM postproxy_profiles WHERE user_id = ? AND client_id = ?`
-    ).bind(uid, clientId).first<PostproxyProfileRow>();
+              postproxy_placement_id, fb_page_name, profile_status, oauth_state, platform
+       FROM postproxy_profiles WHERE user_id = ? AND client_id = ? AND platform = ?`
+    ).bind(uid, clientId, platform).first<PostproxyProfileRow>();
   }
   return env.DB.prepare(
     `SELECT id, user_id, client_id, postproxy_group_id, postproxy_profile_id,
-            postproxy_placement_id, fb_page_name, profile_status, oauth_state
-     FROM postproxy_profiles WHERE user_id = ? AND client_id IS NULL`
-  ).bind(uid).first<PostproxyProfileRow>();
+            postproxy_placement_id, fb_page_name, profile_status, oauth_state, platform
+     FROM postproxy_profiles WHERE user_id = ? AND client_id IS NULL AND platform = ?`
+  ).bind(uid, platform).first<PostproxyProfileRow>();
 }
 
 export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
@@ -144,8 +172,9 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     if (await isRateLimited(c.env.DB, `pp-init:${uid}`, 10)) {
       return c.json({ error: 'Rate limit exceeded — 10 connect attempts per minute' }, 429);
     }
-    const body = await c.req.json<{ clientId?: string | null }>().catch(() => ({} as { clientId?: string | null }));
+    const body = await c.req.json<{ clientId?: string | null; platform?: string }>().catch(() => ({} as { clientId?: string | null; platform?: string }));
     const clientId = body?.clientId ?? null;
+    const platform = parsePlatform(body?.platform);
 
     // Agency-tenant safety: only allow connecting clients the caller owns.
     if (clientId) {
@@ -160,10 +189,12 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const label = workspaceLabel(uid, clientId);
       const group = await ensureProfileGroup(c.env, label);
 
-      // 2. Upsert the workspace row with a fresh oauth_state nonce. We do
-      //    NOT touch postproxy_profile_id / placement_id here — the
-      //    callback fills profile_id, save-placement fills placement_id.
-      const existing = await selectProfileByWorkspace(c.env, uid, clientId);
+      // 2. Upsert the workspace row for THIS platform. After ig-wire,
+      //    one workspace can own up to one row per platform (UNIQUE on
+      //    user_id + client_id + platform per schema_v24). The existing
+      //    check is platform-scoped — connecting Instagram won't clobber
+      //    the FB row, and vice versa.
+      const existing = await selectProfileByWorkspace(c.env, uid, clientId, platform);
       const oauthState = uuid();
       const nowIso = new Date().toISOString();
       if (existing) {
@@ -176,18 +207,19 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
         await c.env.DB.prepare(
           `INSERT INTO postproxy_profiles
              (id, user_id, client_id, postproxy_group_id, profile_status,
-              oauth_state, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?)`
-        ).bind(uuid(), uid, clientId, group.id, 'pending', oauthState, nowIso, nowIso).run();
+              oauth_state, platform, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`
+        ).bind(uuid(), uid, clientId, group.id, 'pending', oauthState, platform, nowIso, nowIso).run();
       }
 
-      // 3. Open Postproxy's hosted-OAuth URL. The state nonce lives in the
-      //    redirect path so the callback can resolve workspace ownership
-      //    without needing the browser to send anything else.
+      // 3. Open Postproxy's hosted-OAuth URL for the chosen platform.
+      //    The state nonce lives in the redirect path so the callback can
+      //    resolve workspace + platform from the row without needing the
+      //    browser to send anything else.
       const redirectUrl = `${workerOrigin(c.req.raw, c.env)}/api/postproxy/oauth-callback?state=${encodeURIComponent(oauthState)}`;
-      const { url: authUrl } = await initializeConnection(c.env, group.id, redirectUrl);
+      const { url: authUrl } = await initializeConnection(c.env, group.id, redirectUrl, platform);
 
-      return c.json({ authUrl, oauthState });
+      return c.json({ authUrl, oauthState, platform });
     } catch (err: any) {
       console.error('[postproxy] init-connection failed:', err?.message);
       return c.json({ error: 'Connection setup failed', message: String(err?.message || err) }, 502);
@@ -204,10 +236,11 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!state) return c.json({ error: 'Missing state' }, 400);
 
     const row = await c.env.DB.prepare(
-      `SELECT id, user_id, client_id, postproxy_group_id
+      `SELECT id, user_id, client_id, postproxy_group_id, platform
        FROM postproxy_profiles WHERE oauth_state = ?`
-    ).bind(state).first<{ id: string; user_id: string; client_id: string | null; postproxy_group_id: string }>();
+    ).bind(state).first<{ id: string; user_id: string; client_id: string | null; postproxy_group_id: string; platform: string }>();
     if (!row) return c.json({ error: 'Unknown oauth state' }, 404);
+    const rowPlatform = parsePlatform(row.platform);
 
     // Postproxy signals OAuth failure via `failure=true&error_code=...`
     // (common codes: account_is_already_in_group, access_denied,
@@ -224,11 +257,13 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     try {
-      // List profiles in this group; pick the newest (the one we just connected).
-      // Postproxy doesn't surface a "freshly-connected" marker — best heuristic
-      // is "most recent active profile in our group" — falling back to the
-      // first profile in the group if all are pending.
-      const profiles = await listProfiles(c.env, row.postproxy_group_id);
+      // List profiles in this group; pick the newest matching the
+      // platform we just connected. Postproxy doesn't surface a
+      // "freshly-connected" marker — best heuristic is "most recent
+      // active profile for this platform in our group" — falling back
+      // to the first matching profile if all are pending.
+      const allProfiles = await listProfiles(c.env, row.postproxy_group_id);
+      const profiles = allProfiles.filter((p) => parsePlatform(p.platform) === rowPlatform);
       const fresh = profiles.find((p) => p.status === 'active') ?? profiles[0];
       if (!fresh) {
         // Same redirect pattern as the explicit-failure case — but with a
@@ -254,7 +289,25 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
         row.id,
       ).run();
 
-      const target = postOauthRedirect(c.env, row.client_id);
+      // IG short-circuit (ig-wire): Instagram has no placements per
+      // docs §3299 — there's nothing to pick. Auto-flip use_postproxy=1
+      // here so the publish cron starts routing IG posts on its next
+      // tick without the user having to click through a picker that
+      // would always show "0 placements". For FB, this still happens
+      // in save-placement after the user picks a Page.
+      if (rowPlatform === 'instagram') {
+        if (row.client_id) {
+          await c.env.DB.prepare('UPDATE clients SET use_postproxy = 1 WHERE id = ? AND user_id = ?')
+            .bind(row.client_id, row.user_id).run();
+        } else {
+          await c.env.DB.prepare('UPDATE users SET use_postproxy = 1 WHERE id = ?')
+            .bind(row.user_id).run();
+        }
+      }
+
+      const target = rowPlatform === 'instagram'
+        ? postOauthConnectedRedirect(c.env, row.client_id, 'instagram')
+        : postOauthRedirect(c.env, row.client_id);
       return c.redirect(target, 303);
     } catch (err: any) {
       console.error('[postproxy] oauth-callback failed:', err?.message);
@@ -262,21 +315,33 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     }
   });
 
-  // ── GET /api/postproxy/placements?clientId=<id> ───────────────────────
+  // ── GET /api/postproxy/placements?clientId=<id>&platform=<facebook|instagram> ──
   // Returns the placements (FB Pages) available for the workspace's
   // connected profile. Used by the placement-picker UI.
+  //
+  // ig-wire: Instagram has no placements (docs §3299) — we return an empty
+  // array with `skipPicker: true` so the frontend knows to bypass Stage 2
+  // entirely. The IG auto-flip in oauth-callback means the user is already
+  // fully connected by the time they'd hit this endpoint.
   app.get('/api/postproxy/placements', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') ?? null;
+    const platform = parsePlatform(c.req.query('platform'));
 
-    const row = await selectProfileByWorkspace(c.env, uid, clientId);
+    if (platform === 'instagram') {
+      // Short-circuit — IG has no picker step. Frontend can detect this
+      // shape and skip rendering the picker UI entirely.
+      return c.json({ placements: [], platform: 'instagram', skipPicker: true });
+    }
+
+    const row = await selectProfileByWorkspace(c.env, uid, clientId, platform);
     if (!row?.postproxy_profile_id) {
       return c.json({ error: 'No social connection for this workspace' }, 404);
     }
     try {
       const placements = await listPlacements(c.env, row.postproxy_profile_id, row.postproxy_group_id);
-      return c.json({ placements: placements.map((p) => ({ id: p.id, name: p.name })) });
+      return c.json({ placements: placements.map((p) => ({ id: p.id, name: p.name })), platform });
     } catch (err: any) {
       console.error('[postproxy] placements failed:', err?.message);
       return c.json({ error: 'Placement fetch failed', message: String(err?.message || err) }, 502);
@@ -292,13 +357,24 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/postproxy/save-placement', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    const body = await c.req.json<{ clientId?: string | null; placementId?: string; pageName?: string }>().catch(() => null);
-    if (!body || typeof body.placementId !== 'string' || typeof body.pageName !== 'string') {
+    const body = await c.req.json<{ clientId?: string | null; placementId?: string; pageName?: string; platform?: string }>().catch(() => null);
+    if (!body) return c.json({ error: 'JSON body required' }, 400);
+    const clientId = body.clientId ?? null;
+    const platform = parsePlatform(body.platform);
+
+    // IG bypass: the oauth-callback already flipped use_postproxy=1 for
+    // IG since there's no picker to wait for. If the frontend still calls
+    // save-placement (e.g. for shape uniformity), no-op success.
+    if (platform === 'instagram') {
+      return c.json({ ok: true, platform: 'instagram', skipped: true });
+    }
+
+    // FB requires placementId + pageName from the picker.
+    if (typeof body.placementId !== 'string' || typeof body.pageName !== 'string') {
       return c.json({ error: 'placementId and pageName are required' }, 400);
     }
-    const clientId = body.clientId ?? null;
 
-    const row = await selectProfileByWorkspace(c.env, uid, clientId);
+    const row = await selectProfileByWorkspace(c.env, uid, clientId, platform);
     if (!row) return c.json({ error: 'No social connection for this workspace — connect Facebook first' }, 404);
 
     const nowIso = new Date().toISOString();

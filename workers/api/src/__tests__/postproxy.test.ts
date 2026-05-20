@@ -92,6 +92,100 @@ describe('buildCreatePostPayload — wire shape', () => {
   });
 });
 
+describe('buildCreatePostPayload — Instagram wire shape (ig-wire)', () => {
+  it('IG post emits platforms.instagram with no page_id', () => {
+    const payload = buildCreatePostPayload({
+      profileId: 'ig_prof_x',
+      body: 'IG caption',
+      media: ['https://r2.example.com/img.jpg'],
+      format: 'post',
+      pageId: '', // ignored for IG
+      platform: 'instagram',
+    });
+    expect((payload as any).platforms).toEqual({
+      instagram: { format: 'post' },
+    });
+    // Critical: no FB block leaked through
+    expect((payload as any).platforms.facebook).toBeUndefined();
+  });
+
+  it('IG reel sets format=reel and truncates title to 60', () => {
+    const payload = buildCreatePostPayload({
+      profileId: 'ig_prof_x',
+      body: 'caption',
+      media: ['https://r2.example.com/v.mp4'],
+      format: 'reel',
+      pageId: '',
+      platform: 'instagram',
+      title: 'x'.repeat(120),
+    });
+    const ig = (payload as any).platforms.instagram as Record<string, unknown>;
+    expect(ig.format).toBe('reel');
+    expect(ig.title).toBe('x'.repeat(60));
+    expect('page_id' in ig).toBe(false);
+  });
+
+  it('IG story format passes through verbatim', () => {
+    const payload = buildCreatePostPayload({
+      profileId: 'ig_prof_x',
+      body: '',
+      media: ['https://r2.example.com/story.jpg'],
+      format: 'story',
+      pageId: '',
+      platform: 'instagram',
+    });
+    expect((payload as any).platforms.instagram.format).toBe('story');
+  });
+
+  it('IG first_comment passes through, capped at 2196 chars', () => {
+    const payload = buildCreatePostPayload({
+      profileId: 'ig_prof_x',
+      body: 'caption',
+      media: ['https://r2.example.com/img.jpg'],
+      format: 'post',
+      pageId: '',
+      platform: 'instagram',
+      firstComment: 'c'.repeat(3000),
+    });
+    const ig = (payload as any).platforms.instagram as Record<string, unknown>;
+    expect((ig.first_comment as string).length).toBe(2196);
+  });
+
+  it('FB payload (no platform arg) still emits the legacy shape byte-identically', () => {
+    const ig = buildCreatePostPayload({
+      profileId: 'ig_prof_x', body: 'a', media: [], format: 'post', pageId: '', platform: 'instagram',
+    });
+    const fb = buildCreatePostPayload({
+      profileId: 'fb_prof', body: 'a', media: [], format: 'feed', pageId: '123',
+    });
+    // Sanity check: defaulting platform to 'facebook' produces the original shape
+    expect((fb as any).platforms.facebook).toEqual({ format: 'feed', page_id: '123' });
+    expect((fb as any).platforms.instagram).toBeUndefined();
+    // And IG block has no page_id key
+    expect((ig as any).platforms.instagram).toEqual({ format: 'post' });
+  });
+});
+
+describe('initializeConnection — platform parameter', () => {
+  it('defaults to facebook when platform arg omitted', async () => {
+    const fetchMock = mockFetch({ body: { url: 'https://auth.example/123', success: true } });
+    vi.stubGlobal('fetch', fetchMock);
+    await initializeConnection(env, 'grp_X', 'https://worker.example/cb');
+    const init = fetchMock.mock.calls[0][1];
+    const body = JSON.parse(init.body as string);
+    expect(body.platform).toBe('facebook');
+  });
+
+  it('passes platform=instagram when explicitly set', async () => {
+    const fetchMock = mockFetch({ body: { url: 'https://auth.example/abc', success: true } });
+    vi.stubGlobal('fetch', fetchMock);
+    await initializeConnection(env, 'grp_X', 'https://worker.example/cb', 'instagram');
+    const init = fetchMock.mock.calls[0][1];
+    const body = JSON.parse(init.body as string);
+    expect(body.platform).toBe('instagram');
+  });
+});
+
 describe('createPost', () => {
   it('POSTs to /api/posts with the correct body + auth header', async () => {
     const fetchMock = mockFetch({ body: { id: 'pp_post_abc', status: 'pending' } });

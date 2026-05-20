@@ -17,7 +17,15 @@
  * If you change the batch loader's query shape, expect these to fire.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { loadSocialTokensForPosts, lookupSocialTokens, type SocialTokens } from '../cron/_shared';
+import {
+  loadSocialTokensForPosts,
+  lookupSocialTokens,
+  loadPostproxyMappingForPosts,
+  lookupPostproxyMapping,
+  normalizePostPlatform,
+  type SocialTokens,
+  type PostproxyMappingRow,
+} from '../cron/_shared';
 
 function makeDb(rows: { table: 'clients' | 'users'; id: string; social_tokens: string | null }[]) {
   const calls: { sql: string; binds: unknown[] }[] = [];
@@ -168,5 +176,149 @@ describe('lookupSocialTokens', () => {
   it('returns undefined when the requested id is not in the map', () => {
     const t = lookupSocialTokens(map, { user_id: 'u-missing', client_id: null });
     expect(t).toBeUndefined();
+  });
+});
+
+// ── Postproxy mapping (ig-wire: platform-aware) ─────────────────────────
+
+function mappingRow(over: Partial<PostproxyMappingRow>): PostproxyMappingRow {
+  return {
+    user_id: 'u1',
+    client_id: null,
+    postproxy_profile_id: 'prof_fb',
+    postproxy_placement_id: 'page_123',
+    postproxy_group_id: 'grp_X',
+    fb_page_name: 'My Page',
+    profile_status: 'active',
+    platform: 'facebook',
+    ...over,
+  };
+}
+
+describe('normalizePostPlatform', () => {
+  it('normalises common variants to facebook/instagram', () => {
+    expect(normalizePostPlatform('Facebook')).toBe('facebook');
+    expect(normalizePostPlatform('FACEBOOK')).toBe('facebook');
+    expect(normalizePostPlatform('Instagram')).toBe('instagram');
+    expect(normalizePostPlatform('INSTAGRAM')).toBe('instagram');
+    expect(normalizePostPlatform('IG')).toBe('instagram');
+    expect(normalizePostPlatform('ig')).toBe('instagram');
+  });
+
+  it('defaults to facebook for null/undefined/unknown', () => {
+    expect(normalizePostPlatform(null)).toBe('facebook');
+    expect(normalizePostPlatform(undefined)).toBe('facebook');
+    expect(normalizePostPlatform('')).toBe('facebook');
+    expect(normalizePostPlatform('TikTok')).toBe('facebook');
+  });
+});
+
+describe('lookupPostproxyMapping — platform-aware', () => {
+  it('exact match: post platform=facebook → FB mapping row', () => {
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::::facebook', mappingRow({ platform: 'facebook', postproxy_profile_id: 'prof_fb' }));
+    map.set('u1::::instagram', mappingRow({ platform: 'instagram', postproxy_profile_id: 'prof_ig' }));
+    const row = lookupPostproxyMapping(map, { user_id: 'u1', client_id: null, platform: 'Facebook' });
+    expect(row?.postproxy_profile_id).toBe('prof_fb');
+  });
+
+  it('exact match: post platform=Instagram → IG mapping row', () => {
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::::facebook', mappingRow({ platform: 'facebook', postproxy_profile_id: 'prof_fb' }));
+    map.set('u1::::instagram', mappingRow({ platform: 'instagram', postproxy_profile_id: 'prof_ig' }));
+    const row = lookupPostproxyMapping(map, { user_id: 'u1', client_id: null, platform: 'Instagram' });
+    expect(row?.postproxy_profile_id).toBe('prof_ig');
+  });
+
+  it('legacy post (platform=null) falls back to FB mapping', () => {
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::::facebook', mappingRow({ platform: 'facebook', postproxy_profile_id: 'prof_fb' }));
+    const row = lookupPostproxyMapping(map, { user_id: 'u1', client_id: null, platform: null });
+    expect(row?.postproxy_profile_id).toBe('prof_fb');
+  });
+
+  it('IG post does NOT fall back to FB mapping when no IG row exists', () => {
+    // Critical: an IG post must never silently publish via FB — it would
+    // hit the wrong account. Returning undefined here pushes the post to
+    // the "reconnect Instagram" Missed path.
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::::facebook', mappingRow({ platform: 'facebook', postproxy_profile_id: 'prof_fb' }));
+    const row = lookupPostproxyMapping(map, { user_id: 'u1', client_id: null, platform: 'instagram' });
+    expect(row).toBeUndefined();
+  });
+
+  it('explicit platform arg overrides post.platform', () => {
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::::facebook', mappingRow({ platform: 'facebook', postproxy_profile_id: 'prof_fb' }));
+    map.set('u1::::instagram', mappingRow({ platform: 'instagram', postproxy_profile_id: 'prof_ig' }));
+    // post.platform says FB but we explicitly ask for IG
+    const row = lookupPostproxyMapping(
+      map,
+      { user_id: 'u1', client_id: null, platform: 'Facebook' },
+      'instagram',
+    );
+    expect(row?.postproxy_profile_id).toBe('prof_ig');
+  });
+
+  it('returns undefined for unknown workspace', () => {
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::::facebook', mappingRow({}));
+    const row = lookupPostproxyMapping(map, { user_id: 'u_other', client_id: null, platform: 'Facebook' });
+    expect(row).toBeUndefined();
+  });
+
+  it('agency post with client_id keys by (user_id, client_id, platform)', () => {
+    const map = new Map<string, PostproxyMappingRow>();
+    map.set('u1::c1::facebook', mappingRow({ client_id: 'c1', platform: 'facebook', postproxy_profile_id: 'prof_client_fb' }));
+    const row = lookupPostproxyMapping(map, { user_id: 'u1', client_id: 'c1', platform: 'Facebook' });
+    expect(row?.postproxy_profile_id).toBe('prof_client_fb');
+  });
+});
+
+describe('loadPostproxyMappingForPosts — SQL shape', () => {
+  function makePpDb(rows: PostproxyMappingRow[]) {
+    const queries: { sql: string; binds: unknown[] }[] = [];
+    const prepare = vi.fn().mockImplementation((sql: string) => ({
+      bind: (...binds: unknown[]) => {
+        queries.push({ sql, binds });
+        return {
+          all: () => Promise.resolve({ results: rows }),
+        };
+      },
+    }));
+    return { env: { DB: { prepare } } as any, queries };
+  }
+
+  it('queries postproxy_profiles WHERE client_id IS NULL for own-workspace posts', async () => {
+    const { env, queries } = makePpDb([
+      mappingRow({ user_id: 'u1', client_id: null, platform: 'facebook' }),
+    ]);
+    const map = await loadPostproxyMappingForPosts(env, [{ user_id: 'u1', client_id: null }]);
+    expect(queries.length).toBe(1);
+    expect(queries[0].sql).toContain('client_id IS NULL');
+    expect(queries[0].sql).toContain('platform');
+    expect(map.size).toBe(1);
+    expect(map.get('u1::::facebook')).toBeDefined();
+  });
+
+  it('keys the map by user::client::platform so both platforms coexist', async () => {
+    const { env } = makePpDb([
+      mappingRow({ user_id: 'u1', client_id: null, platform: 'facebook', postproxy_profile_id: 'prof_fb' }),
+      mappingRow({ user_id: 'u1', client_id: null, platform: 'instagram', postproxy_profile_id: 'prof_ig' }),
+    ]);
+    const map = await loadPostproxyMappingForPosts(env, [{ user_id: 'u1', client_id: null }]);
+    expect(map.get('u1::::facebook')?.postproxy_profile_id).toBe('prof_fb');
+    expect(map.get('u1::::instagram')?.postproxy_profile_id).toBe('prof_ig');
+  });
+
+  it('normalises pre-migration NULL platform to facebook in the map key', async () => {
+    // Defence against an apply-order miss where the worker ships before
+    // schema_v24 lands — old rows return platform=null/undefined and
+    // we still want a usable FB mapping.
+    const { env } = makePpDb([
+      { ...mappingRow({ user_id: 'u1', client_id: null }), platform: null as any },
+    ]);
+    const map = await loadPostproxyMappingForPosts(env, [{ user_id: 'u1', client_id: null }]);
+    expect(map.get('u1::::facebook')).toBeDefined();
   });
 });
