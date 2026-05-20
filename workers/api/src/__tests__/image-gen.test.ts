@@ -164,7 +164,7 @@ describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth
     expect(body.prompt.toLowerCase()).not.toMatch(/\b(restaurant|plated|kitchen|sourdough|meal)\b/);
   });
 
-  it('SaaS archetype + clean prompt → keeps prompt, only extends negativePrompt with archetype avoid-list', async () => {
+  it('SaaS archetype → always uses fallback scene bank (auto-forced for abstract-caption archetype), extends negativePrompt with archetype avoid-list', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
     );
@@ -174,8 +174,17 @@ describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth
       negativePrompt: 'people, hands',
     });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    // Prompt preserved as-is (with FLUX_STYLE_SUFFIX appended by image-safety).
-    expect(body.prompt).toContain('co-working studio');
+    // 2026-05-20 behaviour change: tech-saas-agency is in the
+    // FORCE_FALLBACK_ARCHETYPES set because its caption space is
+    // inherently abstract (pricing, "which is worse" questions, "$29/mo")
+    // and the LLM keeps generating non-photographable prompts that flux
+    // returns black/white blanks for. The fix: always route SaaS through
+    // the curated 15-scene fallback bank with caption-subject injection,
+    // even when the supplied LLM prompt looks clean. Caller's prompt is
+    // discarded in favour of a deterministic pick from the bank.
+    expect(body.prompt).not.toContain('co-working studio with closed laptop and morning light');
+    // Should be one of the 15 SaaS fallback scenes (all photographable).
+    expect(body.prompt.toLowerCase()).toMatch(/notebook|desk|hands|smartphone|coffee|journal|sketch|street|coffee|highway|window|chair|gradient|brass|leather/);
     // Negative prompt extended with the archetype's avoid-list.
     expect(body.negative_prompt).toMatch(/food|plated|bbq/);
   });
