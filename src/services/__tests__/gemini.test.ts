@@ -72,14 +72,35 @@ describe('buildSafeImagePromptClient', () => {
     expect(buildSafeImagePromptClient('', 'small business')).toBeNull();
   });
 
-  it('rewrites abstract-UI prompt as photographable scene (was fail-closed pre-2026-05-19)', () => {
-    // BEHAVIOR CHANGE (2026-05-19): "dashboard with pricing tiers" used to
-    // return null when businessType was generic (no scene bank to pick from
-    // safely). Now rewriteAbstractUIAsPhotography keeps the topic intent
-    // ("show a pricing dashboard") and renders it as a real phone-on-desk
-    // photo — better than failing closed because SaaS posts legitimately
-    // ARE about dashboards.
-    const r = buildSafeImagePromptClient('dashboard with pricing tiers', 'small business');
+  it('fails closed for abstract-UI prompt + GENERIC businessType (tightened 2026-05-21)', () => {
+    // POLICY HISTORY:
+    //   pre-2026-05-19  fail-closed for abstract-UI + any businessType.
+    //   2026-05-19      rewrite the abstract-UI prompt as a phone-on-desk
+    //                   photo even when businessType is generic, so SaaS
+    //                   posts about dashboards don't get nuked.
+    //   2026-05-21      tightened back — when businessType is one of the
+    //                   GENERIC placeholders ("small business", "company",
+    //                   "service provider", "local business"), we have no
+    //                   signal for what KIND of dashboard the post is
+    //                   about, and the marble-desk pricing-tier rewrite
+    //                   ends up off-topic almost as often as a random
+    //                   industry scene would. Posting text-only is safer.
+    //
+    // The rewrite path still runs for SPECIFIC businessTypes — covered by
+    // the next test ('falls back to … specific businessType'). SaaS
+    // workspaces should set their businessType to something real (e.g.
+    // "social media SaaS" or the tech-saas-agency archetype slug) to keep
+    // image rendering on — generic placeholders intentionally do not.
+    expect(buildSafeImagePromptClient('dashboard with pricing tiers', 'small business')).toBeNull();
+  });
+
+  it('rewrites abstract-UI prompt as photographable scene for SPECIFIC businessType', () => {
+    // The rewriteAbstractUIAsPhotography path keeps the post intent ("show
+    // a pricing dashboard") and renders it as a real phone-on-desk photo.
+    // FLUX handles real photography well — abstract-UI prompts produce
+    // wireframe artefacts. The non-generic businessType is the signal that
+    // we know enough about the workspace to risk the rewrite.
+    const r = buildSafeImagePromptClient('dashboard with pricing tiers', 'tech-saas-agency');
     expect(r).not.toBeNull();
     expect(r!.prompt).not.toMatch(/^dashboard with pricing tiers/);
     // Rewrite anchors to physical desk/phone context so FLUX renders a photo
