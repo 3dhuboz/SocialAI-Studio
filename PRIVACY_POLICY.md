@@ -72,6 +72,7 @@ We use the following sub-processors to provide the service:
 - **Shopify, Inc.** — App platform, OAuth, Billing API, webhook delivery. Shopify's privacy practices: https://www.shopify.com/legal/privacy
 - **Anthropic / OpenRouter** — AI model inference for caption generation. No customer or order data is sent — only product titles + descriptions you've granted us via `read_products`.
 - **fal.ai** — AI image generation. No customer data is sent.
+- **Meta Platforms, Inc. (Facebook / Instagram)** — only if you connect a Facebook Page in Settings. We use the Facebook Graph API to publish your scheduled posts to your connected Page (and linked Instagram Business account, if any) and to read Page-level engagement stats for the Insights view. We never request access to your customers, ad accounts, or messages. We store a Page access token and Page ID; both are erased when you click "Disconnect" in Settings or when the app is uninstalled. Meta's privacy practices: https://www.facebook.com/privacy/policy/
 
 ## 8. Your rights
 
