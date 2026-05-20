@@ -80,12 +80,17 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
   'tech-saas-agency': {
     forbidden: /\b(?:food|restaurant|plated|plating|dining|kitchen|meal|breakfast|lunch|dinner|cuisine|cocktail|wine|pastry|pastries|loaf|loaves|sourdough|farm|paddock|livestock|cattle|sheep|tractor|crops|harvest|bbq|brisket|smoker|smoked|grill|grilled|charcoal|gym|treadmill|barbell|dumbbell|massage|salon|spa|garage|engine|axle|wrench)\b/i,
     extraNegatives: 'food, plate, plated, restaurant, dining, kitchen, meal, beverage, candlelit, rustic wood board, bbq, smoker, grill, agriculture, farm, livestock, gym, yoga mat, automotive, garage',
-    // 15 scenes covering: workspaces, hands-on-objects, regional Australian
-    // context, books/reading, founder/maker moments, travel, pure objects,
-    // abstract. Wider variety so a week of bulk-generated SaaS posts doesn't
-    // ship five flatlay-laptop shots in a row. Selection is deterministic by
-    // post-id hash (see image-gen.ts) so the same week's posts spread
-    // predictably across this bank instead of random-colliding.
+    // 14 photographable scenes covering: workspaces, hands-on-objects,
+    // regional Australian context, books/reading, founder/maker moments,
+    // travel, pure objects. Wider variety so a week of bulk-generated SaaS
+    // posts doesn't ship five flatlay-laptop shots in a row. Selection is
+    // deterministic by post-id hash (see image-gen.ts) so the same week's
+    // posts spread predictably across this bank instead of random-colliding.
+    //
+    // 2026-05-20: dropped the abstract gradient scene (was #15) — for SaaS
+    // posts the gradient added no topical anchor and felt thin compared to
+    // the 14 photographable scenes. All entries below render as actual
+    // photographs of physical objects/places.
     fallbackScenes: [
       // Workspace settings (curated, varied lighting + angle)
       'modern co-working studio with closed laptop on a clean desk, soft abstract blue and purple gradient on the wall behind, geometric paper shapes scattered, morning daylight',
@@ -106,8 +111,6 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
       'stack of business and design books on a side table, folded reading glasses on top, single linen armchair partially in frame, soft lamp light',
       // Pure-object stills (no humans, no UI) — versatile abstract context
       'two leather-bound notebooks stacked on a marble table, a brass pen and folded reading glasses beside them, single ceramic vase with native gum leaves, soft window light',
-      // Abstract (genuine fallback for purely conceptual posts)
-      'abstract layered gradient of blue, purple and soft pink with subtle geometric shapes, low-poly aesthetic, suggesting connectivity and workflow',
     ],
   },
   'professional-services': {
