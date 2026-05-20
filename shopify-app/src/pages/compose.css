@@ -1,0 +1,32 @@
+/* Compose page polish — hero, quality score visual, hover on the image. */
+
+.compose-hero {
+  background: var(--p-color-bg-surface-magic-subdued, #f4f1ff);
+  border-radius: 12px;
+}
+
+/* The image thumbnail gets a subtle hover-lift so it feels like a real
+   asset preview rather than a static decoration. */
+.compose-image-wrap {
+  transition: transform 160ms ease, box-shadow 160ms ease;
+  border-radius: 8px;
+}
+.compose-image-wrap:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Quality-score card is the moment of truth on this page — give it a
+   tinted background that flips by score band. */
+.compose-quality-good {
+  background: var(--p-color-bg-surface-success-subdued, #e8f5e8);
+  border-radius: 12px;
+}
+.compose-quality-mid {
+  background: var(--p-color-bg-surface-warning-subdued, #fff5d6);
+  border-radius: 12px;
+}
+.compose-quality-low {
+  background: var(--p-color-bg-surface-critical-subdued, #ffe9e8);
+  border-radius: 12px;
+}

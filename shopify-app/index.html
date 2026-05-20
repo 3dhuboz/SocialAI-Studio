@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Shopify App Bridge bootstrap.
+
+      The <meta> tag MUST be present BEFORE the app-bridge.js script tag so
+      App Bridge can read the API key during its synchronous init pass.
+      VITE_SHOPIFY_API_KEY is interpolated at build time by Vite's HTML
+      transform — must match shopify.app.toml `client_id` and the worker's
+      SHOPIFY_API_KEY secret.
+
+      app-bridge.js exposes a global `window.shopify` object that the React
+      tree uses via @shopify/app-bridge-react hooks (useAppBridge,
+      shopify.idToken(), etc.). Loading from Shopify's CDN is required —
+      self-hosting is explicitly unsupported by Shopify.
+    -->
+    <meta name="shopify-api-key" content="%VITE_SHOPIFY_API_KEY%" />
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+    <title>SocialAI Studio for Shopify</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

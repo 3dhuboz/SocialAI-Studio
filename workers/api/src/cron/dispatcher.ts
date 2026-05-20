@@ -30,6 +30,7 @@ import { cronPrewarmVideos } from './prewarm-videos';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
+import { reconcileSubscriptions } from './reconcile-subscriptions';
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
 // Returns void; never throws (so a failure in one cron doesn't kill the worker).
@@ -119,6 +120,10 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
       const r = await cronHealthSweep(env);
       return { posts_processed: r.posts_processed };
     });
+    // Reconcile Shopify subscriptions — catches missed app_subscriptions/update
+    // webhooks. Cheap when no Shopify shops are out of sync; runs on the same
+    // 15-min cadence as health sweep since both are observability-tier work.
+    await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
     return;
   }
   // Monday 7am AEST (Sunday 21:00 UTC) — Autonomous Weekly Review.
