@@ -438,8 +438,10 @@ export async function deletePoster(id: string, signal?: AbortSignal) {
 // generate-one for each slot with concurrency-3 to fill in parallel.
 
 export interface AutopilotGeneratedPost {
+  /** UUID. When status==='Preview' this is a client-side identity, not a posts row. */
   id: string;
-  status: 'Scheduled';
+  /** 'Preview' is returned by the dryRun path; 'Scheduled' by the legacy save-on-generate path. */
+  status: 'Scheduled' | 'Preview';
   caption: string;
   image_url: string;
   platform: 'facebook' | 'instagram' | 'both';
@@ -448,6 +450,13 @@ export interface AutopilotGeneratedPost {
   campaign_used: boolean;
   post_type: 'image' | 'video';
   video_status: 'pending' | null;
+  /** Echoed back by the dryRun response so save-batch can replay the same Kling motion. */
+  motion_prompt?: string | null;
+}
+
+export interface AutopilotBatchSaveResult {
+  saved: string[];
+  failed: Array<{ idx: number; error: string }>;
 }
 
 // ── FB Facts (Autopilot grounding) ────────────────────────────────────────
@@ -531,12 +540,36 @@ export async function generateAutopilotPost(
     tone?: 'friendly' | 'professional' | 'playful';
     postType?: 'image' | 'video';
     motionPrompt?: string;
+    /** When true, server composes but does NOT persist — used by the preview flow. */
+    dryRun?: boolean;
   },
   signal?: AbortSignal,
 ) {
   return apiFetch<AutopilotGeneratedPost>(
     '/api/shopify/autopilot/generate-one',
     { method: 'POST', body: JSON.stringify(input), signal },
+  );
+}
+
+/**
+ * Save a batch of merchant-approved (preview) posts to the scheduling queue.
+ * Use after the user clicks "Accept All" on the Autopilot review screen.
+ * Each post inserts independently — partial failures are reported in `failed`.
+ */
+export async function saveAutopilotBatch(
+  posts: Array<{
+    caption: string;
+    imageUrl: string;
+    platform: 'facebook' | 'instagram' | 'both';
+    scheduledFor: string;
+    postType?: 'image' | 'video';
+    motionPrompt?: string | null;
+  }>,
+  signal?: AbortSignal,
+) {
+  return apiFetch<AutopilotBatchSaveResult>(
+    '/api/shopify/autopilot/save-batch',
+    { method: 'POST', body: JSON.stringify({ posts }), signal },
   );
 }
 

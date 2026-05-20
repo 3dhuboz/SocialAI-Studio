@@ -4,32 +4,53 @@ import {
   Card, BlockStack, InlineStack, InlineGrid, Text, Banner, Button,
   Spinner, Box, Badge, ChoiceList, RangeSlider, ProgressBar, Divider, Checkbox,
 } from '@shopify/polaris';
-import { RefreshIcon } from '@shopify/polaris-icons';
+import { RefreshIcon, DeleteIcon, CheckCircleIcon } from '@shopify/polaris-icons';
 import {
-  listProducts, generateAutopilotPost, getActiveCampaign, getFactsStatus, refreshFacts, ApiError,
+  listProducts, generateAutopilotPost, saveAutopilotBatch, getActiveCampaign,
+  getFactsStatus, refreshFacts, ApiError,
   type Product, type AutopilotGeneratedPost, type ShopifyCampaign, type FactsStatus,
 } from '../api';
 
 /**
- * AI Autopilot — bulk content calendar generator.
+ * AI Autopilot — bulk content calendar generator with preview-then-accept flow.
  *
- * Workflow:
+ * Workflow (mirrors main SocialAI Studio Smart Schedule):
  *  1. Merchant picks a vibe (Smart Schedule / 24hr Burst / Highlights /
  *     Saturation), a platform selection, and a post count.
  *  2. We expand the vibe into N timestamps in the merchant's LOCAL
- *     timezone (the browser's clock — better than guessing on the
- *     worker side where everything is UTC).
+ *     timezone (the browser's clock — better than guessing on the worker
+ *     side where everything is UTC).
  *  3. We round-robin the synced product list into the N slots so each
  *     post features a different SKU (loops if N > product count).
- *  4. Calls /api/shopify/autopilot/generate-one for each slot with a
- *     concurrency cap of 3, surfacing live progress as each completes.
- *  5. Once done, the merchant is offered to head to the Calendar to
- *     review/tweak.
+ *  4. Calls /api/shopify/autopilot/generate-one with dryRun=true for each
+ *     slot, concurrency-3. The worker composes caption + image but does
+ *     NOT persist — we collect results into React state.
+ *  5. Phase flips to 'reviewing'. Merchant sees a preview card per post:
+ *     image, caption, scheduled time, platform, and a delete button.
+ *  6. When the merchant clicks "Accept All & Add to Calendar", we call
+ *     /api/shopify/autopilot/save-batch with the surviving posts. The
+ *     worker bulk-inserts them as status='Scheduled'.
+ *
+ *  Why not save-on-generate?
+ *  -------------------------
+ *  An earlier version did. But composing 7-14 posts is a 90-180s wall-clock
+ *  operation, and merchants want to scan the captions/images before they
+ *  go live. Save-on-generate forced them to load the Calendar tab and
+ *  delete unwanted posts one by one. The preview flow keeps everything in
+ *  one screen and only writes to D1 once the merchant confirms.
  */
 
 type Vibe = 'smart' | 'burst' | 'highlights' | 'saturation';
 type Platform = 'facebook' | 'instagram' | 'both';
-type Phase = 'idle' | 'generating' | 'done' | 'error';
+/**
+ * Phase progression mirrors the main SocialAI Studio Smart Schedule:
+ *   idle → generating → reviewing → saving → done
+ *
+ * 'reviewing' is the new step: posts are composed but NOT yet in the DB.
+ * The merchant can edit/delete individual posts, then "Accept All" saves
+ * them in one batch.
+ */
+type Phase = 'idle' | 'generating' | 'reviewing' | 'saving' | 'done' | 'error';
 
 interface VibeConfig {
   id: Vibe;
@@ -185,6 +206,13 @@ export default function Autopilot() {
     failed: { error: string; scheduledFor: string }[];
   }>({ done: 0, total: 0, succeeded: [], failed: [] });
   const [error, setError] = useState<string | null>(null);
+  // Per-row "I changed my mind" state for the preview screen. Removing a
+  // preview just drops it from this set — no DB roundtrip until Accept All.
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  // Save phase counters — drive the progress bar during Accept All.
+  const [saveProgress, setSaveProgress] = useState<{ saved: number; failed: number; total: number }>({
+    saved: 0, failed: 0, total: 0,
+  });
 
   const vibeConfig = VIBES.find((v) => v.id === vibe)!;
 
@@ -250,6 +278,8 @@ export default function Autopilot() {
     }
     setError(null);
     setPhase('generating');
+    setRemovedIds(new Set());
+    setSaveProgress({ saved: 0, failed: 0, total: 0 });
 
     // Plan slots in local time, then assign products round-robin.
     const timestamps = expandToTimestamps(vibe, postCount);
@@ -281,6 +311,7 @@ export default function Autopilot() {
         platform: slot.platform,
         scheduledFor: slot.scheduledFor,
         postType: slot.postType,
+        dryRun: true,  // compose only — merchant reviews before saving
       }),
       (_idx, result) => {
         setProgress((p) => ({
@@ -292,7 +323,62 @@ export default function Autopilot() {
       },
     );
 
-    setPhase('done');
+    // Move to review phase even if some failed — the merchant can still
+    // accept the successful ones and ignore the failures.
+    setPhase('reviewing');
+  };
+
+  // Survivors = succeeded posts the merchant hasn't removed in the preview.
+  const survivors = progress.succeeded.filter((p) => !removedIds.has(p.id));
+
+  const handleAcceptAll = async () => {
+    if (survivors.length === 0) {
+      setError('Nothing left to save — every post was removed.');
+      return;
+    }
+    setError(null);
+    setPhase('saving');
+    setSaveProgress({ saved: 0, failed: 0, total: survivors.length });
+
+    try {
+      const result = await saveAutopilotBatch(
+        survivors.map((p) => ({
+          caption: p.caption,
+          imageUrl: p.image_url,
+          platform: p.platform,
+          scheduledFor: p.scheduled_for,
+          postType: p.post_type,
+          motionPrompt: p.motion_prompt ?? null,
+        })),
+      );
+      setSaveProgress({
+        saved: result.saved.length,
+        failed: result.failed.length,
+        total: survivors.length,
+      });
+      // If everything saved, flip straight to done. If partial, leave the
+      // merchant in 'done' anyway so they can choose to retry the failures
+      // by running another batch.
+      setPhase('done');
+    } catch (e: unknown) {
+      setError(e instanceof ApiError ? e.message : String(e));
+      setPhase('reviewing');  // back to review so they can retry
+    }
+  };
+
+  const handleDiscardAll = () => {
+    setPhase('idle');
+    setProgress({ done: 0, total: 0, succeeded: [], failed: [] });
+    setRemovedIds(new Set());
+    setSaveProgress({ saved: 0, failed: 0, total: 0 });
+  };
+
+  const handleRemovePost = (id: string) => {
+    setRemovedIds((s) => {
+      const next = new Set(s);
+      next.add(id);
+      return next;
+    });
   };
 
   return (
@@ -463,17 +549,13 @@ export default function Autopilot() {
             </BlockStack>
           </Card>
 
-          {/* ── Progress ─────────────────────────────────────────────── */}
-          {(phase === 'generating' || phase === 'done') && (
+          {/* ── Generation progress (while running) ──────────────────── */}
+          {phase === 'generating' && (
             <Card>
               <BlockStack gap="400">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingMd">
-                    {phase === 'generating' ? 'Generating…' : 'Done'}
-                  </Text>
-                  <Badge tone={phase === 'done' ? 'success' : 'info'}>
-                    {`${progress.done} of ${progress.total}`}
-                  </Badge>
+                  <Text as="h3" variant="headingMd">Generating…</Text>
+                  <Badge tone="info">{`${progress.done} of ${progress.total}`}</Badge>
                 </InlineStack>
 
                 <ProgressBar
@@ -482,52 +564,212 @@ export default function Autopilot() {
                   tone="primary"
                 />
 
-                <InlineStack gap="300">
-                  <Badge tone="success">{`${progress.succeeded.length} succeeded`}</Badge>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Each post takes 5–20 seconds. We'll show them all here for review
+                  before anything goes to your calendar.
+                </Text>
+              </BlockStack>
+            </Card>
+          )}
+
+          {/* ── Review / preview screen (after generation) ──────────── */}
+          {phase === 'reviewing' && (
+            <BlockStack gap="400">
+              {/* Sticky Accept All header */}
+              <Card>
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingMd">
+                        {survivors.length > 0
+                          ? `${survivors.length} ${survivors.length === 1 ? 'post' : 'posts'} ready to schedule`
+                          : 'No posts to schedule'}
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Review below, then add them all to your calendar.
+                      </Text>
+                    </BlockStack>
+                    <InlineStack gap="200">
+                      <Button onClick={handleDiscardAll} variant="tertiary">
+                        Discard all
+                      </Button>
+                      <Button
+                        variant="primary"
+                        size="large"
+                        icon={CheckCircleIcon}
+                        disabled={survivors.length === 0}
+                        onClick={handleAcceptAll}
+                      >
+                        {`Accept all ${survivors.length} & add to Calendar`}
+                      </Button>
+                    </InlineStack>
+                  </InlineStack>
+
+                  <InlineStack gap="200">
+                    <Badge tone="success">{`${progress.succeeded.length} generated`}</Badge>
+                    {removedIds.size > 0 && (
+                      <Badge tone="info">{`${removedIds.size} removed`}</Badge>
+                    )}
+                    {progress.failed.length > 0 && (
+                      <Badge tone="warning">{`${progress.failed.length} failed to generate`}</Badge>
+                    )}
+                    {activeCampaign && (
+                      <Badge tone="attention">{`Campaign: ${activeCampaign.name}`}</Badge>
+                    )}
+                  </InlineStack>
+
                   {progress.failed.length > 0 && (
-                    <Badge tone="warning">{`${progress.failed.length} failed`}</Badge>
+                    <Banner tone="warning" title={`${progress.failed.length} ${progress.failed.length === 1 ? 'post' : 'posts'} couldn't be generated`}>
+                      <BlockStack gap="100">
+                        {progress.failed.slice(0, 3).map((f, i) => (
+                          <Text key={i} as="p" variant="bodySm">
+                            {new Date(f.scheduledFor).toLocaleString()} — {f.error}
+                          </Text>
+                        ))}
+                        {progress.failed.length > 3 && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            …and {progress.failed.length - 3} more.
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </Banner>
                   )}
+                </BlockStack>
+              </Card>
+
+              {/* One card per preview post */}
+              {survivors.map((post) => (
+                <PreviewCard
+                  key={post.id}
+                  post={post}
+                  onRemove={() => handleRemovePost(post.id)}
+                />
+              ))}
+            </BlockStack>
+          )}
+
+          {/* ── Saving phase ─────────────────────────────────────────── */}
+          {phase === 'saving' && (
+            <Card>
+              <BlockStack gap="400" align="center" inlineAlign="center">
+                <Spinner accessibilityLabel="Saving posts" />
+                <Text as="h3" variant="headingMd">Adding {saveProgress.total} posts to your calendar…</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Don't refresh — this only takes a few seconds.
+                </Text>
+              </BlockStack>
+            </Card>
+          )}
+
+          {/* ── Done ─────────────────────────────────────────────────── */}
+          {phase === 'done' && (
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h3" variant="headingMd">All done!</Text>
+                  <Badge tone="success">
+                    {`${saveProgress.saved} of ${saveProgress.total} scheduled`}
+                  </Badge>
                 </InlineStack>
 
-                {phase === 'done' && (
-                  <InlineStack gap="200">
-                    <Button variant="primary" onClick={() => navigate('/calendar')}>
-                      View in Calendar
-                    </Button>
-                    <Button
-                      icon={RefreshIcon}
-                      onClick={() => {
-                        setPhase('idle');
-                        setProgress({ done: 0, total: 0, succeeded: [], failed: [] });
-                      }}
-                    >
-                      Run another batch
-                    </Button>
-                  </InlineStack>
-                )}
-
-                {progress.failed.length > 0 && (
-                  <Banner tone="warning" title={`${progress.failed.length} ${progress.failed.length === 1 ? 'post' : 'posts'} failed`}>
-                    <BlockStack gap="100">
-                      {progress.failed.slice(0, 3).map((f, i) => (
-                        <Text key={i} as="p" variant="bodySm">
-                          {new Date(f.scheduledFor).toLocaleString()} — {f.error}
-                        </Text>
-                      ))}
-                      {progress.failed.length > 3 && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          …and {progress.failed.length - 3} more.
-                        </Text>
-                      )}
-                    </BlockStack>
+                {saveProgress.failed > 0 && (
+                  <Banner tone="warning" title={`${saveProgress.failed} couldn't be saved`}>
+                    <p>You can run another batch to retry the failed slots.</p>
                   </Banner>
                 )}
+
+                <InlineStack gap="200">
+                  <Button variant="primary" onClick={() => navigate('/calendar')}>
+                    View in Calendar
+                  </Button>
+                  <Button icon={RefreshIcon} onClick={handleDiscardAll}>
+                    Run another batch
+                  </Button>
+                </InlineStack>
               </BlockStack>
             </Card>
           )}
         </>
       )}
     </BlockStack>
+  );
+}
+
+// ── PreviewCard ────────────────────────────────────────────────────────────
+//
+// One generated post awaiting merchant approval. Shows:
+//   - product image (fal.ai URL is public so a plain <img> works)
+//   - scheduled time (local format)
+//   - platform + post-type badges
+//   - the generated caption
+//   - a Remove button that yanks it from the preview state (no DB hit)
+
+function PreviewCard({
+  post, onRemove,
+}: {
+  post: AutopilotGeneratedPost;
+  onRemove: () => void;
+}) {
+  const isVideo = post.post_type === 'video';
+  return (
+    <Card>
+      <InlineGrid columns={{ xs: 1, sm: '160px 1fr' }} gap="400">
+        {/* Image / thumbnail. For video posts, this is the still that
+            Kling will animate; we badge it accordingly. fal.ai URLs are
+            public so a plain <img src> works (no auth header needed). */}
+        <Box position="relative">
+          <img
+            src={post.image_url}
+            alt={post.product.title}
+            style={{
+              width: '100%',
+              aspectRatio: '1 / 1',
+              objectFit: 'cover',
+              borderRadius: 8,
+              display: 'block',
+            }}
+          />
+          {isVideo && (
+            <Box
+              position="absolute"
+              insetBlockEnd="200"
+              insetInlineStart="200"
+            >
+              <Badge tone="info">Reel · rendering</Badge>
+            </Box>
+          )}
+        </Box>
+
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="start" wrap={false}>
+            <BlockStack gap="100">
+              <Text as="h4" variant="headingSm">{post.product.title}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {new Date(post.scheduled_for).toLocaleString(undefined, {
+                  weekday: 'short', month: 'short', day: 'numeric',
+                  hour: 'numeric', minute: '2-digit',
+                })}
+              </Text>
+            </BlockStack>
+            <Button
+              icon={DeleteIcon}
+              onClick={onRemove}
+              accessibilityLabel="Remove this post"
+              variant="tertiary"
+              tone="critical"
+            />
+          </InlineStack>
+
+          <InlineStack gap="200">
+            <Badge>{post.platform === 'both' ? 'FB + IG' : post.platform === 'facebook' ? 'Facebook' : 'Instagram'}</Badge>
+            <Badge tone={isVideo ? 'magic' : undefined}>{isVideo ? 'Video' : 'Image'}</Badge>
+            {post.campaign_used && <Badge tone="attention">Campaign-aware</Badge>}
+          </InlineStack>
+
+          <Text as="p" variant="bodyMd">{post.caption}</Text>
+        </BlockStack>
+      </InlineGrid>
+    </Card>
   );
 }
 

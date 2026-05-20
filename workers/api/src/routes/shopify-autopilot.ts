@@ -125,8 +125,16 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
       tone?: string;
       postType?: string;
       motionPrompt?: string;
+      // dryRun=true → compose caption+image but DO NOT INSERT into posts. The
+      // frontend uses this to build a review-before-accept queue: gather all
+      // composed results in React state, let the merchant edit/delete, then
+      // ship the surviving ones via POST /save-batch. Mirrors how the main
+      // SocialAI Studio Smart Schedule works.
+      dryRun?: boolean;
     } | null;
     if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
+
+    const dryRun = body.dryRun === true;
 
     const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
     if (!productId) return c.json({ error: 'productId is required' }, 400);
@@ -197,6 +205,25 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     const nowIso = new Date().toISOString();
     const scheduledIso = new Date(scheduleMs).toISOString();
 
+    // Dry-run path: return composed data without persisting. Caller (frontend
+    // preview flow) collects the result in React state, then calls
+    // /save-batch when the merchant clicks Accept All.
+    if (dryRun) {
+      return c.json({
+        id,                // client-side identity for the preview card
+        status: 'Preview', // not yet a DB row
+        caption: composed.caption,
+        image_url: composed.imageUrl,
+        platform,
+        scheduled_for: scheduledIso,
+        product: composed.product,
+        campaign_used: !!campaignContext,
+        post_type: postType,
+        video_status: postType === 'video' ? 'pending' : null,
+        motion_prompt: postType === 'video' ? motionPrompt : null,
+      }, 200);
+    }
+
     // Wrap the INSERT — if D1 throws (FK violation, NOT NULL, schema mismatch,
     // etc.) Hono's default handler returns a bare 500 with no body, which the
     // frontend renders as the useless "HTTP 500" string. With this catch, the
@@ -260,5 +287,117 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     const msg = String(err?.message ?? err).slice(0, 300) || 'Unknown server error';
     return c.json({ stage: 'unknown', error: msg }, 500);
    }
+  });
+
+  // ── POST /api/shopify/autopilot/save-batch ─────────────────────────────
+  //
+  // Persists a batch of pre-composed posts that the merchant approved on the
+  // Autopilot review screen. Body shape:
+  //
+  //   { posts: Array<{
+  //       caption: string,
+  //       imageUrl: string,
+  //       platform: 'facebook' | 'instagram' | 'both',
+  //       scheduledFor: string  // ISO
+  //       postType?: 'image' | 'video',
+  //       motionPrompt?: string,
+  //     }>
+  //   }
+  //
+  // Each row inserts independently — if one fails (FK, NOT NULL, bad input)
+  // the others still land. Returns `{ saved: <ids[]>, failed: <{idx,error}[]> }`
+  // so the frontend can show "11 of 14 saved" + flag the failing ones.
+  //
+  // Rate limit shares the per-shop bucket with /generate-one (20/min) since
+  // a batch save is one user action. Cap batch size at 50 to keep a single
+  // request bounded.
+  app.post('/api/shopify/autopilot/save-batch', async (c) => {
+    try {
+      const sessionOrResp = await requireSession(c);
+      if (sessionOrResp instanceof Response) return sessionOrResp;
+      const shop = sessionOrResp.shopDomain;
+
+      if (await isRateLimited(c.env.DB, `shopify-autopilot:${shop}`, RATE_LIMIT_PER_MIN)) {
+        return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);
+      }
+
+      await ensureShopSentinelUser(c.env, shop);
+
+      const body = await c.req.json().catch(() => null) as {
+        posts?: Array<{
+          caption?: string;
+          imageUrl?: string;
+          platform?: string;
+          scheduledFor?: string;
+          postType?: string;
+          motionPrompt?: string;
+        }>;
+      } | null;
+
+      const posts = Array.isArray(body?.posts) ? body!.posts : null;
+      if (!posts || posts.length === 0) {
+        return c.json({ error: 'posts array is required' }, 400);
+      }
+      if (posts.length > 50) {
+        return c.json({ error: 'Batch capped at 50 posts' }, 400);
+      }
+
+      const saved: string[] = [];
+      const failed: Array<{ idx: number; error: string }> = [];
+      const nowIso = new Date().toISOString();
+
+      for (let i = 0; i < posts.length; i++) {
+        const p = posts[i];
+        try {
+          const caption = typeof p.caption === 'string' ? p.caption : '';
+          const imageUrl = typeof p.imageUrl === 'string' ? p.imageUrl : '';
+          const platform = typeof p.platform === 'string' ? p.platform : '';
+          const scheduledFor = typeof p.scheduledFor === 'string' ? p.scheduledFor : '';
+          const postType = p.postType === 'video' ? 'video' : 'image';
+          const motionPrompt = typeof p.motionPrompt === 'string' && p.motionPrompt.trim()
+            ? p.motionPrompt.trim().slice(0, 500)
+            : DEFAULT_MOTION_PROMPT;
+
+          if (!caption.trim()) { failed.push({ idx: i, error: 'empty caption' }); continue; }
+          if (!imageUrl)       { failed.push({ idx: i, error: 'missing imageUrl' }); continue; }
+          if (!ALLOWED_PLATFORMS.has(platform)) { failed.push({ idx: i, error: 'bad platform' }); continue; }
+          const ms = Date.parse(scheduledFor);
+          if (!ms || Number.isNaN(ms))    { failed.push({ idx: i, error: 'bad scheduledFor' }); continue; }
+          if (ms < Date.now() - 60_000)   { failed.push({ idx: i, error: 'scheduledFor in past' }); continue; }
+          if (ms > Date.now() + 60 * 86_400_000) { failed.push({ idx: i, error: 'scheduledFor >60d' }); continue; }
+
+          const id = crypto.randomUUID();
+          const scheduledIso = new Date(ms).toISOString();
+
+          if (postType === 'video') {
+            await c.env.DB.prepare(
+              `INSERT INTO posts (
+                 id, user_id, client_id, owner_kind, owner_id,
+                 content, image_url, platform, status, scheduled_for, created_at,
+                 post_type, video_status, video_script
+               )
+               VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?, 'video', 'pending', ?)`,
+            ).bind(
+              id, shop, shop,
+              caption, imageUrl, platform, scheduledIso, nowIso, motionPrompt,
+            ).run();
+          } else {
+            await c.env.DB.prepare(
+              `INSERT INTO posts (id, user_id, client_id, owner_kind, owner_id, content, image_url, platform, status, scheduled_for, created_at)
+               VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?)`,
+            ).bind(id, shop, shop, caption, imageUrl, platform, scheduledIso, nowIso).run();
+          }
+          saved.push(id);
+        } catch (err: any) {
+          console.error('[shopify-autopilot/save-batch] insert failed idx', i, String(err?.stack ?? err));
+          failed.push({ idx: i, error: String(err?.message ?? err).slice(0, 200) });
+        }
+      }
+
+      return c.json({ saved, failed });
+    } catch (err: any) {
+      console.error('[shopify-autopilot/save-batch] uncaught:', String(err?.stack ?? err));
+      return c.json({ error: String(err?.message ?? err).slice(0, 300) || 'Unknown error' }, 500);
+    }
   });
 }
