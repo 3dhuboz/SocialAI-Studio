@@ -122,7 +122,10 @@ export default function Insights() {
       {/* ── Header row: title + refresh ─────────────────────────────────── */}
       <InlineStack align="space-between" blockAlign="center">
         <BlockStack gap="100">
-          <Text as="h2" variant="headingLg">Insights</Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={ChartLineIcon} tone="info" />
+            <Text as="h2" variant="headingLg">Insights</Text>
+          </InlineStack>
           <Text as="p" variant="bodySm" tone="subdued">
             Last updated {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             {' · '}
