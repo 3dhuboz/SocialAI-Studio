@@ -67,6 +67,22 @@ describe('FAB_PATTERNS — full pattern bank present', () => {
       expect(reasons.length, `expected hits on: "${s}"`).toBeGreaterThan(0);
     }
   });
+
+  // 2026-05 follow-up: invented competitor-pricing claim. Real-world SocialAI
+  // Studio self-promo post: "Existing tools cost $500-$1,500/month and require…"
+  // Brand-context whitelist still lets real prices through (gen-time only).
+  it('flags invented competitor pricing claims', () => {
+    const sample = [
+      `Existing tools cost $500-$1,500/month for less.`,
+      `Most platforms charge $200 per month.`,
+      `Priced at $99/mo, the competitor is laughable.`,
+      `They cost $1,000-$2,500 yearly.`,
+    ];
+    for (const s of sample) {
+      const reasons = scanContentForTropes(s);
+      expect(reasons.some((r) => /competitor pricing/i.test(r)), `expected competitor-pricing hit on: "${s}"`).toBe(true);
+    }
+  });
 });
 
 describe('scanContentForTropes — cadence detector threshold', () => {

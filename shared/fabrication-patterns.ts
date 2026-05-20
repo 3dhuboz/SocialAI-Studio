@@ -49,6 +49,12 @@ export const FAB_PATTERNS: Array<[RegExp, string]> = [
   // "posting NN times" shape above. The literal "7-14 posts/week" survives
   // (brand-guide preferred form) — only the verb-driven sentence form trips.
   [/\b(?:generates?|writes?|produces?|delivers?|creates?|cranks?\s+out)\s+\d+(?:[-–]\d+)?\s+(?:posts?|captions?|articles?|videos?|reels?)\s+(?:per|a|each)\s+(?:day|week|month)/i, 'invented content-generation cadence claim'],
+  // 2026-05 SaaS follow-up: invented COMPETITOR pricing. Real generated post
+  // (SocialAI Studio): "Existing tools cost $500-$1,500/month and require…".
+  // The LLM invents specific competitor pricing brackets to make the
+  // brand's own price look favourable. Whitelisted via the brand-context
+  // check upstream when the numbers appear in REAL MATERIAL.
+  [/\b(?:cost|costs?|costing|priced\s+at|charges?|charging)\s+\$\d[\d,]*(?:\s*[–\-]\s*\$?\d[\d,]*)?\s*(?:\/|per)?\s*(?:mo|month|monthly|yr|year|yearly)\b/i, 'invented competitor pricing claim'],
   // 2026-05 audit additions: leading questions with implied stat (real Penny
   // Wise post: "How many hours could you reclaim this week?")
   [/\bHow\s+many\s+(?:hours?|days?|customers?|sales?|leads?)\s+could\s+you\s+(?:reclaim|save|gain|earn|get|win)/i, 'leading question with implied invented stat'],

@@ -169,6 +169,12 @@ describe('detectFabrication — invented stats and cadence', () => {
     ['Loved it! — Sarah J., Brisbane', /testimonial signature/i],
     // 2026-05 SaaS-genre additions
     ['Our AI Content Autopilot generates 7-14 posts per week-captions, hashtags, and all.', /content-generation cadence/i],
+    // 2026-05 follow-up: invented competitor pricing — SocialAI Studio
+    // self-promo post pattern. The LLM invents the bracket to make the
+    // brand price look favourable.
+    ['Existing tools cost $500-$1,500/month and require a 12-month contract.', /competitor pricing/i],
+    ['Most platforms charge $200 per month.', /competitor pricing/i],
+    ['Priced at $99/mo, the competitor is laughable.', /competitor pricing/i],
   ])('flags "%s"', (input, reasonRegex) => {
     const result = detectFabrication(input);
     expect(result).not.toBeNull();
@@ -224,9 +230,37 @@ describe('scrubBannedPhrases — banned-trope removal', () => {
     ['Multi-client management, white-label client portals, centralized analytics.', /Multi-client management,\s+white-label/i],
     ['Managing multiple client social accounts? Let us help.', /Managing multiple client social accounts\?/i],
     ['Learn more—link in bio.', /link in bio/i],
+    // 2026-05 follow-up: bannedTropeExtras alignment — these are listed in
+    // the tech-saas-agency archetype's bannedTropeExtras (prompt-side hint)
+    // but the LLM kept slipping them through. Now BANNED_PATTERNS enforces.
+    ['We built SocialAI Studio because we got tired of generic posts.', /We built\s+\S+\s+because/i],
+    ['We built it to help small businesses grow.', /We built it to/i],
+    ['Most small business owners don\'t have time for content.', /Most small business owners don'?t/i],
+    ['Most owners don\'t bother with consistency.', /Most owners don'?t/i],
+    ['Ready to try SocialAI Studio!', /Ready to try/i],
+    ['You\'re tired. Ready to automate this for good.', /Ready to automate/i],
   ])('strips banned phrase from "%s"', (input, leftoverRegex) => {
     const out = scrubBannedPhrases(input);
     expect(out).not.toMatch(leftoverRegex);
+  });
+
+  // 2026-05 follow-up: regression test for the word-fusion bug. When a
+  // BANNED_PATTERN with greedy `\s*` matched a phrase between two words,
+  // the empty-string replacement consumed the boundary whitespace and
+  // fused the surrounding words (e.g. "$29/mo, no lock-in! What's" →
+  // "$29/moWhat's"). The fix: empty-string replacements are now single-
+  // space, with the existing `\s{2,}` collapser handling the doubles.
+  it('does NOT fuse surrounding words when scrubbing mid-sentence trope', () => {
+    const input = 'Plans from $29/mo, no lock-in! What\'s your stack?';
+    const out = scrubBannedPhrases(input);
+    expect(out).not.toMatch(/moWhat/i); // no word fusion
+    expect(out).toMatch(/\$29\/mo\s+What/i); // space restored between adjacent words
+  });
+  it('does NOT fuse around "Every X. Every Y." anaphora removal', () => {
+    const input = 'Hello there. Every website coded. Every app custom-built. Every AI tool tailored. Goodbye now.';
+    const out = scrubBannedPhrases(input);
+    expect(out).not.toMatch(/there\.Goodbye/i); // no fusion of "there." and "Goodbye"
+    expect(out).toMatch(/there\.\s+Goodbye/i);
   });
 });
 

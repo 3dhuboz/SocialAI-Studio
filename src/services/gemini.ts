@@ -10,8 +10,13 @@ const sanitizeJson = (raw: string): string => {
   s = s.replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '');
   // Replace smart SINGLE quotes with straight apostrophe (safe — apostrophes don't delimit JSON strings)
   s = s.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
-  // Replace en-dash/em-dash with hyphen
-  s = s.replace(/[\u2013\u2014]/g, '-');
+  // Replace en-dash/em-dash with spaced em-dash. The earlier "strip to plain
+  // hyphen" produced word-fusion artifacts in real generated posts (e.g.
+  // "money\u2014and" \u2192 "money-and", "exist\u2014you" \u2192 "exist-you") that read as
+  // compound words. Spaced em-dash preserves the LLM's intended punctuation
+  // and the AI-cadence detectors (scrubBannedPhrases / detectFabrication)
+  // already accept em/en/hyphen in their patterns, so this is drift-safe.
+  s = s.replace(/\s*[\u2013\u2014]\s*/g, ' \u2014 ');
   // Replace ellipsis character with three dots
   s = s.replace(/\u2026/g, '...');
   // Strip problematic control characters — but KEEP \n \r \t which are valid JSON whitespace
@@ -1281,31 +1286,31 @@ export function detectFabrication(content: string, brandContext: string = ''): s
 // posts read like AI even when no individual word is wrong.
 const BANNED_PATTERNS: Array<[RegExp, string]> = [
   // ── Original list (explicit cliché phrases) ──
-  [/\bWant to boost your [^?.!]+[?.!]/gi, ''],
-  [/\bEngage with your audience!?/gi, ''],
-  [/\bCheck out our website[^.!?]*[.!?]/gi, ''],
-  [/\bVisit our website[^.!?]*[.!?]/gi, ''],
-  [/\bLet [^.]+ handle the rest!?/gi, ''],
-  [/\bIn today's (digital age|fast-paced world)[,.]?\s*/gi, ''],
-  [/\bAs a business owner[,.]?\s*/gi, ''],
-  [/\bStay ahead of the competition!?/gi, ''],
-  [/\bTake your [^.!?]+ to the next level!?/gi, ''],
-  [/\bExciting news!\s*/gi, ''],
-  [/\bWe('?re| are) thrilled to announce[^.!?]*[.!?]\s*/gi, ''],
+  [/\bWant to boost your [^?.!]+[?.!]/gi, ' '],
+  [/\bEngage with your audience!?/gi, ' '],
+  [/\bCheck out our website[^.!?]*[.!?]/gi, ' '],
+  [/\bVisit our website[^.!?]*[.!?]/gi, ' '],
+  [/\bLet [^.]+ handle the rest!?/gi, ' '],
+  [/\bIn today's (digital age|fast-paced world)[,.]?\s*/gi, ' '],
+  [/\bAs a business owner[,.]?\s*/gi, ' '],
+  [/\bStay ahead of the competition!?/gi, ' '],
+  [/\bTake your [^.!?]+ to the next level!?/gi, ' '],
+  [/\bExciting news!\s*/gi, ' '],
+  [/\bWe('?re| are) thrilled to announce[^.!?]*[.!?]\s*/gi, ' '],
   // ── 2026-05 audit additions (structural AI cadence) ──
   // "Your best/top/favourite X goes live at 3 AM on a Tuesday. Nobody sees it."
-  [/\bYour\s+(?:best|top|favourite|favorite)\s+\w+\s+goes\s+live\s+at\s+\d[^.!?]*[.!?]\s*(?:Nobody\s+sees\s+it[.!?]\s*)?/gi, ''],
+  [/\bYour\s+(?:best|top|favourite|favorite)\s+\w+\s+goes\s+live\s+at\s+\d[^.!?]*[.!?]\s*(?:Nobody\s+sees\s+it[.!?]\s*)?/gi, ' '],
   // "Nobody sees it. Timing is everything." — three-beat declarative rhythm
-  [/\bNobody\s+sees\s+(it|them)[.!?]\s*Timing\s+is\s+everything[.!?]\s*/gi, ''],
+  [/\bNobody\s+sees\s+(it|them)[.!?]\s*Timing\s+is\s+everything[.!?]\s*/gi, ' '],
   // "No more staring at a blank screen" / "No more wondering what to write"
-  [/\bNo more (staring at a blank screen|wondering what to (write|post|say)|guessing|worrying about [^.!?]+)[^.!?]*[.!?]\s*/gi, ''],
+  [/\bNo more (staring at a blank screen|wondering what to (write|post|say)|guessing|worrying about [^.!?]+)[^.!?]*[.!?]\s*/gi, ' '],
   // "Every website coded. Every app custom-built. Every AI tool tailored." — anaphora.
   // Uses \S+ (any non-whitespace) so hyphenated words like "custom-built"
   // don't break the chain. \s* (zero-or-more) at the end so the trailing
   // sentence with no following space still gets stripped.
-  [/(?:\bEvery\s+\S+(?:\s+\S+){0,3}[.!]\s*){2,}/gi, ''],
+  [/(?:\bEvery\s+\S+(?:\s+\S+){0,3}[.!]\s*){2,}/gi, ' '],
   // Buzzword soup: "channeled significant creative energy into bespoke digital platforms"
-  [/\b(?:channell?ed|leveraged|elevated|curated|crafted)\s+(?:significant|considerable|substantial|incredible|powerful)\s+\w+(?:\s+\w+){0,2}\s+(?:into|to|towards)\s+(?:designing|building|creating|developing)\s+(?:bespoke|tailored|custom|cutting-edge|innovative)\s+\w+/gi, ''],
+  [/\b(?:channell?ed|leveraged|elevated|curated|crafted)\s+(?:significant|considerable|substantial|incredible|powerful)\s+\w+(?:\s+\w+){0,2}\s+(?:into|to|towards)\s+(?:designing|building|creating|developing)\s+(?:bespoke|tailored|custom|cutting-edge|innovative)\s+\w+/gi, ' '],
   // "bespoke digital platforms" / "bespoke AI solutions" — agency-pitch noun phrases
   [/\bbespoke\s+(digital\s+platforms?|ai\s+(?:tools?|solutions?|platforms?)|software\s+solutions?|web\s+experiences?)/gi, 'custom builds'],
   // "small business owners often/usually/post/struggle..." — generalising opener.
@@ -1313,13 +1318,13 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   // present-tense verb ("Small business owners post inconsistently because…")
   // which the older adverb-only regex missed. Sentence-anchored so it doesn't
   // chomp legitimate mid-sentence mentions like "we welcome small business owners".
-  [/(?:^|[.!?]\s+)Small business owners\s+(?:often|usually|typically|always|never|rarely|post|struggle|find|don'?t|can'?t|miss|forget|wish|need|want|hate|love)\b[^.!?]+[.!?]\s*/gim, ''],
+  [/(?:^|[.!?]\s+)Small business owners\s+(?:often|usually|typically|always|never|rarely|post|struggle|find|don'?t|can'?t|miss|forget|wish|need|want|hate|love)\b[^.!?]+[.!?]\s*/gim, ' '],
   // "Timing is everything." / "Consistency is everything." — empty epigram closers
-  [/\b(Timing|Consistency|Authenticity|Quality|Strategy)\s+is\s+everything[.!?]\s*/gi, ''],
+  [/\b(Timing|Consistency|Authenticity|Quality|Strategy)\s+is\s+everything[.!?]\s*/gi, ' '],
   // "X is the gap we close." / "That's the gap we close." — agency-speak
-  [/\bThat'?s\s+the\s+gap\s+we\s+close[.!?]\s*/gi, ''],
+  [/\bThat'?s\s+the\s+gap\s+we\s+close[.!?]\s*/gi, ' '],
   // "Making real differences." / "Making a real difference." — vague platitude
-  [/\bMaking\s+(real|a\s+real)\s+difference[s]?[.!?]\s*/gi, ''],
+  [/\bMaking\s+(real|a\s+real)\s+difference[s]?[.!?]\s*/gi, ' '],
 
   // ── 2026-05 SaaS-genre additions (observed in SocialAI Studio self-promo) ──
   // These target the agency-selling-SaaS marketing genre. Distinct from the
@@ -1328,15 +1333,15 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   // CONSTRUCTION around them, not the values themselves.
 
   // "Staring at a blank caption for 20 minutes?" — hyperbolic-stat opener
-  [/\bStaring at (?:a|the|your) (?:blank|empty) \S+(?:\s+\S+){0,2} for \d+ (?:seconds?|minutes?|hours?)\b[^.!?]*[.!?]?\s*/gi, ''],
+  [/\bStaring at (?:a|the|your) (?:blank|empty) \S+(?:\s+\S+){0,2} for \d+ (?:seconds?|minutes?|hours?)\b[^.!?]*[.!?]?\s*/gi, ' '],
   // "Ready to reclaim those hours?" / "Ready to automate?" — rhetorical SaaS-CTA closer.
   // Closed verb list keeps legitimate openers like "Ready to order?" / "Ready to eat?"
   // safe. Sentence-anchored + case-sensitive `Ready` so mid-sentence lowercase
   // "are you ready to automate" doesn't false-positive — that smoke test bit me.
-  [/(?:^|[.!?]\s+)Ready to (?:reclaim|automate|scale|simplify|streamline|transform|elevate|level\s+up|unlock|supercharge)\b[^.!?]*\?\s*/gm, ''],
+  [/(?:^|[.!?]\s+)Ready to (?:reclaim|automate|scale|simplify|streamline|transform|elevate|level\s+up|unlock|supercharge)\b[^.!?]*\?\s*/gm, ' '],
   // "..., no lock-in" / "..., cancel anytime" — strips the SaaS pitch fragment
   // while preserving the price itself (which the brand guide tells the AI to use)
-  [/\s*,\s*no\s+(?:lock-?in|contracts?|commitments?|credit\s+card\s+required|setup\s+fees?|hidden\s+fees?)\b[.!]?\s*/gi, ''],
+  [/\s*,\s*no\s+(?:lock-?in|contracts?|commitments?|credit\s+card\s+required|setup\s+fees?|hidden\s+fees?)\b[.!]?\s*/gi, ' '],
   // "Your social media on autopilot" — abstract "X on autopilot" cliché.
   // Critical: the product is named "AI Content Autopilot" so we anchor on the
   // possessive "Your X on autopilot" shape, NOT bare "autopilot".
@@ -1344,27 +1349,51 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   // the whole rhetorical construction as one unit. Without this, a phrase
   // like "Ready to get your social media on autopilot?" left an orphan
   // "Ready to get?" CTA in the post after the trope was stripped.
-  [/\b(?:(?:Ready|Want|Looking|Wondering)\s+to\s+\S+\s+)?your\s+(?:social\s+media|business|marketing|content|growth|sales)\s+on\s+autopilot\b[?.!]?\s*/gi, ''],
+  [/\b(?:(?:Ready|Want|Looking|Wondering)\s+to\s+\S+\s+)?your\s+(?:social\s+media|business|marketing|content|growth|sales)\s+on\s+autopilot\b[?.!]?\s*/gi, ' '],
   // "Consistency without the burnout" / "Growth without the grind" — X-without-Y antipattern
-  [/\b(?:Consistency|Growth|Scale|Success|Results|Quality|Productivity|Reach|Visibility)\s+without\s+(?:the\s+)?(?:burnout|chaos|stress|overwhelm|effort|work|grind|hassle|headache|complexity)\b[.!?]?\s*/gi, ''],
+  [/\b(?:Consistency|Growth|Scale|Success|Results|Quality|Productivity|Reach|Visibility)\s+without\s+(?:the\s+)?(?:burnout|chaos|stress|overwhelm|effort|work|grind|hassle|headache|complexity)\b[.!?]?\s*/gi, ' '],
   // "Scale your agency without scaling your workload" — pun/wordplay marketing
-  [/\b(?:Scale|Grow|Expand)\s+(?:your\s+\S+(?:\s+\S+){0,2}\s+)?without\s+scaling\b[^.!?]*[.!?]?\s*/gi, ''],
+  [/\b(?:Scale|Grow|Expand)\s+(?:your\s+\S+(?:\s+\S+){0,2}\s+)?without\s+scaling\b[^.!?]*[.!?]?\s*/gi, ' '],
   // "That's not laziness—that's reality" — em-dash/hyphen parallel construction.
   // \S+ for hyphenated words; matches em-dash, en-dash, or plain hyphen.
-  [/\bThat'?s\s+not\s+\S+(?:\s+\S+){0,3}\s*[—–-]\s*that'?s\s+\S+(?:\s+\S+){0,3}[.!?]\s*/gi, ''],
+  [/\bThat'?s\s+not\s+\S+(?:\s+\S+){0,3}\s*[—–-]\s*that'?s\s+\S+(?:\s+\S+){0,3}[.!?]\s*/gi, ' '],
   // "Multi-client management, white-label client portals, centralized analytics" —
   // comma-separated SaaS feature list. Requires TWO of the list items to start
   // with a SaaS-flavour prefix so a normal "Monday, Wednesday, Friday" or
   // "burgers, salads, shakes" list can't accidentally trigger.
-  [/\b(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:and\s+)?\S+/gi, ''],
+  [/\b(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:multi-?\S+|white-?label\s+\S+|centralised?\s+\S+|integrated\s+\S+|automated\s+\S+|streamlined\s+\S+|cross-?\S+|real-?time\s+\S+)\s+\S+,\s+(?:and\s+)?\S+/gi, ' '],
   // "Managing multiple client social accounts?" — rhetorical opener with quantifier.
   // Requires a quantifier (multiple/several/all your/etc.) so we don't strip
   // legitimate sentences like "Managing your booking is easy."
-  [/(?:^|[.!?]\s+)(?:Managing|Juggling|Handling|Running|Tracking|Wrangling)\s+(?:multiple|several|all\s+your|countless|too\s+many)\s+\S+(?:\s+\S+){0,3}\?\s*/gim, ''],
+  [/(?:^|[.!?]\s+)(?:Managing|Juggling|Handling|Running|Tracking|Wrangling)\s+(?:multiple|several|all\s+your|countless|too\s+many)\s+\S+(?:\s+\S+){0,3}\?\s*/gim, ' '],
   // "Link in bio." / "Learn more—link in bio." — Facebook-inappropriate CTA
   // that's actually an Instagram cargo-culted phrase. Prompt-level guidance
   // already discourages this but doesn't always work; this is the safety net.
-  [/\b(?:Learn\s+more\s*[—–-]\s*)?(?:Click\s+(?:the\s+)?)?link\s+in\s+bio\b[.!]?\s*(?=$|[.!?\s])/gim, ''],
+  [/\b(?:Learn\s+more\s*[—–-]\s*)?(?:Click\s+(?:the\s+)?)?link\s+in\s+bio\b[.!]?\s*(?=$|[.!?\s])/gim, ' '],
+
+  // ── 2026-05 follow-up: bannedTropeExtras alignment ──
+  // tech-saas-agency archetype lists these in bannedTropeExtras (prompt-side)
+  // but the LLM kept slipping them through because BANNED_PATTERNS didn't
+  // enforce them post-flight. Now both layers reject. Whole sentence
+  // anchored so the scrubber removes the cliche without leaving orphan
+  // fragments — same shape as the "Small business owners" pattern above.
+
+  // "We built SocialAI Studio because we got tired of..." / "We built it to..."
+  // Anchored to sentence start so mid-sentence "we built it" stays safe in
+  // narrative contexts (e.g. "the kitchen we built ourselves").
+  [/(?:^|[.!?]\s+)We built\s+\S+(?:\s+\S+){0,3}\s+(?:because|to)\s+[^.!?]+[.!?]\s*/gim, ' '],
+
+  // "Most small business owners don't..." / "Most owners don't have time"
+  // Sentence-anchored. Closed determiner set (small business / business / bare
+  // owners) so we don't strip legitimate "Most homeowners don't" / "most
+  // landowners don't" cases that aren't the archetype-banned trope.
+  [/(?:^|[.!?]\s+)Most\s+(?:small\s+business\s+|business\s+)?owners?\s+don'?t\b[^.!?]+[.!?]\s*/gim, ' '],
+
+  // Extends the line 1336 "Ready to..." catch (which only handles ?-ended
+  // forms) with the period/bang-ended variant AND adds `try` to the verb
+  // bank. Real example: "Ready to try SocialAI Studio!" — slipped through
+  // the ?-anchored older pattern.
+  [/(?:^|[.!?]\s+)Ready\s+to\s+(?:try|automate|level\s+up|transform|unlock|simplify|streamline|elevate|reclaim|scale|supercharge)\b[^.!?]*[.!]\s*/gm, ' '],
 ];
 export function scrubBannedPhrases(content: string): string {
   let out = content;
@@ -2445,11 +2474,22 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     // Only enforced when archetypePillars is set — research-derived pillars
     // are the LLM's own invention so it has no reason to deviate.
     const pillarValues = pillarsForPrompt.map((p: any) => typeof p === 'object' ? p.name : p);
+    // Pillars explicitly marked "(no product mention)" forbid the brand name.
+    // The prompt currently only buries this in voiceCues, which the LLM keeps
+    // breaking — observed in real posts (SocialAI Studio Tactical-SMB posts
+    // naming the brand 1-3 times). processOne enforces post-flight; this
+    // block makes the prompt-side rule equally explicit.
+    const noBrandPillars: string[] = pillarValues.filter((p: any) => typeof p === 'string' && /\(no product mention\)/i.test(p));
     const strictPillarsBlock = archetypePillars
       ? `\nSTRICT PILLAR CONSTRAINT (NON-NEGOTIABLE):
 Every post's "pillar" field MUST exactly match one of these values (case-sensitive, character-for-character):
 ${pillarValues.map((p: string) => `  - "${p}"`).join('\n')}
-Do NOT invent your own pillar names. Do NOT abbreviate. Do NOT add parenthetical hints. Do NOT combine pillars. If your "pillar" value is not one of the exact strings above, the post is invalid and will be rejected. Reuse the exact strings verbatim.`
+Do NOT invent your own pillar names. Do NOT abbreviate. Do NOT add parenthetical hints. Do NOT combine pillars. If your "pillar" value is not one of the exact strings above, the post is invalid and will be rejected. Reuse the exact strings verbatim.${noBrandPillars.length ? `
+
+NO-BRAND-NAME PILLARS — HARD RULE:
+For posts assigned to ANY of these pillars, the brand name "${businessName}" MUST NOT appear ANYWHERE in the post body, hashtags, or imagePrompt:
+${noBrandPillars.map((p: string) => `  - "${p}"`).join('\n')}
+These posts MUST read like peer advice, not a product pitch. Reference competitors generically ("most tools", "existing platforms") rather than naming your own product. If a post idea can ONLY be written by referencing the brand, pick a different pillar. Posts that mention "${businessName}" under these pillars will be auto-rejected and regenerated.` : ''}`
       : '';
 
     const videoCount = includeVideos ? Math.max(1, Math.round(effectivePosts * 0.3)) : 0;
@@ -2622,6 +2662,19 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     // get exactly one shot — and any caught by the cadence/judge surface as
     // "Needs review" banners in the UI. With this, the user only sees that
     // banner for posts that survived 4 attempts total (1 bulk + 3 single).
+    // Brand-name forbidden when the pillar is marked "(no product mention)".
+    // The prompt now states this explicitly (see strictPillarsBlock) but the
+    // LLM still slips through ~20% of the time on tech-saas-agency posts —
+    // post-flight enforcement is the safety net. Regex-escape businessName
+    // so brand names containing punctuation (`.`, `()`, etc.) don't break
+    // the matcher.
+    const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const brandNameRegex = businessName
+      ? new RegExp(`\\b${escapeRegex(businessName)}\\b`, 'i')
+      : null;
+    const pillarForbidsBrand = (pillar: unknown): boolean =>
+      typeof pillar === 'string' && /\(no product mention\)/i.test(pillar);
+
     const processOne = async (p: any) => {
       if (typeof p.content !== 'string') return p;
       let flagReason: string | null = null;
@@ -2647,6 +2700,13 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
           p.imagePrompt = cleaned;
         }
       }
+      // Hard pillar enforcement: "(no product mention)" pillars MUST NOT
+      // contain the brand name anywhere in the body. Triggers auto-recovery
+      // when the LLM ignores the prompt-side rule. Same flag plumbing as
+      // detectFabrication so the recovery path runs identically.
+      if (!flagReason && brandNameRegex && pillarForbidsBrand(p.pillar) && brandNameRegex.test(p.content)) {
+        flagReason = `pillar "${p.pillar}" forbids brand name but post mentions "${businessName}"`;
+      }
       if (!flagReason) {
         try {
           const judgement = await judgePost(p.content, facts, profileBlock || '');
@@ -2669,7 +2729,15 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
           undefined,
           clientId,
         );
-        if (recovered?.content && !detectFabrication(recovered.content, profileBlock)) {
+        // Re-check the recovered content against the SAME rules we flagged
+        // on — including the pillar brand-name ban. Without this re-check
+        // the recovery can swap a brand-mentioning post for ANOTHER
+        // brand-mentioning post (single-post path doesn't know about the
+        // pillar rule yet).
+        const recoveredOk = recovered?.content
+          && !detectFabrication(recovered.content, profileBlock)
+          && !(brandNameRegex && pillarForbidsBrand(p.pillar) && brandNameRegex.test(recovered.content));
+        if (recoveredOk) {
           p.content = scrubBannedPhrases(recovered.content);
           if (Array.isArray(recovered.hashtags) && recovered.hashtags.length > 0) p.hashtags = recovered.hashtags;
           if (recovered.imagePrompt) p.imagePrompt = recovered.imagePrompt;
