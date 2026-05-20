@@ -79,8 +79,22 @@ export async function generateImageWithGuardrails(
     }
   }
 
+  // Archetypes whose caption space is inherently abstract — no inventory to
+  // photograph, no location, no people-in-action — force the LLM-prompt path
+  // OFF and always use the curated fallback scene bank with caption-subject
+  // injection. Without this, the LLM keeps generating "abstract image of...",
+  // "graphic showing...", "vector illustration of..." prompts that flux can't
+  // render → safety_checker rejects → black/white blanks. The 15-scene SaaS
+  // bank is pre-vetted photographable; caption injection keeps each scene
+  // topically tied to the post.
+  const FORCE_FALLBACK_ARCHETYPES = new Set(['tech-saas-agency']);
+  const forceFallback = options.forceFallback || (archetypeSlug !== null && FORCE_FALLBACK_ARCHETYPES.has(archetypeSlug));
+  if (forceFallback && !options.forceFallback) {
+    console.log(`[image-gen] archetype=${archetypeSlug} — auto-forcing fallback scene bank (abstract-caption archetype)`);
+  }
+
   let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };
-  if (options.forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {
+  if (forceFallback && archetypeSlug && ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug]) {
     // Critique-retry mode: skip the LLM prompt entirely, force a curated
     // archetype scene. Last-resort path when the original gen failed critique.
     const fallback = ARCHETYPE_IMAGE_GUARDRAILS[archetypeSlug];
