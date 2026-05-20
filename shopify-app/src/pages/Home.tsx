@@ -383,11 +383,13 @@ interface ChecklistItem {
 
 function ChecklistRow({ item }: { item: ChecklistItem }) {
   const inner = (
-    <InlineStack gap="300" blockAlign="center" wrap={false}>
-      <Icon
-        source={item.done ? CheckCircleIcon : AlertCircleIcon}
-        tone={item.done ? 'success' : 'subdued'}
-      />
+    <InlineStack gap="300" blockAlign="center" wrap={false} align="start">
+      <Box>
+        <Icon
+          source={item.done ? CheckCircleIcon : AlertCircleIcon}
+          tone={item.done ? 'success' : 'subdued'}
+        />
+      </Box>
       <BlockStack gap="050">
         <Text as="span" variant="bodyMd" fontWeight={item.done ? 'regular' : 'semibold'}
           tone={item.done ? 'subdued' : 'base'}>

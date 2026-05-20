@@ -547,8 +547,10 @@ function WhatWePublishCard() {
         <BlockStack gap="100">
           {items.map((it) => (
             <div key={it.title} className="settings-publish-row">
-              <InlineStack gap="300" blockAlign="center" wrap={false}>
-                <Icon source={it.icon} tone="subdued" />
+              <InlineStack gap="300" blockAlign="center" wrap={false} align="start">
+                <Box>
+                  <Icon source={it.icon} tone="subdued" />
+                </Box>
                 <BlockStack gap="050">
                   <Text as="span" variant="bodyMd" fontWeight="semibold">{it.title}</Text>
                   <Text as="span" variant="bodySm" tone="subdued">{it.desc}</Text>
@@ -557,8 +559,10 @@ function WhatWePublishCard() {
             </div>
           ))}
         </BlockStack>
-        <InlineStack gap="200" blockAlign="center">
-          <Icon source={LockIcon} tone="subdued" />
+        <InlineStack gap="200" blockAlign="center" align="start" wrap={false}>
+          <Box>
+            <Icon source={LockIcon} tone="subdued" />
+          </Box>
           <Text as="p" variant="bodySm" tone="subdued">
             We never publish without your explicit save. You can edit or delete
             any Draft or Scheduled post from the Calendar.
