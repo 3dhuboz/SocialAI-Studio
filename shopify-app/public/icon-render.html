@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="robots" content="noindex" />
+  <title>App Icon Render Target</title>
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; }
+    body {
+      width: 1200px;
+      height: 1200px;
+      overflow: hidden;
+      display: block;
+    }
+    /* Render the SVG at an exact 1200x1200 with NO chrome / scrollbars. */
+    img {
+      display: block;
+      width: 1200px;
+      height: 1200px;
+    }
+  </style>
+</head>
+<body>
+  <img src="/app-icon.svg" alt="" width="1200" height="1200" />
+</body>
+</html>

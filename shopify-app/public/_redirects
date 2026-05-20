@@ -1,0 +1,19 @@
+# Cloudflare Pages SPA fallback for the Shopify embedded app.
+#
+# The app uses BrowserRouter (path-based routing) because Shopify's
+# <ui-nav-menu> web component navigates via path, not hash. When App
+# Bridge points the embedded iframe at /products, /compose, /calendar,
+# or /settings, CF Pages must serve the SPA shell (index.html) for those
+# paths instead of returning 404 (or a default 308 redirect to root).
+# React Router then takes over and renders the right page in-browser.
+#
+# Single catch-all rule. We intentionally do NOT list per-route entries:
+# CF Pages's _redirects parser treats explicit lines `/products
+# /index.html 200` as redirects rather than rewrites on this project,
+# which 308s back to `/`. The wildcard form `/* /index.html 200` is
+# applied correctly as a passthrough/rewrite — unknown path serves the
+# SPA shell with the original URL preserved.
+#
+# Static assets in /assets/ are unaffected: Pages serves files-on-disk
+# directly without consulting _redirects.
+/*  /index.html  200

@@ -16,7 +16,9 @@ import { parseForbiddenSubjects } from '../../../../shared/forbidden-subjects';
 
 // Re-exported so existing callers keep working. Implementation lives in
 // shared/forbidden-subjects.ts so the frontend (src/services/gemini.ts) and
-// worker can never drift on what counts as a forbidden subject.
+// worker can never drift on what counts as a forbidden subject. The shared
+// parser now accepts both legacy string (main-app users.profile) and array
+// (Shopify shopify_stores.profile) shapes.
 export { parseForbiddenSubjects };
 
 /**
@@ -146,6 +148,50 @@ export async function resolveBusinessType(
     console.warn(`[profile-guards] resolveBusinessType user lookup failed for ${userId}:`, err);
   }
   return DEFAULT;
+}
+
+/**
+ * Shopify-shop variant of loadForbiddenSubjects. Reads from
+ * `shopify_stores.profile` (added in schema_v30_shopify_stores_profile)
+ * and tokenises the same way.
+ *
+ * Why a separate function instead of unioning into loadForbiddenSubjects:
+ * shop posts use the schema_v27_shopify_phase2 tenant abstraction
+ * (owner_kind='shop', user_id=<shop_domain> as a sentinel — no real users
+ * row, no clients row). The Clerk-tenant loader would do a wasted lookup
+ * against users(id=<shop>) which returns the empty sentinel. Calling this
+ * loader directly is faster and makes the intent obvious at the call site.
+ *
+ * Wire this into every shop-side pipeline path that the main app applies
+ * loadForbiddenSubjects to:
+ *   - routes/shopify-compose.ts  (image prompt + caption gen)
+ *   - routes/shopify-post-quality.ts (critique HARD-RULES gate)
+ *   - routes/shopify-posters.ts (poster image gen)
+ *   - cron/publish-missed.ts (pre-publish scan of caption + image_prompt)
+ *
+ * Same fail-open posture as the Clerk version: errors are logged and we
+ * return []. Halting the platform is worse than publishing unguarded.
+ */
+export async function loadForbiddenSubjectsForShop(
+  env: Env,
+  shopDomain: string,
+): Promise<string[]> {
+  try {
+    const row = await env.DB
+      .prepare('SELECT profile FROM shopify_stores WHERE shop_domain = ?')
+      .bind(shopDomain)
+      .first<{ profile: string | null }>();
+    if (!row?.profile) return [];
+    try {
+      const parsed = JSON.parse(row.profile);
+      return parseForbiddenSubjects(parsed?.forbiddenSubjects);
+    } catch {
+      return [];
+    }
+  } catch (err) {
+    console.warn(`[profile-guards] loadForbiddenSubjectsForShop lookup failed for ${shopDomain}:`, err);
+    return [];
+  }
 }
 
 /**

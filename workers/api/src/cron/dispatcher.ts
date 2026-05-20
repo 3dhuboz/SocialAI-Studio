@@ -27,6 +27,7 @@ import { cronPublishMissedPosts } from './publish-missed';
 import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
+import { reconcileSubscriptions } from './reconcile-subscriptions';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -100,6 +101,10 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
       return { posts_processed: r.regenerated };
     });
     await trackCron(env, 'fal_credits', () => cronCheckFalCredits(env));
+    return;
+  }
+  if (cron === '*/15 * * * *') {
+    await trackCron(env, 'reconcile_subscriptions', () => reconcileSubscriptions(env));
     return;
   }
   if (cron === '0 3 * * *') {

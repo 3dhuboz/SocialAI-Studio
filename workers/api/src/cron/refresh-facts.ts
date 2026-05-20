@@ -18,7 +18,7 @@
 // Extracted from src/index.ts as Phase B step 11 of the route-module split.
 
 import type { Env } from '../env';
-import { refreshFactsForWorkspace } from '../lib/facebook-facts';
+import { refreshFactsForWorkspace, refreshFactsForShop } from '../lib/facebook-facts';
 import { refreshFactsViaPostproxy } from '../lib/postproxy-facts';
 
 export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: number }> {
@@ -60,6 +60,15 @@ export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: num
        AND pp.postproxy_placement_id IS NOT NULL`
   ).all();
 
+  // Shopify shops (Phase 2+). Same scrape shape but scoped by shop_domain
+  // into shopify_facts. Skips uninstalled shops via the IS NULL guard.
+  const shops = await env.DB.prepare(
+    `SELECT shop_domain, social_tokens FROM shopify_stores
+     WHERE social_tokens IS NOT NULL
+       AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL
+       AND uninstalled_at IS NULL`
+  ).all<{ shop_domain: string; social_tokens: string }>();
+
   let processed = 0;
   for (const u of (legacyUsers.results || [])) {
     try { await refreshFactsForWorkspace(env.DB, (u as any).id, null); processed++; }
@@ -77,6 +86,21 @@ export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: num
     try { await refreshFactsViaPostproxy(env, (cl as any).user_id, (cl as any).id); processed++; }
     catch (e: any) { console.warn(`[CRON facts] pp client ${(cl as any).id}: ${e.message}`); }
   }
-  console.log(`[CRON facts] refreshed ${processed} workspaces (${(legacyUsers.results || []).length + (legacyClients.results || []).length} legacy + ${(ppUsers.results || []).length + (ppClients.results || []).length} postproxy)`);
+  for (const sh of (shops.results || [])) {
+    try {
+      const tokens = JSON.parse(sh.social_tokens);
+      const pageId = tokens?.facebookPageId;
+      const pageToken = tokens?.facebookPageAccessToken;
+      if (!pageId || !pageToken) continue;
+      await refreshFactsForShop(env, sh.shop_domain, pageId, pageToken);
+      processed++;
+    } catch (e: any) {
+      console.warn(`[CRON facts] shop ${sh.shop_domain}: ${e.message}`);
+    }
+  }
+  const legacyCount = (legacyUsers.results || []).length + (legacyClients.results || []).length;
+  const ppCount = (ppUsers.results || []).length + (ppClients.results || []).length;
+  const shopCount = (shops.results || []).length;
+  console.log(`[CRON facts] refreshed ${processed} workspaces (${legacyCount} legacy + ${ppCount} postproxy + ${shopCount} shops)`);
   return { posts_processed: processed };
 }

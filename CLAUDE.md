@@ -9,6 +9,7 @@ Quick reference for navigating the codebase. Read this before touching anything.
 ```
 GitHub repo
 ├── src/                  React frontend (Vite + Tailwind + Clerk)
+├── shopify-app/          Embedded Shopify app (Vite + React + Polaris + App Bridge) — Phase 1
 ├── functions/            Cloudflare Pages Functions (legacy proxies — mostly superseded)
 ├── workers/api/          Cloudflare Worker (Hono, the real API)
 └── dist/                 Vite build output (CF Pages serves this)
@@ -137,7 +138,21 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `onboarding.ts` | Onboarding flow endpoints |
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
+| `postproxy.ts` | Postproxy hosted-publishing layer integration |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
+| `shopify-oauth.ts` | Shopify embedded-app: install/callback, GDPR + uninstall webhooks, `GET /api/shopify/me` |
+| `admin-shopify.ts` | Owner admin endpoints for Shopify shops — list, force-reconcile, audit trail |
+| `shopify-products.ts` | Embedded-app: `POST /api/shopify/products/sync` (Admin GraphQL pagination, 500-product cap), `GET /api/shopify/products` (cached LIMIT 250) |
+| `shopify-compose.ts` | Embedded-app: `POST /api/shopify/compose` — Claude Haiku caption + brand-grounded image for a Shopify product |
+| `shopify-posts.ts` | Embedded-app: shop-scoped post CRUD + publish-now (owner_kind='shop' rows). All endpoints session-token gated. |
+| `shopify-social-connect.ts` | Embedded-app: FB/IG connect for Shopify merchants — exchange token, connect, disconnect, status. Writes shopify_stores.social_tokens. |
+| `shopify-insights.ts` | Embedded-app: `GET /api/shopify/insights` — FB Page stats (followers, reach/interactions, engagement rate) + D1 post queue summary. Mirrors main-app's `getLivePageStats` logic in the worker. |
+| `shopify-post-quality.ts` | Embedded-app: `POST /api/shopify/critique-image-caption` — vision critique (Haiku 4.5) for shop posts. Session-token gated; persists onto `posts` row when `postId` is provided and owner matches. |
+| `shopify-posters.ts` | Embedded-app: shop-scoped poster gallery — `POST /api/shopify/posters` (generate via OpenRouter + save to R2), `GET /api/shopify/posters` (list), `GET /api/shopify/posters/:id/image` (stream), `DELETE /api/shopify/posters/:id`. Uses `shopify_posters` table (schema_v28_shopify_posters). |
+| `shopify-autopilot.ts` | Embedded-app: bulk-content-calendar generator. `POST /api/shopify/autopilot/generate-one` composes (caption+image via shared `composeProductPost`) and inserts a Scheduled post. Supports `postType: 'image' \| 'video'` — video posts seed the existing prewarm-videos cron via `video_status='pending'`. Includes active-campaign context lookup. |
+| `shopify-campaigns.ts` | Embedded-app: shop-scoped marketing campaigns. CRUD via `/api/shopify/campaigns/*` plus `/active` convenience endpoint. `shopify_campaigns` table (schema_v29_shopify_campaigns_and_facts). Autopilot reads active campaign context into each compose call. |
+| `shopify-facts.ts` | Embedded-app: FB Page facts status + manual refresh. `GET /api/shopify/facts/status` returns `{total, by_type, last_verified_at, page_connected}`. `POST /api/shopify/facts/refresh` triggers `refreshFactsForShop` synchronously (rate-limited 3/min). `shopify_facts` table (schema_v29_shopify_campaigns_and_facts). |
+| `shopify-profile.ts` | Embedded-app: shop profile + forbiddenSubjects denylist write surface. `shopify_stores.profile` JSON (schema_v30_shopify_stores_profile). |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -157,6 +172,11 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `prompt-safety.ts` | Prompt injection detection |
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
+| `shopify-auth.ts` | Shopify HMAC verification (OAuth + webhooks), session-token JWT verification, shop-domain sanitizer |
+| `shopify-billing.ts` | Shopify Billing API helpers — create/cancel app subscription, billing-status lookup, plan→price mapping |
+| `shopify-token-exchange.ts` | Token Exchange flow — swap session token for offline access token (replaces OAuth code-grant for fresh installs) |
+| `shopify-admin-api.ts` | `shopifyGraphQL<T>(shop, accessToken, query, variables)` — discriminated-union GraphQL helper, 15s timeout, distinct network/http/graphql failure stages |
+| `shopify-tenancy.ts` | `ensureShopSentinelUser(env, shop)` — `INSERT OR IGNORE` a users row keyed by shop domain so the `posts.user_id → users(id)` FK is satisfied for shop-owned writes. Idempotent. Call before any shop-tenant INSERT into posts. |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |
@@ -164,11 +184,12 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 | `dispatcher.ts` | — | Routes `scheduled()` events to the right cron handler |
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
-| `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
+| `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG (handles Clerk user/client AND Shopify shop posts via `owner_kind`) |
 | `refresh-tokens.ts` | `0 3 * * *` | Refresh 60-day Facebook tokens |
 | `refresh-facts.ts` | `0 4 * * *` | Scrape FB Pages → `client_facts` engagement history |
 | `check-fal-credits.ts` | `0 */6 * * *` | Alert when fal.ai balance < $5 |
 | `weekly-review.ts` | `0 21 * * SUN` | Autonomous weekly review (Mon 7am AEST) |
+| `reconcile-subscriptions.ts` | `*/15 * * * *` | Reconcile Shopify app subscriptions — catch missed `app_subscriptions/update` webhooks, downgrade lapsed shops |
 | `_shared.ts` | — | Shared cron utilities |
 
 ---
@@ -177,7 +198,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v16
+**Current schema version:** v24
 
 ### Migration process
 ```bash
@@ -198,6 +219,15 @@ New migrations go in `workers/api/schema_vN.sql`. Always use `IF NOT EXISTS` / `
 | `posters` | AI poster metadata + R2 key |
 | `activations` | Account activation codes |
 | `portals` | White-label portal configs |
+| `shopify_stores` | Installed Shopify shops — offline access token, scopes, install/uninstall timestamps |
+| `shopify_oauth_state` | Short-lived OAuth state nonces (10-min TTL, GC'd opportunistically) |
+| `shopify_webhooks_log` | Inbound Shopify webhook audit trail (GDPR + app/uninstalled) |
+| `shopify_products` | Cached product catalog per shop (populated in Phase 2) |
+| `shopify_billing_events` | Audit log of every `app_subscriptions/update` transition + reconciliation cron decisions |
+| `shopify_admin_audit` | Owner-side admin actions on Shopify shops (force-cancel, force-reconcile, manual plan override) |
+| `shopify_posters` | Shop-scoped AI-poster gallery (schema_v23). R2 key prefix `shopify-posters/<id>.png`. |
+| `shopify_campaigns` | Shop-scoped marketing campaigns (schema_v24). Active campaign feeds into autopilot compose context. |
+| `shopify_facts` | Per-shop scrape of connected FB Page (about/posts/photos, schema_v24). Powers Autopilot "N facts ready" indicator. |
 
 ---
 
@@ -210,6 +240,19 @@ npx wrangler deploy --config wrangler.toml   # --config flag required — avoids
 ```
 > The global `wrangler` (v4) detects the repo root `functions/` dir and thinks it's a Pages project. Always use `npx wrangler` (v3) with `--config wrangler.toml`.
 
+**⚠⚠⚠ CRITICAL — worker must be deployed from THIS worktree (`claude/keen-vaughan-e42cc6`).**
+The entire Shopify embedded-app integration (`workers/api/src/routes/shopify-*.ts` + all the `registerShopify*Routes` calls in `index.ts`) lives only on this branch. **It has never been merged into `main`.** Every other worktree and the root SocialAI-Studio repo have zero Shopify code. If you deploy from any of those, every `/api/shopify/*` route returns 404 and the entire Shopify embedded app breaks (Settings, Products, Insights, Autopilot, everything).
+
+This has happened multiple times already — search the git log for "auto-rollback" / "phantom rollback" / "redeploy worker" commits. It is NOT a Cloudflare auto-rollback; it is a stale deploy from a different worktree silently overwriting this one.
+
+**One-line check after every worker deploy:**
+```bash
+curl -s https://socialai-api.steve-700.workers.dev/api/_meta | grep -o 'shopify_routes_present[^,}]*'
+```
+Should return `shopify_routes_present":true`. If the endpoint 404s or the field is `false`, redeploy from this worktree.
+
+**Until the Shopify branch is merged to main**, treat any deploy from anywhere else as a production regression.
+
 ### Frontend (auto via GitHub → Cloudflare Pages)
 Push to `main` → Pages auto-deploys. Check status at Cloudflare Dashboard → Pages → `socialaistudio-au`.
 
@@ -218,11 +261,25 @@ Manual build:
 npm run build    # outputs to dist/
 ```
 
+### Shopify embedded app (manual to PRODUCTION)
+```bash
+cd shopify-app
+npm run build
+npx wrangler pages deploy dist --project-name socialai-shopify --branch=main
+```
+**⚠ The `--branch=main` flag is required.** Without it, `wrangler pages deploy` uses the current git branch name as the deploy alias, which lands the build at a preview URL (`<hash>.socialai-shopify.pages.dev`) instead of the production `socialai-shopify.pages.dev` the Shopify app config points at. Verify the new build is live by:
+```bash
+curl -s "https://socialai-shopify.pages.dev/" | grep -oE "/assets/index-[A-Za-z0-9_-]+\.js"
+```
+and confirming the hash matches the one printed by `vite build`.
+
 ### Secrets (worker)
 ```bash
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
-Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`
+Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`
+
+Shopify-specific vars (set in `wrangler.toml [vars]`, not secrets): `SHOPIFY_APP_URL`, `SHOPIFY_APP_SCOPES`. See `SHOPIFY_SETUP.md` for the full embedded-app setup flow.
 
 ---
 

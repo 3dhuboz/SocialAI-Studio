@@ -1,0 +1,116 @@
+-- ─────────────────────────────────────────────────────────────────────
+--  schema_v22.sql — Phase 2 of the Shopify embedded app.
+--
+--  Phase 1 (v17/v18/v19/v21) shipped the OAuth shell, Billing API
+--  integration, admin visibility, and envelope-encryption marker on
+--  shopify_stores. Phase 2 unlocks the actual product-marketing flow
+--  for installed merchants:
+--
+--    * Product sync — populate shopify_products from the Admin GraphQL
+--      API (catalog + product webhooks). The table was created in v17
+--      but has stayed empty until now.
+--    * AI post composer — generate captions + images for individual
+--      products (or product collections), scoped to a single shop.
+--    * FB/IG publishing scoped to Shopify shops — the shop connects its
+--      own Facebook Page + Instagram Business Account inside the
+--      embedded app, separate from any Clerk-account user/client.
+--
+--  ── Tri-tenant model recap ──────────────────────────────────────────
+--  v20 introduced the schema-level groundwork:
+--
+--    posts.owner_kind ∈ ('user' | 'client' | 'shop')
+--    posts.owner_id   → users.id  | clients.id  | shopify_stores.shop_domain
+--
+--  For Shopify-owned posts:
+--    owner_kind = 'shop'
+--    owner_id   = shopify_stores.shop_domain  (e.g. "acme-co.myshopify.com")
+--
+--  posts.user_id stays NOT NULL today, BUT for Shopify shop-owned posts
+--  it will be either NULL (if/when the column is made nullable in a
+--  follow-up) or a sentinel value — the code agent landing the
+--  composer routes will decide which. This migration does NOT change
+--  posts.user_id's nullability; that's a separate, riskier change.
+--
+--  ── What this migration changes ─────────────────────────────────────
+--    1. shopify_stores.social_tokens (TEXT, nullable) — JSON blob
+--       mirroring the existing users.social_tokens / clients.social_tokens
+--       shape, holding the merchant's connected FB Page + IG Business
+--       Account tokens. Shape:
+--         {
+--           "facebookUserToken": "...",
+--           "facebookPageId": "...",
+--           "facebookPageAccessToken": "...",
+--           "facebookPageName": "...",
+--           "instagramBusinessAccountId": "...",
+--           "connectedAt": "ISO-8601"
+--         }
+--       Like the access_token column added in v17, this value will be
+--       envelope-encrypted by the application layer once
+--       MASTER_ENCRYPTION_KEY is wired through (see schema_v21 + lib/crypto.ts).
+--
+--    2. shopify_stores.last_products_synced_at (TEXT, nullable) —
+--       ISO-8601 timestamp of the most recent successful product-catalog
+--       sync. Lets the sync route short-circuit when called too often
+--       (e.g. throttle to once per N minutes per shop).
+--
+--    3. idx_shopify_products_shop_handle — composite index on
+--       (shop_domain, handle). Supports the Phase 2 compose flow's
+--       lookup pattern: "find product by shop + handle" when the
+--       composer references a product by its storefront URL slug.
+--
+--    4. idx_posts_owner_status — composite index on
+--       (owner_kind, owner_id, status). Supports the calendar query
+--       pattern:
+--         WHERE owner_kind = 'shop'
+--           AND owner_id   = ?
+--           AND status IN ('Scheduled', 'Posted', 'Draft')
+--         ORDER BY scheduled_for
+--       which is run on every load of the embedded-app calendar view.
+--       The existing idx_posts_owner from v20 covers (owner_kind,
+--       owner_id) but adds no help for the status filter; this index
+--       lets SQLite seek directly to (kind, id, status) ranges.
+--
+--  ── D1 / SQLite caveats ─────────────────────────────────────────────
+--  D1's SQLite does NOT support `ADD COLUMN IF NOT EXISTS`. If this
+--  migration was applied previously and is being re-run, the two
+--  ALTERs below will fail with "duplicate column name". That's the
+--  same risk profile as v17/v18/v20/v21 (also non-idempotent ALTERs)
+--  and is the expected, safe failure mode — once-only. The two
+--  CREATE INDEX statements are guarded with IF NOT EXISTS so the
+--  index half is always safe to re-run.
+--
+--  ── Apply via ───────────────────────────────────────────────────────
+--    cd workers/api
+--    npx wrangler d1 execute socialai-db --remote --file=schema_v22.sql --config wrangler.toml
+-- ─────────────────────────────────────────────────────────────────────
+
+-- ── 1. social_tokens JSON blob on shopify_stores ────────────────────
+-- Mirrors users.social_tokens / clients.social_tokens (JSON columns
+-- on those tables — there is no standalone social_tokens table; see
+-- the v20 comment for the confirmed-against-prod note).
+ALTER TABLE shopify_stores ADD COLUMN social_tokens TEXT;
+
+-- ── 2. last_products_synced_at on shopify_stores ────────────────────
+-- ISO-8601 string. Read by the sync route to decide whether to skip
+-- a re-sync. NULL means "never synced" — treat as cold cache.
+ALTER TABLE shopify_stores ADD COLUMN last_products_synced_at TEXT;
+
+-- ── 3. Composite index for product lookups by (shop, handle) ────────
+-- Supports the compose-flow lookup:
+--   SELECT * FROM shopify_products
+--    WHERE shop_domain = ? AND handle = ?
+-- v17 already has idx_shopify_products_shop on (shop_domain) alone,
+-- which would filter the right shop but then scan that shop's whole
+-- catalog. The composite seeks directly to the matching row.
+CREATE INDEX IF NOT EXISTS idx_shopify_products_shop_handle
+  ON shopify_products(shop_domain, handle);
+
+-- ── 4. Composite index for the calendar query on posts ──────────────
+-- Supports:
+--   WHERE owner_kind = ? AND owner_id = ? AND status IN (...)
+--   ORDER BY scheduled_for
+-- The existing v20 idx_posts_owner covers the first two predicates;
+-- this one extends it with status so SQLite can apply the IN filter
+-- inside the index seek instead of scanning every post for the shop.
+CREATE INDEX IF NOT EXISTS idx_posts_owner_status
+  ON posts(owner_kind, owner_id, status);

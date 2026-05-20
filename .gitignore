@@ -3,6 +3,9 @@ dist
 .env
 .env.local
 *.log
+*.err
+workers/api/tail.log
+workers/api/tail.err
 .wrangler/
 workers/api/.wrangler/
 .claude/plans/

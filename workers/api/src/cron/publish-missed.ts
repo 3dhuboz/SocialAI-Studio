@@ -56,6 +56,15 @@ function friendlyPublishReason(raw: string): string {
   return raw.slice(0, 200);
 }
 
+// NOTE(rebase, 2026-05): PR #135 originally added inline `escapeHtml` +
+// `notifyOwnerOnPublishFailure` helpers here with Shopify-aware deep-linking
+// (admin.shopify.com/store/<shop>/apps/socialai-studio). When rebasing onto
+// main these were dropped because main's Phase-B refactor moved the canonical
+// notifier into `lib/cron-notify.ts` (and poll-pending-reels.ts uses it too).
+// TODO(shopify-followup): extend `notifyOwnerOnFailure` in lib/cron-notify.ts
+// to honour `post.owner_kind === 'shop'` and synthesise the Shopify admin URL.
+// Until that lands, shop-post failure emails carry the SocialAI Studio URLs.
+
 // ── Facebook Page Reels publishing — KICK phase ─────────────────────────────
 // Audit P0 (Hono/Workers lane, 2026-05) — was previously a 4-phase blocking
 // function that polled FB for up to 180s per post serially inside the publish
@@ -86,6 +95,27 @@ async function kickFacebookReelUpload(
   const base = 'https://graph.facebook.com/v21.0';
   if (description.length > 2200) {
     throw new Error(`FB reel description exceeds 2200 char limit (got ${description.length})`);
+  }
+
+  // Validate the video URL before passing it as a header value. The URL
+  // originates from the prewarm-videos cron writing into the posts table
+  // (sourced from Kling output), so server-controlled — BUT defense in
+  // depth: a malformed value (CRLF, non-HTTPS scheme, missing host) could
+  // smuggle headers into the FB API call. Reject explicitly.
+  let parsedVideo: URL;
+  try {
+    parsedVideo = new URL(videoUrl);
+  } catch {
+    throw new Error(`FB reel videoUrl is not a valid URL: ${String(videoUrl).slice(0, 80)}`);
+  }
+  if (parsedVideo.protocol !== 'https:') {
+    throw new Error(`FB reel videoUrl must use https:// (got ${parsedVideo.protocol})`);
+  }
+  // CRLF / control-char check on the raw string. URL constructor strips
+  // many of these but a CR/LF embedded as %0D / %0A round-trips through
+  // .href — fail closed on anything that smells like header injection.
+  if (/[\r\n\x00-\x1f]/.test(videoUrl)) {
+    throw new Error(`FB reel videoUrl contains control characters`);
   }
 
   // Phase 1 — start: get a video_id + upload_url.
@@ -264,8 +294,8 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // (legacy, pre-v22) → 0 = legacy Graph path.
   const rows = await env.DB.prepare(
     `SELECT p.id, p.content, p.hashtags, p.image_url, p.image_prompt, p.platform,
-            p.user_id, p.client_id, p.post_type, p.video_url, p.video_status,
-            p.audio_mixed_url,
+            p.user_id, p.client_id, p.owner_kind, p.owner_id,
+            p.post_type, p.video_url, p.video_status, p.audio_mixed_url,
             COALESCE(c.use_postproxy, u.use_postproxy, 0) AS use_postproxy
      FROM posts p
      LEFT JOIN users   u ON u.id = p.user_id
@@ -307,8 +337,28 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   const MAX_JIT_IMAGES_PER_RUN = 5;
   let jitGenerated = 0;
 
+  // Reel publishing inside postReelToFacebookPage polls up to 180s for FB
+  // processing. With up to 20 posts claimed per tick, a Reel-heavy batch
+  // could spend the entire cron budget on video polling and starve image
+  // posts. Cap reel work to 2 per tick — remaining reel posts wait for the
+  // next 5-min tick. Image / text-only posts in the same batch still
+  // process normally.
+  const MAX_REELS_PER_RUN = 2;
+  let reelsProcessed = 0;
+
   for (const post of posts) {
     try {
+      // Shop-owned posts (Phase 2 of the embedded Shopify app, schema_v22):
+      //   owner_kind='shop', owner_id=shop_domain, client_id=NULL,
+      //   user_id=shop_domain sentinel. Their FB/IG tokens live in
+      //   shopify_stores.social_tokens (JSON column) instead of
+      //   users.social_tokens / clients.social_tokens. Branch the
+      //   denylist + token-resolution paths so we don't accidentally
+      //   query the users/clients tables for a sentinel id.
+      const ownerKind = (post as any).owner_kind as string | null;
+      const ownerId = (post as any).owner_id as string | null;
+      const isShopPost = ownerKind === 'shop' && !!ownerId;
+
       // ── Owner-declared exclusion guard (defense layer 5) ────────────────
       // Final safety net before auto-publish. The gen prompts (layers 1+2)
       // and vision critique (layer 4) should already have caught any
@@ -321,23 +371,29 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // Pre-fix this only checked the user-level denylist, which is why
       // Seamus's brisket-only exclusion silently no-opped for a managed
       // client even after the system was nominally "configured" with one.
-      const denylist = await loadForbiddenSubjects(
-        env,
-        (post as any).user_id as string,
-        (post as any).client_id as string | null,
-      );
-      if (denylist.length > 0) {
-        const captionHit = scanForForbidden((post as any).content as string, denylist);
-        const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);
-        const hit = captionHit || promptHit;
-        if (hit) {
-          const where = captionHit ? 'caption' : 'image_prompt';
-          const reason = `Auto-publish blocked: post ${where} mentions "${hit}" which the business has flagged as a forbidden subject. Edit the post or update the denylist in Settings.`;
-          console.warn(`[CRON] Post ${(post as any).id} blocked by forbiddenSubjects guard: "${hit}" in ${where}`);
-          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
-            .bind('NeedsReview', reason, (post as any).id).run();
-          await notifyOwnerOnFailure(env, post as any, reason, 'post');
-          continue;
+      // Shop-owned posts skip the Clerk-tenant denylist — they don't have a
+      // users.id/clients.id to read from. TODO(shopify): wire the shop-side
+      // denylist via loadForbiddenSubjectsForShop when the merchant Settings
+      // UI ships. See profile-guards.ts:loadForbiddenSubjectsForShop.
+      if (!isShopPost) {
+        const denylist = await loadForbiddenSubjects(
+          env,
+          (post as any).user_id as string,
+          (post as any).client_id as string | null,
+        );
+        if (denylist.length > 0) {
+          const captionHit = scanForForbidden((post as any).content as string, denylist);
+          const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);
+          const hit = captionHit || promptHit;
+          if (hit) {
+            const where = captionHit ? 'caption' : 'image_prompt';
+            const reason = `Auto-publish blocked: post ${where} mentions "${hit}" which the business has flagged as a forbidden subject. Edit the post or update the denylist in Settings.`;
+            console.warn(`[CRON] Post ${(post as any).id} blocked by forbiddenSubjects guard: "${hit}" in ${where}`);
+            await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+              .bind('NeedsReview', reason, (post as any).id).run();
+            await notifyOwnerOnFailure(env, post as any, reason, 'post');
+            continue;
+          }
         }
       }
 
@@ -482,10 +538,21 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // reconnected still publish exactly as they did before the cutover.
       // schema_v23 will delete this block once every workspace has migrated.
 
-      // Social tokens come from the batch-loaded map (see preload above) —
-      // collapses what used to be a per-post DB round-trip into a single
-      // in-memory hash lookup.
-      const tokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null });
+      // Social tokens for this workspace. For non-shop posts, use the
+      // batch-loaded map (collapses what used to be a per-post DB round-trip
+      // into a single in-memory hash lookup — see cron/_shared.ts). Shopify
+      // shop posts pull straight from shopify_stores.social_tokens since
+      // they aren't in the batch-loader's users/clients scope.
+      let tokens: { facebookPageId?: string; facebookPageAccessToken?: string } | null;
+      if (isShopPost) {
+        const tokensRaw = await env.DB
+          .prepare('SELECT social_tokens FROM shopify_stores WHERE shop_domain = ? AND uninstalled_at IS NULL')
+          .bind(ownerId)
+          .first<{ social_tokens: string | null }>();
+        tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+      } else {
+        tokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null });
+      }
       if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
         const reason = 'No Facebook page connected — go to Settings → Connect Facebook to fix.';
         console.warn(`[CRON] No FB tokens for post ${(post as any).id} — marking missed`);
@@ -581,6 +648,22 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       const videoStatus = (post as any).video_status as string | null;
 
       if (postType === 'video' && videoStatus === 'ready' && videoUrl) {
+        // Cron-budget guard: each reel publish can spin up to 180s on FB
+        // processing polls. To keep image/text posts in the same batch from
+        // starving, defer surplus reels to the next tick. They stay in the
+        // queue (status='Scheduled', scheduled_for unchanged) so the next
+        // 5-min sweep picks them up via the same "scheduled_for <= now"
+        // predicate. The 2-per-tick cap gives us at most 6 minutes of
+        // reel polling budget while leaving room for the rest of the batch.
+        if (reelsProcessed >= MAX_REELS_PER_RUN) {
+          console.log(`[CRON] Skipping reel ${(post as any).id} — MAX_REELS_PER_RUN (${MAX_REELS_PER_RUN}) reached, will retry next tick`);
+          // Release the claim so the next tick can pick it up. Don't change
+          // status — the post is still legitimately Scheduled, just deferred.
+          await env.DB.prepare('UPDATE posts SET claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind((post as any).id).run();
+          continue;
+        }
+        reelsProcessed++;
         try {
           // Reel caption — strip trailing hashtags from content (idempotent)
           // and append clean hashtag block. Same idiom as fullText above.

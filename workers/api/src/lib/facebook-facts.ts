@@ -87,6 +87,188 @@ export async function refreshFactsForUser(
   } catch { /* skip */ }
 }
 
+// Shop-tenant variant of refreshFactsForUser. Scopes everything by
+// shop_domain into shopify_facts (schema_v24) rather than the
+// (user_id, client_id)-keyed client_facts table. Same about/posts/photos
+// scrape set — comments/events skipped here, mirroring the lighter
+// onboarding-magic flow.
+//
+// Returns the count of rows inserted so the Autopilot "N facts ready"
+// indicator can surface freshness to the merchant.
+export async function refreshFactsForShop(
+  env: Env,
+  shopDomain: string,
+  pageId: string,
+  pageToken: string,
+): Promise<{ inserted: number; errors: string[] }> {
+  const base = 'https://graph.facebook.com/v21.0';
+  const errors: string[] = [];
+  let inserted = 0;
+
+  // Drop existing rows for this shop so we start clean. The UNIQUE
+  // (shop_domain, fb_id) constraint will catch any race with another
+  // refresh, but the wipe + re-insert keeps stale facts from lingering.
+  await env.DB.prepare(`DELETE FROM shopify_facts WHERE shop_domain = ?`).bind(shopDomain).run();
+
+  const stamp = new Date().toISOString();
+
+  // ── About / description ────────────────────────────────────────────
+  try {
+    const r = await fetch(
+      `${base}/${pageId}?fields=about,description,category,fan_count&access_token=${encodeURIComponent(pageToken)}`,
+      { signal: AbortSignal.timeout(15_000) },
+    );
+    const d: any = await r.json();
+    if (d?.error) {
+      errors.push(`about: ${d.error.message}`);
+    } else if (d?.about || d?.description) {
+      const result = await env.DB.prepare(
+        `INSERT OR IGNORE INTO shopify_facts (shop_domain, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+         VALUES (?, 'about', ?, ?, ?, 0, ?)`,
+      ).bind(
+        shopDomain,
+        d.about || d.description,
+        JSON.stringify({ category: d.category, fan_count: d.fan_count }),
+        pageId,
+        stamp,
+      ).run();
+      if (result?.meta?.changes) inserted++;
+    }
+  } catch (e: any) {
+    errors.push(`about: ${e?.message || String(e)}`);
+  }
+
+  // ── Posts (with engagement) ────────────────────────────────────────
+  try {
+    const r = await fetch(
+      `${base}/${pageId}/posts?fields=id,message,created_time,reactions.summary(true),shares,comments.summary(true)&limit=50&access_token=${encodeURIComponent(pageToken)}`,
+      { signal: AbortSignal.timeout(20_000) },
+    );
+    const d: any = await r.json();
+    if (d?.error) {
+      errors.push(`posts: ${d.error.message}`);
+    } else {
+      for (const p of d?.data || []) {
+        if (!p.message || p.message.length < 20) continue;
+        const eng = (p.reactions?.summary?.total_count || 0)
+                  + (p.shares?.count || 0) * 3
+                  + (p.comments?.summary?.total_count || 0) * 2;
+        const result = await env.DB.prepare(
+          `INSERT OR IGNORE INTO shopify_facts (shop_domain, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+           VALUES (?, 'own_post', ?, ?, ?, ?, ?)`,
+        ).bind(
+          shopDomain,
+          p.message,
+          JSON.stringify({
+            created_time: p.created_time,
+            reactions: p.reactions?.summary?.total_count,
+            shares: p.shares?.count,
+            comments: p.comments?.summary?.total_count,
+          }),
+          p.id,
+          eng,
+          stamp,
+        ).run();
+        if (result?.meta?.changes) inserted++;
+      }
+    }
+  } catch (e: any) {
+    errors.push(`posts: ${e?.message || String(e)}`);
+  }
+
+  // ── Photos (URLs for image-gen brand refs) ─────────────────────────
+  try {
+    const r = await fetch(
+      `${base}/${pageId}/photos?type=uploaded&fields=id,images,name&limit=30&access_token=${encodeURIComponent(pageToken)}`,
+      { signal: AbortSignal.timeout(15_000) },
+    );
+    const d: any = await r.json();
+    if (d?.error) {
+      errors.push(`photos: ${d.error.message}`);
+    } else {
+      for (const ph of d?.data || []) {
+        const url = ph.images?.[0]?.source;
+        if (!url) continue;
+        const result = await env.DB.prepare(
+          `INSERT OR IGNORE INTO shopify_facts (shop_domain, fact_type, content, metadata, fb_id, engagement_score, verified_at)
+           VALUES (?, 'photo', ?, ?, ?, 0, ?)`,
+        ).bind(
+          shopDomain,
+          ph.name || 'Untitled photo',
+          JSON.stringify({ url }),
+          ph.id,
+          stamp,
+        ).run();
+        if (result?.meta?.changes) inserted++;
+      }
+    }
+  } catch (e: any) {
+    errors.push(`photos: ${e?.message || String(e)}`);
+  }
+
+  return { inserted, errors };
+}
+
+// Load the merchant's strongest Facebook-page signals for stitching into a
+// compose prompt. Returns a compact, human-readable string the LLM can use
+// to ground voice and avoid fabricating claims — or `null` if no facts are
+// available yet (table empty, page not connected, or scrape hasn't run).
+//
+// Shape:
+//   - 1× 'about' row (page description / category)
+//   - up to N 'own_post' rows ordered by engagement_score DESC
+//
+// Each post is trimmed to ~220 chars so the prompt stays bounded even when
+// the merchant has 50 huge posts in the table. Photos are deliberately
+// excluded — they're useful for image-gen brand refs, not for caption
+// grounding.
+//
+// Degrades silently if the shopify_facts table doesn't exist (deploys where
+// schema_v24 hasn't run yet), returning null instead of throwing — autopilot
+// generation must keep working with or without facts.
+export async function loadShopFactsForPrompt(
+  env: Env,
+  shopDomain: string,
+  topPostLimit = 3,
+): Promise<string | null> {
+  try {
+    const about = await env.DB.prepare(
+      `SELECT content, metadata FROM shopify_facts
+        WHERE shop_domain = ? AND fact_type = 'about'
+        ORDER BY verified_at DESC
+        LIMIT 1`,
+    ).bind(shopDomain).first<{ content: string; metadata: string | null }>();
+
+    const { results: posts } = await env.DB.prepare(
+      `SELECT content, engagement_score, metadata FROM shopify_facts
+        WHERE shop_domain = ? AND fact_type = 'own_post' AND engagement_score > 0
+        ORDER BY engagement_score DESC
+        LIMIT ?`,
+    ).bind(shopDomain, topPostLimit).all<{ content: string; engagement_score: number; metadata: string | null }>();
+
+    if (!about && (!posts || posts.length === 0)) return null;
+
+    const lines: string[] = [];
+    if (about?.content) {
+      const trimmed = about.content.length > 400
+        ? about.content.slice(0, 400) + '…'
+        : about.content;
+      lines.push(`Page about: ${trimmed}`);
+    }
+    for (const p of posts || []) {
+      const trimmed = p.content.length > 220 ? p.content.slice(0, 220) + '…' : p.content;
+      // Strip newlines so the bullet list stays compact in the prompt.
+      const oneLine = trimmed.replace(/\s+/g, ' ').trim();
+      lines.push(`Past high-engagement post (engagement ${p.engagement_score}): "${oneLine}"`);
+    }
+    if (lines.length === 0) return null;
+    return lines.join('\n');
+  } catch {
+    // Table missing or query failed — degrade silently.
+    return null;
+  }
+}
+
 export async function refreshFactsForWorkspace(
   db: D1Database,
   uid: string,

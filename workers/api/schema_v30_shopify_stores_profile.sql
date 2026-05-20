@@ -1,0 +1,30 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- schema_v25 — shopify_stores.profile JSON column.
+--
+-- Closes a content-safety gap surfaced in the launch audit:
+-- routes/shopify-post-quality.ts:90 hardcodes `forbiddenSubjects: []` so the
+-- HARD-RULES gate (lib/critique.ts) is inactive for every Shopify shop. Same
+-- gap in routes/shopify-compose.ts and routes/shopify-posters.ts — they pass
+-- raw merchant prompts into the image-gen pipeline with no shop-side denylist
+-- enforcement.
+--
+-- Mirrors the structure used by users.profile / clients.profile in the main
+-- SocialAI Studio app, so loadForbiddenSubjects() can union all three with
+-- minimal code change.
+--
+-- Schema:
+--   shopify_stores.profile JSON
+--     {
+--       "forbiddenSubjects": ["alcohol", "children", ...],   // hard denylist
+--       "brandVoice":        "...",                          // optional copy guidance
+--       "bannedPhrases":     [...]                           // optional copy denylist
+--     }
+--
+-- Idempotent — re-running is safe (ADD COLUMN with IF NOT EXISTS via D1 catch).
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- D1/SQLite doesn't support "ADD COLUMN IF NOT EXISTS" natively. We rely on
+-- migration ordering — this file should only ever be applied once, after
+-- schema_v24. Apply via:
+--   wrangler d1 execute socialai-db --remote --file=schema_v25.sql
+ALTER TABLE shopify_stores ADD COLUMN profile TEXT;
