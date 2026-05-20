@@ -10,6 +10,7 @@ import type { BillingInfo } from '../services/db';
 import { PaymentList } from './PaymentList';
 import { CLIENT } from '../client.config';
 import { useAuth } from '../contexts/AuthContext';
+import { getPaypalManageUrl } from '../utils/paypal';
 
 interface Props {
   activePlan: string;
@@ -53,6 +54,23 @@ export const AccountPanel: React.FC<Props> = ({
   const border = planBorders[activePlan] || 'border-white/10';
 
   const [section, setSection] = useState<Section>('main');
+
+  // ── Billing info (lifted from BillingSection so the main view's
+  //     Manage Billing button can route to the specific subscription
+  //     URL instead of the generic PayPal autopay page — see I4 of
+  //     the billing security audit). One fetch on mount; the inner
+  //     BillingSection re-fetches when the user navigates there so
+  //     transient state from a payment + page reload is fresh.
+  //     Fail-quiet: if the fetch errors we just fall back to the
+  //     generic URL, no user-visible error needed on the main view.
+  const [billingSummary, setBillingSummary] = useState<BillingInfo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    db.getBilling()
+      .then((info) => { if (!cancelled) setBillingSummary(info); })
+      .catch(() => { /* silent — main view falls back to generic URL */ });
+    return () => { cancelled = true; };
+  }, [db]);
 
   // ── Change password ──────────────────────────────────────
   const [oldPw, setOldPw] = useState('');
@@ -159,7 +177,7 @@ export const AccountPanel: React.FC<Props> = ({
                 )}
                 <div className="flex gap-2">
                   <a
-                    href={CLIENT.paypalManageUrl}
+                    href={getPaypalManageUrl(billingSummary?.subscription_id)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex-1 flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-white text-xs font-semibold py-2 rounded-xl transition"
@@ -457,7 +475,7 @@ const BillingSection: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             )}
             {data.subscription_id ? (
               <a
-                href={`https://www.paypal.com/billing/subscriptions/${data.subscription_id}`}
+                href={getPaypalManageUrl(data.subscription_id)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300 hover:text-amber-200 transition"

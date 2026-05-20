@@ -14,6 +14,7 @@ import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { useDb } from './hooks/useDb';
 import { mapDbPostToSocialPost } from './services/db';
+import { getPaypalManageUrl } from './utils/paypal';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 // PricingTable is modal-gated (only mounted when showPricing is true).
@@ -562,11 +563,33 @@ const Dashboard: React.FC = () => {
   const db = useDb();
   const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers'>('home');
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
+  // ── Billing summary cache (I4 fix) ────────────────────────────────────
+  // Lazily-loaded the first time the user navigates to the Settings tab
+  // so the "Manage Billing" link can deep-link to the customer's own
+  // PayPal subscription page (`/billing/subscriptions/<id>`) instead of
+  // the generic `/myaccount/autopay` page where they'd have to hunt
+  // through autopay agreements. Cached for the rest of the session.
+  const [billingSummary, setBillingSummary] = useState<{ subscription_id: string | null } | null>(null);
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
   const [autoLoginPending, setAutoLoginPending] = useState(false);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
+
+  // ── Billing summary lazy fetch (I4) ───────────────────────────────────
+  // Trigger: user enters the Settings tab. Caches per-session — once
+  // loaded, the second-and-onwards Settings visits reuse the cached
+  // subscription_id without a network round-trip. Fail-quiet: if the
+  // fetch errors, the Manage Billing link falls back to the generic URL
+  // (same behaviour as pre-I4), so no user-visible failure mode.
+  useEffect(() => {
+    if (activeTab !== 'settings' || billingSummary !== null || !user) return;
+    let cancelled = false;
+    db.getBilling()
+      .then((info) => { if (!cancelled) setBillingSummary({ subscription_id: info?.subscription_id ?? null }); })
+      .catch(() => { /* silent — settings link falls back to generic URL */ });
+    return () => { cancelled = true; };
+  }, [activeTab, billingSummary, db, user]);
 
   // ── Back-button handling ─────────────────────────────────────────────
   // Bug being fixed: clicking "Sign In" on the landing page just flipped
@@ -5517,7 +5540,7 @@ const Dashboard: React.FC = () => {
                       </div>
                     </div>
                     {CLIENT.paypalManageUrl && (
-                      <a href={CLIENT.paypalManageUrl} target="_blank" rel="noopener noreferrer"
+                      <a href={getPaypalManageUrl(billingSummary?.subscription_id)} target="_blank" rel="noopener noreferrer"
                         className="text-xs text-white/40 hover:text-amber-300 border border-white/10 hover:border-amber-500/30 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5">
                         <Link2 size={12} /> Manage Billing
                       </a>
