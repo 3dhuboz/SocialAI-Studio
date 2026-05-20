@@ -117,7 +117,21 @@ const SOCIAL_SYSTEM_PROMPT = [
   'You are a senior social-media copywriter for small e-commerce brands.',
   'You write captions that move product, not Instagram poetry.',
   '',
-  'STRICT RULES — these are non-negotiable:',
+  'CRITICAL — your ONLY job is to write a finished caption:',
+  '  - NEVER ask the merchant questions. There is nobody to answer.',
+  '  - NEVER comment on the input. Do NOT write things like',
+  '    "I notice there\'s a mismatch", "Could you clarify", "I can\'t write",',
+  '    "Is this product being sold by", "If it\'s a test", or any sentence',
+  '    that talks ABOUT writing instead of being the caption itself.',
+  '  - NEVER refuse. If the product seems out of place for the merchant context,',
+  '    write a normal product-focused caption that ignores the merchant context.',
+  '    A mismatch is a creative challenge, not a blocker. The merchant chose to',
+  '    list this product — your job is to sell it, not to question it.',
+  '  - NEVER explain what you are about to do or why you wrote what you wrote.',
+  '  - Output is shipped DIRECTLY to Facebook/Instagram. There is no review step',
+  '    that strips meta-commentary. Anything you write WILL be published.',
+  '',
+  'STRICT CONTENT RULES — non-negotiable:',
   '  1. NEVER invent statistics, percentages, counts, "studies show", or testimonial-style quotes. If a stat is not in the product info given, do not include one.',
   '  2. NEVER fake urgency. No "selling out fast", "only X left", "limited time" unless the merchant explicitly provides those facts in the product info.',
   '  3. NEVER use generic AI tropes: "elevate your", "game-changer", "level up", "must-have", "obsessed", "literally", "in today\'s fast-paced world", "look no further".',
@@ -132,8 +146,42 @@ const SOCIAL_SYSTEM_PROMPT = [
   '  - End with a clear, simple call-to-action.',
   '',
   'OUTPUT FORMAT:',
-  '  Return ONLY the caption text. No preamble, no "Here\'s your caption:", no markdown code fences, no JSON wrapping. Just the caption a merchant can paste straight into Meta Business Suite.',
+  '  Return ONLY the caption text. No preamble, no "Here\'s your caption:", no markdown code fences, no JSON wrapping. The first word of your response IS the first word of the caption. Just the caption a merchant can paste straight into Meta Business Suite.',
 ].join('\n');
+
+// Phrases that indicate the LLM went meta instead of writing a caption.
+// Match against the LOWERCASED first ~200 chars of the response — that's
+// where refusals/clarifying-questions always begin. Keep this list tight:
+// false positives turn good captions into "failed" slots.
+//
+// Patterns observed in production:
+//   "I notice there's a mismatch..."
+//   "Could you clarify..."
+//   "I can't write an authentic caption..."
+//   "Is this snowboard actually being sold by..."
+const REFUSAL_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bi notice\b/i,
+  /\bi can'?t (write|create|generate)\b/i,
+  /\bcould you (clarify|confirm|tell me)\b/i,
+  /\b(is|are) (this|these) .{0,40}\b(actually|really) (being )?(sold|offered)\b/i,
+  /\bthere'?s a mismatch\b/i,
+  /\bdoesn'?t match\b/i,
+  /\bif it'?s a test\b/i,
+  /\bonce i understand\b/i,
+  /\bi'?ll (write|create) (a |the )?caption\b/i,
+];
+
+/**
+ * Returns true when the caption looks like the LLM dodging the job
+ * (asking questions, commenting on the input, refusing to write).
+ * False captures are dangerous — they turn good output into "failed" slots —
+ * so the patterns are scoped to the first 250 chars and look for clear refusal
+ * markers, not just any question mark.
+ */
+function looksLikeRefusal(caption: string): boolean {
+  const head = caption.slice(0, 250);
+  return REFUSAL_PATTERNS.some((r) => r.test(head));
+}
 
 interface ProductRow {
   id: string;
@@ -267,27 +315,18 @@ export async function composeProductPost(
   // each caller (single-compose + autopilot) re-derive them, so the prompt
   // shape stays consistent. The shopify_facts query is cheap (~1ms) and
   // bounded (LIMIT 4 rows).
-  let userPrompt = buildCaptionUserPrompt(product, platform, tone);
-
+  const basePrompt = buildCaptionUserPrompt(product, platform, tone);
   const factsContext = await loadShopFactsForPrompt(env, shop);
-  if (factsContext) {
-    userPrompt = `${userPrompt}\n\nMerchant's Facebook page context — use this to ground voice and avoid inventing claims. Echo themes from high-engagement past posts, but write FRESH copy. Do not copy or paraphrase verbatim:\n${factsContext}`;
-  }
 
-  if (campaignContext && campaignContext.trim().length > 0) {
-    userPrompt = `${userPrompt}\n\nActive marketing campaign — weave this naturally into the post (avoid sounding bolted-on):\n${campaignContext.trim()}`;
-  }
-
-  let caption: string;
-  try {
+  // Inner: one LLM round-trip. Returned caption is whatever the model
+  // produced — refusal detection happens in the caller's retry loop.
+  async function callLLM(userPrompt: string): Promise<string> {
     if (env.ANTHROPIC_API_KEY) {
       const result = await callAnthropicDirect({
         apiKey: env.ANTHROPIC_API_KEY,
         // api.anthropic.com uses the bare model id; the `anthropic/` prefix
-        // is OpenRouter-only and api.anthropic.com returns 404 not_found_error
-        // if you send it through. Other callsites in this codebase that hit
-        // callAnthropicDirect (campaign-research, weekly-review, post-quality)
-        // all use this same bare-id form.
+        // is OpenRouter-only. See campaign-research / weekly-review / post-quality
+        // for the same pattern.
         model: 'claude-haiku-4-5',
         systemPrompt: SOCIAL_SYSTEM_PROMPT,
         prompt: userPrompt,
@@ -295,8 +334,9 @@ export async function composeProductPost(
         maxTokens: 800,
         responseFormat: 'text',
       });
-      caption = (result.text || '').trim();
-    } else if (env.OPENROUTER_API_KEY) {
+      return (result.text || '').trim();
+    }
+    if (env.OPENROUTER_API_KEY) {
       const result = await callOpenRouter(
         env.OPENROUTER_API_KEY,
         SOCIAL_SYSTEM_PROMPT,
@@ -304,9 +344,46 @@ export async function composeProductPost(
         0.7,
         800,
       );
-      caption = (result.text || '').trim().replace(/^```[a-z]*\n?|```$/gi, '').trim();
-    } else {
-      throw new ComposeError('caption', 'No LLM API key configured');
+      return (result.text || '').trim().replace(/^```[a-z]*\n?|```$/gi, '').trim();
+    }
+    throw new ComposeError('caption', 'No LLM API key configured');
+  }
+
+  // First attempt: full context (facts + campaign).
+  // Mismatch case (e.g. seeded dev-store products vs an IT-business FB page)
+  // sometimes pushes Haiku into "I notice there's a mismatch, could you
+  // clarify..." instead of a caption. If we detect that, retry without the
+  // facts context — that's almost always the conflict source. If the retry
+  // ALSO refuses, throw so the autopilot marks the slot failed instead of
+  // shipping meta-commentary to Facebook.
+  let firstAttemptPrompt = basePrompt;
+  if (factsContext) {
+    firstAttemptPrompt = `${firstAttemptPrompt}\n\nMerchant's Facebook page context — use this to ground voice and avoid inventing claims. Echo themes from high-engagement past posts, but write FRESH copy. Do not copy or paraphrase verbatim:\n${factsContext}`;
+  }
+  if (campaignContext && campaignContext.trim().length > 0) {
+    firstAttemptPrompt = `${firstAttemptPrompt}\n\nActive marketing campaign — weave this naturally into the post (avoid sounding bolted-on):\n${campaignContext.trim()}`;
+  }
+
+  let caption: string;
+  try {
+    caption = await callLLM(firstAttemptPrompt);
+
+    if (caption && looksLikeRefusal(caption)) {
+      console.warn('[shopify-compose] refusal detected on first attempt; retrying without facts. product=', product.id);
+      // Retry with product context only + a stronger inline reminder.
+      let retryPrompt = `${basePrompt}\n\nIMPORTANT: Do NOT ask questions, do NOT mention any mismatch, do NOT explain what you are writing. Just output the caption directly — first word of your reply is the first word of the caption.`;
+      if (campaignContext && campaignContext.trim().length > 0) {
+        retryPrompt = `${retryPrompt}\n\nActive marketing campaign — weave this naturally into the post:\n${campaignContext.trim()}`;
+      }
+      caption = await callLLM(retryPrompt);
+
+      if (caption && looksLikeRefusal(caption)) {
+        console.error('[shopify-compose] refusal on retry — bailing. product=', product.id, 'first240=', caption.slice(0, 240));
+        throw new ComposeError(
+          'caption',
+          'AI refused to write a caption for this product — likely a product / shop mismatch. Try a different product, or skip this slot.',
+        );
+      }
     }
 
     if (!caption) {
