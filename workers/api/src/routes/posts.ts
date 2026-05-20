@@ -22,6 +22,7 @@ import type { Env } from '../env';
 import { requireAuth } from '../middleware/auth';
 import { classifyArchetypeFromFingerprint } from '../lib/archetypes';
 import { POSTS_PER_WEEK, TRIAL_POST_LIMIT } from '../lib/pricing';
+import { isWorkspaceConnected, normalizePlatform } from '../lib/connection-check';
 
 const uuid = () => crypto.randomUUID();
 
@@ -154,6 +155,33 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
             plan,
           }, 429);
         }
+      }
+    }
+
+    // ── FB/IG-connected gate ──────────────────────────────────────────────────
+    // Block scheduling a post for a workspace that hasn't connected the target
+    // platform. Without this, posts age into Missed with reasoning="No Facebook
+    // page connected" — accurate but unactionable from the calendar. Drafts
+    // are exempt; users may save them before connecting (e.g. mid-onboarding,
+    // or curating ideas to schedule later).
+    //
+    // 409 NOT_CONNECTED is the contract the frontend reads to surface a
+    // "Connect Facebook" CTA in place of the schedule-success toast.
+    if (body.status === 'Scheduled') {
+      const platform = normalizePlatform(body.platform as string | null | undefined);
+      const connected = await isWorkspaceConnected(
+        c.env,
+        uid,
+        (body.clientId ?? null) as string | null,
+        platform,
+      );
+      if (!connected) {
+        const label = platform === 'instagram' ? 'Instagram' : 'Facebook';
+        return c.json({
+          error: `${label} not connected for this workspace. Connect ${label} in Settings before scheduling posts.`,
+          code: 'NOT_CONNECTED',
+          platform,
+        }, 409);
       }
     }
 

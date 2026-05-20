@@ -172,6 +172,15 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // stale-kick guard so a hung FB upload won't pin Publishing forever.
   const tenMinAgoUtc = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const tenMinAgo = new Date(Date.now() + 10 * 60 * 60 * 1000 - 10 * 60 * 1000).toISOString().replace('Z', '');
+
+  // Zombie sweep — active workspaces only. Posts whose workspace went
+  // on-hold mid-publish are handled by the second sweep below (reset to
+  // Scheduled, not Missed) so on-hold artifacts don't pollute the "Missed"
+  // metric. Without this filter, 7 historical Hugheseys posts ended up
+  // Missed during the May 2026 hold, with reasoning containing the AI's
+  // *scheduling* strategy (never overwritten by the cron because the
+  // cron's active filter correctly skipped them post-hold) — making
+  // it look like an FB-publish failure when it was an operational pause.
   await env.DB.prepare(
     `UPDATE posts SET status = 'Missed', claim_id = NULL, claim_at = NULL
        WHERE status = 'Publishing'
@@ -179,7 +188,26 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
            (claim_at IS NOT NULL AND claim_at <= ?)
            OR (claim_at IS NULL AND scheduled_for <= ?)
          )
-         AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))`
+         AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))
+         AND ${ACTIVE_CLIENT_FILTER}`
+  ).bind(tenMinAgoUtc, tenMinAgo).run();
+
+  // On-hold zombies — workspace was put on hold between claim and publish.
+  // Reset to Scheduled (NOT Missed) so they sit in the queue and pick up
+  // automatically if/when the hold is lifted. The claim UPDATE below
+  // honours ACTIVE_CLIENT_FILTER so resetting these is safe — they won't
+  // be re-claimed while still on hold. Rare in practice (only triggers
+  // on the narrow race where a workspace is paused mid-publish) but the
+  // alternative — leaving them in Publishing forever — would block them
+  // from ever recovering after the hold lifts.
+  await env.DB.prepare(
+    `UPDATE posts SET status = 'Scheduled', claim_id = NULL, claim_at = NULL
+       WHERE status = 'Publishing'
+         AND (
+           (claim_at IS NOT NULL AND claim_at <= ?)
+           OR (claim_at IS NULL AND scheduled_for <= ?)
+         )
+         AND client_id IN (SELECT id FROM clients WHERE status = 'on_hold')`
   ).bind(tenMinAgoUtc, tenMinAgo).run();
 
   // Image-quality guard. Posts whose image scored at/below the guard threshold
