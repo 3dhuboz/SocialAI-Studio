@@ -121,42 +121,69 @@ async function readRawBody(req: Request): Promise<string> {
   return await req.text();
 }
 
-async function logWebhook(
+// Atomically claim a webhook delivery — replaces the previous
+// SELECT-then-INSERT pattern which had a TOCTOU race:
+//
+//   T1: SELECT 1 WHERE webhook_id=X  → not found
+//   T2: SELECT 1 WHERE webhook_id=X  → not found  (T1 hasn't INSERTed yet)
+//   T1: process side effects
+//   T2: process side effects     ← duplicate work!
+//   T1: INSERT (audit row)
+//   T2: INSERT (no-op via UNIQUE)
+//
+// Shopify retries on a 5s schedule when our handler is slow, so two retries
+// landing on different worker instances in the same ~100ms window is
+// realistic. UPDATEs on shopify_stores are idempotent (last writer wins) but
+// a double-DELETE on shop/redact or a double-INSERT of a billing event row
+// would surface as duplicate audit rows or noisy logs.
+//
+// The fix: INSERT OR IGNORE FIRST. SQLite returns meta.changes === 1 when
+// the row was new and 0 when the UNIQUE constraint fired — that single
+// boolean IS the dedup signal, with no race window. Side effects gate on
+// `isNew`.
+//
+// auditPayload semantics: most handlers pass `raw` so the full body is
+// available for debugging. customers/redact passes a sentinel because the
+// raw body contains the PII the merchant is asking us to delete. This
+// helper is payload-agnostic — whatever the caller passes is what the
+// audit row stores.
+//
+// webhookId === undefined: no dedup key available (Shopify always sends one
+// in prod, but the test harness may not). We still write an audit row but
+// can't dedup future deliveries — fall through to side effects, matching
+// the old isDuplicateWebhook fail-open behaviour. Two NULL webhook_id rows
+// can coexist; the UNIQUE index permits multiple NULLs.
+//
+// On D1 error: fail open ("new"). Running a side effect twice is less
+// harmful than dropping it, and the alternative (skipping side effects on
+// every DB hiccup) was the original pre-2026-04 behaviour we already fixed
+// once.
+async function claimWebhook(
   env: Env,
-  shopDomain: string,
+  shop: string,
   topic: string,
-  payload: string,
-  webhookId: string | null,
-): Promise<void> {
+  webhookId: string | undefined,
+  auditPayload: string,
+): Promise<{ isNew: boolean }> {
+  const truncated = auditPayload.length > 65_536 ? auditPayload.slice(0, 65_536) : auditPayload;
+  const receivedAt = new Date().toISOString();
+
   try {
-    // Truncate to ~64KB to keep the audit table bounded. Full payload is
-    // available in CF logs if we need it.
-    const truncated = payload.length > 65_536 ? payload.slice(0, 65_536) : payload;
-    await env.DB.prepare(
+    const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO shopify_webhooks_log (shop_domain, topic, payload, webhook_id, received_at)
        VALUES (?, ?, ?, ?, ?)`,
-    ).bind(shopDomain, topic, truncated, webhookId, new Date().toISOString()).run();
-  } catch (e) {
-    console.error('[shopify] failed to log webhook:', String(e));
-    // Never fail the webhook handler on audit-log failure.
-  }
-}
+    ).bind(shop, topic, truncated, webhookId ?? null, receivedAt).run();
 
-// Idempotency check — Shopify retries webhooks aggressively (every 5s for the
-// first minute, then exponential). The unique index on webhook_id dedups the
-// AUDIT row, but side effects (DELETE / UPDATE) would still run on every
-// retry without an explicit guard here. Returns true if we've already seen
-// this delivery (caller should ack 200 without re-running side effects).
-async function isDuplicateWebhook(env: Env, webhookId: string | undefined): Promise<boolean> {
-  if (!webhookId) return false; // Can't dedup without an id — let it through.
-  try {
-    const row = await env.DB.prepare(
-      `SELECT 1 FROM shopify_webhooks_log WHERE webhook_id = ? LIMIT 1`,
-    ).bind(webhookId).first<{ '1': number }>();
-    return !!row;
+    // D1's .meta.changes reflects rows actually written. INSERT OR IGNORE
+    // returns 0 when the UNIQUE(webhook_id) branch fires → that's our
+    // dedup signal. With no webhook_id, the INSERT always succeeds (UNIQUE
+    // allows multiple NULLs), so isNew is always true — matching the
+    // fail-open semantics of the old code path.
+    const changes = result?.meta?.changes ?? 0;
+    return { isNew: changes >= 1 };
   } catch (e) {
-    console.error('[shopify] dedup lookup failed (fail-open):', String(e));
-    return false; // Fail open — better to re-run side effects than drop them.
+    console.error('[shopify] claimWebhook insert failed (fail-open):', String(e));
+    return { isNew: true };
   }
 }
 
@@ -669,20 +696,15 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!shop) return c.json({ error: 'Missing shop header' }, 400);
 
     const webhookId: string | undefined = c.req.header('X-Shopify-Webhook-Id');
-    if (await isDuplicateWebhook(c.env, webhookId)) {
-      return c.json({ ok: true, dedup: true }, 200);
-    }
+    // Atomically claim + audit — see claimWebhook docblock for race-fix rationale.
+    const claim = await claimWebhook(c.env, shop, 'app/uninstalled', webhookId, raw);
+    if (!claim.isNew) return c.json({ ok: true, dedup: true }, 200);
 
     // CRITICAL side effect: mark store uninstalled. Stays sync so we know it
     // succeeded before acking.
     await c.env.DB.prepare(
       `UPDATE shopify_stores SET uninstalled_at = ? WHERE shop_domain = ?`,
     ).bind(new Date().toISOString(), shop).run();
-
-    // Non-critical audit write — defer past response.
-    c.executionCtx.waitUntil(
-      logWebhook(c.env, shop, 'app/uninstalled', raw, webhookId ?? null),
-    );
 
     return c.body(null, 200);
   });
@@ -710,14 +732,18 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!shop) return c.json({ error: 'Missing shop header' }, 400);
 
     const webhookId: string | undefined = c.req.header('X-Shopify-Webhook-Id');
-    if (await isDuplicateWebhook(c.env, webhookId)) {
-      return c.json({ ok: true, dedup: true }, 200);
-    }
+    // Atomic claim with SENTINEL payload, not raw — the data_request body
+    // contains customer email/phone/id (the merchant is identifying which
+    // customer the data is about), which is PII we should never persist.
+    // Pre-2026-05 this handler logged raw despite the privacy-comment
+    // saying otherwise; while atomicising the dedup we're fixing the
+    // mismatch. The sentinel records receipt without leaking the customer
+    // identifier.
+    const claim = await claimWebhook(c.env, shop, 'customers/data_request', webhookId, '{"data_request":true}');
+    if (!claim.isNew) return c.json({ ok: true, dedup: true }, 200);
 
-    // No customer data stored → nothing to export. Audit-log only (deferred).
-    c.executionCtx.waitUntil(
-      logWebhook(c.env, shop, 'customers/data_request', raw, webhookId ?? null),
-    );
+    // No customer data stored → nothing to export. claim already wrote the
+    // sentinel audit row.
     return c.body(null, 200);
   });
 
@@ -738,9 +764,13 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!shop) return c.json({ error: 'Missing shop header' }, 400);
 
     const webhookId: string | undefined = c.req.header('X-Shopify-Webhook-Id');
-    if (await isDuplicateWebhook(c.env, webhookId)) {
-      return c.json({ ok: true, dedup: true }, 200);
-    }
+    // Atomic claim — but with a SENTINEL payload, not the raw body. The
+    // raw customers/redact payload contains the very PII the merchant is
+    // asking us to delete (customer id / email / phone / address); storing
+    // it in shopify_webhooks_log would defeat the redact request. The
+    // sentinel records the FACT of receipt without leaking the data.
+    const claim = await claimWebhook(c.env, shop, 'customers/redact', webhookId, '{"redacted":true}');
+    if (!claim.isNew) return c.json({ ok: true, dedup: true }, 200);
 
     // GDPR posture:
     //   1. We don't request customer / order scopes — only read_products. So
@@ -763,10 +793,8 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     //      DELETE must be parameterized against an explicit customer_id
     //      column — never via LIKE on a JSON blob.
 
-    // Audit-only — payload sentinel keeps PII out of the log entirely.
-    c.executionCtx.waitUntil(
-      logWebhook(c.env, shop, 'customers/redact', '{"redacted":true}', webhookId ?? null),
-    );
+    // (Audit row already inserted at claim time above with the sentinel
+    // payload — no separate logWebhook needed.)
 
     return c.body(null, 200);
   });
@@ -789,9 +817,14 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!shop) return c.json({ error: 'Missing shop header' }, 400);
 
     const webhookId: string | undefined = c.req.header('X-Shopify-Webhook-Id');
-    if (await isDuplicateWebhook(c.env, webhookId)) {
-      return c.json({ ok: true, dedup: true }, 200);
-    }
+    // Atomic claim — see claimWebhook docblock. Subtle: the purge below
+    // wipes shopify_webhooks_log for this shop, but we exclude
+    // topic='shop/redact' from that DELETE so the audit row we just
+    // inserted survives. Without that exclusion, the purge would erase
+    // our dedup marker and a Shopify retry (they fire on a 5s schedule)
+    // would re-run the full purge.
+    const claim = await claimWebhook(c.env, shop, 'shop/redact', webhookId, raw);
+    if (!claim.isNew) return c.json({ ok: true, dedup: true }, 200);
 
     // CRITICAL side effects: hard-delete every row referencing this shop.
     // Shopify auto-rejects apps that leave PII (customer emails, raw webhook
@@ -818,7 +851,14 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     // 2. D1 purge. Order doesn't matter — every constraint is shop-scoped or
     //    references shopify_stores with ON DELETE CASCADE.
     await c.env.DB.prepare(`DELETE FROM shopify_products WHERE shop_domain = ?`).bind(shop).run();
-    await c.env.DB.prepare(`DELETE FROM shopify_webhooks_log WHERE shop_domain = ?`).bind(shop).run();
+    // Preserve the shop/redact audit row we just inserted at claim time —
+    // Shopify retries this webhook for ~24h after first delivery; without
+    // the audit row, dedup would fail and we'd re-run the full purge on
+    // every retry. Any historical shop/redact rows for the same shop are
+    // also preserved (harmless — they contain no PII).
+    await c.env.DB.prepare(
+      `DELETE FROM shopify_webhooks_log WHERE shop_domain = ? AND topic != 'shop/redact'`,
+    ).bind(shop).run();
     await c.env.DB.prepare(`DELETE FROM shopify_billing_events WHERE shop_domain = ?`).bind(shop).run();
     await c.env.DB.prepare(`DELETE FROM shopify_oauth_state WHERE shop = ?`).bind(shop).run();
     await c.env.DB.prepare(`DELETE FROM shopify_facts WHERE shop_domain = ?`).bind(shop).run();
@@ -855,11 +895,9 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       }
     }
 
-    // Audit-log AFTER the purge (also deferred). This row survives because
-    // it goes in fresh — it contains only the shop domain + ack, no PII.
-    c.executionCtx.waitUntil(
-      logWebhook(c.env, shop, 'shop/redact', raw, webhookId ?? null),
-    );
+    // (Audit row was inserted at claim time at the top of this handler and
+    // preserved by the topic != 'shop/redact' filter on the webhooks-log
+    // DELETE above. No separate logWebhook needed.)
 
     return c.body(null, 200);
   });
@@ -890,21 +928,17 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!shop) return c.json({ error: 'Missing shop header' }, 400);
 
     const webhookId: string | undefined = c.req.header('X-Shopify-Webhook-Id');
-    if (await isDuplicateWebhook(c.env, webhookId)) {
-      return c.json({ ok: true, dedup: true }, 200);
-    }
+    // Atomic claim — see claimWebhook docblock. Note: app_subscriptions/update
+    // payloads contain no PII (just subscription metadata: id, status,
+    // currency, capped_amount, dates), so the raw body is safe to persist.
+    const claim = await claimWebhook(c.env, shop, 'app_subscriptions/update', webhookId, raw);
+    if (!claim.isNew) return c.json({ ok: true, dedup: true }, 200);
 
     let payload: any;
     try { payload = JSON.parse(raw); } catch {
       console.warn('[shopify] app_subscriptions/update: invalid JSON');
-      // Still log the malformed delivery so we can debug — deferred.
-      c.executionCtx.waitUntil(
-        logWebhook(c.env, shop, 'app_subscriptions/update', raw, webhookId ?? null),
-      );
-      // Return 400 (not 200) so Shopify retries. Previous behaviour acked 200
-      // on any garbage, which permanently lost the delivery — combined with
-      // the dedup check above, the webhook_id was marked "seen" so future
-      // retries (which might have fixed the parse) short-circuited.
+      // Return 400 (not 200) so Shopify retries. claim already wrote the
+      // raw-payload audit row for debugging.
       return c.json({ error: 'Invalid JSON payload' }, 400);
     }
 
@@ -913,9 +947,6 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     const newStatus: string | undefined = sub?.status;
     if (!subId || !newStatus) {
       console.warn('[shopify] app_subscriptions/update: missing id or status', payload);
-      c.executionCtx.waitUntil(
-        logWebhook(c.env, shop, 'app_subscriptions/update', raw, webhookId ?? null),
-      );
       // Same rationale as above — bad payload, let Shopify retry.
       return c.json({ error: 'Missing subscription id or status' }, 400);
     }
@@ -940,12 +971,12 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
        WHERE shop_domain = ?`,
     ).bind(subId, newStatus.toUpperCase(), periodEnd, trialEndsAt, shop).run();
 
-    // Non-critical audit writes — both the webhook log and the billing event
-    // can settle after the response goes out.
+    // Non-critical audit write — the billing event log can settle after
+    // the response goes out. (The webhooks-log audit row was inserted at
+    // claim time at the top of the handler.)
     const truncatedRaw = raw.length > 65536 ? raw.slice(0, 65536) : raw;
     const auditAt = new Date().toISOString();
-    c.executionCtx.waitUntil(Promise.all([
-      logWebhook(c.env, shop, 'app_subscriptions/update', raw, webhookId ?? null),
+    c.executionCtx.waitUntil(
       c.env.DB.prepare(
         `INSERT INTO shopify_billing_events
            (shop_domain, event_type, subscription_id, status_from, status_to, payload, created_at)
@@ -960,7 +991,7 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       ).run().catch((e) => {
         console.error('[shopify] billing-event audit write failed:', String(e));
       }),
-    ]));
+    );
 
     return c.body(null, 200);
   });
