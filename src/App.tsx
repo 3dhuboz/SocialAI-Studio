@@ -955,7 +955,7 @@ const Dashboard: React.FC = () => {
 
   // Manual sync function for user-triggered refresh
   const handleManualSync = async () => {
-    if (!fbConnected) {
+    if (!fbPublishable) {
       toast('Connect your Facebook page first', 'warning');
       return;
     }
@@ -1546,6 +1546,13 @@ const Dashboard: React.FC = () => {
 
   const hasApiKey = true; // AI is server-side via OpenRouter worker
   const fbConnected = !!socialTokens.facebookPageId && socialTokens.facebookConnected;
+  // Postproxy users have NO legacy FB token but CAN still publish via the
+  // postproxy_profiles row + placement. fbPublishable mirrors the worker's
+  // isWorkspaceConnected('facebook') logic in workers/api/src/lib/
+  // connection-check.ts so the UI's "can publish" gates accept both paths.
+  // Keep `fbConnected` for legacy-specific operations (refresh stats, reel
+  // smoke test) — those still require the Graph API token.
+  const fbPublishable = fbConnected || !!socialTokens.postproxyPlacementId;
 
   // Auto-run daily insight analysis when stale — only in own workspace, never in client workspaces
   useEffect(() => {
@@ -1926,7 +1933,7 @@ const Dashboard: React.FC = () => {
       setPosts(prev => [{ id: newPostId, ...postData, postType: isVideoPost ? 'video' : undefined } as unknown as SocialPost, ...prev]);
       // Scheduled posts are published by the cron (5-min tick). We do NOT hand them to Facebook's
       // scheduled_publish_time — that would create an uncancellable duplicate on Facebook's side.
-      toast(`${isVideoPost ? 'Reel' : 'Post'} ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
+      toast(`${isVideoPost ? 'Reel' : 'Post'} ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbPublishable ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
       setGeneratedContent('');
       setGeneratedHashtags([]);
       setGeneratedImage(null);
@@ -2352,7 +2359,7 @@ const Dashboard: React.FC = () => {
       );
       setPosts(prev => [...results, ...prev]);
       clearDraft(activeClientId);
-      if (!fbConnected) {
+      if (!fbPublishable) {
         toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
       } else {
         toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
@@ -3019,7 +3026,7 @@ const Dashboard: React.FC = () => {
             <div className="px-4 pb-4">
               <button
                 onClick={() => { setShowPreview(false); handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram']); }}
-                disabled={!fbConnected || isGeneratingReel}
+                disabled={!fbPublishable || isGeneratingReel}
                 className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 transition text-sm"
               >
                 <Send size={14} /> Publish to {platform}
@@ -3309,7 +3316,7 @@ const Dashboard: React.FC = () => {
                 this — never skip past it silently.
               • If FB IS connected → normal "X posts remaining" nudge with
                 pricing CTA. Pre-selects Growth on the last post. */}
-        {isOnFreeTrial && !fbConnected && (
+        {isOnFreeTrial && !fbPublishable && (
           <div className="mb-5 rounded-2xl border border-red-500/35 bg-red-500/10 px-5 py-4 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-red-500/20">
@@ -3332,7 +3339,7 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         )}
-        {isOnFreeTrial && fbConnected && (
+        {isOnFreeTrial && fbPublishable && (
           <div className={`mb-5 rounded-2xl border px-5 py-4 flex items-center justify-between gap-4 ${
             trialPostsRemaining <= 1
               ? 'bg-amber-500/10 border-amber-500/30'
@@ -3381,7 +3388,7 @@ const Dashboard: React.FC = () => {
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Platform</label>
                   <div className="flex rounded-xl overflow-hidden border border-white/10">
                     {(['Instagram', 'Facebook'] as const)
-                      .filter(p => p === 'Facebook' ? fbConnected : !!socialTokens.instagramBusinessAccountId)
+                      .filter(p => p === 'Facebook' ? fbPublishable : !!socialTokens.instagramBusinessAccountId)
                       .map(p => (
                       <button key={p} onClick={() => setPlatform(p)}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition ${
@@ -3392,7 +3399,7 @@ const Dashboard: React.FC = () => {
                         {p === 'Instagram' ? <Instagram size={14} /> : <Facebook size={14} />} {p}
                       </button>
                     ))}
-                    {!fbConnected && !socialTokens.instagramBusinessAccountId && (
+                    {!fbPublishable && !socialTokens.instagramBusinessAccountId && (
                       <div className="flex items-center gap-2 px-4 py-2.5 text-xs text-white/30">
                         No platforms connected. <button onClick={() => setActiveTab('settings')} className="text-amber-400 underline">Settings →</button>
                       </div>
@@ -3869,7 +3876,7 @@ const Dashboard: React.FC = () => {
                     Publish to primary and keep Save as a secondary fallback. */}
                 <div className="flex flex-wrap gap-2.5 items-center px-5 py-4 border-t border-white/[0.06] bg-black/15">
                   <DateTimePicker value={scheduleDate} onChange={setScheduleDate} />
-                  {isOnFreeTrial && fbConnected && !scheduleDate ? (
+                  {isOnFreeTrial && fbPublishable && !scheduleDate ? (
                     <>
                       <button
                         onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
@@ -3910,7 +3917,7 @@ const Dashboard: React.FC = () => {
                           <Eye size={14} /> Full Preview
                         </button>
                       )}
-                      {fbConnected && (
+                      {fbPublishable && (
                         <button
                           onClick={() => handlePublishDirect([platform.toLowerCase() as 'facebook' | 'instagram'])}
                           disabled={isPublishing || isGeneratingReel}
@@ -3955,7 +3962,7 @@ const Dashboard: React.FC = () => {
             stats={stats}
             liveStats={liveStats}
             hasApiKey={hasApiKey}
-            fbConnected={fbConnected}
+            fbConnected={fbPublishable}
             activePlan={effectivePlan}
             planName={planCfg?.name}
             businessName={authMode === 'portal' ? (CLIENT.defaultBusinessName || profile.name) : (profile.name || CLIENT.defaultBusinessName)}
@@ -3980,7 +3987,7 @@ const Dashboard: React.FC = () => {
                 {/* Sync statuses button */}
                 <button
                   onClick={handleManualSync}
-                  disabled={!fbConnected}
+                  disabled={!fbPublishable}
                   className="flex items-center gap-1.5 text-xs font-bold text-blue-300 hover:text-white bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/25 px-3 py-1.5 rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Check if scheduled posts were published"
                 >
@@ -4008,7 +4015,7 @@ const Dashboard: React.FC = () => {
             </div>
 
             {/* Tip — only show when no social account connected */}
-            {!fbConnected && (
+            {!fbPublishable && (
               <div className="bg-blue-500/8 border border-blue-500/15 rounded-2xl px-5 py-3.5 flex gap-3">
                 <Info size={14} className="text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-white/40 leading-relaxed">
@@ -4022,7 +4029,7 @@ const Dashboard: React.FC = () => {
               posts={posts}
               calendarImages={calendarImages}
               calendarGenSet={calendarGenSet}
-              fbConnected={fbConnected}
+              fbConnected={fbPublishable}
               hasApiKey={hasApiKey}
               onDelete={deletePost}
               onSave={handleUpdatePost}
@@ -4134,7 +4141,7 @@ const Dashboard: React.FC = () => {
               stats={stats}
               liveStats={liveStats}
               hasApiKey={hasApiKey}
-              fbConnected={fbConnected}
+              fbConnected={fbPublishable}
               activePlan={effectivePlan}
               planName={planCfg?.name}
               lastPulled={lastPulled}
@@ -4375,7 +4382,7 @@ const Dashboard: React.FC = () => {
                 <div>
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Post to</label>
                   {(() => {
-                    const hasFb = fbConnected;
+                    const hasFb = fbPublishable;
                     const hasIg = !!socialTokens.instagramBusinessAccountId;
                     const availableOpts = [
                       ...(hasFb && hasIg ? ['both' as const] : []),
