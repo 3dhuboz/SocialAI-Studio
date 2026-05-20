@@ -594,7 +594,16 @@ export function buildSafeImagePromptClient(rawPrompt: string, businessType: stri
   // the post intent ("show a dashboard") and renders it as a real photo
   // of a phone-on-marble-desk, which is what FLUX actually does well.
   // Worker-side counterpart in workers/api/src/lib/image-safety.ts.
-  if (needsFallback && isAbstractUIPrompt(prompt)) {
+  //
+  // 2026-05-21: BUT only when businessType is specific. With a generic
+  // businessType ("small business" / "company" / etc) we have no signal
+  // for which "kind of dashboard" the post is about, so the marble-desk
+  // pricing-tier rewrite ends up on the wrong kind of business almost
+  // as often as a randomly picked scene would. The fail-closed path
+  // below catches this case for both abstract and empty prompts —
+  // posting text-only is safer than posting a wrong image.
+  const isGenericType = /^(small business|business|company|service provider|local business)$/i.test(businessType.trim());
+  if (needsFallback && isAbstractUIPrompt(prompt) && !isGenericType) {
     const rewritten = rewriteAbstractUIAsPhotography(prompt);
     if (rewritten) {
       const cleanRewritten = rewritten.replace(PEOPLE_REGEX, '').replace(/\s+/g, ' ').trim();
@@ -609,7 +618,6 @@ export function buildSafeImagePromptClient(rawPrompt: string, businessType: stri
   // type. This is the audit fix that stops "pizza on a tech post" — the old
   // code would happily pick a cafe scene from getImagePromptExamples for a
   // 'small business' fallback and FLUX would render food on a SaaS topic.
-  const isGenericType = /^(small business|business|company|service provider|local business)$/i.test(businessType.trim());
   if (needsFallback && isGenericType) {
     console.warn(`[image-safety] fail-closed — abstract/missing prompt with generic businessType="${businessType}". Post will publish text-only.`);
     return null;

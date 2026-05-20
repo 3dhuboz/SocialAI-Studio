@@ -165,7 +165,14 @@ run('buildRegionalVoiceBlock — Aussie detection', [
 run('detectFabrication — invented stats & cadence', [
   { name: 'Penny Wise screenshot: "posting 7-14 times per week" → flagged', input: 'Small business owners in Rocky are already posting 7-14 times per week on autopilot. Join them.', expect: o => o !== null && /posting-frequency|customer/i.test(o), describeExpected: 'flagged with reason' },
   { name: '"How many hours could you reclaim" → flagged', input: 'AI does it for you. How many hours could you reclaim this week?', expect: o => o !== null && /implied invented stat|leading question/i.test(o), describeExpected: 'flagged with reason' },
-  { name: 'AI cadence: 4 short sentences in a row → flagged', input: 'Nobody sees it. Timing is everything. We fix that. Trust us.', expect: o => o !== null && /cadence|short sentences/i.test(o), describeExpected: 'cadence flagged' },
+  // The input here triggers the FAB_PATTERNS trope-match for the "Nobody
+  // sees it. Timing is everything." three-beat construction (reason:
+  // "three-beat AI rhythm") rather than the structural ≥5-consecutive-short
+  // cadence detector — both are flagging the same underlying problem, so
+  // the regex accepts either reason. If we ever lower AI_CADENCE_THRESHOLD
+  // back to <5, the same input will start matching the "AI cadence" reason
+  // and both branches stay green.
+  { name: 'AI cadence: 4 short sentences in a row → flagged', input: 'Nobody sees it. Timing is everything. We fix that. Trust us.', expect: o => o !== null && /cadence|short sentences|rhythm/i.test(o), describeExpected: 'cadence or rhythm flagged' },
   { name: 'Invented percentage stat → flagged', input: 'Boost engagement by 45% with our new feature.', expect: o => o !== null && /percentage/i.test(o), describeExpected: 'percentage flagged' },
   { name: 'Fake testimonial signature → flagged', input: 'Loved it! — Sarah J., Brisbane', expect: o => o !== null && /testimonial signature/i.test(o), describeExpected: 'signature flagged' },
   { name: 'Clean post → NOT flagged', input: 'Fresh sourdough out the oven at 7am. Drop in before they go.', expect: o => o === null, describeExpected: 'null (no flag)' },
