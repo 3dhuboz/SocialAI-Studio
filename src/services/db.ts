@@ -13,6 +13,30 @@ type AuthMode = 'clerk' | 'portal';
 
 // ── Fetch wrapper ─────────────────────────────────────────────────────────────
 
+/** Structured API error carrying the HTTP status and the parsed JSON body
+ *  (when the server sent one). Callers in App.tsx interrogate `status` +
+ *  `body.code` to render specific UX — most commonly the 409 NOT_CONNECTED
+ *  thrown by POST /api/posts + /api/postproxy/publish-now to drive the
+ *  inline "Connect Facebook/Instagram" CTA. Falls back to a plain Error
+ *  message for callers that just want to `toast(e.message)`. */
+export class ApiError extends Error {
+  status: number;
+  body: { error?: string; code?: string; platform?: 'facebook' | 'instagram'; [k: string]: unknown } | null;
+  constructor(message: string, status: number, body: ApiError['body']) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/** True when the error is the worker's standard NOT_CONNECTED 409 shape.
+ *  Used by App.tsx createPost call sites to route the user to Settings
+ *  instead of toasting a raw error blob. */
+export function isNotConnectedError(e: unknown): e is ApiError {
+  return e instanceof ApiError && e.status === 409 && e.body?.code === 'NOT_CONNECTED';
+}
+
 async function apiFetch(
   getToken: GetToken,
   path: string,
@@ -27,7 +51,12 @@ async function apiFetch(
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`API ${options.method || 'GET'} ${path} failed (${res.status}): ${text}`);
+    let body: ApiError['body'] = null;
+    try { body = text ? JSON.parse(text) : null; } catch { /* non-JSON body — keep raw text in message */ }
+    const msg = body?.error
+      ? `API ${options.method || 'GET'} ${path} failed (${res.status}): ${body.error}`
+      : `API ${options.method || 'GET'} ${path} failed (${res.status}): ${text}`;
+    throw new ApiError(msg, res.status, body);
   }
   return res;
 }

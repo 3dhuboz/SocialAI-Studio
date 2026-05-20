@@ -521,7 +521,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // Load the post + verify ownership (own-workspace OR agency client owned by uid).
     const post = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.client_id, p.content, p.hashtags,
+      `SELECT p.id, p.user_id, p.client_id, p.content, p.hashtags, p.platform,
               p.image_url, p.video_url, p.audio_mixed_url, p.post_type
        FROM posts p
        LEFT JOIN clients c ON c.id = p.client_id
@@ -529,20 +529,32 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
          AND (p.user_id = ? OR c.user_id = ?)`
     ).bind(body.postId, uid, uid).first<{
       id: string; user_id: string | null; client_id: string | null;
-      content: string; hashtags: string | null;
+      content: string; hashtags: string | null; platform: string | null;
       image_url: string | null; video_url: string | null;
       audio_mixed_url: string | null; post_type: string | null;
     }>();
     if (!post) return c.json({ error: 'Post not found' }, 404);
 
+    // ig-wire (schema_v24): derive platform from posts.platform so an
+    // IG-targeted post resolves to the workspace's IG mapping (not the FB
+    // row). Mirrors the cron path in publish-missed.ts.
+    const postPlatform = normalizePostPlatform(post.platform);
     const mapping = await selectProfileByWorkspace(
       c.env,
       post.user_id ?? uid,
       post.client_id,
+      postPlatform,
     );
-    if (!mapping?.postproxy_profile_id || !mapping?.postproxy_placement_id) {
+    // FB requires a placement_id (the chosen Page); IG does not (no
+    // placements per docs §3299). Match the cron's check shape so the
+    // failure mode is identical across the two publish paths.
+    const placementMissingForFb = postPlatform === 'facebook' && !mapping?.postproxy_placement_id;
+    if (!mapping?.postproxy_profile_id || placementMissingForFb) {
+      const label = postPlatform === 'instagram' ? 'Instagram' : 'Facebook';
       return c.json({
-        error: 'No social connection for this workspace — connect Facebook first',
+        error: `${label} not connected for this workspace — connect ${label} in Settings before publishing.`,
+        code: 'NOT_CONNECTED',
+        platform: postPlatform,
       }, 409);
     }
 
@@ -552,7 +564,13 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const media = [post.audio_mixed_url, post.video_url, post.image_url].find((u): u is string => !!u);
     if (!media) return c.json({ error: 'Post has no media (image or video) to publish' }, 400);
 
-    const format: 'feed' | 'reel' = post.post_type === 'video' ? 'reel' : 'feed';
+    // Match the cron's format-per-platform mapping: FB uses 'feed' (legacy
+    // alias), IG uses the docs-canonical 'post'. Reels are 'reel' on both.
+    const isReel = post.post_type === 'video';
+    const format: 'feed' | 'post' | 'reel' =
+      isReel ? 'reel'
+      : postPlatform === 'instagram' ? 'post'
+      : 'feed';
 
     try {
       const result = await createPost(c.env, {
@@ -560,8 +578,12 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
         body: fullText,
         media: [media],
         format,
-        pageId: mapping.postproxy_placement_id,
-        title: format === 'reel' ? cleanContent.slice(0, 60) : undefined,
+        // page_id is IG-irrelevant — buildCreatePostPayload drops it from
+        // the IG payload. Pass an empty string for IG so the typed arg is
+        // satisfied without leaking through. Same shape as the cron.
+        pageId: mapping.postproxy_placement_id || '',
+        title: isReel ? cleanContent.slice(0, 60) : undefined,
+        platform: postPlatform,
       });
 
       const nowIso = new Date().toISOString();
