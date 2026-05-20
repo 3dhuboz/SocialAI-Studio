@@ -98,6 +98,12 @@ async function findActiveCampaignContext(env: Env, shop: string): Promise<string
 
 export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/shopify/autopilot/generate-one', async (c) => {
+   // Outer try/catch: if anything escapes the per-stage error handling below
+   // (e.g. an unexpected DB / image-gen / runtime error) Hono otherwise
+   // returns a bare 500 with no body, which the frontend renders as the
+   // useless "HTTP 500" string. This wrapper guarantees the merchant
+   // sees the actual error message in the Autopilot failure list.
+   try {
     const sessionOrResp = await requireSession(c);
     if (sessionOrResp instanceof Response) return sessionOrResp;
     const shop = sessionOrResp.shopDomain;
@@ -185,35 +191,47 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     const nowIso = new Date().toISOString();
     const scheduledIso = new Date(scheduleMs).toISOString();
 
-    if (postType === 'video') {
-      await c.env.DB.prepare(
-        `INSERT INTO posts (
-           id, user_id, client_id, owner_kind, owner_id,
-           content, image_url, platform, status, scheduled_for, created_at,
-           post_type, video_status, video_script
-         )
-         VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?, 'video', 'pending', ?)`,
-      ).bind(
-        id, shop, shop,
-        composed.caption,
-        composed.imageUrl,   // serves as the thumbnail for Kling i2v
-        platform,
-        scheduledIso,
-        nowIso,
-        motionPrompt,
-      ).run();
-    } else {
-      await c.env.DB.prepare(
-        `INSERT INTO posts (id, user_id, client_id, owner_kind, owner_id, content, image_url, platform, status, scheduled_for, created_at)
-         VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?)`,
-      ).bind(
-        id, shop, shop,
-        composed.caption,
-        composed.imageUrl,
-        platform,
-        scheduledIso,
-        nowIso,
-      ).run();
+    // Wrap the INSERT — if D1 throws (FK violation, NOT NULL, schema mismatch,
+    // etc.) Hono's default handler returns a bare 500 with no body, which the
+    // frontend renders as the useless "HTTP 500" string. With this catch, the
+    // merchant sees the actual DB error.
+    try {
+      if (postType === 'video') {
+        await c.env.DB.prepare(
+          `INSERT INTO posts (
+             id, user_id, client_id, owner_kind, owner_id,
+             content, image_url, platform, status, scheduled_for, created_at,
+             post_type, video_status, video_script
+           )
+           VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?, 'video', 'pending', ?)`,
+        ).bind(
+          id, shop, shop,
+          composed.caption,
+          composed.imageUrl,   // serves as the thumbnail for Kling i2v
+          platform,
+          scheduledIso,
+          nowIso,
+          motionPrompt,
+        ).run();
+      } else {
+        await c.env.DB.prepare(
+          `INSERT INTO posts (id, user_id, client_id, owner_kind, owner_id, content, image_url, platform, status, scheduled_for, created_at)
+           VALUES (?, ?, NULL, 'shop', ?, ?, ?, ?, 'Scheduled', ?, ?)`,
+        ).bind(
+          id, shop, shop,
+          composed.caption,
+          composed.imageUrl,
+          platform,
+          scheduledIso,
+          nowIso,
+        ).run();
+      }
+    } catch (err: any) {
+      console.error('[shopify-autopilot] INSERT failed:', String(err?.stack ?? err));
+      return c.json({
+        stage: 'persist',
+        error: `Database insert failed: ${String(err?.message ?? err).slice(0, 200)}`,
+      }, 500);
     }
 
     return c.json({
@@ -228,5 +246,13 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
       post_type: postType,
       video_status: postType === 'video' ? 'pending' : null,
     }, 201);
+   } catch (err: any) {
+    // Catch-all for anything that escaped the per-stage handlers above.
+    // Logs the full stack but only returns the message (truncated) to the
+    // caller so prompt-injection attempts can't echo arbitrary payloads.
+    console.error('[shopify-autopilot] uncaught:', String(err?.stack ?? err));
+    const msg = String(err?.message ?? err).slice(0, 300) || 'Unknown server error';
+    return c.json({ stage: 'unknown', error: msg }, 500);
+   }
   });
 }
