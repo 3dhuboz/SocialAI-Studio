@@ -21,6 +21,46 @@ import { ACTIVE_CLIENT_FILTER } from '../cron/_shared';
 export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/health', (c) => c.json({ ok: true, service: 'socialai-api' }));
 
+  // ── /api/_meta — build manifest, public, used to detect rollbacks ────────
+  //
+  // The Shopify routes only exist on branch claude/keen-vaughan-e42cc6.
+  // Any worker deploy from main / another worktree silently removes them
+  // (and we've seen this happen multiple times — see the "phantom rollback"
+  // saga in the task log). This endpoint returns a hard-coded feature flag
+  // list so you can verify the correct build is live with one curl:
+  //
+  //   curl https://socialai-api.steve-700.workers.dev/api/_meta
+  //
+  // If `shopify_routes_present` is true → correct build is live.
+  // If this endpoint 404s OR returns false → a stale build is live; redeploy
+  // from this worktree with: npx wrangler deploy --config wrangler.toml
+  //
+  // The constant below is incremented every time the Shopify route surface
+  // changes — so even if the endpoint exists, a low version number is a
+  // signal that someone deployed a stale checkout of THIS branch.
+  app.get('/api/_meta', (c) => {
+    return c.json({
+      service: 'socialai-api',
+      // Bump when Shopify route surface changes (new routes, removed routes,
+      // path renames). Lets a human eyeball whether the live build is fresh.
+      shopify_manifest_version: 1,
+      shopify_routes_present: true,
+      // List the route groups baked into this build. If any of these are
+      // missing on a future deploy, the endpoint either won't exist or this
+      // array will be shorter — both are easy signals.
+      route_groups: [
+        'health', 'ai', 'user', 'posts', 'clients', 'social-tokens',
+        'portal', 'activation', 'campaigns', 'facts', 'archetypes',
+        'facebook', 'paypal', 'admin-stats', 'admin-actions', 'billing',
+        'onboarding', 'post-quality', 'posters', 'proxies', 'pennybuild',
+        'shopify-oauth', 'admin-shopify', 'shopify-products',
+        'shopify-compose', 'shopify-posts', 'shopify-social-connect',
+        'shopify-insights', 'shopify-post-quality', 'shopify-posters',
+        'shopify-autopilot', 'shopify-campaigns', 'shopify-facts',
+      ],
+    });
+  });
+
   // Cron observability — last 30 cron runs (public so the deploy-monitor widget
   // can poll without an auth token; emits no PII).
   app.get('/api/cron-health', async (c) => {

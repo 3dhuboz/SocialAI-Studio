@@ -237,6 +237,19 @@ npx wrangler deploy --config wrangler.toml   # --config flag required — avoids
 ```
 > The global `wrangler` (v4) detects the repo root `functions/` dir and thinks it's a Pages project. Always use `npx wrangler` (v3) with `--config wrangler.toml`.
 
+**⚠⚠⚠ CRITICAL — worker must be deployed from THIS worktree (`claude/keen-vaughan-e42cc6`).**
+The entire Shopify embedded-app integration (`workers/api/src/routes/shopify-*.ts` + all the `registerShopify*Routes` calls in `index.ts`) lives only on this branch. **It has never been merged into `main`.** Every other worktree and the root SocialAI-Studio repo have zero Shopify code. If you deploy from any of those, every `/api/shopify/*` route returns 404 and the entire Shopify embedded app breaks (Settings, Products, Insights, Autopilot, everything).
+
+This has happened multiple times already — search the git log for "auto-rollback" / "phantom rollback" / "redeploy worker" commits. It is NOT a Cloudflare auto-rollback; it is a stale deploy from a different worktree silently overwriting this one.
+
+**One-line check after every worker deploy:**
+```bash
+curl -s https://socialai-api.steve-700.workers.dev/api/_meta | grep -o 'shopify_routes_present[^,}]*'
+```
+Should return `shopify_routes_present":true`. If the endpoint 404s or the field is `false`, redeploy from this worktree.
+
+**Until the Shopify branch is merged to main**, treat any deploy from anywhere else as a production regression.
+
 ### Frontend (auto via GitHub → Cloudflare Pages)
 Push to `main` → Pages auto-deploys. Check status at Cloudflare Dashboard → Pages → `socialaistudio-au`.
 
