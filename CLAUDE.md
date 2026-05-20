@@ -245,6 +245,18 @@ Manual build:
 npm run build    # outputs to dist/
 ```
 
+### Shopify embedded app (manual to PRODUCTION)
+```bash
+cd shopify-app
+npm run build
+npx wrangler pages deploy dist --project-name socialai-shopify --branch=main
+```
+**⚠ The `--branch=main` flag is required.** Without it, `wrangler pages deploy` uses the current git branch name as the deploy alias, which lands the build at a preview URL (`<hash>.socialai-shopify.pages.dev`) instead of the production `socialai-shopify.pages.dev` the Shopify app config points at. Verify the new build is live by:
+```bash
+curl -s "https://socialai-shopify.pages.dev/" | grep -oE "/assets/index-[A-Za-z0-9_-]+\.js"
+```
+and confirming the hash matches the one printed by `vite build`.
+
 ### Secrets (worker)
 ```bash
 wrangler secret put SECRET_NAME   # from workers/api/
