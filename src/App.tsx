@@ -13,7 +13,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { AppLogo } from './components/AppLogo';
 import { useAuth } from './contexts/AuthContext';
 import { useDb } from './hooks/useDb';
-import { mapDbPostToSocialPost } from './services/db';
+import { mapDbPostToSocialPost, isNotConnectedError } from './services/db';
 import { getPaypalManageUrl } from './utils/paypal';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
@@ -1713,15 +1713,17 @@ const Dashboard: React.FC = () => {
         : _postNowBase;
 
       if (onPostproxyPath) {
-        // Postproxy path: save the draft, then publish-now. We only
-        // attempt Facebook here — Instagram + multi-platform fan-out
-        // through Postproxy is a P1 follow-up the cleanup PR adds.
-        if (!platforms.includes('facebook')) {
-          toast('Instagram publishing is coming soon — Facebook only for now.', 'warning');
-        } else {
+        // Postproxy path: create one Scheduled post per requested platform
+        // and call publish-now for each. The worker's publish-now route
+        // honours post.platform (ig-wire schema_v24) so IG-tagged posts
+        // route through the Postproxy IG block and FB-tagged ones through
+        // the FB block. The 409 NOT_CONNECTED gate fires per-post if the
+        // workspace hasn't connected that platform — the catch below
+        // surfaces an actionable CTA instead of a raw error toast.
+        for (const plat of platforms) {
           const newId = await db.createPost({
             content: _postNowBase,
-            platform: 'Facebook',
+            platform: plat === 'instagram' ? 'Instagram' : 'Facebook',
             status: 'Scheduled',
             scheduled_for: new Date().toISOString(),
             hashtags: generatedHashtags,
@@ -1757,7 +1759,16 @@ const Dashboard: React.FC = () => {
       setPublishSuccess(true);
       setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
-      toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+      // 409 NOT_CONNECTED: the worker's schedule-time gate (PR #137) or the
+      // publish-now route (ig-wire) couldn't find a Postproxy mapping for
+      // the chosen platform. Drop the user on Settings so they can connect.
+      if (isNotConnectedError(e)) {
+        const platLabel = e.body?.platform === 'instagram' ? 'Instagram' : 'Facebook';
+        toast(`${platLabel} not connected for this workspace. Open Settings → Connections to connect ${platLabel}.`, 'warning');
+        setActiveTab('settings');
+      } else {
+        toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+      }
     }
     setIsPublishing(false);
   };
@@ -1910,19 +1921,32 @@ const Dashboard: React.FC = () => {
         video_mood: (generatedVideoScript as any)?.mood ?? undefined,
       }),
     };
-    const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
-    setPosts(prev => [{ id: newPostId, ...postData, postType: isVideoPost ? 'video' : undefined } as unknown as SocialPost, ...prev]);
-    // Scheduled posts are published by the cron (5-min tick). We do NOT hand them to Facebook's
-    // scheduled_publish_time — that would create an uncancellable duplicate on Facebook's side.
-    toast(`${isVideoPost ? 'Reel' : 'Post'} ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
-    setGeneratedContent('');
-    setGeneratedHashtags([]);
-    setGeneratedImage(null);
-    setGeneratedVideoScript(null);
-    setGeneratedVideoUrl(null);
-    setVideoProgress(0);
-    setTopic('');
-    setScheduleDate('');
+    try {
+      const newPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
+      setPosts(prev => [{ id: newPostId, ...postData, postType: isVideoPost ? 'video' : undefined } as unknown as SocialPost, ...prev]);
+      // Scheduled posts are published by the cron (5-min tick). We do NOT hand them to Facebook's
+      // scheduled_publish_time — that would create an uncancellable duplicate on Facebook's side.
+      toast(`${isVideoPost ? 'Reel' : 'Post'} ${scheduleDate ? 'scheduled' : 'saved as draft'}!${scheduleDate && !fbConnected ? ' Connect Facebook in Settings to enable auto-publishing.' : ''}`);
+      setGeneratedContent('');
+      setGeneratedHashtags([]);
+      setGeneratedImage(null);
+      setGeneratedVideoScript(null);
+      setGeneratedVideoUrl(null);
+      setVideoProgress(0);
+      setTopic('');
+      setScheduleDate('');
+    } catch (e: any) {
+      // 409 NOT_CONNECTED: the worker rejected the Scheduled-status post
+      // because the workspace hasn't connected the requested platform.
+      // Route to Settings so the user can connect before retrying.
+      if (isNotConnectedError(e)) {
+        const platLabel = e.body?.platform === 'instagram' ? 'Instagram' : 'Facebook';
+        toast(`${platLabel} not connected for this workspace. Open Settings → Connections to connect ${platLabel} before scheduling.`, 'warning');
+        setActiveTab('settings');
+      } else {
+        toast(`Save failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
+      }
+    }
   };
 
   // ── Poster → Quick Post pre-seed ─────────────────────────────────────────
@@ -2368,7 +2392,18 @@ const Dashboard: React.FC = () => {
       setCurrentGenIdx(null);
       setActiveTab('calendar');
     } catch (e: any) {
-      toast(`Failed to save posts — ${e?.message?.substring(0, 80) ?? 'check your connection and try again.'}`, 'error');
+      // 409 NOT_CONNECTED on any post in the batch (Promise.all rejects on
+      // first failure). The pre-flight check at the top of this function
+      // catches the legacy-tokens case; this catches the Postproxy case
+      // where the schedule-time gate (PR #137) rejected the post because
+      // the workspace hasn't connected the platform.
+      if (isNotConnectedError(e)) {
+        const platLabel = e.body?.platform === 'instagram' ? 'Instagram' : 'Facebook';
+        toast(`${platLabel} not connected for this workspace. Open Settings → Connections to connect ${platLabel} before accepting the batch.`, 'warning');
+        setActiveTab('settings');
+      } else {
+        toast(`Failed to save posts — ${e?.message?.substring(0, 80) ?? 'check your connection and try again.'}`, 'error');
+      }
     } finally {
       setIsAccepting(false);
       setAcceptProgress(0);
