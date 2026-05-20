@@ -34,6 +34,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
+import { loadForbiddenSubjectsForShop, scanForForbidden } from '../lib/profile-guards';
 
 const uuid = () => crypto.randomUUID();
 
@@ -196,6 +197,26 @@ export function registerShopifyPostersRoutes(app: Hono<{ Bindings: Env }>): void
       return c.json({ error: `prompt too long (max ${MAX_PROMPT_LEN} chars)` }, 400);
     }
     const aspectRatio = (ALLOWED_ASPECT.has(body.aspectRatio || '') ? body.aspectRatio! : '1:1') as '1:1' | '9:16' | '16:9';
+
+    // Forbidden-subject HARD-RULES gate before any LLM/image call. Merchants
+    // declare subjects they never want depicted ("alcohol", "children",
+    // competitor brand names…) via Settings → shopify_stores.profile.
+    // Bail BEFORE the slow + paid image-gen leg if the prompt mentions any.
+    // Same pattern as routes/posters.ts in the main app — keeps the safety
+    // gate symmetric between Clerk and Shopify tenants.
+    const forbiddenSubjects = await loadForbiddenSubjectsForShop(c.env, shop);
+    if (forbiddenSubjects.length > 0) {
+      const hit = scanForForbidden(prompt, forbiddenSubjects);
+      if (hit) {
+        return c.json(
+          {
+            error: `Prompt mentions "${hit}" which is on your shop's forbidden-subjects list. Reword the prompt or update the list in Settings.`,
+            forbidden: hit,
+          },
+          400,
+        );
+      }
+    }
 
     // Generate the image — this is the slow leg (5–20s).
     let gen: { dataUrl: string; model: string };

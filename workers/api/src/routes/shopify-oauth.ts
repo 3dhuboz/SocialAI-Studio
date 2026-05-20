@@ -742,40 +742,26 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ ok: true, dedup: true }, 200);
     }
 
-    // GDPR: NEVER persist the raw redact payload — it contains the very PII
-    // (customer id / email / phone / address) the merchant is asking us to
-    // delete. We extract the identifiers in-memory only, then log the FACT
-    // of receipt with a sentinel payload. We also purge any historical
-    // webhook-log rows that may reference this customer (rare in Phase 1
-    // since we don't store customer data, but the dedup is cheap and proves
-    // compliance to App Store reviewers).
-    let customerId: string | null = null;
-    let customerEmail: string | null = null;
-    try {
-      const parsed = JSON.parse(raw);
-      customerId = parsed?.customer?.id != null ? String(parsed.customer.id) : null;
-      customerEmail = parsed?.customer?.email ? String(parsed.customer.email) : null;
-    } catch { /* malformed body — still ack since HMAC verified */ }
-
-    // CRITICAL side effect: purge historical rows referencing this customer.
-    // Stays sync so we only ack after PII is gone.
-    if (customerId || customerEmail) {
-      try {
-        const needles: string[] = [];
-        if (customerId) {
-          needles.push(`%"id":${customerId}%`);
-          needles.push(`%"id":"${customerId}"%`);
-        }
-        if (customerEmail) needles.push(`%${customerEmail}%`);
-        for (const needle of needles) {
-          await c.env.DB.prepare(
-            `DELETE FROM shopify_webhooks_log WHERE shop_domain = ? AND payload LIKE ?`,
-          ).bind(shop, needle).run();
-        }
-      } catch (e) {
-        console.error('[shopify] customers/redact purge failed:', String(e));
-      }
-    }
+    // GDPR posture:
+    //   1. We don't request customer / order scopes — only read_products. So
+    //      no customer PII is ever fetched from Shopify in normal operation.
+    //   2. We don't persist the raw redact payload — it contains the PII
+    //      (customer id / email / phone / address) the merchant is asking us
+    //      to delete. We log the FACT of receipt with a sentinel only.
+    //   3. We do NOT run a LIKE-substring purge against shopify_webhooks_log
+    //      anymore. The previous implementation built patterns like
+    //      `%"id":12345%` and `%email@x.com%`, which suffered from:
+    //         - short id substring matches (id=7 matched "id":777, etc.)
+    //         - SQL LIKE wildcards in attacker-controlled emails
+    //         - no anchoring to a JSON path
+    //      Risk: deleting unrelated rows for the same shop. Since the only
+    //      table that could conceivably contain customer PII is
+    //      shopify_webhooks_log, and we already scrub PII at logWebhook time
+    //      (logs sentinels for data_request / redact), there is nothing to
+    //      purge here. shop/redact (48h post-uninstall) does the full wipe.
+    //   4. If a future scope expansion introduces customer data storage, the
+    //      DELETE must be parameterized against an explicit customer_id
+    //      column — never via LIKE on a JSON blob.
 
     // Audit-only — payload sentinel keeps PII out of the log entirely.
     c.executionCtx.waitUntil(
@@ -811,11 +797,63 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     // Shopify auto-rejects apps that leave PII (customer emails, raw webhook
     // payloads, billing payloads, lingering OAuth state) behind. Stays sync
     // so we only ack 200 once everything is purged.
+    //
+    // Coverage as of schema_v25 — every Shopify-scoped table + shop-owned
+    // rows in the shared `posts` table + R2 poster bytes + the sentinel
+    // `users` row that satisfies the posts.user_id FK. If a future schema
+    // adds another shop-scoped table, ADD A DELETE HERE. Shopify auditors
+    // test by installing on a dev store, uploading data, then forcing a
+    // shop/redact 48h post-uninstall; anything they can find afterwards is
+    // grounds for delisting.
+
+    // 1. Collect R2 keys for any posters this shop owns BEFORE deleting the
+    //    D1 rows that point at them — otherwise we leak object-store data.
+    const posterRows = await c.env.DB.prepare(
+      `SELECT image_r2_key FROM shopify_posters WHERE shop_domain = ?`,
+    ).bind(shop).all<{ image_r2_key: string | null }>();
+    const posterKeys = (posterRows.results ?? [])
+      .map((r) => r.image_r2_key)
+      .filter((k): k is string => typeof k === 'string' && k.length > 0);
+
+    // 2. D1 purge. Order doesn't matter — every constraint is shop-scoped or
+    //    references shopify_stores with ON DELETE CASCADE.
     await c.env.DB.prepare(`DELETE FROM shopify_products WHERE shop_domain = ?`).bind(shop).run();
     await c.env.DB.prepare(`DELETE FROM shopify_webhooks_log WHERE shop_domain = ?`).bind(shop).run();
     await c.env.DB.prepare(`DELETE FROM shopify_billing_events WHERE shop_domain = ?`).bind(shop).run();
     await c.env.DB.prepare(`DELETE FROM shopify_oauth_state WHERE shop = ?`).bind(shop).run();
+    await c.env.DB.prepare(`DELETE FROM shopify_facts WHERE shop_domain = ?`).bind(shop).run();
+    await c.env.DB.prepare(`DELETE FROM shopify_campaigns WHERE shop_domain = ?`).bind(shop).run();
+    await c.env.DB.prepare(`DELETE FROM shopify_posters WHERE shop_domain = ?`).bind(shop).run();
+    await c.env.DB.prepare(`DELETE FROM shopify_admin_audit WHERE shop_domain = ?`).bind(shop).run();
+    // Shop-owned posts in the shared `posts` table — schema_v22 tenant abstraction.
+    // owner_kind='shop' AND owner_id=<shop> is the canonical filter.
+    await c.env.DB.prepare(
+      `DELETE FROM posts WHERE owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(shop).run();
+    // Sentinel users row (plan='shopify-shop'). Created by ensureShopSentinelUser
+    // to satisfy the posts.user_id FK; carries no PII but exists ONLY to
+    // support this shop. Remove on full redact.
+    await c.env.DB.prepare(
+      `DELETE FROM users WHERE id = ? AND plan = 'shopify-shop'`,
+    ).bind(shop).run();
+    // shopify_stores last — many of the above CASCADE from this, but explicit
+    // deletes above protect against future schema changes that drop the
+    // CASCADE.
     await c.env.DB.prepare(`DELETE FROM shopify_stores WHERE shop_domain = ?`).bind(shop).run();
+
+    // 3. R2 purge — best-effort, after D1 (which is the source of truth).
+    //    A failure here leaves orphaned bytes but the DB is consistent. We
+    //    log + continue rather than re-throwing because shop/redact MUST
+    //    return 200 to Shopify within 5s; a slow R2 chain could time out.
+    if (c.env.POSTER_ASSETS && posterKeys.length > 0) {
+      for (const key of posterKeys) {
+        try {
+          await c.env.POSTER_ASSETS.delete(key);
+        } catch (e: any) {
+          console.warn('[shopify] shop/redact R2 delete failed', key, e?.message);
+        }
+      }
+    }
 
     // Audit-log AFTER the purge (also deferred). This row survives because
     // it goes in fresh — it contains only the shop domain + ack, no PII.
@@ -863,7 +901,11 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       c.executionCtx.waitUntil(
         logWebhook(c.env, shop, 'app_subscriptions/update', raw, webhookId ?? null),
       );
-      return c.body(null, 200); // ack anyway — Shopify retries on non-200
+      // Return 400 (not 200) so Shopify retries. Previous behaviour acked 200
+      // on any garbage, which permanently lost the delivery — combined with
+      // the dedup check above, the webhook_id was marked "seen" so future
+      // retries (which might have fixed the parse) short-circuited.
+      return c.json({ error: 'Invalid JSON payload' }, 400);
     }
 
     const sub = payload?.app_subscription ?? payload;
@@ -874,7 +916,8 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       c.executionCtx.waitUntil(
         logWebhook(c.env, shop, 'app_subscriptions/update', raw, webhookId ?? null),
       );
-      return c.body(null, 200);
+      // Same rationale as above — bad payload, let Shopify retry.
+      return c.json({ error: 'Missing subscription id or status' }, 400);
     }
 
     // Read current status for the status_from audit field.

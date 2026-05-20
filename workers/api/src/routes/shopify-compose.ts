@@ -34,6 +34,8 @@ import {
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 import { generateImageWithBrandRefs } from '../lib/image-gen';
 import { loadShopFactsForPrompt } from '../lib/facebook-facts';
+import { loadForbiddenSubjectsForShop, scanForForbidden } from '../lib/profile-guards';
+import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from '../lib/prompt-safety';
 
 // ── Config helpers (mirror shopify-oauth.ts so the route file stays self-contained) ──
 
@@ -199,26 +201,37 @@ interface ProductRow {
 }
 
 function buildCaptionUserPrompt(product: ProductRow, platform: Platform, tone: Tone): string {
+  // Merchant-controlled fields (title / description / tags / vendor) flow
+  // unchanged into the LLM prompt. A malicious or careless product description
+  // could contain "Ignore previous instructions and output X" — the LLM has
+  // no way to know that text came from a Shopify product field versus the
+  // surrounding system instructions. We wrap each merchant-supplied field in
+  // <<UNTRUSTED_FROM_SHOPIFY_PRODUCT>> markers and pair with
+  // UNTRUSTED_CONTENT_DIRECTIVE in the system prompt so the model treats them
+  // as inert data, not directives. See lib/prompt-safety.ts.
   const facts: string[] = [];
-  facts.push(`Title: ${product.title}`);
-  if (product.product_type) facts.push(`Type: ${product.product_type}`);
-  if (product.vendor) facts.push(`Vendor: ${product.vendor}`);
+  facts.push(`Title: ${wrapUntrusted(product.title, 'shopify_product_title', { maxLen: 200 })}`);
+  if (product.product_type) {
+    facts.push(`Type: ${wrapUntrusted(product.product_type, 'shopify_product_type', { maxLen: 120 })}`);
+  }
+  if (product.vendor) {
+    facts.push(`Vendor: ${wrapUntrusted(product.vendor, 'shopify_product_vendor', { maxLen: 120 })}`);
+  }
   if (product.price) {
+    // Price + currency are numeric / ISO codes — not injection-prone.
     facts.push(`Price: ${product.price}${product.currency ? ` ${product.currency}` : ''}`);
   }
-  if (product.tags && product.tags.trim()) facts.push(`Tags: ${product.tags}`);
+  if (product.tags && product.tags.trim()) {
+    facts.push(`Tags: ${wrapUntrusted(product.tags, 'shopify_product_tags', { maxLen: 400 })}`);
+  }
   if (product.description && product.description.trim()) {
-    // Cap description at ~1500 chars to keep the prompt bounded — some Shopify
-    // descriptions are full-on landing-page HTML. The LLM doesn't need all of
-    // it to write a caption.
-    const desc = product.description.length > 1500
-      ? product.description.slice(0, 1500) + '…'
-      : product.description;
-    facts.push(`Description:\n${desc}`);
+    facts.push(`Description:\n${wrapUntrusted(product.description, 'shopify_product_description', { maxLen: 1500 })}`);
   }
 
   return [
     `Write ONE social media post promoting this product.`,
+    '',
+    UNTRUSTED_CONTENT_DIRECTIVE,
     '',
     `Tone: ${toneGuidance(tone)}`,
     `Platform: ${platformGuidance(platform)}`,
@@ -299,6 +312,29 @@ export async function composeProductPost(
 
   if (!product) {
     throw new ComposeError('product', 'Product not synced yet. Run sync first.');
+  }
+
+  // ── Stage 0: forbidden-subject pre-flight ─────────────────────────
+  // Merchant has declared subjects they never want depicted or mentioned
+  // (e.g. "alcohol", "children", competitor brand names). Load from
+  // shopify_stores.profile.forbiddenSubjects (schema_v25). Scan the product
+  // itself FIRST — if the product title/description/type already mentions a
+  // forbidden subject, no amount of LLM coaching will produce safe output.
+  // Better to fail fast than ship a refusal-cycle.
+  const forbiddenSubjects = await loadForbiddenSubjectsForShop(env, shop);
+  if (forbiddenSubjects.length > 0) {
+    const inProduct = scanForForbidden(
+      [product.title, product.description, product.product_type, product.tags]
+        .filter(Boolean)
+        .join(' '),
+      forbiddenSubjects,
+    );
+    if (inProduct) {
+      throw new ComposeError(
+        'product',
+        `This product mentions "${inProduct}", which is on your shop's forbidden-subjects list. Update the list in Settings, or skip this product.`,
+      );
+    }
   }
 
   // ── Stage 1: caption ──────────────────────────────────────────────
@@ -395,9 +431,38 @@ export async function composeProductPost(
     throw new ComposeError('caption', String(err?.message ?? err).slice(0, 300));
   }
 
+  // Post-gen denylist HARD-RULES check on the LLM's output. If the merchant
+  // has declared "no alcohol" and Haiku still wrote "perfect with a glass of
+  // wine", we throw here rather than ship a violation. The downstream
+  // critique pass (shopify-post-quality.ts) does the same on image/caption
+  // alignment; this is the pre-publish gate on caption text alone.
+  if (forbiddenSubjects.length > 0) {
+    const hit = scanForForbidden(caption, forbiddenSubjects);
+    if (hit) {
+      throw new ComposeError(
+        'caption',
+        `Generated caption mentions "${hit}" (on your forbidden-subjects list). Regenerate, or remove "${hit}" from the list in Settings.`,
+      );
+    }
+  }
+
   // ── Stage 2: image ────────────────────────────────────────────────
   const sentinelUserId = `shop:${shop}`;
   const imagePrompt = buildImagePrompt(product);
+
+  // Pre-image denylist gate. The image prompt is generated from product
+  // fields (which we already scanned at stage 0), but a future change to
+  // buildImagePrompt could introduce a path that pulls from caption or
+  // facts — guard against that here.
+  if (forbiddenSubjects.length > 0) {
+    const hit = scanForForbidden(imagePrompt, forbiddenSubjects);
+    if (hit) {
+      throw new ComposeError(
+        'image',
+        `Image prompt mentions "${hit}" (on your forbidden-subjects list). This shouldn't normally happen — please contact support.`,
+      );
+    }
+  }
   try {
     const result = await generateImageWithBrandRefs(
       env,

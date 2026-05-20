@@ -23,11 +23,10 @@
 // malicious payload could otherwise smuggle in a Clerk-user's postId.
 //
 // Forbidden subjects:
-// Shop-tenant posts don't have a `users.profile`/`clients.profile` denylist
-// today (the schema_v22 `shopify_stores` row has no equivalent column).
-// We pass an empty `forbiddenSubjects` array so the HARD-RULES gate is
-// inactive — if a shop-level denylist gets added later, wire it in here
-// the same way `loadForbiddenSubjects` does for Clerk users.
+// Shop-tenant posts use `shopify_stores.profile.forbiddenSubjects` (added in
+// schema_v25). Wired through `loadForbiddenSubjectsForShop` so the HARD-RULES
+// gate in lib/critique.ts behaves identically to the Clerk-tenant path.
+// Merchants set their denylist in the embedded app's Settings page.
 //
 // Rate limit: 60/min per shop (matches the main-app route — these calls
 // happen as the merchant clicks Regenerate, so a tight loop could
@@ -38,6 +37,7 @@ import type { Env } from '../env';
 import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { critiqueImageInternal } from '../lib/critique';
+import { loadForbiddenSubjectsForShop } from '../lib/profile-guards';
 
 const RATE_LIMIT_PER_MIN = 60;
 
@@ -83,11 +83,10 @@ export function registerShopifyPostQualityRoutes(app: Hono<{ Bindings: Env }>): 
       return c.json({ error: 'imageUrl and caption are required' }, 400);
     }
 
-    // Shop-tenant denylist isn't wired up yet (no shopify_stores.profile
-    // column). Pass an empty array — the critique still produces a useful
-    // verdict on image-vs-caption match; only the HARD-RULES gate is
-    // skipped. When we add a shop-level profile, plumb it through here.
-    const forbiddenSubjects: string[] = [];
+    // Shop-tenant denylist from shopify_stores.profile.forbiddenSubjects
+    // (schema_v25). Empty if the merchant hasn't set any — HARD-RULES gate
+    // becomes a no-op in that case, which is correct (no rules to enforce).
+    const forbiddenSubjects = await loadForbiddenSubjectsForShop(c.env, shop);
 
     const result = await critiqueImageInternal(c.env, {
       imageUrl,
