@@ -1,0 +1,28 @@
+/* Autopilot page polish — hover/focus states that Polaris doesn't expose. */
+
+/* Vibe selector cards lift slightly on hover and press in when active.
+   The selected state's shadow is set inline in JSX so it survives focus
+   states cleanly. */
+.autopilot-vibe-card:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.autopilot-vibe-card:active:not(:disabled) {
+  transform: translateY(0);
+}
+.autopilot-vibe-card:focus-visible {
+  outline: 2px solid var(--p-color-border-focus);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+/* Preview cards in the review screen get a subtle hover lift so they feel
+   like cards you can interact with (delete, drag, etc.). The Card border
+   stays Polaris-managed; we only animate the wrapper's transform + shadow. */
+.autopilot-preview-card {
+  transition: transform 160ms ease, box-shadow 160ms ease;
+  border-radius: 12px;
+}
+.autopilot-preview-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}

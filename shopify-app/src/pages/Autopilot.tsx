@@ -3,8 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import {
   Card, BlockStack, InlineStack, InlineGrid, Text, Banner, Button,
   Spinner, Box, Badge, ChoiceList, RangeSlider, ProgressBar, Divider, Checkbox,
+  Icon,
 } from '@shopify/polaris';
-import { RefreshIcon, DeleteIcon, CheckCircleIcon } from '@shopify/polaris-icons';
+import type { IconSource } from '@shopify/polaris';
+import {
+  RefreshIcon, DeleteIcon, CheckCircleIcon,
+  MagicIcon, ClockIcon, StarIcon, CalendarIcon,
+  WandIcon, ConfettiIcon,
+} from '@shopify/polaris-icons';
+import './autopilot.css';
 import {
   listProducts, generateAutopilotPost, saveAutopilotBatch, getActiveCampaign,
   getFactsStatus, refreshFacts, ApiError,
@@ -56,16 +63,50 @@ interface VibeConfig {
   id: Vibe;
   label: string;
   description: string;
+  bestFor: string;
+  icon: IconSource;
   defaultPosts: number;
   /** Maximum slots this vibe will produce — clamps the slider. */
   maxPosts: number;
 }
 
 const VIBES: VibeConfig[] = [
-  { id: 'smart',      label: 'Smart Schedule', description: 'Best times, 1–2 weeks', defaultPosts: 7, maxPosts: 14 },
-  { id: 'burst',      label: 'Quick 24hr Burst', description: '3–5 posts today', defaultPosts: 4, maxPosts: 6 },
-  { id: 'highlights', label: 'Highlights Only', description: 'Peak slots only', defaultPosts: 7, maxPosts: 14 },
-  { id: 'saturation', label: 'Saturation', description: '3–5 posts/day, 7 days', defaultPosts: 14, maxPosts: 28 },
+  {
+    id: 'smart',
+    label: 'Smart Schedule',
+    description: 'One post per day at peak time, up to 2 weeks',
+    bestFor: 'Consistent steady growth',
+    icon: MagicIcon,
+    defaultPosts: 7,
+    maxPosts: 14,
+  },
+  {
+    id: 'burst',
+    label: 'Quick 24hr Burst',
+    description: '3–6 posts evenly spaced over the next 24 hours',
+    bestFor: 'Launch days, flash sales',
+    icon: ClockIcon,
+    defaultPosts: 4,
+    maxPosts: 6,
+  },
+  {
+    id: 'highlights',
+    label: 'Highlights Only',
+    description: 'Peak engagement slots only — one per day, evenings',
+    bestFor: 'Premium / low-frequency feeds',
+    icon: StarIcon,
+    defaultPosts: 7,
+    maxPosts: 14,
+  },
+  {
+    id: 'saturation',
+    label: 'Saturation',
+    description: '4 posts/day × 7 days — maximum reach',
+    bestFor: 'Black Friday, big campaigns',
+    icon: CalendarIcon,
+    defaultPosts: 14,
+    maxPosts: 28,
+  },
 ];
 
 const CONCURRENCY = 3;
@@ -382,16 +423,29 @@ export default function Autopilot() {
   };
 
   return (
-    <BlockStack gap="400">
-      <InlineStack align="space-between" blockAlign="center">
-        <BlockStack gap="100">
-          <Text as="h2" variant="headingLg">AI Autopilot</Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            Generate a whole content calendar in one click. Pick a vibe, post count,
-            and platform — we'll plan the schedule and write each post for you.
-          </Text>
-        </BlockStack>
-      </InlineStack>
+    <BlockStack gap="500">
+      {/* ── Hero ───────────────────────────────────────────────────────── */}
+      <Card>
+        <Box background="bg-fill-magic-secondary" padding="500" borderRadius="200">
+          <InlineStack gap="400" blockAlign="center" wrap={false}>
+            <Box
+              background="bg-fill-magic"
+              padding="300"
+              borderRadius="200"
+              minWidth="56px"
+            >
+              <Icon source={WandIcon} tone="magic" />
+            </Box>
+            <BlockStack gap="100">
+              <Text as="h1" variant="headingXl">AI Autopilot</Text>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                Generate a week of social-ready posts in one click. Pick a vibe,
+                review the previews, then ship them to your calendar.
+              </Text>
+            </BlockStack>
+          </InlineStack>
+        </Box>
+      </Card>
 
       {error && (
         <Banner tone="critical" title="Couldn't run autopilot" onDismiss={() => setError(null)}>
@@ -468,9 +522,15 @@ export default function Autopilot() {
         <>
           {/* ── Vibe picker ──────────────────────────────────────────── */}
           <Card>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Choose your vibe</Text>
-              <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">1. Choose your vibe</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  How aggressive should the schedule be? Each vibe maps to a different
+                  cadence and spread.
+                </Text>
+              </BlockStack>
+              <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="400">
                 {VIBES.map((v) => (
                   <VibeCard
                     key={v.id}
@@ -487,7 +547,12 @@ export default function Autopilot() {
           {/* ── Settings ────────────────────────────────────────────── */}
           <Card>
             <BlockStack gap="400">
-              <Text as="h3" variant="headingMd">Settings</Text>
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">2. Tune the schedule</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Where to post, how many, and whether to mix in video Reels.
+                </Text>
+              </BlockStack>
 
               <ChoiceList
                 title="Post to"
@@ -552,96 +617,121 @@ export default function Autopilot() {
           {/* ── Generation progress (while running) ──────────────────── */}
           {phase === 'generating' && (
             <Card>
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingMd">Generating…</Text>
-                  <Badge tone="info">{`${progress.done} of ${progress.total}`}</Badge>
-                </InlineStack>
+              <Box background="bg-fill-magic-secondary" padding="500" borderRadius="200">
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Spinner accessibilityLabel="Generating posts" size="small" />
+                      <Text as="h3" variant="headingMd">Composing your batch…</Text>
+                    </InlineStack>
+                    <Badge tone="magic">{`${progress.done} of ${progress.total}`}</Badge>
+                  </InlineStack>
 
-                <ProgressBar
-                  progress={progress.total > 0 ? (progress.done / progress.total) * 100 : 0}
-                  size="small"
-                  tone="primary"
-                />
+                  <ProgressBar
+                    progress={progress.total > 0 ? (progress.done / progress.total) * 100 : 0}
+                    size="medium"
+                    tone="primary"
+                  />
 
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Each post takes 5–20 seconds. We'll show them all here for review
-                  before anything goes to your calendar.
-                </Text>
-              </BlockStack>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Each post takes 5–20 seconds — caption + image, in parallel. Sit tight,
+                    we'll show every post for your review before anything goes live.
+                  </Text>
+                </BlockStack>
+              </Box>
             </Card>
           )}
 
           {/* ── Review / preview screen (after generation) ──────────── */}
           {phase === 'reviewing' && (
             <BlockStack gap="400">
-              {/* Sticky Accept All header */}
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center" wrap={false}>
-                    <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">
-                        {survivors.length > 0
-                          ? `${survivors.length} ${survivors.length === 1 ? 'post' : 'posts'} ready to schedule`
-                          : 'No posts to schedule'}
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        Review below, then add them all to your calendar.
-                      </Text>
-                    </BlockStack>
-                    <InlineStack gap="200">
-                      <Button onClick={handleDiscardAll} variant="tertiary">
-                        Discard all
-                      </Button>
-                      <Button
-                        variant="primary"
-                        size="large"
-                        icon={CheckCircleIcon}
-                        disabled={survivors.length === 0}
-                        onClick={handleAcceptAll}
-                      >
-                        {`Accept all ${survivors.length} & add to Calendar`}
-                      </Button>
-                    </InlineStack>
-                  </InlineStack>
+              {/* Sticky Accept All header — branded, prominent */}
+              <Box
+                position="sticky"
+                insetBlockStart="0"
+                background="bg-surface"
+                zIndex="100"
+                paddingBlockStart="200"
+              >
+                <Card>
+                  <Box background="bg-fill-success-secondary" padding="400" borderRadius="200">
+                    <BlockStack gap="300">
+                      <InlineStack align="space-between" blockAlign="center" wrap={false} gap="400">
+                        <InlineStack gap="300" blockAlign="center" wrap={false}>
+                          <Box
+                            background="bg-fill-success"
+                            padding="200"
+                            borderRadius="200"
+                          >
+                            <Icon source={CheckCircleIcon} tone="success" />
+                          </Box>
+                          <BlockStack gap="050">
+                            <Text as="h3" variant="headingMd">
+                              {survivors.length > 0
+                                ? `${survivors.length} ${survivors.length === 1 ? 'post' : 'posts'} ready to schedule`
+                                : 'No posts to schedule'}
+                            </Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Review the previews below. Anything you don't like, hit the trash icon.
+                            </Text>
+                          </BlockStack>
+                        </InlineStack>
+                        <InlineStack gap="200">
+                          <Button onClick={handleDiscardAll} variant="tertiary">
+                            Discard all
+                          </Button>
+                          <Button
+                            variant="primary"
+                            size="large"
+                            icon={CheckCircleIcon}
+                            disabled={survivors.length === 0}
+                            onClick={handleAcceptAll}
+                          >
+                            {`Accept all ${survivors.length} & schedule`}
+                          </Button>
+                        </InlineStack>
+                      </InlineStack>
 
-                  <InlineStack gap="200">
-                    <Badge tone="success">{`${progress.succeeded.length} generated`}</Badge>
-                    {removedIds.size > 0 && (
-                      <Badge tone="info">{`${removedIds.size} removed`}</Badge>
-                    )}
-                    {progress.failed.length > 0 && (
-                      <Badge tone="warning">{`${progress.failed.length} failed to generate`}</Badge>
-                    )}
-                    {activeCampaign && (
-                      <Badge tone="attention">{`Campaign: ${activeCampaign.name}`}</Badge>
-                    )}
-                  </InlineStack>
-
-                  {progress.failed.length > 0 && (
-                    <Banner tone="warning" title={`${progress.failed.length} ${progress.failed.length === 1 ? 'post' : 'posts'} couldn't be generated`}>
-                      <BlockStack gap="100">
-                        {progress.failed.slice(0, 3).map((f, i) => (
-                          <Text key={i} as="p" variant="bodySm">
-                            {new Date(f.scheduledFor).toLocaleString()} — {f.error}
-                          </Text>
-                        ))}
-                        {progress.failed.length > 3 && (
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            …and {progress.failed.length - 3} more.
-                          </Text>
+                      <InlineStack gap="200">
+                        <Badge tone="success">{`${progress.succeeded.length} generated`}</Badge>
+                        {removedIds.size > 0 && (
+                          <Badge>{`${removedIds.size} removed`}</Badge>
                         )}
-                      </BlockStack>
-                    </Banner>
-                  )}
-                </BlockStack>
-              </Card>
+                        {progress.failed.length > 0 && (
+                          <Badge tone="warning">{`${progress.failed.length} failed`}</Badge>
+                        )}
+                        {activeCampaign && (
+                          <Badge tone="attention">{`Campaign: ${activeCampaign.name}`}</Badge>
+                        )}
+                      </InlineStack>
+                    </BlockStack>
+                  </Box>
+                </Card>
+              </Box>
+
+              {progress.failed.length > 0 && (
+                <Banner tone="warning" title={`${progress.failed.length} ${progress.failed.length === 1 ? 'post' : 'posts'} couldn't be generated`}>
+                  <BlockStack gap="100">
+                    {progress.failed.slice(0, 3).map((f, i) => (
+                      <Text key={i} as="p" variant="bodySm">
+                        {new Date(f.scheduledFor).toLocaleString()} — {f.error}
+                      </Text>
+                    ))}
+                    {progress.failed.length > 3 && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        …and {progress.failed.length - 3} more.
+                      </Text>
+                    )}
+                  </BlockStack>
+                </Banner>
+              )}
 
               {/* One card per preview post */}
-              {survivors.map((post) => (
+              {survivors.map((post, idx) => (
                 <PreviewCard
                   key={post.id}
                   post={post}
+                  index={idx}
                   onRemove={() => handleRemovePost(post.id)}
                 />
               ))}
@@ -651,42 +741,58 @@ export default function Autopilot() {
           {/* ── Saving phase ─────────────────────────────────────────── */}
           {phase === 'saving' && (
             <Card>
-              <BlockStack gap="400" align="center" inlineAlign="center">
-                <Spinner accessibilityLabel="Saving posts" />
-                <Text as="h3" variant="headingMd">Adding {saveProgress.total} posts to your calendar…</Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Don't refresh — this only takes a few seconds.
-                </Text>
-              </BlockStack>
+              <Box background="bg-fill-info-secondary" padding="600" borderRadius="200">
+                <BlockStack gap="400" align="center" inlineAlign="center">
+                  <Spinner accessibilityLabel="Saving posts" />
+                  <Text as="h3" variant="headingMd">
+                    Adding {saveProgress.total} {saveProgress.total === 1 ? 'post' : 'posts'} to your calendar…
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Don't refresh — this takes a few seconds.
+                  </Text>
+                </BlockStack>
+              </Box>
             </Card>
           )}
 
-          {/* ── Done ─────────────────────────────────────────────────── */}
+          {/* ── Done — celebratory finish state ──────────────────────── */}
           {phase === 'done' && (
             <Card>
-              <BlockStack gap="400">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingMd">All done!</Text>
-                  <Badge tone="success">
-                    {`${saveProgress.saved} of ${saveProgress.total} scheduled`}
-                  </Badge>
-                </InlineStack>
+              <Box background="bg-fill-success-secondary" padding="600" borderRadius="200">
+                <BlockStack gap="500" align="center" inlineAlign="center">
+                  <Box
+                    background="bg-fill-success"
+                    padding="400"
+                    borderRadius="full"
+                  >
+                    <Icon source={ConfettiIcon} tone="success" />
+                  </Box>
+                  <BlockStack gap="100" align="center" inlineAlign="center">
+                    <Text as="h2" variant="headingLg" alignment="center">
+                      Your batch is on the calendar!
+                    </Text>
+                    <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
+                      {saveProgress.saved} of {saveProgress.total} {saveProgress.total === 1 ? 'post' : 'posts'} scheduled.
+                      We'll publish each one to Facebook + Instagram at its scheduled time.
+                    </Text>
+                  </BlockStack>
 
-                {saveProgress.failed > 0 && (
-                  <Banner tone="warning" title={`${saveProgress.failed} couldn't be saved`}>
-                    <p>You can run another batch to retry the failed slots.</p>
-                  </Banner>
-                )}
+                  {saveProgress.failed > 0 && (
+                    <Banner tone="warning" title={`${saveProgress.failed} couldn't be saved`}>
+                      <p>Run another batch to retry the failed slots.</p>
+                    </Banner>
+                  )}
 
-                <InlineStack gap="200">
-                  <Button variant="primary" onClick={() => navigate('/calendar')}>
-                    View in Calendar
-                  </Button>
-                  <Button icon={RefreshIcon} onClick={handleDiscardAll}>
-                    Run another batch
-                  </Button>
-                </InlineStack>
-              </BlockStack>
+                  <InlineStack gap="200">
+                    <Button variant="primary" size="large" icon={CalendarIcon} onClick={() => navigate('/calendar')}>
+                      View in Calendar
+                    </Button>
+                    <Button icon={RefreshIcon} onClick={handleDiscardAll}>
+                      Run another batch
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              </Box>
             </Card>
           )}
         </>
@@ -697,83 +803,130 @@ export default function Autopilot() {
 
 // ── PreviewCard ────────────────────────────────────────────────────────────
 //
-// One generated post awaiting merchant approval. Shows:
-//   - product image (fal.ai URL is public so a plain <img> works)
-//   - scheduled time (local format)
+// One generated post awaiting merchant approval. Designed to read like a
+// social-media-feed mock so the merchant gets a feel for the post in context:
+//   - product image (square, 200px target, fal.ai URLs are public)
+//   - "Day N" pill + relative date + clock time
 //   - platform + post-type badges
-//   - the generated caption
-//   - a Remove button that yanks it from the preview state (no DB hit)
+//   - full generated caption
+//   - corner Remove button (overlay on the image, easy to scan + click)
+//
+// Hover state gives a subtle lift so it feels card-like and clickable.
 
 function PreviewCard({
-  post, onRemove,
+  post, index, onRemove,
 }: {
   post: AutopilotGeneratedPost;
+  index: number;
   onRemove: () => void;
 }) {
   const isVideo = post.post_type === 'video';
+  const date = new Date(post.scheduled_for);
+  const dayLabel = describeRelativeDay(date);
+  const timeLabel = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   return (
-    <Card>
-      <InlineGrid columns={{ xs: 1, sm: '160px 1fr' }} gap="400">
-        {/* Image / thumbnail. For video posts, this is the still that
-            Kling will animate; we badge it accordingly. fal.ai URLs are
-            public so a plain <img src> works (no auth header needed). */}
-        <Box position="relative">
-          <img
-            src={post.image_url}
-            alt={post.product.title}
-            style={{
-              width: '100%',
-              aspectRatio: '1 / 1',
-              objectFit: 'cover',
-              borderRadius: 8,
-              display: 'block',
-            }}
-          />
-          {isVideo && (
-            <Box
-              position="absolute"
-              insetBlockEnd="200"
-              insetInlineStart="200"
-            >
-              <Badge tone="info">Reel · rendering</Badge>
-            </Box>
-          )}
-        </Box>
-
-        <BlockStack gap="300">
-          <InlineStack align="space-between" blockAlign="start" wrap={false}>
-            <BlockStack gap="100">
-              <Text as="h4" variant="headingSm">{post.product.title}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {new Date(post.scheduled_for).toLocaleString(undefined, {
-                  weekday: 'short', month: 'short', day: 'numeric',
-                  hour: 'numeric', minute: '2-digit',
-                })}
-              </Text>
-            </BlockStack>
-            <Button
-              icon={DeleteIcon}
-              onClick={onRemove}
-              accessibilityLabel="Remove this post"
-              variant="tertiary"
-              tone="critical"
+    <div className="autopilot-preview-card">
+      <Card padding="0">
+        <InlineGrid columns={{ xs: 1, sm: '220px 1fr' }} gap="0">
+          {/* Image / thumbnail. fal.ai URLs are public so a plain <img>
+              works. The Remove button is overlaid bottom-right so it
+              stays in the merchant's eye-line. */}
+          <Box position="relative">
+            <img
+              src={post.image_url}
+              alt={post.product.title}
+              style={{
+                width: '100%',
+                aspectRatio: '1 / 1',
+                objectFit: 'cover',
+                display: 'block',
+              }}
             />
-          </InlineStack>
+            {/* Day pill — sits top-left over the image */}
+            <Box position="absolute" insetBlockStart="200" insetInlineStart="200">
+              <Badge tone="info">{`#${index + 1} · ${dayLabel}`}</Badge>
+            </Box>
+            {isVideo && (
+              <Box position="absolute" insetBlockStart="200" insetInlineEnd="200">
+                <Badge tone="magic">Reel</Badge>
+              </Box>
+            )}
+            {/* Remove button — overlay bottom-right */}
+            <div style={{ position: 'absolute', bottom: 8, right: 8 }}>
+              <Button
+                icon={DeleteIcon}
+                onClick={onRemove}
+                accessibilityLabel="Remove this post"
+                tone="critical"
+                size="micro"
+              />
+            </div>
+          </Box>
 
-          <InlineStack gap="200">
-            <Badge>{post.platform === 'both' ? 'FB + IG' : post.platform === 'facebook' ? 'Facebook' : 'Instagram'}</Badge>
-            <Badge tone={isVideo ? 'magic' : undefined}>{isVideo ? 'Video' : 'Image'}</Badge>
-            {post.campaign_used && <Badge tone="attention">Campaign-aware</Badge>}
-          </InlineStack>
+          {/* Right column: meta + caption */}
+          <Box padding="400">
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="start" wrap={false}>
+                <BlockStack gap="100">
+                  <Text as="h4" variant="headingSm">{post.product.title}</Text>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Icon source={ClockIcon} tone="subdued" />
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · {timeLabel}
+                    </Text>
+                  </InlineStack>
+                </BlockStack>
+              </InlineStack>
 
-          <Text as="p" variant="bodyMd">{post.caption}</Text>
-        </BlockStack>
-      </InlineGrid>
-    </Card>
+              <InlineStack gap="200" wrap>
+                <Badge>{post.platform === 'both' ? 'FB + IG' : post.platform === 'facebook' ? 'Facebook' : 'Instagram'}</Badge>
+                <Badge tone={isVideo ? 'magic' : undefined}>{isVideo ? 'Video Reel' : 'Image post'}</Badge>
+                {post.campaign_used && (
+                  <Badge tone="attention">Campaign-aware</Badge>
+                )}
+                {post.product.price && (
+                  <Badge>{`${post.product.currency ?? ''} ${post.product.price}`.trim()}</Badge>
+                )}
+              </InlineStack>
+
+              <Box
+                background="bg-surface-secondary"
+                padding="300"
+                borderRadius="200"
+              >
+                <Text as="p" variant="bodyMd">{post.caption}</Text>
+              </Box>
+            </BlockStack>
+          </Box>
+        </InlineGrid>
+      </Card>
+    </div>
   );
 }
 
+/**
+ * Human label for a scheduled date relative to "now":
+ *   - "Today" / "Tomorrow"
+ *   - "In 3 days"
+ *   - "Mon Jun 2" (anything > 6 days out)
+ */
+function describeRelativeDay(date: Date): string {
+  const now = new Date();
+  // Compare calendar days, not raw ms — a post at 11pm tonight is still "Today".
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(date) - startOfDay(now)) / 86_400_000);
+  if (dayDiff === 0) return 'Today';
+  if (dayDiff === 1) return 'Tomorrow';
+  if (dayDiff > 1 && dayDiff <= 6) return `In ${dayDiff} days`;
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 // ── VibeCard ───────────────────────────────────────────────────────────────
+//
+// Visually distinct selectable card per vibe. Selected state gets a stronger
+// border, a tinted background, and a subtle shadow so the merchant sees their
+// choice from across the room. Hover lift comes from inline CSS since Polaris
+// doesn't expose a hover state for Box.
 
 function VibeCard({
   config, selected, onClick, disabled,
@@ -788,27 +941,51 @@ function VibeCard({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      className="autopilot-vibe-card"
+      data-selected={selected ? 'true' : 'false'}
       style={{
         all: 'unset',
         cursor: disabled ? 'not-allowed' : 'pointer',
         display: 'block',
         width: '100%',
+        opacity: disabled ? 0.5 : 1,
+        transition: 'transform 120ms ease, box-shadow 120ms ease',
+        boxShadow: selected
+          ? '0 0 0 2px var(--p-color-border-magic), 0 4px 12px rgba(128, 81, 255, 0.18)'
+          : '0 0 0 1px var(--p-color-border)',
+        borderRadius: 12,
       }}
     >
       <Box
-        background={selected ? 'bg-fill-info-secondary' : 'bg-surface'}
-        borderColor={selected ? 'border-info' : 'border'}
-        borderWidth={selected ? '050' : '025'}
-        borderRadius="200"
-        padding="300"
+        background={selected ? 'bg-fill-magic-secondary' : 'bg-surface'}
+        borderRadius="300"
+        padding="400"
+        minHeight="170px"
       >
-        <BlockStack gap="200">
-          <Text as="span" variant="bodyMd" fontWeight="bold">
-            {config.label}
-          </Text>
-          <Text as="span" variant="bodySm" tone="subdued">
-            {config.description}
-          </Text>
+        <BlockStack gap="300">
+          <InlineStack gap="200" blockAlign="center">
+            <Box
+              background={selected ? 'bg-fill-magic' : 'bg-surface-secondary'}
+              padding="200"
+              borderRadius="200"
+            >
+              <Icon source={config.icon} tone={selected ? 'magic' : 'subdued'} />
+            </Box>
+            {selected && <Badge tone="magic">Selected</Badge>}
+          </InlineStack>
+          <BlockStack gap="100">
+            <Text as="span" variant="headingSm">
+              {config.label}
+            </Text>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {config.description}
+            </Text>
+          </BlockStack>
+          <Box paddingBlockStart="100">
+            <Text as="span" variant="bodyXs" tone="subdued">
+              Best for: <Text as="span" variant="bodyXs" fontWeight="semibold">{config.bestFor}</Text>
+            </Text>
+          </Box>
         </BlockStack>
       </Box>
     </button>
