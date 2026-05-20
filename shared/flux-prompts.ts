@@ -77,6 +77,16 @@ export function isAbstractUIPrompt(prompt: string): boolean {
   if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
   if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
   if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
+  // Hashtag / social-feed abstractions — flux cannot render hashtag-the-concept;
+  // it produces noise → safety_checker rejects → black square. Catch any
+  // mention of "hashtag" in an image prompt (it's never a photographable
+  // subject) plus social-feed / post-grid mockups.
+  if (/\b(hashtag|hashtags|tag\s+cloud|social\s+feed|news\s+feed|content\s+feed|post\s+(?:carousel|grid|feed|preview|preview\s+grid))\b/i.test(prompt)) return true;
+  // Generic "website" prompts that aren't already caught by "website screenshot".
+  // SaaS posts about web design typically generate "modern website on a laptop",
+  // "small business website hero", etc. — flux renders them as flat washed-out
+  // white screens. Catch when "website" appears with a UI-context noun.
+  if (/\b(website|webpage|web\s+page)\s+(?:design|hero|homepage|template|refresh|rebuild|redesign|on\s+(?:a\s+)?(?:laptop|screen|monitor|browser|computer|tablet))\b/i.test(prompt)) return true;
   return false;
 }
 
@@ -140,9 +150,23 @@ export function rewriteAbstractUIAsPhotography(
     return 'smartphone on a marble desk displaying a clean tile grid with colorful icons, overhead daylight, candid flatlay';
   }
 
-  // ── Landing page / website screenshot ──
-  if (/\b(landing\s+page|website\s+screenshot|webpage)\b/i.test(prompt)) {
-    return 'laptop open on a wooden desk displaying a colorful website hero with a bold accent stripe, ceramic mug beside it, overhead daylight';
+  // ── Hashtag / social-feed abstractions ──
+  // Hashtag-the-concept can't be photographed. Rewrite as a handwritten
+  // notebook list — photographable, on-brand for "tactical SMB tip" posts.
+  if (/\b(hashtag|hashtags|tag\s+cloud)\b/i.test(prompt)) {
+    return 'overhead photo of an open notebook with a handwritten list of words preceded by hash marks, a fountain pen resting on the page, ceramic mug beside it, soft natural daylight, candid flatlay';
+  }
+  if (/\b(social\s+feed|news\s+feed|content\s+feed|post\s+(?:carousel|grid|feed|preview))\b/i.test(prompt)) {
+    return 'smartphone resting on a marble desk displaying a colorful tile grid with bright accent cards, overhead daylight, candid flatlay';
+  }
+
+  // ── Landing page / website screenshot / generic website prompts ──
+  // Catches both the literal "website screenshot" cases AND generic "small
+  // business website on a laptop" / "website redesign" type prompts that
+  // were previously slipping through to flux → washed-out blank renders.
+  if (/\b(landing\s+page|website\s+screenshot|webpage)\b/i.test(prompt)
+      || /\b(website|webpage|web\s+page)\s+(?:design|hero|homepage|template|refresh|rebuild|redesign|on\s+(?:a\s+)?(?:laptop|screen|monitor|browser|computer|tablet))\b/i.test(prompt)) {
+    return 'laptop open on a wooden desk displaying a clean website hero with a bold colorful accent stripe, ceramic mug beside it, overhead daylight, candid flatlay';
   }
 
   // ── App screen / mobile UI / interface ──
