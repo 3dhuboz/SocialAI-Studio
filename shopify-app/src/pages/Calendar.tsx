@@ -713,8 +713,27 @@ function PostChip({ post, busy, onClick, draggable }: PostChipProps) {
     : post.platform === 'instagram' ? 'ig'
     : 'fb·ig';
 
+  // Reel indicator — the autopilot can schedule video Reels; without this
+  // chip merchants can't tell at a glance which posts will publish as video
+  // and which as a still image. ▶ glyph (U+25B6) is a universally-recognised
+  // play arrow and reads well at the chip's tiny font size.
+  const isReel = post.post_type === 'video' || post.post_type === 'reel';
+  const reelPending = isReel && post.video_status === 'pending';
+  const reelFailed = isReel && post.video_status === 'failed';
+
+  // AI critique score — only show if populated (Compose page or critique cron
+  // wrote it). 0-10 scale. Below 5 we tint the badge so low-quality posts
+  // visually stand out and the merchant can swap before publish.
+  const score = typeof post.image_critique_score === 'number'
+    ? post.image_critique_score
+    : null;
+  const scoreLow = score !== null && score < 5;
+
   return (
     <div
+      role="button"
+      tabIndex={busy ? -1 : 0}
+      aria-label={`${post.status} post${isReel ? ' (Reel)' : ''} at ${labelTime || 'unscheduled'}: ${post.content.slice(0, 60)}`}
       draggable={draggable && !busy}
       onDragStart={(e) => {
         if (!draggable) return;
@@ -722,6 +741,15 @@ function PostChip({ post, busy, onClick, draggable }: PostChipProps) {
         e.dataTransfer.effectAllowed = 'move';
       }}
       onClick={onClick}
+      onKeyDown={(e) => {
+        // Keyboard activation — Enter or Space opens the post (Polaris convention).
+        // Drag-to-reschedule is mouse-only for now; keyboard users edit via the
+        // modal's date/time field. See Calendar a11y notes for the longer fix.
+        if ((e.key === 'Enter' || e.key === ' ') && onClick && !busy) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       style={{
         cursor: draggable && !busy ? 'grab' : onClick ? 'pointer' : 'default',
         opacity: busy ? 0.55 : 1,
@@ -739,8 +767,30 @@ function PostChip({ post, busy, onClick, draggable }: PostChipProps) {
               {labelTime}
             </Text>
           )}
+          {isReel && (
+            <Text
+              as="span"
+              variant="bodySm"
+              tone="text-inverse"
+              fontWeight="bold"
+              // Wrapped tooltip-style title via native attribute; Polaris's
+              // Tooltip is heavier than chip rendering can absorb at scale.
+            >
+              {reelFailed ? '⚠▶' : reelPending ? '⏳▶' : '▶'}
+            </Text>
+          )}
+          {score !== null && (
+            <Text
+              as="span"
+              variant="bodySm"
+              tone="text-inverse"
+              fontWeight={scoreLow ? 'bold' : 'medium'}
+            >
+              {scoreLow ? '⚠' : ''}{score}/10
+            </Text>
+          )}
           <Text as="span" variant="bodySm" tone="text-inverse" truncate>
-            {truncate(post.content, 22)}
+            {truncate(post.content, isReel || score !== null ? 16 : 22)}
           </Text>
           <Text as="span" variant="bodySm" tone="text-inverse">{platformChar}</Text>
         </InlineStack>
@@ -761,8 +811,14 @@ interface PostRowProps {
 
 function PostRow({ post, busy, onPublishNow, onEdit, onDelete }: PostRowProps) {
   const canPublishNow = post.status === 'Draft';
+  // Missed posts come from cron failures (token expired, FB outage, image
+  // gen timeout, etc.) — once the upstream issue is resolved the merchant
+  // expects a one-click recovery. Same publish-now endpoint, just a
+  // different button label so the intent reads correctly.
+  const canRetry = post.status === 'Missed';
   const canEdit = post.status === 'Draft' || post.status === 'Scheduled';
-  const canDelete = post.status === 'Draft' || post.status === 'Scheduled';
+  const canDelete = post.status === 'Draft' || post.status === 'Scheduled' || post.status === 'Missed';
+  const isReel = post.post_type === 'video' || post.post_type === 'reel';
 
   const media = post.image_url
     ? <Thumbnail source={post.image_url} alt="" size="medium" />
@@ -783,6 +839,16 @@ function PostRow({ post, busy, onPublishNow, onEdit, onDelete }: PostRowProps) {
             </Text>
           </Box>
           <InlineStack gap="200" blockAlign="center" wrap={false}>
+            {isReel && (
+              <Badge tone={post.video_status === 'failed' ? 'critical' : post.video_status === 'pending' ? 'attention' : 'magic'}>
+                {post.video_status === 'failed' ? 'Reel failed' : post.video_status === 'pending' ? 'Reel rendering' : 'Reel'}
+              </Badge>
+            )}
+            {typeof post.image_critique_score === 'number' && (
+              <Badge tone={post.image_critique_score >= 7 ? 'success' : post.image_critique_score >= 5 ? 'info' : 'warning'}>
+                {`AI ${post.image_critique_score}/10`}
+              </Badge>
+            )}
             <PlatformBadge platform={post.platform} />
             <StatusBadge status={post.status} />
           </InlineStack>
@@ -797,6 +863,13 @@ function PostRow({ post, busy, onPublishNow, onEdit, onDelete }: PostRowProps) {
               <Tooltip content="Skip the schedule and publish immediately">
                 <Button size="slim" onClick={onPublishNow} loading={busy} variant="primary">
                   Publish now
+                </Button>
+              </Tooltip>
+            )}
+            {canRetry && (
+              <Tooltip content="This post was missed by the publish cron. Click to retry — works as long as the upstream issue (e.g. Facebook token) is resolved.">
+                <Button size="slim" onClick={onPublishNow} loading={busy} variant="primary" tone="success">
+                  Retry publish
                 </Button>
               </Tooltip>
             )}

@@ -133,7 +133,12 @@ export default function Settings() {
       setLongLivedToken(result.longLivedUserToken);
 
       if (!result.pages || result.pages.length === 0) {
-        setConnectError('No Facebook Pages found on your account. You need to be an admin of at least one Page.');
+        // Use a sentinel string so the ConnectCard can render a richer
+        // "Create a Page" CTA. Plain text would render as a generic
+        // critical Banner — fine, but the largest conversion cliff in the
+        // onboarding flow is solo merchants who only have a Personal FB
+        // profile and don't realise Pages are a separate thing.
+        setConnectError('__NO_FB_PAGES__');
         setConnectStep('error');
         return;
       }
@@ -315,9 +320,47 @@ function ConnectCard({ step, error, onConnect, onResetError }: ConnectCardProps)
           </Text>
         </BlockStack>
 
-        {step === 'error' && error && (
+        {step === 'error' && error === '__NO_FB_PAGES__' && (
+          // The single biggest abandonment cliff in onboarding: solo merchants
+          // who logged in successfully but have only a Personal FB profile.
+          // Facebook only lets apps publish on Pages, so we surface a clear
+          // recovery path: create a Page (most merchants finish that in
+          // 2 minutes), then retry. This replaces the previous dead-end
+          // "No Facebook Pages found on your account" critical Banner.
+          <Banner tone="warning" title="You need a Facebook Page (not a personal profile)" onDismiss={onResetError}>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd">
+                Your Facebook account doesn't have any Business Pages yet.
+                Facebook only lets apps publish on Pages — your personal
+                profile isn't enough.
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Most Shopify merchants create one in under 2 minutes. Once
+                it's set up, click <strong>Retry</strong> below — Facebook
+                will remember your login so you won't have to re-enter
+                credentials.
+              </Text>
+              <InlineStack gap="200" wrap>
+                <Button
+                  variant="primary"
+                  url="https://www.facebook.com/pages/create"
+                  external
+                >
+                  Create a Facebook Page
+                </Button>
+                <Button onClick={onResetError}>Retry connection</Button>
+              </InlineStack>
+            </BlockStack>
+          </Banner>
+        )}
+        {step === 'error' && error && error !== '__NO_FB_PAGES__' && (
           <Banner tone="critical" title="Connection failed" onDismiss={onResetError}>
-            <p>{error}</p>
+            <BlockStack gap="200">
+              <p>{error}</p>
+              <InlineStack gap="200">
+                <Button onClick={onResetError}>Try again</Button>
+              </InlineStack>
+            </BlockStack>
           </Banner>
         )}
 

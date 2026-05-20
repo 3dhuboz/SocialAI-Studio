@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Page, Spinner } from '@shopify/polaris';
 import { useAppBridge } from '@shopify/app-bridge-react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { Home } from './pages/Home';
 
 // Lazy-load secondary pages so each route ships its own chunk. Keeps the
@@ -59,21 +59,47 @@ export function App() {
         <a href="/posters">Posters</a>
         <a href="/settings">Settings</a>
       </ui-nav-menu>
-      <Page title="SocialAI Studio">
-        <Suspense fallback={<Spinner accessibilityLabel="Loading page" />}>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/products" element={<Products />} />
-            <Route path="/autopilot" element={<Autopilot />} />
-            <Route path="/campaigns" element={<Campaigns />} />
-            <Route path="/compose" element={<Compose />} />
-            <Route path="/calendar" element={<Calendar />} />
-            <Route path="/insights" element={<Insights />} />
-            <Route path="/posters" element={<Posters />} />
-            <Route path="/settings" element={<Settings />} />
-          </Routes>
-        </Suspense>
-      </Page>
+      <RoutedShell />
     </BrowserRouter>
+  );
+}
+
+// Map route paths → (page title, optional subtitle). Polaris's <Page> renders
+// the title as an h1 in the embedded admin header; pre-fix it was hard-coded
+// to "SocialAI Studio" on every route, which (a) reviewers explicitly flag
+// as a missed UX cue, and (b) means the heading hierarchy on each page
+// starts at h2 even though some pages render h1-styled hero text inside the
+// body — visually fine but a11y-confusing.
+const ROUTE_META: Record<string, { title: string; subtitle?: string }> = {
+  '/':           { title: 'SocialAI Studio',                                          },
+  '/products':   { title: 'Products',  subtitle: 'Your Shopify catalog'               },
+  '/autopilot':  { title: 'Autopilot', subtitle: 'Generate a week of posts in clicks' },
+  '/campaigns':  { title: 'Campaigns', subtitle: 'Date-ranged themes for autopilot'   },
+  '/compose':    { title: 'Compose',   subtitle: 'AI caption + image for a product'   },
+  '/calendar':   { title: 'Calendar',  subtitle: 'Scheduled & published posts'        },
+  '/insights':   { title: 'Insights',  subtitle: 'Facebook engagement + queue'        },
+  '/posters':    { title: 'Posters',   subtitle: 'AI-generated standalone graphics'   },
+  '/settings':   { title: 'Settings',  subtitle: 'Facebook / Instagram connection'    },
+};
+
+function RoutedShell() {
+  const { pathname } = useLocation();
+  const meta = ROUTE_META[pathname] || { title: 'SocialAI Studio' };
+  return (
+    <Page title={meta.title} subtitle={meta.subtitle}>
+      <Suspense fallback={<Spinner accessibilityLabel="Loading page" />}>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/products" element={<Products />} />
+          <Route path="/autopilot" element={<Autopilot />} />
+          <Route path="/campaigns" element={<Campaigns />} />
+          <Route path="/compose" element={<Compose />} />
+          <Route path="/calendar" element={<Calendar />} />
+          <Route path="/insights" element={<Insights />} />
+          <Route path="/posters" element={<Posters />} />
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+      </Suspense>
+    </Page>
   );
 }

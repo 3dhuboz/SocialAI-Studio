@@ -218,6 +218,17 @@ export interface Post {
   status: 'Draft' | 'Scheduled' | 'Posted' | 'Missed';
   scheduled_for: string | null;
   created_at: string;
+  // Reel fields — autopilot can schedule video posts. The Calendar uses
+  // post_type to render a Reel chip indicator + video_status to render a
+  // "rendering" pill while the prewarm-videos cron processes the post.
+  post_type?: 'image' | 'video' | 'reel' | null;
+  video_url?: string | null;
+  video_status?: 'pending' | 'ready' | 'failed' | null;
+  // AI image-vs-caption quality score (0-10), populated by the critique
+  // cron + the Compose page's manual critique. Shown as a small badge on
+  // calendar tiles so merchants can spot low-quality posts pre-publish.
+  image_critique_score?: number | null;
+  image_critique_reasoning?: string | null;
 }
 
 export async function listPosts(params?: { status?: string }, signal?: AbortSignal) {

@@ -42,6 +42,10 @@ export function Home() {
   const [shop, setShop] = useState<ShopInfo | null>(null);
   const [insights, setInsights] = useState<ShopifyInsightsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bump on retry so the boot effect re-runs from scratch. Cleaner than
+  // duplicating the boot logic into a callable function — the effect
+  // already handles cancellation correctly via AbortController.
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     // Two cancellation mechanisms:
@@ -87,7 +91,7 @@ export function Home() {
       cancelled = true;
       controller.abort();
     };
-  }, []);
+  }, [retryNonce]);
 
   const handleStartTrial = async () => {
     setPhase('subscribing');
@@ -126,9 +130,36 @@ export function Home() {
   }
 
   if (phase === 'error' || !shop) {
+    // The very first frame a merchant sees after install. Without a retry
+    // path a single 502 (Shopify Admin API throttling, transient worker
+    // restart, etc.) leaves them stranded with a "reload the iframe"
+    // dead-end. The Retry button re-runs tokenExchange + fetchMe by
+    // bumping retryNonce, which the boot effect listens on.
     return (
       <Banner tone="critical" title="Couldn't connect to your shop">
-        <p>{error ?? 'Unknown error.'}</p>
+        <BlockStack gap="200">
+          <p>{error ?? 'Unknown error.'}</p>
+          <Text as="p" variant="bodySm" tone="subdued">
+            This is usually transient — a quick retry resolves it. If it
+            keeps happening, email steve@pennywiseit.com.au with your
+            shop domain.
+          </Text>
+          <InlineStack gap="200">
+            <Button
+              variant="primary"
+              onClick={() => {
+                setError(null);
+                setPhase('init');
+                setRetryNonce((n) => n + 1);
+              }}
+            >
+              Retry
+            </Button>
+            <Button url="mailto:steve@pennywiseit.com.au?subject=SocialAI%20Studio%20-%20boot%20error" external>
+              Contact support
+            </Button>
+          </InlineStack>
+        </BlockStack>
       </Banner>
     );
   }
@@ -214,7 +245,18 @@ export function Home() {
 
       {subStatus === 'FROZEN' && (
         <Banner tone="critical" title="Payment failed">
-          <p>Your most recent charge didn't go through. Update your payment method in Shopify Admin → Settings → Billing.</p>
+          <BlockStack gap="200">
+            <p>Your most recent charge didn't go through. Until you update your payment method in Shopify, scheduled posts will not publish.</p>
+            <InlineStack gap="200">
+              <Button
+                variant="primary"
+                external
+                url={shop?.shop ? `https://admin.shopify.com/store/${shop.shop.replace('.myshopify.com', '')}/settings/billing` : 'https://admin.shopify.com/settings/billing'}
+              >
+                Update payment method
+              </Button>
+            </InlineStack>
+          </BlockStack>
         </Banner>
       )}
 
