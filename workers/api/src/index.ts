@@ -47,6 +47,7 @@ import { registerShopifyPostersRoutes } from './routes/shopify-posters';
 import { registerShopifyAutopilotRoutes } from './routes/shopify-autopilot';
 import { registerShopifyCampaignRoutes } from './routes/shopify-campaigns';
 import { registerShopifyFactsRoutes } from './routes/shopify-facts';
+import { registerShopifyProfileRoutes } from './routes/shopify-profile';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -147,6 +148,7 @@ registerShopifyPostersRoutes(app);
 registerShopifyAutopilotRoutes(app);
 registerShopifyCampaignRoutes(app);
 registerShopifyFactsRoutes(app);
+registerShopifyProfileRoutes(app);
 
 export default {
   fetch: app.fetch,

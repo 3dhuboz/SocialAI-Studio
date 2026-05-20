@@ -13,16 +13,20 @@ import {
   Badge,
   Bleed,
   Icon,
+  TextField,
+  Tag,
 } from '@shopify/polaris';
 import {
   SocialPostIcon, LinkIcon, LockIcon, TextIcon, ImageIcon, ClockIcon,
-  SocialAdIcon, CheckCircleIcon,
+  SocialAdIcon, CheckCircleIcon, AlertTriangleIcon,
 } from '@shopify/polaris-icons';
 import {
   getSocialStatus,
   disconnectSocial,
   exchangeFacebookToken,
   connectSocial,
+  getDenylist,
+  updateDenylist,
   ApiError,
   type SocialStatus,
   type FacebookPageOption,
@@ -245,6 +249,8 @@ export default function Settings() {
           onResetError={handleResetConnect}
         />
       )}
+
+      <BrandSafetyCard />
 
       <WhatWePublishCard />
     </BlockStack>
@@ -619,6 +625,208 @@ function WhatWePublishCard() {
             </Text>
           </InlineStack>
         </div>
+      </BlockStack>
+    </Card>
+  );
+}
+
+// ── Brand safety / forbidden-subjects denylist ──────────────────────────
+//
+// Backed by GET/PUT /api/shopify/profile/denylist → shopify_stores.profile.
+// The worker's content-safety pipeline (lib/profile-guards.ts) scans
+// captions, image prompts, and poster prompts against this list at compose,
+// critique, poster, and pre-publish time. Without populated entries the
+// pipeline runs unconstrained — so this card is the merchant's only path
+// to declare what should NEVER appear in AI-generated content for their
+// brand.
+//
+// UX:
+//   - Textarea holds the raw input (comma- OR newline-separated).
+//   - Submit splits/trims/lowercases/dedupes, sends to the worker, and
+//     receives the canonical list back. Chips below the input show that
+//     canonical form so the merchant sees exactly what the pipeline will
+//     scan against.
+//   - "Saved" state is sticky-but-resettable: visible toast for 4s, then
+//     reverts to a neutral state. Errors surface inline in a Banner.
+
+function normaliseDenylistInput(raw: string): string[] {
+  // Mirror the worker-side parseForbiddenSubjects tokeniser exactly.
+  // Diverging here would surprise merchants ("why did 'Alcohol' become
+  // 'alcohol' on save?" is a less-fun question than "why isn't my list
+  // applying?", but both are avoidable).
+  const out = new Set<string>();
+  for (const piece of raw.split(/[,\n]+/)) {
+    const trimmed = piece.trim().toLowerCase();
+    if (trimmed) out.add(trimmed);
+  }
+  return [...out];
+}
+
+function BrandSafetyCard() {
+  // load* = initial GET, save* = PUT round-trip. Separate flags so a slow
+  // save doesn't visually re-blank the chips while the merchant is reading.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [raw, setRaw] = useState('');
+  const [chips, setChips] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // Initial fetch. We deliberately swallow ApiError(401) into a generic
+  // error message — a 401 here means the session expired between the page
+  // mount and the card render, which is recoverable via the host App
+  // Bridge token refresh; the merchant doesn't need the raw status code.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await getDenylist(ctrl.signal);
+        setChips(res.forbiddenSubjects);
+        // Render existing entries as a comma-separated string. Newlines
+        // would be technically valid but the comma form survives copy/paste
+        // through more contexts (Slack threads, email replies, etc).
+        setRaw(res.forbiddenSubjects.join(', '));
+        setLoaded(true);
+      } catch (err) {
+        if ((err as any)?.name === 'AbortError') return;
+        const msg = err instanceof ApiError ? err.message : 'Could not load denylist.';
+        setLoadError(msg);
+        setLoaded(true);
+      }
+    })();
+    return () => ctrl.abort();
+  }, []);
+
+  // Auto-dismiss the "Saved" badge after a few seconds so it doesn't stick
+  // around as visual noise — but only while the user hasn't started a new
+  // edit, which clears savedAt anyway.
+  useEffect(() => {
+    if (!savedAt) return;
+    const t = setTimeout(() => setSavedAt(null), 4000);
+    return () => clearTimeout(t);
+  }, [savedAt]);
+
+  // Preview chips reflect what the textarea would tokenise to right now.
+  // Recomputed every render — cheap because the cap is 100 items and the
+  // regex split is O(n).
+  const previewChips = normaliseDenylistInput(raw);
+
+  // "Dirty" = preview differs from the most recently-saved canonical list.
+  // We compare on the previewChips → chips set rather than raw text so
+  // whitespace-only edits don't enable the Save button.
+  const isDirty = (() => {
+    if (previewChips.length !== chips.length) return true;
+    const set = new Set(chips);
+    for (const v of previewChips) if (!set.has(v)) return true;
+    return false;
+  })();
+
+  const handleSave = useCallback(async () => {
+    setSaveError(null);
+    setSaving(true);
+    try {
+      const res = await updateDenylist(previewChips);
+      setChips(res.forbiddenSubjects);
+      // Rewrite the raw input to the canonical form — visually confirms
+      // the normalisation and prevents the chip list from drifting if the
+      // user keeps editing.
+      setRaw(res.forbiddenSubjects.join(', '));
+      setSavedAt(Date.now());
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not save denylist.';
+      setSaveError(msg);
+    } finally {
+      setSaving(false);
+    }
+  }, [previewChips]);
+
+  if (!loaded) {
+    return (
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingMd">Brand safety</Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Spinner size="small" />
+            <Text as="span" variant="bodyMd" tone="subdued">Loading your denylist…</Text>
+          </InlineStack>
+        </BlockStack>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <BlockStack gap="100">
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={AlertTriangleIcon} tone="caution" />
+            <Text as="h3" variant="headingMd">Brand safety</Text>
+          </InlineStack>
+          <Text as="p" variant="bodyMd" tone="subdued">
+            Words or phrases that should NEVER appear in your AI-generated
+            captions, images, or posters. Scanned at compose, critique, and
+            pre-publish — anything that matches is blocked before it goes
+            live.
+          </Text>
+        </BlockStack>
+
+        {loadError && (
+          <Banner tone="warning">
+            <p>{loadError}</p>
+          </Banner>
+        )}
+        {saveError && (
+          <Banner tone="critical" onDismiss={() => setSaveError(null)}>
+            <p>{saveError}</p>
+          </Banner>
+        )}
+
+        <TextField
+          label="Denylist"
+          labelHidden
+          value={raw}
+          onChange={(v) => {
+            setRaw(v);
+            // Clear stale "Saved" badge as soon as the user starts editing —
+            // otherwise the green dot would lie about the state.
+            if (savedAt) setSavedAt(null);
+          }}
+          multiline={3}
+          autoComplete="off"
+          placeholder="e.g. alcohol, weapons, competitor brand names"
+          helpText="Separate entries with commas or new lines. Matching is case-insensitive and includes partial-word matches."
+        />
+
+        {previewChips.length > 0 && (
+          <BlockStack gap="200">
+            <Text as="p" variant="bodySm" tone="subdued">
+              The pipeline will scan against {previewChips.length} {previewChips.length === 1 ? 'entry' : 'entries'}:
+            </Text>
+            <InlineStack gap="100" wrap>
+              {previewChips.map((c) => (
+                <Tag key={c}>{c}</Tag>
+              ))}
+            </InlineStack>
+          </BlockStack>
+        )}
+
+        <InlineStack gap="200" blockAlign="center">
+          <Button
+            variant="primary"
+            onClick={handleSave}
+            loading={saving}
+            disabled={!isDirty || saving}
+          >
+            Save denylist
+          </Button>
+          {savedAt && (
+            <InlineStack gap="100" blockAlign="center">
+              <Icon source={CheckCircleIcon} tone="success" />
+              <Text as="span" variant="bodyMd" tone="success">Saved</Text>
+            </InlineStack>
+          )}
+        </InlineStack>
       </BlockStack>
     </Card>
   );

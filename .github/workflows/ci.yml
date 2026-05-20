@@ -72,6 +72,8 @@ jobs:
             registerShopifyPostersRoutes
             registerShopifyAutopilotRoutes
             registerShopifyCampaignRoutes
+            registerShopifyFactsRoutes
+            registerShopifyProfileRoutes
           )
           missing=()
           for fn in "${required_imports[@]}"; do

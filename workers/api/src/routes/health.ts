@@ -43,7 +43,7 @@ export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
       service: 'socialai-api',
       // Bump when Shopify route surface changes (new routes, removed routes,
       // path renames). Lets a human eyeball whether the live build is fresh.
-      shopify_manifest_version: 1,
+      shopify_manifest_version: 2,
       shopify_routes_present: true,
       // List the route groups baked into this build. If any of these are
       // missing on a future deploy, the endpoint either won't exist or this
@@ -57,6 +57,7 @@ export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
         'shopify-compose', 'shopify-posts', 'shopify-social-connect',
         'shopify-insights', 'shopify-post-quality', 'shopify-posters',
         'shopify-autopilot', 'shopify-campaigns', 'shopify-facts',
+        'shopify-profile',
       ],
     });
   });

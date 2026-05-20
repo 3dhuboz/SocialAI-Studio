@@ -604,3 +604,26 @@ export async function fetchAuthImageBlob(path: string, signal?: AbortSignal): Pr
   }
   return res.blob();
 }
+
+// ── Brand safety / denylist (schema_v25 shopify_stores.profile) ─────────
+// Surfaces the forbidden-subjects list the worker's content-safety pipeline
+// scans against (lib/profile-guards.ts → loadForbiddenSubjectsForShop).
+// PUT normalises (trim, lowercase, dedupe) before persisting; the response
+// echoes the canonical form so the UI can render exactly what the pipeline
+// will see at compose/critique/poster time.
+
+export interface DenylistResponse {
+  forbiddenSubjects: string[];
+}
+
+export async function getDenylist(signal?: AbortSignal) {
+  return apiFetch<DenylistResponse>('/api/shopify/profile/denylist', { method: 'GET', signal });
+}
+
+export async function updateDenylist(forbiddenSubjects: string[], signal?: AbortSignal) {
+  return apiFetch<DenylistResponse>('/api/shopify/profile/denylist', {
+    method: 'PUT',
+    body: JSON.stringify({ forbiddenSubjects }),
+    signal,
+  });
+}

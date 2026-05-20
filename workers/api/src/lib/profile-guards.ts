@@ -14,21 +14,58 @@
 import type { Env } from '../env';
 
 /**
- * Tokenise the owner-typed denylist string into a clean lowercase array.
- * Accepts commas, semicolons, or newlines as separators.
+ * Tokenise the owner-typed denylist into a clean lowercase array.
  *
- *   "pork, chicken\nLamb;  FISH " → ["pork", "chicken", "lamb", "fish"]
+ * Accepts two input shapes so the same parser handles both legacy and
+ * forward-looking storage formats:
  *
- * Empty / null / non-string input → []. Each token is sanity-capped at 60
- * chars to catch a paste-mistake where the entire profile description ends
- * up in this field.
+ *   - STRING: "pork, chicken\nLamb;  FISH " → ["pork", "chicken", "lamb", "fish"]
+ *     Comma, semicolon, or newline separators. This is how the main-app
+ *     users.profile / clients.profile column has stored the value since
+ *     2026-04 when the denylist shipped.
+ *
+ *   - ARRAY:  ["Pork", " chicken ", "lamb"] → ["pork", "chicken", "lamb"]
+ *     This is the shape the new Shopify denylist UI writes
+ *     (shopify_stores.profile.forbiddenSubjects, schema_v25) — JSON arrays
+ *     are a more natural fit for a token list than comma-joined strings.
+ *
+ * Either way: trim, lowercase, dedupe, drop empties, cap each token at 60
+ * chars to catch the paste-mistake-into-wrong-field case.
+ *
+ * Anything else (null, undefined, number, object, mixed-type array) → [].
  */
-export function parseForbiddenSubjects(raw?: string | null): string[] {
-  if (!raw || typeof raw !== 'string') return [];
-  return raw
-    .split(/[,\n;]/)
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0 && s.length < 60);
+export function parseForbiddenSubjects(raw?: unknown): string[] {
+  if (raw == null) return [];
+
+  // String form — legacy main-app callers + tests still pass this.
+  if (typeof raw === 'string') {
+    return [
+      ...new Set(
+        raw
+          .split(/[,\n;]/)
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => s.length > 0 && s.length < 60),
+      ),
+    ];
+  }
+
+  // Array form — preferred for new writes. We deliberately do NOT also
+  // split each entry on commas: the array is already the tokenised form,
+  // and re-splitting would silently merge multiple chips if a merchant
+  // accidentally pasted "a, b" into a single chip slot. Better to drop
+  // such items than to mis-tokenise them.
+  if (Array.isArray(raw)) {
+    return [
+      ...new Set(
+        raw
+          .filter((v): v is string => typeof v === 'string')
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => s.length > 0 && s.length < 60),
+      ),
+    ];
+  }
+
+  return [];
 }
 
 /**
