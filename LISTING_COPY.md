@@ -51,7 +51,7 @@ This document holds every piece of copy that goes into the Shopify App Store lis
 >
 > ### Pricing
 >
-> $29 USD / month after a 14-day free trial. No setup fees, no per-post costs, no extra charges for AI generation. Cancel anytime from Shopify Admin → Settings → Billing.
+> $29 USD / month after a 7-day free trial. No setup fees, no per-post costs, no extra charges for AI generation. Cancel anytime from Shopify Admin → Settings → Billing.
 >
 > ### Privacy & security
 >
@@ -66,7 +66,7 @@ This document holds every piece of copy that goes into the Shopify App Store lis
 1. **Generate product-specific social posts in seconds, not hours**
 2. **Auto-schedule to Facebook & Instagram without leaving Shopify admin**
 3. **AI visuals trained on your brand, not stock photo libraries**
-4. **14-day free trial, $29/mo after. Cancel anytime.**
+4. **7-day free trial, $29/mo after. Cancel anytime.**
 5. **Read-only access — we never see your customers or orders**
 
 ## Categories
@@ -79,7 +79,7 @@ Secondary: **Sales channels → Social media**
 - **Plan name**: SocialAI Studio Monthly
 - **Price**: $29.00 USD
 - **Billing interval**: Every 30 days
-- **Trial**: 14 days, free
+- **Trial**: 7 days, free
 - **Available on**: All Shopify plans
 
 ## Search keywords (max 10, 30 chars each)

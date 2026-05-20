@@ -32,7 +32,7 @@ import './home.css';
  *   - subscription not active → top-of-page Banner with "Start trial"
  *   - subscription active → no banner, full dashboard
  *
- * The 14-day free trial is configured in workers/api/src/lib/shopify-billing.ts.
+ * The 7-day free trial is configured in workers/api/src/lib/shopify-billing.ts.
  */
 
 type Phase = 'init' | 'ready' | 'subscribing' | 'error';
@@ -156,7 +156,7 @@ export function Home() {
     {
       id: 'subscription',
       label: 'Activate your subscription',
-      description: 'Start the 14-day free trial — no charge today.',
+      description: 'Start the 7-day free trial — no charge today.',
       done: !needsSubscribe && subStatus === 'ACTIVE',
       href: null, // The banner above handles this — no separate route.
     },
@@ -184,9 +184,9 @@ export function Home() {
     <BlockStack gap="500">
       {/* ── Billing banners (preserved from original) ───────────────── */}
       {needsSubscribe && (
-        <Banner tone="info" title="Start your 14-day free trial">
+        <Banner tone="info" title="Start your 7-day free trial">
           <BlockStack gap="300">
-            <p>SocialAI Studio for Shopify is $29 USD / month after a 14-day free trial. No charge today.</p>
+            <p>SocialAI Studio for Shopify is $29 USD / month after a 7-day free trial. No charge today.</p>
             <Button
               variant="primary"
               loading={phase === 'subscribing'}

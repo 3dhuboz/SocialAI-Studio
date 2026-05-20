@@ -71,8 +71,8 @@ describe('PLAN_INFO', () => {
     expect(PLAN_INFO.currency).toBe('USD');
   });
 
-  it('has a 14-day trial', () => {
-    expect(PLAN_INFO.trialDays).toBe(14);
+  it('has a 7-day trial', () => {
+    expect(PLAN_INFO.trialDays).toBe(7);
   });
 
   it('has a non-empty name and monthly interval', () => {

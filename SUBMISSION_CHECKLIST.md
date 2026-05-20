@@ -20,7 +20,7 @@ The state of every requirement Shopify checks during review, with file links to 
 | Webhook HMAC verification before parse | ✅ | All 6 webhooks verify against raw body before any JSON parse |
 | Webhook idempotency via `X-Shopify-Webhook-Id` | ✅ | `isDuplicateWebhook()` check before side effects |
 | Webhook responses < 5s (Shopify timeout) | ✅ | `ctx.waitUntil()` on non-critical audit writes |
-| Shopify Billing API integration | ✅ | $29 USD/mo, 14-day trial, dev-store `test: true` |
+| Shopify Billing API integration | ✅ | $29 USD/mo, 7-day trial, dev-store `test: true` |
 | `app_subscriptions/update` webhook | ✅ | Reconciles state changes into D1 |
 | Billing reconciliation cron (`*/15 * * * *`) | ✅ | Recovers from missed webhooks — [reconcile-subscriptions.ts](workers/api/src/cron/reconcile-subscriptions.ts) |
 | OAuth state CSRF protection | ✅ | One-shot nonces, atomic `DELETE … RETURNING` |

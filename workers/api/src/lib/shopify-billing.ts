@@ -1,7 +1,7 @@
 // Shopify Billing API client — creates + manages recurring app subscriptions.
 //
 // Phase 1b: wired into the OAuth callback so every install kicks off a
-// $29/mo USD subscription with a 14-day trial. On approval Shopify fires
+// $29/mo USD subscription with a 7-day trial. On approval Shopify fires
 // app_subscriptions/update which routes/shopify-oauth.ts catches and
 // reconciles into shopify_stores.subscription_status.
 //
@@ -18,7 +18,7 @@
 const SHOPIFY_API_VERSION = '2025-01';
 const PLAN_NAME = 'SocialAI Studio Monthly';
 const PLAN_PRICE_USD = 29.00;
-const TRIAL_DAYS = 14;
+const TRIAL_DAYS = 7;
 const PLAN_INTERVAL = 'EVERY_30_DAYS';
 
 // Dev store plan_name values that force test: true. Real merchant plans are
@@ -72,7 +72,7 @@ export function shouldForceTestMode(
 }
 
 /**
- * Create a $29/mo USD recurring app subscription with a 14-day trial.
+ * Create a $29/mo USD recurring app subscription with a 7-day trial.
  *
  * `returnUrl` is where Shopify sends the merchant browser after they
  * approve/decline the charge. Typically `${cfg.appUrl}/?shop=...&host=...`

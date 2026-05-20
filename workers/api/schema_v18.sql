@@ -9,7 +9,7 @@
 --   src/components/AdminShopifyStores.tsx    — Admin Shopify Stores panel
 --
 -- Pricing (set in lib/shopify-billing.ts, NOT here):
---   $29 USD / month, 14-day trial.
+--   $29 USD / month, 7-day trial.
 --
 -- subscription_status values (matches Shopify GraphQL AppSubscriptionStatus):
 --   PENDING     — created, awaiting merchant approval (sub-second state)
