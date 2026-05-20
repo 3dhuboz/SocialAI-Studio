@@ -17,9 +17,10 @@ import {
   Box,
   ButtonGroup,
   Tooltip,
+  Icon,
 } from '@shopify/polaris';
 import {
-  CalendarIcon, ChevronLeftIcon, ChevronRightIcon,
+  CalendarIcon, ChevronLeftIcon, ChevronRightIcon, WandIcon,
 } from '@shopify/polaris-icons';
 import {
   listPosts,
@@ -29,6 +30,7 @@ import {
   ApiError,
   type Post,
 } from '../api';
+import './calendar.css';
 
 /**
  * Calendar — the shop's posting schedule, with two views:
@@ -281,7 +283,10 @@ export default function Calendar() {
       <Card>
         <BlockStack gap="400">
           <InlineStack align="space-between" blockAlign="center" wrap={false}>
-            <Text as="h2" variant="headingLg">Calendar</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Icon source={CalendarIcon} tone="info" />
+              <Text as="h2" variant="headingLg">Calendar</Text>
+            </InlineStack>
             <InlineStack gap="200" blockAlign="center" wrap={false}>
               <Text as="span" variant="bodySm" tone="subdued">
                 {filtered.length} of {posts.length}
@@ -392,28 +397,49 @@ export default function Calendar() {
               />
 
               {posts.length === 0 && (
-                <EmptyState
-                  heading="No posts yet"
-                  image=""
-                >
-                  <p>Compose your first AI-generated post from the Products page.</p>
-                </EmptyState>
+                <div className="calendar-empty">
+                  <EmptyState
+                    heading="Nothing scheduled yet"
+                    image=""
+                    action={{
+                      content: 'Launch Autopilot',
+                      icon: WandIcon,
+                      url: '/autopilot',
+                    }}
+                    secondaryAction={{
+                      content: 'Compose a single post',
+                      url: '/products',
+                    }}
+                  >
+                    <p>
+                      Autopilot fills your calendar with a week of on-brand posts
+                      in two clicks. Or compose one product at a time.
+                    </p>
+                  </EmptyState>
+                </div>
               )}
             </>
           ) : (
             // ── List view (legacy) ───────────────────────────────────────
             filtered.length === 0 ? (
-              <EmptyState
-                heading={posts.length === 0 ? 'No posts yet' : 'No posts match this filter'}
-                action={posts.length === 0 ? undefined : { content: 'Show all', onAction: () => setFilter('All') }}
-                image=""
-              >
-                <p>
-                  {posts.length === 0
-                    ? 'Compose your first AI-generated post from the Products page.'
-                    : 'Try a different status filter.'}
-                </p>
-              </EmptyState>
+              <div className="calendar-empty">
+                <EmptyState
+                  heading={posts.length === 0 ? 'Nothing scheduled yet' : 'No posts match this filter'}
+                  action={posts.length === 0
+                    ? { content: 'Launch Autopilot', icon: WandIcon, url: '/autopilot' }
+                    : { content: 'Show all', onAction: () => setFilter('All') }}
+                  secondaryAction={posts.length === 0
+                    ? { content: 'Compose a single post', url: '/products' }
+                    : undefined}
+                  image=""
+                >
+                  <p>
+                    {posts.length === 0
+                      ? 'Autopilot fills your calendar with a week of on-brand posts in two clicks.'
+                      : 'Try a different status filter.'}
+                  </p>
+                </EmptyState>
+              </div>
             ) : (
               <ResourceList
                 resourceName={{ singular: 'post', plural: 'posts' }}
@@ -598,6 +624,7 @@ function MonthGrid({
           return (
             <div
               key={key}
+              className="calendar-day-cell"
               onDragOver={(e) => {
                 // Allow drop: default behaviour is to reject.
                 e.preventDefault();

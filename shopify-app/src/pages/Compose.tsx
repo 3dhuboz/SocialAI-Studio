@@ -3,13 +3,19 @@ import {
   Card, BlockStack, InlineStack, Text, Banner, Button, ButtonGroup,
   TextField, Select, Spinner, Thumbnail, Link as PolarisLink,
   Badge, InlineGrid, Box, Tooltip, ProgressBar, ButtonGroup as PolarisButtonGroup,
+  Icon,
 } from '@shopify/polaris';
+import {
+  WandIcon, ImageIcon, TextIcon, SocialAdIcon, ViewIcon,
+  RefreshIcon, SendIcon, SaveIcon, StarFilledIcon,
+} from '@shopify/polaris-icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   composePost, createPost, publishPostNow, critiqueImageCaption, fetchMe,
   ApiError, type ComposeResponse, type CritiqueResponse, type ShopInfo,
 } from '../api';
 import { LivePostPreview, type PreviewPlatform } from '../components/LivePostPreview';
+import './compose.css';
 
 /**
  * AI Compose page.
@@ -285,21 +291,29 @@ export default function Compose() {
       {/* ── Left column: editor ──────────────────────────────────────────── */}
       <BlockStack gap="400">
         {result?.product && (
-          <Card>
-            <BlockStack gap="100">
-              <Text as="h2" variant="headingMd">
-                Composing for: {result.product.title}
-              </Text>
-              {result.product.price && (
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Price: {result.product.price}
+          <div className="compose-hero">
+            <Box padding="400">
+              <BlockStack gap="200">
+                <InlineStack gap="200" blockAlign="center">
+                  <Icon source={WandIcon} tone="magic" />
+                  <Text as="span" variant="bodyMd" tone="subdued" fontWeight="medium">
+                    Composing for
+                  </Text>
+                </InlineStack>
+                <Text as="h2" variant="headingLg">
+                  {result.product.title}
                 </Text>
-              )}
-              <Text as="p" variant="bodySm" tone="subdued">
-                Model: {result.model_used}
-              </Text>
-            </BlockStack>
-          </Card>
+                <InlineStack gap="200" blockAlign="center">
+                  {result.product.price && (
+                    <Badge tone="info">{`Price: ${result.product.price}`}</Badge>
+                  )}
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {result.model_used}
+                  </Text>
+                </InlineStack>
+              </BlockStack>
+            </Box>
+          </div>
         )}
 
         {successNote && (
@@ -316,67 +330,82 @@ export default function Compose() {
 
         {/* ── Quality score card (only shows once we have an image+caption) ── */}
         {imageUrl && (
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h3" variant="headingMd">Quality score</Text>
-                {critiquing
-                  ? <InlineStack gap="100" blockAlign="center"><Spinner size="small" /><Text as="span" variant="bodySm" tone="subdued">Checking…</Text></InlineStack>
-                  : critique
-                    ? <Badge tone={critiqueTone}>{critiqueLabel}</Badge>
-                    : null}
-              </InlineStack>
-
-              {critique && (
-                <>
-                  <InlineStack gap="300" blockAlign="center">
-                    <Tooltip content="Image-vs-caption match score from a vision model — higher is better.">
-                      <Text as="p" variant="heading2xl">{critique.score}<Text as="span" variant="bodyLg" tone="subdued">/10</Text></Text>
-                    </Tooltip>
-                    <Box minWidth="100%">
-                      <ProgressBar
-                        progress={critique.score * 10}
-                        size="small"
-                        tone={critiqueTone === 'success' ? 'success' : critiqueTone === 'warning' ? 'critical' : 'primary'}
-                      />
-                    </Box>
+          <div className={
+            critique == null ? undefined
+            : critique.score >= 8 ? 'compose-quality-good'
+            : critique.score >= 5 ? 'compose-quality-mid'
+            : 'compose-quality-low'
+          }>
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Icon source={StarFilledIcon} tone={critiqueTone === 'success' ? 'success' : critiqueTone === 'warning' ? 'critical' : 'subdued'} />
+                    <Text as="h3" variant="headingMd">Quality score</Text>
                   </InlineStack>
-                  <Text as="p" variant="bodyMd" tone="subdued">{critique.reasoning}</Text>
-                  {critique.regenerate && (
-                    <Banner tone="warning">
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodyMd">
-                          The image and caption don't match well. Regenerating the image usually fixes this faster than tweaking the caption.
-                        </Text>
-                        <Button onClick={handleRegenerate} loading={regenerating}>
-                          Regenerate image
-                        </Button>
-                      </BlockStack>
-                    </Banner>
-                  )}
-                </>
-              )}
+                  {critiquing
+                    ? <InlineStack gap="100" blockAlign="center"><Spinner size="small" /><Text as="span" variant="bodySm" tone="subdued">Checking…</Text></InlineStack>
+                    : critique
+                      ? <Badge tone={critiqueTone}>{critiqueLabel}</Badge>
+                      : null}
+                </InlineStack>
 
-              {!critique && !critiquing && critiqueError && (
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Quality check unavailable: {critiqueError}
-                </Text>
-              )}
-            </BlockStack>
-          </Card>
+                {critique && (
+                  <>
+                    <InlineStack gap="300" blockAlign="center">
+                      <Tooltip content="Image-vs-caption match score from a vision model — higher is better.">
+                        <Text as="p" variant="heading2xl">{critique.score}<Text as="span" variant="bodyLg" tone="subdued">/10</Text></Text>
+                      </Tooltip>
+                      <Box minWidth="100%">
+                        <ProgressBar
+                          progress={critique.score * 10}
+                          size="small"
+                          tone={critiqueTone === 'success' ? 'success' : critiqueTone === 'warning' ? 'critical' : 'primary'}
+                        />
+                      </Box>
+                    </InlineStack>
+                    <Text as="p" variant="bodyMd" tone="subdued">{critique.reasoning}</Text>
+                    {critique.regenerate && (
+                      <Banner tone="warning">
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd">
+                            The image and caption don't match well. Regenerating the image usually fixes this faster than tweaking the caption.
+                          </Text>
+                          <Button icon={RefreshIcon} onClick={handleRegenerate} loading={regenerating}>
+                            Regenerate image
+                          </Button>
+                        </BlockStack>
+                      </Banner>
+                    )}
+                  </>
+                )}
+
+                {!critique && !critiquing && critiqueError && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Quality check unavailable: {critiqueError}
+                  </Text>
+                )}
+              </BlockStack>
+            </Card>
+          </div>
         )}
 
         <Card>
           <BlockStack gap="400">
-            <Text as="h3" variant="headingMd">Image</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Icon source={ImageIcon} tone="info" />
+              <Text as="h3" variant="headingMd">Image</Text>
+            </InlineStack>
             {imageUrl ? (
               <InlineStack gap="400" blockAlign="start">
-                <Thumbnail source={imageUrl} alt="Generated post image" size="large" />
+                <div className="compose-image-wrap">
+                  <Thumbnail source={imageUrl} alt="Generated post image" size="large" />
+                </div>
                 <BlockStack gap="200">
                   <Text as="p" variant="bodySm" tone="subdued">
                     Not quite right? Regenerate to try another shot.
                   </Text>
-                  <Button onClick={handleRegenerate} loading={regenerating}>
+                  <Button icon={RefreshIcon} onClick={handleRegenerate} loading={regenerating}>
                     Regenerate image
                   </Button>
                 </BlockStack>
@@ -391,7 +420,10 @@ export default function Compose() {
 
         <Card>
           <BlockStack gap="400">
-            <Text as="h3" variant="headingMd">Caption</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Icon source={TextIcon} tone="info" />
+              <Text as="h3" variant="headingMd">Caption</Text>
+            </InlineStack>
             <TextField
               label="Caption"
               labelHidden
@@ -406,7 +438,10 @@ export default function Compose() {
 
         <Card>
           <BlockStack gap="400">
-            <Text as="h3" variant="headingMd">Publish to</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Icon source={SocialAdIcon} tone="info" />
+              <Text as="h3" variant="headingMd">Publish to</Text>
+            </InlineStack>
             <Select
               label="Platform"
               labelHidden
@@ -417,6 +452,7 @@ export default function Compose() {
             <ButtonGroup>
               <Button
                 variant="primary"
+                icon={SaveIcon}
                 onClick={handleSaveDraft}
                 loading={phase === 'saving'}
                 disabled={phase === 'saving' || regenerating}
@@ -424,6 +460,7 @@ export default function Compose() {
                 Save as draft
               </Button>
               <Button
+                icon={SendIcon}
                 onClick={handlePublishNow}
                 loading={phase === 'saving'}
                 disabled={phase === 'saving' || regenerating}
@@ -440,7 +477,10 @@ export default function Compose() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h3" variant="headingMd">Live preview</Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Icon source={ViewIcon} tone="info" />
+                <Text as="h3" variant="headingMd">Live preview</Text>
+              </InlineStack>
               <PolarisButtonGroup variant="segmented">
                 <Button
                   pressed={previewPlatform === 'facebook'}

@@ -7,13 +7,17 @@ import {
   Spinner,
   Banner,
   Button,
-  List,
   Box,
   Divider,
   Thumbnail,
   Badge,
   Bleed,
+  Icon,
 } from '@shopify/polaris';
+import {
+  SocialPostIcon, LinkIcon, LockIcon, TextIcon, ImageIcon, ClockIcon,
+  SocialAdIcon, CheckCircleIcon,
+} from '@shopify/polaris-icons';
 import {
   getSocialStatus,
   disconnectSocial,
@@ -24,6 +28,7 @@ import {
   type FacebookPageOption,
 } from '../api';
 import { initFB, loginFB } from '../fb-sdk';
+import './settings.css';
 
 /**
  * Settings — Facebook + Instagram connect for the current Shopify shop.
@@ -202,12 +207,15 @@ export default function Settings() {
   }
 
   return (
-    <BlockStack gap="400">
+    <BlockStack gap="500">
       {error && (
         <Banner tone="warning" onDismiss={() => setError(null)}>
           <p>{error}</p>
         </Banner>
       )}
+
+      {/* ── Hero — connection status at a glance ───────────────────── */}
+      <SettingsHero status={status} />
 
       {status.connected ? (
         <ConnectedCard
@@ -238,6 +246,44 @@ export default function Settings() {
   );
 }
 
+// ── Hero — connection status badge ───────────────────────────────────────
+
+function SettingsHero({ status }: { status: SocialStatus }) {
+  const connected = status.connected;
+  return (
+    <div className={connected ? 'settings-hero-success' : 'settings-hero'}>
+      <Box padding="500">
+        <InlineStack gap="400" blockAlign="center" wrap={false}>
+          <Box>
+            <Icon
+              source={connected ? CheckCircleIcon : SocialPostIcon}
+              tone={connected ? 'success' : 'info'}
+            />
+          </Box>
+          <BlockStack gap="100">
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="h1" variant="headingXl">
+                {connected ? 'Facebook connected' : 'Connect Facebook & Instagram'}
+              </Text>
+              {connected && (
+                <Badge tone="success">Live</Badge>
+              )}
+              {!connected && (
+                <Badge tone="attention">Setup required</Badge>
+              )}
+            </InlineStack>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              {connected
+                ? `Publishing through ${status.facebookPageName ?? 'your Page'}${status.instagramConnected ? ' + Instagram' : ''}.`
+                : 'Link a Facebook Page so SocialAI can publish posts and pull engagement stats.'}
+            </Text>
+          </BlockStack>
+        </InlineStack>
+      </Box>
+    </div>
+  );
+}
+
 // ── Disconnected state ───────────────────────────────────────────────────
 
 interface ConnectCardProps {
@@ -259,12 +305,13 @@ function ConnectCard({ step, error, onConnect, onResetError }: ConnectCardProps)
     <Card>
       <BlockStack gap="400">
         <BlockStack gap="200">
-          <Text as="h2" variant="headingLg">Connect Facebook &amp; Instagram</Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={LinkIcon} tone="info" />
+            <Text as="h2" variant="headingLg">Link your Page</Text>
+          </InlineStack>
           <Text as="p" variant="bodyMd" tone="subdued">
-            Link your Facebook Page (and connected Instagram Business account, if
-            you have one) so SocialAI Studio can publish drafts directly from
-            this app. We never store passwords — only an access token from
-            Facebook, scoped to your Page.
+            Connect your Facebook Page (and Instagram Business account, if linked)
+            so SocialAI can publish drafts directly from this app.
           </Text>
         </BlockStack>
 
@@ -274,11 +321,12 @@ function ConnectCard({ step, error, onConnect, onResetError }: ConnectCardProps)
           </Banner>
         )}
 
-        <Box>
+        <InlineStack gap="200" blockAlign="center" wrap>
           <Button
             variant="primary"
             tone="success"
             size="large"
+            icon={LinkIcon}
             loading={loading}
             disabled={loading}
             onClick={onConnect}
@@ -286,7 +334,13 @@ function ConnectCard({ step, error, onConnect, onResetError }: ConnectCardProps)
           >
             {buttonLabel}
           </Button>
-        </Box>
+          <InlineStack gap="100" blockAlign="center">
+            <Icon source={LockIcon} tone="subdued" />
+            <Text as="span" variant="bodySm" tone="subdued">
+              We never store passwords — only a scoped access token from Facebook.
+            </Text>
+          </InlineStack>
+        </InlineStack>
 
         <Banner tone="info">
           <BlockStack gap="200">
@@ -350,36 +404,38 @@ function PageRow({
   page, disabled, onClick, isLast,
 }: { page: FacebookPageOption; disabled: boolean; onClick: () => void; isLast: boolean }) {
   return (
-    <Box
-      paddingBlock="300"
-      paddingInline="400"
-      borderBlockEndWidth={isLast ? '0' : '025'}
-      borderColor="border"
-    >
-      <InlineStack align="space-between" blockAlign="center" wrap={false} gap="400">
-        <InlineStack gap="300" blockAlign="center" wrap={false}>
-          {page.picture?.data?.url ? (
-            <Thumbnail source={page.picture.data.url} alt={page.name} size="small" />
-          ) : (
-            <Thumbnail source="" alt={page.name} size="small" />
-          )}
-          <BlockStack gap="050">
-            <Text as="span" variant="bodyMd" fontWeight="semibold">{page.name}</Text>
-            <InlineStack gap="200">
-              {page.category && (
-                <Text as="span" variant="bodySm" tone="subdued">{page.category}</Text>
-              )}
-              {page.instagramBusinessAccountId && (
-                <Badge tone="info">Instagram linked</Badge>
-              )}
-            </InlineStack>
-          </BlockStack>
+    <div className="settings-page-row">
+      <Box
+        paddingBlock="300"
+        paddingInline="400"
+        borderBlockEndWidth={isLast ? '0' : '025'}
+        borderColor="border"
+      >
+        <InlineStack align="space-between" blockAlign="center" wrap={false} gap="400">
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            {page.picture?.data?.url ? (
+              <Thumbnail source={page.picture.data.url} alt={page.name} size="small" />
+            ) : (
+              <Thumbnail source="" alt={page.name} size="small" />
+            )}
+            <BlockStack gap="050">
+              <Text as="span" variant="bodyMd" fontWeight="semibold">{page.name}</Text>
+              <InlineStack gap="200">
+                {page.category && (
+                  <Text as="span" variant="bodySm" tone="subdued">{page.category}</Text>
+                )}
+                {page.instagramBusinessAccountId && (
+                  <Badge tone="info">Instagram linked</Badge>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </InlineStack>
+          <Button onClick={onClick} disabled={disabled} accessibilityLabel={`Connect to ${page.name}`}>
+            Connect
+          </Button>
         </InlineStack>
-        <Button onClick={onClick} disabled={disabled} accessibilityLabel={`Connect to ${page.name}`}>
-          Connect
-        </Button>
-      </InlineStack>
-    </Box>
+      </Box>
+    </div>
   );
 }
 
@@ -455,33 +511,59 @@ function ConnectedCard({ status, disconnecting, onDisconnect, onSwitchPage, swit
 // ── What we'll publish ──────────────────────────────────────────────────
 
 function WhatWePublishCard() {
+  const items = [
+    {
+      icon: TextIcon,
+      title: 'Caption',
+      desc: 'The text you wrote or generated.',
+    },
+    {
+      icon: ImageIcon,
+      title: 'Image',
+      desc: 'The product photo or AI-generated graphic attached to the post.',
+    },
+    {
+      icon: ClockIcon,
+      title: 'Scheduled time',
+      desc: 'The exact moment you picked — no surprises.',
+    },
+    {
+      icon: SocialAdIcon,
+      title: 'Target platforms',
+      desc: 'Facebook only, Instagram only, or both — your call per post.',
+    },
+  ];
   return (
     <Card>
-      <BlockStack gap="300">
-        <Text as="h3" variant="headingMd">What we'll publish</Text>
-        <Text as="p" variant="bodyMd" tone="subdued">
-          Every post is composed by you (or AI-assisted from a Product) and
-          reviewed before it goes anywhere. SocialAI Studio only publishes
-          the fields you saw at compose time:
-        </Text>
-        <List type="bullet">
-          <List.Item>
-            <Text as="span" variant="bodyMd"><b>Caption.</b> The text you wrote or generated.</Text>
-          </List.Item>
-          <List.Item>
-            <Text as="span" variant="bodyMd"><b>Image.</b> The product photo or AI-generated graphic attached to the post.</Text>
-          </List.Item>
-          <List.Item>
-            <Text as="span" variant="bodyMd"><b>Scheduled time.</b> The exact moment you picked — no surprises.</Text>
-          </List.Item>
-          <List.Item>
-            <Text as="span" variant="bodyMd"><b>Target platforms.</b> Facebook only, Instagram only, or both — your call per post.</Text>
-          </List.Item>
-        </List>
-        <Text as="p" variant="bodySm" tone="subdued">
-          We never publish without your explicit save. You can edit or delete
-          any Draft or Scheduled post from the Calendar.
-        </Text>
+      <BlockStack gap="400">
+        <BlockStack gap="100">
+          <Text as="h3" variant="headingMd">What we'll publish</Text>
+          <Text as="p" variant="bodyMd" tone="subdued">
+            Every post is composed by you (or AI-assisted) and reviewed before
+            it goes anywhere. SocialAI Studio only publishes the fields you
+            saw at compose time:
+          </Text>
+        </BlockStack>
+        <BlockStack gap="100">
+          {items.map((it) => (
+            <div key={it.title} className="settings-publish-row">
+              <InlineStack gap="300" blockAlign="center" wrap={false}>
+                <Icon source={it.icon} tone="subdued" />
+                <BlockStack gap="050">
+                  <Text as="span" variant="bodyMd" fontWeight="semibold">{it.title}</Text>
+                  <Text as="span" variant="bodySm" tone="subdued">{it.desc}</Text>
+                </BlockStack>
+              </InlineStack>
+            </div>
+          ))}
+        </BlockStack>
+        <InlineStack gap="200" blockAlign="center">
+          <Icon source={LockIcon} tone="subdued" />
+          <Text as="p" variant="bodySm" tone="subdued">
+            We never publish without your explicit save. You can edit or delete
+            any Draft or Scheduled post from the Calendar.
+          </Text>
+        </InlineStack>
       </BlockStack>
     </Card>
   );

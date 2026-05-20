@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Card, BlockStack, InlineStack, Text, Banner, Button, ResourceList,
-  ResourceItem, Thumbnail, Badge, EmptyState, SkeletonBodyText,
+  ResourceItem, Thumbnail, Badge, EmptyState, SkeletonBodyText, Icon,
 } from '@shopify/polaris';
+import {
+  ProductIcon, RefreshIcon, MagicIcon,
+} from '@shopify/polaris-icons';
 import { useNavigate } from 'react-router-dom';
 import {
   listProducts, syncProducts, ApiError, type Product,
@@ -120,7 +123,10 @@ export default function Products() {
         <BlockStack gap="300">
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
-              <Text as="h2" variant="headingLg">Products</Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Icon source={ProductIcon} tone="info" />
+                <Text as="h2" variant="headingLg">Products</Text>
+              </InlineStack>
               <Text as="p" variant="bodySm" tone="subdued">
                 {lastSyncedAt
                   ? `Last synced ${new Date(lastSyncedAt).toLocaleString()}`
@@ -129,6 +135,7 @@ export default function Products() {
             </BlockStack>
             <Button
               variant="primary"
+              icon={RefreshIcon}
               loading={syncing}
               onClick={handleSync}
             >
@@ -153,7 +160,7 @@ export default function Products() {
         ) : products.length === 0 ? (
           <EmptyState
             heading="No products synced yet"
-            action={{ content: 'Sync now', onAction: handleSync, loading: syncing }}
+            action={{ content: 'Sync now', icon: RefreshIcon, onAction: handleSync, loading: syncing }}
             image=""
           >
             <Text as="p" variant="bodyMd">
@@ -226,7 +233,7 @@ function ProductRow({ product, onCompose }: { product: Product; onCompose: () =>
             inside it (including the button). Polaris doesn't pass the event
             into Button.onClick, so we can't stopPropagation here — but firing
             twice is harmless since navigate() is idempotent. */}
-        <Button variant="primary" onClick={onCompose}>
+        <Button variant="primary" icon={MagicIcon} onClick={onCompose}>
           Compose post
         </Button>
       </InlineStack>

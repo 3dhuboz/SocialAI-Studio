@@ -1,0 +1,26 @@
+/* Calendar page polish — hover on day cells, lift on chips. */
+
+/* Day cells get a subtle hover so the grid feels interactive. The
+   drop-over highlight (drag-rescheduling) is handled inline in JSX
+   via dragOverKey, so this hover only applies when NOT dragging. */
+.calendar-day-cell {
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.calendar-day-cell:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* Chips get a transform on hover so they feel grabbable. The cursor
+   already flips to grab via JSX styles. */
+.calendar-chip {
+  transition: transform 120ms ease;
+}
+.calendar-chip:hover {
+  transform: translateY(-1px);
+}
+
+/* Empty state container — bit of breathing room so the EmptyState
+   feels intentional, not orphaned. */
+.calendar-empty {
+  padding: 32px 0;
+}

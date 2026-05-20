@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Card, BlockStack, InlineStack, InlineGrid, Text, Banner, Button, ButtonGroup,
-  TextField, Select, Spinner, Box, Badge, Modal, EmptyState, Tooltip,
+  TextField, Select, Spinner, Box, Badge, Modal, EmptyState, Tooltip, Icon,
 } from '@shopify/polaris';
+import {
+  ImageIcon, WandIcon, ExportIcon, DeleteIcon,
+} from '@shopify/polaris-icons';
 import {
   listPosters, generatePoster, deletePoster, fetchAuthImageBlob,
   ApiError, type ShopifyPoster,
 } from '../api';
+import './gallery.css';
 
 /**
  * Posters — AI-generated marketing graphics gallery.
@@ -114,7 +118,10 @@ export default function Posters() {
       {/* ── Header ────────────────────────────────────────────────────── */}
       <InlineStack align="space-between" blockAlign="center">
         <BlockStack gap="100">
-          <Text as="h2" variant="headingLg">Posters</Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={ImageIcon} tone="magic" />
+            <Text as="h2" variant="headingLg">Posters</Text>
+          </InlineStack>
           <Text as="p" variant="bodySm" tone="subdued">
             AI-generated marketing graphics. Download to use anywhere, or
             attach when composing a post.
@@ -132,9 +139,13 @@ export default function Posters() {
       )}
 
       {/* ── Create form ──────────────────────────────────────────────── */}
+      <div className="gallery-generate-hero">
       <Card>
         <BlockStack gap="400">
-          <Text as="h3" variant="headingMd">Generate a new poster</Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={WandIcon} tone="magic" />
+            <Text as="h3" variant="headingMd">Generate a new poster</Text>
+          </InlineStack>
 
           <TextField
             label="Prompt"
@@ -176,6 +187,7 @@ export default function Posters() {
             <Button
               variant="primary"
               size="large"
+              icon={WandIcon}
               onClick={handleGenerate}
               loading={generating}
               disabled={generating || !prompt.trim()}
@@ -191,6 +203,7 @@ export default function Posters() {
           )}
         </BlockStack>
       </Card>
+      </div>
 
       {/* ── Gallery ──────────────────────────────────────────────────── */}
       {phase === 'loading' ? (
@@ -213,7 +226,11 @@ export default function Posters() {
             heading="No posters yet"
             image=""
           >
-            <p>Use the form above to generate your first AI poster.</p>
+            <p>
+              Write a prompt above and hit <strong>Generate poster</strong> to
+              create your first AI-designed graphic. Use them on socials, in
+              emails, or as ad creative.
+            </p>
           </EmptyState>
         </Card>
       ) : (
@@ -319,62 +336,66 @@ function PosterCard({ poster, onDelete }: PosterCardProps) {
     : '1 / 1';
 
   return (
-    <Card padding="0">
-      <BlockStack gap="0">
-        <Box
-          background="bg-surface-secondary"
-          minHeight="180px"
-        >
-          {imgError ? (
-            <Box padding="400">
-              <Text as="p" variant="bodySm" tone="critical">{imgError}</Text>
-            </Box>
-          ) : blobUrl ? (
-            <img
-              src={blobUrl}
-              alt={poster.prompt}
-              style={{
-                width: '100%',
-                aspectRatio: aspectCss,
-                objectFit: 'cover',
-                display: 'block',
-              }}
-            />
-          ) : (
-            <Box padding="800">
-              <BlockStack gap="200" align="center" inlineAlign="center">
-                <Spinner accessibilityLabel="Loading image" size="small" />
-              </BlockStack>
-            </Box>
-          )}
-        </Box>
-        <Box padding="300">
-          <BlockStack gap="200">
-            <Text as="p" variant="bodySm" truncate>
-              {poster.prompt}
-            </Text>
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="span" variant="bodySm" tone="subdued">{created}</Text>
-              <ButtonGroup>
-                <Button
-                  variant="plain"
-                  onClick={handleDownload}
-                  disabled={!blobUrl}
-                >
-                  Download
-                </Button>
-                <Button
-                  variant="plain"
-                  tone="critical"
-                  onClick={onDelete}
-                >
-                  Delete
-                </Button>
-              </ButtonGroup>
-            </InlineStack>
-          </BlockStack>
-        </Box>
-      </BlockStack>
-    </Card>
+    <div className="gallery-card">
+      <Card padding="0">
+        <BlockStack gap="0">
+          <Box
+            background="bg-surface-secondary"
+            minHeight="180px"
+          >
+            {imgError ? (
+              <Box padding="400">
+                <Text as="p" variant="bodySm" tone="critical">{imgError}</Text>
+              </Box>
+            ) : blobUrl ? (
+              <img
+                src={blobUrl}
+                alt={poster.prompt}
+                style={{
+                  width: '100%',
+                  aspectRatio: aspectCss,
+                  objectFit: 'cover',
+                  display: 'block',
+                }}
+              />
+            ) : (
+              <Box padding="800">
+                <BlockStack gap="200" align="center" inlineAlign="center">
+                  <Spinner accessibilityLabel="Loading image" size="small" />
+                </BlockStack>
+              </Box>
+            )}
+          </Box>
+          <Box padding="300">
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm" truncate>
+                {poster.prompt}
+              </Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="span" variant="bodySm" tone="subdued">{created}</Text>
+                <ButtonGroup>
+                  <Button
+                    variant="plain"
+                    icon={ExportIcon}
+                    onClick={handleDownload}
+                    disabled={!blobUrl}
+                  >
+                    Download
+                  </Button>
+                  <Button
+                    variant="plain"
+                    tone="critical"
+                    icon={DeleteIcon}
+                    onClick={onDelete}
+                  >
+                    Delete
+                  </Button>
+                </ButtonGroup>
+              </InlineStack>
+            </BlockStack>
+          </Box>
+        </BlockStack>
+      </Card>
+    </div>
   );
 }

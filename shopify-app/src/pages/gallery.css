@@ -1,0 +1,27 @@
+/* Shared polish for gallery/list pages: Posters, Campaigns, Products.
+   Same hover/lift vocabulary as the other polished pages — kept in one
+   file so the three list pages aren't each declaring their own. */
+
+/* Poster cards lift on hover and grow a subtle shadow. */
+.gallery-card {
+  transition: transform 160ms ease, box-shadow 160ms ease;
+  border-radius: 12px;
+}
+.gallery-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* ResourceList rows already have a built-in hover from Polaris, but we
+   add a soft outline on focus so keyboard nav is obvious. */
+.gallery-row:focus-within {
+  outline: 2px solid var(--p-color-border-focus);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* Tinted hero for the Posters page generate form. */
+.gallery-generate-hero {
+  background: var(--p-color-bg-surface-magic-subdued, #f4f1ff);
+  border-radius: 12px;
+}

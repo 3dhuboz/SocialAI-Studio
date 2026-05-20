@@ -1,0 +1,31 @@
+/* Settings page polish — hero, page-picker rows, publish-list icons. */
+
+.settings-hero {
+  background: var(--p-color-bg-surface-info-subdued, #ebf3ff);
+  border-radius: 12px;
+}
+.settings-hero-success {
+  background: var(--p-color-bg-surface-success-subdued, #e8f5e8);
+  border-radius: 12px;
+}
+
+/* Page-picker rows get a clickable hover. The button inside still
+   carries the primary action; we make the whole row feel selectable. */
+.settings-page-row {
+  border-radius: 8px;
+  transition: background 120ms ease;
+}
+.settings-page-row:hover {
+  background: var(--p-color-bg-surface-hover, #f6f6f7);
+}
+
+/* Publish-list rows — each item has an icon on the left, lift slightly
+   on hover so the list scans as "this is what we'll do with your data." */
+.settings-publish-row {
+  border-radius: 8px;
+  padding: 8px 12px;
+  transition: background 120ms ease;
+}
+.settings-publish-row:hover {
+  background: var(--p-color-bg-surface-hover, #f6f6f7);
+}

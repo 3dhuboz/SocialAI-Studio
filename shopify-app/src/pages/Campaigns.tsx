@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Card, BlockStack, InlineStack, Text, Banner, Button, Spinner, Modal,
   TextField, Badge, EmptyState, ResourceList, ResourceItem, Box, ButtonGroup,
+  Icon,
 } from '@shopify/polaris';
+import {
+  MegaphoneIcon, PlusIcon, EditIcon, DeleteIcon,
+} from '@shopify/polaris-icons';
 import {
   listCampaigns, createCampaign, updateCampaign, deleteCampaign,
   ApiError, type ShopifyCampaign,
@@ -170,7 +174,10 @@ export default function Campaigns() {
     <BlockStack gap="400">
       <InlineStack align="space-between" blockAlign="center">
         <BlockStack gap="100">
-          <Text as="h2" variant="headingLg">Campaigns</Text>
+          <InlineStack gap="200" blockAlign="center">
+            <Icon source={MegaphoneIcon} tone="magic" />
+            <Text as="h2" variant="headingLg">Campaigns</Text>
+          </InlineStack>
           <Text as="p" variant="bodySm" tone="subdued">
             Set a date range, goal, and theme. The AI weaves them into every
             post Autopilot generates during the window.
@@ -178,7 +185,7 @@ export default function Campaigns() {
         </BlockStack>
         <InlineStack gap="200">
           {activeCount > 0 && <Badge tone="success">{`${activeCount} active`}</Badge>}
-          <Button variant="primary" onClick={openCreate}>New campaign</Button>
+          <Button variant="primary" icon={PlusIcon} onClick={openCreate}>New campaign</Button>
         </InlineStack>
       </InlineStack>
 
@@ -192,7 +199,7 @@ export default function Campaigns() {
         <Card>
           <EmptyState
             heading="No campaigns yet"
-            action={{ content: 'New campaign', onAction: openCreate }}
+            action={{ content: 'New campaign', icon: PlusIcon, onAction: openCreate }}
             image=""
           >
             <p>
@@ -225,8 +232,8 @@ export default function Campaigns() {
                       )}
                     </InlineStack>
                     <ButtonGroup>
-                      <Button onClick={() => openEdit(c)} size="slim">Edit</Button>
-                      <Button onClick={() => setDeleteId(c.id)} size="slim" tone="critical">Delete</Button>
+                      <Button onClick={() => openEdit(c)} icon={EditIcon} size="slim">Edit</Button>
+                      <Button onClick={() => setDeleteId(c.id)} icon={DeleteIcon} size="slim" tone="critical">Delete</Button>
                     </ButtonGroup>
                   </InlineStack>
 
