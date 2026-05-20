@@ -16,8 +16,8 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
-import { getAuthUserId, requireAdmin } from '../auth';
-import { backfillImagesForUser } from '../lib/backfill';
+import { getAuthUserId, requireAdmin, isRateLimited } from '../auth';
+import { backfillImagesForUser, backfillImagesForPastDrafts } from '../lib/backfill';
 import { critiqueImageInternal } from '../lib/critique';
 import { resolveArchetypeSlug } from '../lib/archetypes';
 import { generateImageWithGuardrails } from '../lib/image-gen';
@@ -33,6 +33,45 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     return c.json(await backfillImagesForUser(c.env, uid));
+  });
+
+  /** POST /api/posts/regen-past-drafts
+   *
+   *  Generate + critique images for past-dated or unscheduled Draft posts.
+   *  User-triggerable (auth-gated + rate-limited at 3/min, tighter than the
+   *  effectively-unlimited admin sibling above because each call burns up to
+   *  ~$0.45 in FLUX + critique credits).
+   *
+   *  Body: { clientId?: string|null, limit?: number (1-30, default 10) }
+   *  Wired into /api/recommendations/auto-fix-checklist via the
+   *  REGEN_DRAFT_IMAGES handler — sniffer + classifier route image-quality
+   *  checklist items here. Can also be called directly from the frontend.
+   *
+   *  Idempotent: the inner SELECT skips rows that already have an image_url,
+   *  so a retry after partial success picks up only the still-missing ones.
+   */
+  app.post('/api/posts/regen-past-drafts', async (c) => {
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    if (!uid) return c.json({ error: 'Unauthorized' }, 401);
+    if (await isRateLimited(c.env.DB, `pastdraft-regen:${uid}`, 3)) {
+      return c.json({ error: 'Rate limit: 3 past-draft regen runs per minute' }, 429);
+    }
+    const body = await c.req.json().catch(() => ({})) as {
+      clientId?: string | null;
+      limit?: number;
+    };
+    const clientId = body.clientId ?? null;
+    const limit = Math.min(Math.max(body.limit ?? 10, 1), 30);
+
+    // Agency tenant guard — mirror the auto-fix-checklist route's pattern.
+    if (clientId) {
+      const owned = await c.env.DB.prepare(
+        `SELECT id FROM clients WHERE id = ? AND user_id = ?`
+      ).bind(clientId, uid).first<{ id: string }>();
+      if (!owned) return c.json({ error: 'clientId not found or not owned by caller' }, 403);
+    }
+
+    return c.json(await backfillImagesForPastDrafts(c.env, uid, { clientId, limit }));
   });
 
   // Admin variant: backfill across every workspace. Gated by FACTS_BOOTSTRAP_SECRET.

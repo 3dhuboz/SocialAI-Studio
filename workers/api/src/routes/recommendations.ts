@@ -34,6 +34,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
+import { backfillImagesForPastDrafts } from '../lib/backfill';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ type ChecklistKind =
   | 'AUDIT_DB'
   | 'AUTO_FIX_SCHEDULE'
   | 'SUGGEST_REWRITE'
+  | 'REGEN_DRAFT_IMAGES'
   | 'MANUAL_ONLY';
 
 /** Shape returned to the frontend per item. `payload` carries kind-specific
@@ -90,6 +92,7 @@ KINDS:
 - AUDIT_DB: needs only our internal database (posting times, scheduled posts count, recent engagement scores). Examples: "Audit posting times", "Check if any posts are scheduled outside business hours".
 - AUTO_FIX_SCHEDULE: needs to adjust scheduled post times. Examples: "Move posts from weekends to weekdays", "Reschedule posts into business hours", "Verify posting times align with [...] business hours".
 - SUGGEST_REWRITE: page description, CTA, or copy needs improvement. Examples: "Audit page description and CTA", "Rewrite page bio for clarity", "Update CTA to mention App Development".
+- REGEN_DRAFT_IMAGES: regenerate missing or low-quality images for past-dated Draft posts (the prewarm cron skips Drafts on purpose, so the user has to ask). Examples: "Generate images for unscheduled draft posts", "Fix missing images on backlog posts", "Regenerate poor-quality post images".
 - MANUAL_ONLY: requires money, human judgement, or write-perms we don't have. Examples: "Boost a post with $5-10 budget", "Reach out to past customers", "Contact Meta support".
 
 Return ONLY valid JSON, no markdown, no prose:
@@ -140,7 +143,7 @@ The "kinds" array MUST have exactly ${items.length} entries, in the same order a
 function normaliseKind(raw: string, item: string): ChecklistKind {
   const up = raw.toUpperCase().trim();
   if (up === 'AUDIT_FB_PAGE' || up === 'AUDIT_DB' || up === 'AUTO_FIX_SCHEDULE'
-    || up === 'SUGGEST_REWRITE' || up === 'MANUAL_ONLY') {
+    || up === 'SUGGEST_REWRITE' || up === 'REGEN_DRAFT_IMAGES' || up === 'MANUAL_ONLY') {
     return up;
   }
   return sniffKind(item);
@@ -158,6 +161,11 @@ function sniffKind(item: string): ChecklistKind {
   }
   if (/(\bdescription\b|\bcta\b|call.?to.?action|\bbio\b|\btagline\b|\brewrite\b|\bcopy\b)/.test(s)) {
     return 'SUGGEST_REWRITE';
+  }
+  // Image-quality items take priority over the schedule sniffer because
+  // "regenerate" and "image" tokens are more specific than "schedule".
+  if (/(missing image|no image|regenerate.*image|image.*regenerate|generate.*image|image.*draft|draft.*image|image.*quality|poor.*image|fix.*image)/.test(s)) {
+    return 'REGEN_DRAFT_IMAGES';
   }
   if (/(posting time|\bschedule\b|business hours|move post|\breschedule\b|time slot)/.test(s)) {
     return 'AUTO_FIX_SCHEDULE';
@@ -509,6 +517,63 @@ Rewrite the description to be clearer, more specific, and end with a real CTA.`;
   };
 }
 
+/** Regenerate images for past-dated or unscheduled Draft posts. Wraps the
+ *  shared `backfillImagesForPastDrafts` lib helper with a tighter per-call
+ *  cap (5 vs the route default of 10) — auto-fix may chain multiple checklist
+ *  items in one request, and a 5-cap per item keeps a worst-case
+ *  20-item-checklist bounded at ~$4.50 in image-gen spend. */
+async function handleRegenDraftImages(
+  env: Env,
+  uid: string,
+  clientId: string | null,
+  item: string,
+): Promise<AutoFixResult> {
+  try {
+    const result = await backfillImagesForPastDrafts(env, uid, { clientId, limit: 5 });
+    if ((result as any).error) {
+      return {
+        item,
+        kind: 'auto_fix',
+        status: 'failed',
+        details: String((result as any).error),
+      };
+    }
+    const found = (result.found ?? 0) as number;
+    const succeeded = (result.succeeded ?? 0) as number;
+    const failed = (result.failed ?? 0) as number;
+    if (found === 0) {
+      return {
+        item,
+        kind: 'auto_fix',
+        status: 'ok',
+        details: 'No past-Draft posts needed image generation — your backlog is already covered.',
+        payload: { found, succeeded, failed },
+      };
+    }
+    return {
+      item,
+      kind: 'auto_fix',
+      status: succeeded > 0 ? 'fixed' : 'failed',
+      details: succeeded === found
+        ? `Generated images for ${succeeded} Draft post${succeeded === 1 ? '' : 's'}.`
+        : `Generated ${succeeded}/${found} (${failed} failed — see Calendar for details).`,
+      payload: {
+        found,
+        succeeded,
+        failed,
+        critique_retries: (result as any).critique_retries ?? 0,
+      },
+    };
+  } catch (e: any) {
+    return {
+      item,
+      kind: 'auto_fix',
+      status: 'failed',
+      details: `Image regen crashed: ${e?.message || 'unknown'}.`,
+    };
+  }
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /** Load the social_tokens JSON blob for a workspace tuple. Returns null
@@ -622,6 +687,9 @@ export function registerRecommendationsRoutes(app: Hono<{ Bindings: Env }>): voi
             break;
           case 'SUGGEST_REWRITE':
             results.push(await handleSuggestRewrite(c.env, uid, clientId, item));
+            break;
+          case 'REGEN_DRAFT_IMAGES':
+            results.push(await handleRegenDraftImages(c.env, uid, clientId, item));
             break;
           case 'MANUAL_ONLY':
           default:

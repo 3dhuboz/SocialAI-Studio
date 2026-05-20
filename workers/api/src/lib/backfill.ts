@@ -134,6 +134,128 @@ export async function backfillImagesForUser(env: Env, uid: string) {
   return { found: posts.length, succeeded, failed, critique_retries: critiqueRetries, errors: errors.slice(0, 5) };
 }
 
+/**
+ * Backfill images for past-dated or unscheduled Draft posts.
+ *
+ * The prewarm cron and `backfillImagesForUser` both exclude Drafts (and
+ * past-dated Scheduled posts) on purpose — Drafts may never publish and we
+ * don't want to burn FLUX credits speculatively. But the auto-fix-checklist
+ * flow (PR #114) needs a user-triggerable way to fill images on those
+ * past-Draft rows when the customer asks for it.
+ *
+ * Same per-post body as backfillImagesForUser (gen → critique → fallback once
+ * if score < threshold). Filter differs:
+ *   - status='Draft' (not Scheduled)
+ *   - scheduled_for IS NULL OR scheduled_for < now (past-dated or unscheduled)
+ *   - scheduled_for > now - 90 days (or created_at if no schedule) —
+ *     skip zombie rows >90d old; user can republish if needed
+ *   - optional clientId scope so an agency user can target one client's backlog
+ *
+ * Per-call cap is tighter than backfillImagesForUser (10 default / 30 max vs
+ * 30 fixed) because this is user-triggerable now: 10 × ~$0.04 FLUX + critique
+ * = ~$0.45 per click worst case. 30 would let an agency user chain multi-dollar
+ * bursts.
+ *
+ * Idempotency: the `image_url IS NULL OR image_url = ''` predicate is naturally
+ * idempotent — a successful run flips the column so subsequent calls skip the
+ * same row. The prewarm cron requires `status='Scheduled'`, so it physically
+ * cannot race on Drafts.
+ */
+export async function backfillImagesForPastDrafts(
+  env: Env,
+  uid: string,
+  opts: { clientId?: string | null; limit?: number } = {},
+) {
+  const apiKey = env.FAL_API_KEY;
+  if (!apiKey) return { error: 'fal.ai not configured', found: 0, succeeded: 0, failed: 0 };
+
+  const limit = Math.min(Math.max(opts.limit ?? 10, 1), 30);
+  const clientId = opts.clientId ?? null;
+
+  // The clientId filter is added inline so we can keep using prepared params
+  // (D1 doesn't expand arrays). All three branches share the same SELECT shape.
+  const baseSql = `SELECT p.id, p.image_prompt, p.client_id, p.content
+     FROM posts p
+     LEFT JOIN clients c ON p.client_id = c.id
+     WHERE p.status = 'Draft'
+       AND (p.scheduled_for IS NULL OR p.scheduled_for < datetime('now'))
+       AND (p.scheduled_for IS NULL OR p.scheduled_for > datetime('now', '-90 days'))
+       AND p.created_at > datetime('now', '-90 days')
+       AND (p.user_id = ? OR c.user_id = ?)
+       AND (p.image_url IS NULL OR p.image_url = '')
+       AND p.image_prompt IS NOT NULL
+       AND p.image_prompt != 'N/A'
+       AND p.image_prompt != ''`;
+  const rows = clientId
+    ? await env.DB.prepare(`${baseSql} AND p.client_id = ? LIMIT ?`).bind(uid, uid, clientId, limit).all()
+    : await env.DB.prepare(`${baseSql} LIMIT ?`).bind(uid, uid, limit).all();
+
+  const posts = rows.results || [];
+  let succeeded = 0; let failed = 0; let critiqueRetries = 0; const errors: string[] = [];
+
+  for (const post of posts) {
+    try {
+      const postId = (post as any).id as string;
+      const postClientId = (post as any).client_id as string | null;
+      const caption = ((post as any).content as string | null) || '';
+      const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption);
+      if (!safe) { failed++; continue; }
+
+      const gen = await generateImageWithGuardrails(env, uid, postClientId, safe, { caption });
+      let finalUrl = gen.imageUrl;
+      let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
+
+      if (finalUrl && caption.length > 20) {
+        const archetypeSlug = gen.archetypeSlug;
+        const forbiddenSubjects = await loadForbiddenSubjects(env, uid, postClientId);
+        const critique = await critiqueImageInternal(env, {
+          imageUrl: finalUrl,
+          caption,
+          archetypeSlug,
+          forbiddenSubjects,
+        });
+        if (critique) {
+          finalCritique = critique;
+          if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+            const retry = await generateImageWithGuardrails(env, uid, postClientId, safe, { forceFallback: true, caption });
+            if (retry.imageUrl) {
+              finalUrl = retry.imageUrl;
+              critiqueRetries++;
+              const retryCritique = await critiqueImageInternal(env, {
+                imageUrl: retry.imageUrl,
+                caption,
+                archetypeSlug,
+                forbiddenSubjects,
+              });
+              finalCritique = retryCritique || null;
+            }
+          }
+        }
+      }
+
+      if (finalUrl) {
+        if (finalCritique) {
+          await env.DB.prepare(
+            `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
+             WHERE id = ?`
+          ).bind(finalUrl, finalCritique.score, finalCritique.reasoning, new Date().toISOString(), postId).run();
+        } else {
+          await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?').bind(finalUrl, postId).run();
+        }
+        succeeded++;
+      } else {
+        failed++;
+        errors.push(`${postId}: image gen failed via ${gen.modelUsed}`);
+      }
+    } catch (e: any) {
+      failed++;
+      errors.push(`${(post as any).id}: ${e.message}`);
+    }
+    await new Promise(r => setTimeout(r, 700));
+  }
+  return { found: posts.length, succeeded, failed, critique_retries: critiqueRetries, errors: errors.slice(0, 5) };
+}
+
 // ── Backlog helpers — run on every */5 cron tick, gate themselves with a
 // cheap COUNT(*) so they no-op once the backlog is exhausted. Process all
 // posts in the system, not just one user's — used to fill in the historical

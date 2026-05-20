@@ -27,6 +27,14 @@ vi.mock('../auth', () => ({
   isRateLimited: async () => rateLimitedNext,
 }));
 
+// Mock backfill module so REGEN_DRAFT_IMAGES handler tests don't hit fal.ai
+// or vision-critique APIs. Tests override the return value per-case.
+const mockBackfillResult: { current: any } = { current: null };
+vi.mock('../lib/backfill', () => ({
+  backfillImagesForUser: vi.fn(),
+  backfillImagesForPastDrafts: vi.fn(async () => mockBackfillResult.current),
+}));
+
 import {
   registerRecommendationsRoutes,
   isInsideWindow,
@@ -179,6 +187,9 @@ let db: MiniDb;
 beforeEach(() => {
   db = makeDb();
   rateLimitedNext = false;
+  // Default backfill mock: nothing to do — exercises the "no past-Draft posts
+  // needed image generation" branch. Individual tests override as needed.
+  mockBackfillResult.current = { found: 0, succeeded: 0, failed: 0 };
 });
 
 // ── Auth + rate-limit ────────────────────────────────────────────────────
@@ -378,6 +389,90 @@ describe('AUTO_FIX_SCHEDULE handler', () => {
     const json = await res.json() as { results: Array<{ status: string; payload?: any }> };
     expect(json.results[0].status).toBe('ok');
     expect(json.results[0].payload.shifted).toBe(0);
+  });
+});
+
+// ── REGEN_DRAFT_IMAGES handler ──────────────────────────────────────────
+
+describe('REGEN_DRAFT_IMAGES handler', () => {
+  it('sniffer routes image-related items to the regen handler', async () => {
+    mockBackfillResult.current = { found: 0, succeeded: 0, failed: 0 };
+    const { app, env } = makeApp(db);
+    const items = [
+      'Generate images for unscheduled draft posts',
+      'Fix missing images on backlog posts',
+      'Regenerate poor-quality post images',
+    ];
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items }),
+    }, env);
+    expect(res.status).toBe(200);
+    const json = await res.json() as { results: Array<{ kind: string; status: string }> };
+    // All three should land on the auto_fix kind via the REGEN_DRAFT_IMAGES sniffer
+    expect(json.results.length).toBe(3);
+    for (const r of json.results) {
+      expect(r.kind).toBe('auto_fix');
+    }
+  });
+
+  it('returns ok when nothing needs regeneration', async () => {
+    mockBackfillResult.current = { found: 0, succeeded: 0, failed: 0 };
+    const { app, env } = makeApp(db);
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items: ['Generate images for missing draft posts'] }),
+    }, env);
+    const json = await res.json() as { results: Array<{ kind: string; status: string; payload?: any }> };
+    expect(json.results[0].kind).toBe('auto_fix');
+    expect(json.results[0].status).toBe('ok');
+    expect(json.results[0].payload.found).toBe(0);
+  });
+
+  it('returns fixed with counts when regen succeeds', async () => {
+    mockBackfillResult.current = { found: 3, succeeded: 3, failed: 0, critique_retries: 1 };
+    const { app, env } = makeApp(db);
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items: ['Fix missing images on backlog draft posts'] }),
+    }, env);
+    const json = await res.json() as { results: Array<{ kind: string; status: string; details: string; payload?: any }> };
+    expect(json.results[0].kind).toBe('auto_fix');
+    expect(json.results[0].status).toBe('fixed');
+    expect(json.results[0].payload.succeeded).toBe(3);
+    expect(json.results[0].payload.found).toBe(3);
+    expect(json.results[0].details).toContain('3');
+  });
+
+  it('returns failed when fal.ai is misconfigured (lib returns error key)', async () => {
+    mockBackfillResult.current = { error: 'fal.ai not configured', found: 0, succeeded: 0, failed: 0 };
+    const { app, env } = makeApp(db);
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items: ['Regenerate poor-quality post images'] }),
+    }, env);
+    const json = await res.json() as { results: Array<{ kind: string; status: string; details: string }> };
+    expect(json.results[0].kind).toBe('auto_fix');
+    expect(json.results[0].status).toBe('failed');
+    expect(json.results[0].details).toContain('fal.ai');
+  });
+
+  it('reports partial success when some posts failed', async () => {
+    mockBackfillResult.current = { found: 5, succeeded: 3, failed: 2, critique_retries: 0 };
+    const { app, env } = makeApp(db);
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items: ['Generate images for unscheduled draft posts'] }),
+    }, env);
+    const json = await res.json() as { results: Array<{ status: string; details: string; payload?: any }> };
+    expect(json.results[0].status).toBe('fixed');
+    expect(json.results[0].details).toContain('3/5');
+    expect(json.results[0].payload.failed).toBe(2);
   });
 });
 
