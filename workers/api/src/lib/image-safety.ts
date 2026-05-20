@@ -20,6 +20,7 @@ import {
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
   isAbstractUIPrompt,
+  isGenericBusinessType,
   needsSafeFallback,
   rewriteAbstractUIAsPhotography,
 } from '../../../../shared/flux-prompts';
@@ -30,7 +31,7 @@ import {
   hashStringToSceneSeed,
 } from '../../../../shared/archetype-scenes';
 
-export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt, rewriteAbstractUIAsPhotography };
+export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt, isGenericBusinessType, rewriteAbstractUIAsPhotography };
 // Re-exported so existing consumers (cron, image-gen, tests) keep their
 // import paths. Source of truth is shared/archetype-scenes.ts — see header
 // comment there for why these were lifted out of this file.
@@ -129,38 +130,62 @@ export function sniffArchetypeFromCaption(caption: string | null | undefined): s
 }
 
 // Returns { prompt, negativePrompt } pair, or null if the prompt is missing
-// (caller should skip image gen and let the post publish text-only).
+// OR if the workspace's businessType is too generic to anchor a fallback
+// scene (caller should skip image gen and let the post publish text-only).
 // Uses needsSafeFallback() from shared/flux-prompts.ts — the same filter the
 // frontend's buildSafeImagePromptClient uses — so abstract UI prompts,
 // title-case business names, vague generic terms ("produce", "items"),
 // single-word prompts, and "N/A" placeholders all get swapped for a
 // neutral fallback scene instead of shipping the bad prompt to FLUX.
 //
-// Pipeline order (2026-05-19 update — was previously just needsSafeFallback
-// → fallback):
+// Pipeline order (2026-05-21 update — added the generic-businessType
+// fail-closed gate to mirror the client; was previously just rewrite/
+// fallback for all cases):
 //   1. Empty prompt → null (caller skips image gen)
-//   2. UI prompt (dashboard/screenshot/UI) → rewriteAbstractUIAsPhotography
-//      tries to keep the post-topic specificity by rewriting as a
-//      photographable scene (phone on marble desk, etc.) before falling
-//      back to a generic scene. Without this, SaaS posts whose subject IS
-//      a dashboard get nuked to "closed laptop on white desk".
+//   2. UI prompt (dashboard/screenshot/UI):
+//      a. SPECIFIC businessType (e.g. tech-saas-agency) →
+//         rewriteAbstractUIAsPhotography tries to keep the post-topic
+//         specificity by rewriting as a photographable scene (phone on
+//         marble desk, etc.) before falling back to a generic scene.
+//         Without this, SaaS posts whose subject IS a dashboard get nuked
+//         to "closed laptop on white desk".
+//      b. GENERIC businessType (small business / company / null) → null.
+//         There's no specific industry to ground the rewrite in, and a
+//         random flatlay would have no connection to the post. Better to
+//         publish text-only. Mirrors buildSafeImagePromptClient — the
+//         frontend was hardened in PR #136 but the cron path (this
+//         function) was untouched, so cron-initiated requests still
+//         produced off-topic flatlays. This gate closes that drift.
 //   3. Other bad prompts (title-case business names, vague terms, "N/A") →
 //      SAFE_FALLBACK_SCENES fallback as before.
 //   4. Good prompt → pass through.
 //
-// Previously this only checked `length < 5`, which let the cron path ship
-// prompts the frontend would have rejected (e.g. "Bella's Bakery" 2-word
-// title, "showcase journey" vague pair). Same drift bug class as the
-// FLUX_NEGATIVE_PROMPT issue.
+// businessType is optional — callers that don't have it default to undefined
+// (treated as generic, so abstract-UI prompts fail closed). The cron / publish-
+// missed / backfill callsites resolve it via profile-guards.resolveBusinessType
+// so the same workspace is judged the same way at every surface.
 export function buildSafeImagePrompt(
   rawPrompt: string | null | undefined,
   caption?: string | null,
+  businessType?: string | null,
 ): { prompt: string; negativePrompt: string } | null {
   const prompt = (rawPrompt || '').trim();
   if (!prompt) return null;
 
   let safeBase: string;
   if (isAbstractUIPrompt(prompt)) {
+    // Fail-closed gate: when the workspace's businessType is generic
+    // ('small business' / 'company' / null) there's no industry hook to
+    // anchor a rewrite OR a fallback scene. Returning null here means the
+    // post publishes text-only — which is much better than shipping a
+    // random flatlay that has nothing to do with the caption. Specific
+    // businessTypes (e.g. 'tech-saas-agency', 'bbq-smokehouse') still get
+    // the rewrite path because the downstream archetype guardrails can
+    // ground the resulting scene.
+    if (isGenericBusinessType(businessType)) {
+      console.warn(`[image-safety] fail-closed — abstract UI prompt with generic businessType="${businessType ?? '<null>'}". Caller should skip image gen.`);
+      return null;
+    }
     // Try to rewrite the UI prompt as a photographable scene before
     // surrendering to the generic fallback. The rewrite produces a phone-on-
     // desk scene that FLUX renders as a real photo rather than a vector UI

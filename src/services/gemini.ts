@@ -490,13 +490,14 @@ export function buildProductAllowlist(
 // Re-export here so existing import paths keep working.
 import {
   isAbstractUIPrompt,
+  isGenericBusinessType,
   FLUX_NEGATIVE_PROMPT,
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
   needsSafeFallback,
   rewriteAbstractUIAsPhotography,
 } from '../../shared/flux-prompts';
-export { isAbstractUIPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX, rewriteAbstractUIAsPhotography };
+export { isAbstractUIPrompt, isGenericBusinessType, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX, rewriteAbstractUIAsPhotography };
 
 // SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS
 // live in shared/archetype-scenes.ts so the frontend image-prompt swap path
@@ -602,7 +603,12 @@ export function buildSafeImagePromptClient(rawPrompt: string, businessType: stri
   // as often as a randomly picked scene would. The fail-closed path
   // below catches this case for both abstract and empty prompts —
   // posting text-only is safer than posting a wrong image.
-  const isGenericType = /^(small business|business|company|service provider|local business)$/i.test(businessType.trim());
+  //
+  // The isGenericBusinessType helper lives in shared/flux-prompts.ts so the
+  // worker's buildSafeImagePrompt uses the EXACT same regex — drift between
+  // surfaces was the original failure mode (the worker had no gate at all,
+  // so cron-initiated requests bypassed the frontend's enforcement).
+  const isGenericType = isGenericBusinessType(businessType);
   if (needsFallback && isAbstractUIPrompt(prompt) && !isGenericType) {
     const rewritten = rewriteAbstractUIAsPhotography(prompt);
     if (rewritten) {
