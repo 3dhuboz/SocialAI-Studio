@@ -1,5 +1,20 @@
+# Cloudflare Pages headers. Applied to all *.pages.dev + custom-domain
+# variants of every SocialAI Studio Pages project (socialaistudio.au,
+# social.hugheseysque.au, social.picklenick.au, …).
+#
+# frame-ancestors — keep in sync with white-label client roots in
+# src/client.configs/. Each customer's main website embeds their own
+# social.* subdomain in /admin → Social & AI tab via iframe. Without the
+# parent domain in this list, the browser refuses to render the iframe
+# (CSP violation, gray box / broken-doc icon).
+#
+# PennyBuilder entries embed socialaistudio.au itself from the PB Builder.
+# Customer-root entries embed the matching social.* subdomain.
+#
+# Long-term: generate this from src/client.configs/* at build time so
+# adding a new white-label client doesn't drop the CSP step.
 /*
-  Content-Security-Policy: frame-ancestors 'self' https://builder.pennywiseit.com.au https://*.pennywiseit.com.au https://pennybuilder.steve-700.workers.dev
+  Content-Security-Policy: frame-ancestors 'self' https://builder.pennywiseit.com.au https://*.pennywiseit.com.au https://pennybuilder.steve-700.workers.dev https://hugheseysque.au https://www.hugheseysque.au https://picklenick.au https://www.picklenick.au https://streetmeatzbbq.com.au https://www.streetmeatzbbq.com.au https://gladstonebbqfestival.com.au https://www.gladstonebbqfestival.com.au https://jenniannesjewels.com.au https://www.jenniannesjewels.com.au https://jonesysgarage.com.au https://www.jonesysgarage.com.au
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
