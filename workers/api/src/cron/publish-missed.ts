@@ -28,6 +28,7 @@ import {
   loadPostproxyMappingForPosts,
   lookupPostproxyMapping,
   normalizePostPlatform,
+  type SocialTokens,
 } from './_shared';
 import { createPost as postproxyCreatePost } from '../lib/postproxy';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
@@ -542,16 +543,18 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // batch-loaded map (collapses what used to be a per-post DB round-trip
       // into a single in-memory hash lookup — see cron/_shared.ts). Shopify
       // shop posts pull straight from shopify_stores.social_tokens since
-      // they aren't in the batch-loader's users/clients scope.
-      let tokens: { facebookPageId?: string; facebookPageAccessToken?: string } | null;
+      // they aren't in the batch-loader's users/clients scope. Coalesce
+      // lookupSocialTokens's undefined → null so the downstream falsy check
+      // doesn't drift between the two paths.
+      let tokens: SocialTokens | null = null;
       if (isShopPost) {
         const tokensRaw = await env.DB
           .prepare('SELECT social_tokens FROM shopify_stores WHERE shop_domain = ? AND uninstalled_at IS NULL')
           .bind(ownerId)
           .first<{ social_tokens: string | null }>();
-        tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+        tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) as SocialTokens : null;
       } else {
-        tokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null });
+        tokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null }) ?? null;
       }
       if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
         const reason = 'No Facebook page connected — go to Settings → Connect Facebook to fix.';
