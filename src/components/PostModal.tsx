@@ -44,6 +44,29 @@ export const PostModal: React.FC<Props> = ({
 
   const displayImage = image || post.image;
 
+  // ── Safe-close guard (audit P0-6, 2026-05-22) ────────────────────────────
+  // Backdrop click + Escape both close the modal. If the user is mid-edit,
+  // confirm before discarding so a stray click doesn't burn 30 seconds of
+  // caption work. Restoring the native confirm() since it's the only
+  // synchronous "are you sure?" available without standing up a second modal.
+  const hasUnsavedEdits =
+    isEditing &&
+    (editContent !== post.content ||
+      editHashtags !== (post.hashtags || []).join(' '));
+  const safeClose = () => {
+    if (!hasUnsavedEdits || confirm('Discard your unsaved edits?')) onClose();
+  };
+
+  // Escape key close (with the safe-close guard). Attach to document so the
+  // handler fires even when focus is inside a deeply-nested input that
+  // hasn't bubbled the keydown to the modal wrapper.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') safeClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasUnsavedEdits]);
+
   const handleSave = async () => {
     setIsSaving(true);
     const tags = editHashtags.trim()
@@ -117,7 +140,10 @@ export const PostModal: React.FC<Props> = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={e => { if (e.target === e.currentTarget) safeClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Post details"
     >
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/70 backdrop-blur-lg" />
@@ -140,7 +166,7 @@ export const PostModal: React.FC<Props> = ({
               <span className="text-[10px] bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full">{post.pillar}</span>
             )}
           </div>
-          <button onClick={onClose} className="text-white/25 hover:text-white/60 hover:bg-white/[0.06] transition-all rounded-lg p-1.5 press">
+          <button onClick={safeClose} aria-label="Close post details" className="text-white/25 hover:text-white/60 hover:bg-white/[0.06] transition-all rounded-lg p-1.5 press">
             <X size={16} />
           </button>
         </div>
