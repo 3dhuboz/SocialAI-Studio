@@ -1753,27 +1753,58 @@ const Dashboard: React.FC = () => {
         return;
       }
 
+      // Audit P0-6 (2026-05-22): track per-platform success so we don't
+      // fire the green success animation when one of two cross-posts
+      // silently failed. Previously a base64 image + cross-post to FB+IG
+      // would post on FB, no-op on IG with a warning toast, then setPublish-
+      // Success(true) — the most common "I published but it didn't appear
+      // on IG" support ticket.
+      const platformResults: Array<{ platform: string; ok: boolean; reason?: string }> = [];
       for (const plat of platforms) {
-        if (plat === 'facebook') {
-          if (generatedImage) {
-            await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText, generatedImage);
-          } else {
-            await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText);
-          }
-        } else if (plat === 'instagram' && socialTokens.instagramBusinessAccountId) {
-          if (generatedImage) {
-            // Instagram requires a public image URL — if base64, we can't use it directly
-            const imgUrl = generatedImage.startsWith('http') ? generatedImage : undefined;
-            if (imgUrl) {
-              await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, fullText, imgUrl);
+        try {
+          if (plat === 'facebook') {
+            if (generatedImage) {
+              await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText, generatedImage);
             } else {
-              toast('Instagram requires a public image URL. Generate or upload an image first.', 'warning');
+              await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText);
+            }
+            platformResults.push({ platform: 'facebook', ok: true });
+          } else if (plat === 'instagram' && socialTokens.instagramBusinessAccountId) {
+            if (generatedImage) {
+              const imgUrl = generatedImage.startsWith('http') ? generatedImage : undefined;
+              if (imgUrl) {
+                await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, fullText, imgUrl);
+                platformResults.push({ platform: 'instagram', ok: true });
+              } else {
+                // Base64 — IG can't use it. Track as a real failure
+                // (was a silent warning before, masked by success state).
+                platformResults.push({ platform: 'instagram', ok: false, reason: 'IG requires a public image URL — generate or upload an image first, then publish' });
+              }
+            } else {
+              // IG requires media for feed posts. No image at all = can't post.
+              platformResults.push({ platform: 'instagram', ok: false, reason: 'IG requires an image — generate or upload one before publishing' });
             }
           }
+        } catch (err: any) {
+          platformResults.push({ platform: plat, ok: false, reason: err?.message?.substring(0, 100) || 'publish failed' });
         }
       }
-      setPublishSuccess(true);
-      setTimeout(() => setPublishSuccess(false), 4000);
+
+      const ok = platformResults.filter(r => r.ok);
+      const failed = platformResults.filter(r => !r.ok);
+      if (failed.length === 0) {
+        setPublishSuccess(true);
+        setTimeout(() => setPublishSuccess(false), 4000);
+      } else if (ok.length > 0) {
+        // Partial success — celebrate what worked, name what didn't so the
+        // user can fix it manually rather than thinking everything published.
+        const okNames = ok.map(r => r.platform === 'instagram' ? 'Instagram' : 'Facebook').join(' + ');
+        const failedSummary = failed.map(r => `${r.platform === 'instagram' ? 'Instagram' : 'Facebook'} (${r.reason})`).join('; ');
+        toast(`Posted to ${okNames}. ${failedSummary}`, 'warning');
+      } else {
+        // Total failure — every platform errored. Surface the first error.
+        toast(`Publish failed — ${failed[0].reason || 'unknown error'}`, 'error');
+      }
     } catch (e: any) {
       // 409 NOT_CONNECTED: the worker's schedule-time gate (PR #137) or the
       // publish-now route (ig-wire) couldn't find a Postproxy mapping for

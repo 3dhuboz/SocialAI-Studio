@@ -34,10 +34,24 @@ const bgColors: Record<ToastType, string> = {
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
+  // Audit P0-6 (2026-05-22): per-type TTL. The previous flat 4s applied
+  // to "your Facebook token expired, go reconnect" messages that the user
+  // hadn't read yet — by the time they processed the toast it had vanished.
+  // Errors get 12s (long enough to read + decide); warnings 8s; success
+  // and info keep 4s for the snappy "saved" / "ok" feedback. Error toasts
+  // also require an explicit dismiss click before the auto-timer fires —
+  // see `requiresDismiss` below.
+  const ttlMs: Record<ToastType, number> = {
+    success: 4000,
+    info:    4000,
+    warning: 8000,
+    error:   12000,
+  };
+
   const toast = useCallback((message: string, type: ToastType = 'success') => {
-    const id = `t_${Date.now()}`;
+    const id = `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), ttlMs[type]);
   }, []);
 
   const dismiss = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
@@ -45,15 +59,28 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
+      {/*
+        aria-live: 'assertive' for errors so screen readers interrupt;
+        'polite' for the rest so they wait for a natural pause. role=status
+        is the semantic anchor for non-error toasts (per WAI-ARIA APG).
+      */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
         {toasts.map(t => (
           <div
             key={t.id}
+            role={t.type === 'error' ? 'alert' : 'status'}
+            aria-live={t.type === 'error' ? 'assertive' : 'polite'}
             className={`flex items-center gap-3 px-4 py-3 rounded-xl border shadow-xl backdrop-blur-xl text-white text-sm animate-in slide-in-from-right ${bgColors[t.type]}`}
           >
             {icons[t.type]}
             <span className="flex-1">{t.message}</span>
-            <button onClick={() => dismiss(t.id)} className="opacity-50 hover:opacity-100"><X size={14} /></button>
+            <button
+              onClick={() => dismiss(t.id)}
+              className="opacity-50 hover:opacity-100"
+              aria-label="Dismiss notification"
+            >
+              <X size={14} />
+            </button>
           </div>
         ))}
       </div>
