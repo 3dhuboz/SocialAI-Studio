@@ -94,6 +94,15 @@ export async function mintEmbedToken(secret: string, claims: EmbedClaims): Promi
  * `null` covers: missing or extra `.` separator, signature mismatch
  * (timing-safe), payload not valid base64url or not valid JSON,
  * exp missing or not a number, exp in the past.
+ *
+ * Decoding mirrors the minter: the payload was produced by feeding
+ * `TextEncoder().encode(json)` into `btoa`, so the raw bytes between
+ * the two are UTF-8 — not Latin-1. We decode via `atob` → byte array
+ * → `TextDecoder('utf-8')` so multi-byte chars (é, ë, em-dash, …) in
+ * email / name claims roundtrip cleanly. A previous version used
+ * `atob(payload)` directly and parsed it as JSON, which silently
+ * mangled any non-ASCII byte (UTF-8 multi-byte sequences read as
+ * mojibake under Latin-1) — see __tests__/embed-token.test.ts.
  */
 export async function verifyEmbedToken(secret: string, token: string): Promise<EmbedClaims | null> {
   const [payload, sig] = token.split('.');
@@ -103,7 +112,12 @@ export async function verifyEmbedToken(secret: string, token: string): Promise<E
   // response timing.
   if (!timingSafeEqualStr(sig, expected)) return null;
   try {
-    const raw = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    // atob → binary string (each char a byte in 0–255). Lift to bytes,
+    // then decode as UTF-8 — this matches the minter's TextEncoder.encode().
+    const bin = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const raw = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
     const claims = JSON.parse(raw) as EmbedClaims;
     if (typeof claims.exp !== 'number' || claims.exp * 1000 < Date.now()) return null;
     return claims;
