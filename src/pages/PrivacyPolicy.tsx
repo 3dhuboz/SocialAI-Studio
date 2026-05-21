@@ -22,10 +22,10 @@ const PrivacyPolicy: React.FC = () => {
     >
       <h2>Who we are</h2>
       <p>
-        {CLIENT.appName} is operated from Queensland, Australia. For privacy enquiries you can
-        reach the operator at <a href={`mailto:${supportEmail}`}>{supportEmail}</a> or{' '}
+        {CLIENT.appName} is operated by Steve, sole trader (ABN 16 477 079 626), based in
+        Queensland, Australia. For privacy enquiries you can reach the operator at{' '}
+        <a href={`mailto:${supportEmail}`}>{supportEmail}</a> or{' '}
         <a href="mailto:steve@3dhub.au">steve@3dhub.au</a>.
-        {/* STEVE: please review — confirm the legal trading entity name you want listed here (e.g. "Penny Wise I.T Pty Ltd" or sole-trader name + ABN). */}
       </p>
 
       <h2>What we collect</h2>
