@@ -130,7 +130,26 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   app.delete('/api/db/clients/:id', async (c) => {
     const uid = c.get('uid');
     const clientId = c.req.param('id');
-    await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
+
+    // Audit P0-5 (2026-05-22): D1 cascades don't fire (PRAGMA off), so
+    // child rows under a deleted client used to orphan and — if the
+    // client UUID was ever reused — re-attach to the wrong owner.
+    // Mirrors the user-delete pattern in routes/user.ts.
+    const purges: Array<{ name: string; sql: string; binds: unknown[] }> = [
+      { name: 'posts',               sql: `DELETE FROM posts WHERE user_id = ? AND client_id = ?`,               binds: [uid, clientId] },
+      { name: 'campaigns',           sql: `DELETE FROM campaigns WHERE user_id = ? AND client_id = ?`,           binds: [uid, clientId] },
+      { name: 'client_facts',        sql: `DELETE FROM client_facts WHERE user_id = ? AND client_id = ?`,        binds: [uid, clientId] },
+      { name: 'posters',             sql: `DELETE FROM posters WHERE user_id = ? AND client_id = ?`,             binds: [uid, clientId] },
+      { name: 'poster_brand_kit',    sql: `DELETE FROM poster_brand_kit WHERE user_id = ? AND client_id = ?`,    binds: [uid, clientId] },
+      { name: 'postproxy_profiles',  sql: `DELETE FROM postproxy_profiles WHERE user_id = ? AND client_id = ?`,  binds: [uid, clientId] },
+    ];
+    for (const p of purges) {
+      try {
+        await c.env.DB.prepare(p.sql).bind(...p.binds).run();
+      } catch (e: any) {
+        console.warn(`[client-delete] ${p.name} purge skipped: ${e?.message || e}`);
+      }
+    }
     await c.env.DB.prepare('DELETE FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).run();
     return c.json({ ok: true });
   });
