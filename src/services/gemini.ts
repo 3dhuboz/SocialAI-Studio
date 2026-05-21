@@ -163,7 +163,7 @@ const AI_WORKER = (((import.meta as any).env as Record<string, string> | undefin
 //
 // See src/data/archetypes.ts for the canonical archetype list and
 // workers/api/src/index.ts for the /api/classify-business endpoint.
-import { ARCHETYPES, matchArchetypeByKeyword, getArchetypeBySlug } from '../data/archetypes';
+import { ARCHETYPES, matchArchetypeByKeyword, getArchetypeBySlug, pillarForbidsBrand } from '../data/archetypes';
 
 let activeArchetypeSlug: string | null = null;
 
@@ -1334,11 +1334,13 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
 
   // "Staring at a blank caption for 20 minutes?" — hyperbolic-stat opener
   [/\bStaring at (?:a|the|your) (?:blank|empty) \S+(?:\s+\S+){0,2} for \d+ (?:seconds?|minutes?|hours?)\b[^.!?]*[.!?]?\s*/gi, ' '],
-  // "Ready to reclaim those hours?" / "Ready to automate?" — rhetorical SaaS-CTA closer.
-  // Closed verb list keeps legitimate openers like "Ready to order?" / "Ready to eat?"
-  // safe. Sentence-anchored + case-sensitive `Ready` so mid-sentence lowercase
-  // "are you ready to automate" doesn't false-positive — that smoke test bit me.
-  [/(?:^|[.!?]\s+)Ready to (?:reclaim|automate|scale|simplify|streamline|transform|elevate|level\s+up|unlock|supercharge)\b[^.!?]*\?\s*/gm, ' '],
+  // "Ready to reclaim those hours?" / "Ready to automate?" / "Ready to try it!" —
+  // rhetorical SaaS-CTA closer. Closed verb list keeps legitimate openers
+  // like "Ready to order?" / "Ready to eat?" safe. Sentence-anchored + case-
+  // sensitive `Ready` so mid-sentence lowercase "are you ready to automate"
+  // doesn't false-positive — that smoke test bit me. Terminator accepts
+  // ?/./! so "Ready to try it!" gets caught alongside "Ready to scale?".
+  [/(?:^|[.!?]\s+)Ready\s+to\s+(?:try|reclaim|automate|scale|simplify|streamline|transform|elevate|level\s+up|unlock|supercharge)\b[^.!?]*[?.!]\s*/gm, ' '],
   // "..., no lock-in" / "..., cancel anytime" — strips the SaaS pitch fragment
   // while preserving the price itself (which the brand guide tells the AI to use)
   [/\s*,\s*no\s+(?:lock-?in|contracts?|commitments?|credit\s+card\s+required|setup\s+fees?|hidden\s+fees?)\b[.!]?\s*/gi, ' '],
@@ -1389,11 +1391,6 @@ const BANNED_PATTERNS: Array<[RegExp, string]> = [
   // landowners don't" cases that aren't the archetype-banned trope.
   [/(?:^|[.!?]\s+)Most\s+(?:small\s+business\s+|business\s+)?owners?\s+don'?t\b[^.!?]+[.!?]\s*/gim, ' '],
 
-  // Extends the line 1336 "Ready to..." catch (which only handles ?-ended
-  // forms) with the period/bang-ended variant AND adds `try` to the verb
-  // bank. Real example: "Ready to try SocialAI Studio!" — slipped through
-  // the ?-anchored older pattern.
-  [/(?:^|[.!?]\s+)Ready\s+to\s+(?:try|automate|level\s+up|transform|unlock|simplify|streamline|elevate|reclaim|scale|supercharge)\b[^.!?]*[.!]\s*/gm, ' '],
 ];
 export function scrubBannedPhrases(content: string): string {
   let out = content;
@@ -2478,8 +2475,9 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     // The prompt currently only buries this in voiceCues, which the LLM keeps
     // breaking — observed in real posts (SocialAI Studio Tactical-SMB posts
     // naming the brand 1-3 times). processOne enforces post-flight; this
-    // block makes the prompt-side rule equally explicit.
-    const noBrandPillars: string[] = pillarValues.filter((p: any) => typeof p === 'string' && /\(no product mention\)/i.test(p));
+    // block makes the prompt-side rule equally explicit. Marker is owned
+    // by src/data/archetypes.ts so renaming is a one-line change there.
+    const noBrandPillars: string[] = pillarValues.filter(pillarForbidsBrand);
     const strictPillarsBlock = archetypePillars
       ? `\nSTRICT PILLAR CONSTRAINT (NON-NEGOTIABLE):
 Every post's "pillar" field MUST exactly match one of these values (case-sensitive, character-for-character):
@@ -2672,8 +2670,12 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
     const brandNameRegex = businessName
       ? new RegExp(`\\b${escapeRegex(businessName)}\\b`, 'i')
       : null;
-    const pillarForbidsBrand = (pillar: unknown): boolean =>
-      typeof pillar === 'string' && /\(no product mention\)/i.test(pillar);
+    // Named helper for the two-site check below — collapses
+    // `brandNameRegex && pillarForbidsBrand(...) && brandNameRegex.test(...)`
+    // and names the semantic intent ("this post violates its pillar's brand
+    // ban") so call sites read at a glance.
+    const violatesPillarBrand = (text: string, pillar: unknown): boolean =>
+      !!(brandNameRegex && pillarForbidsBrand(pillar) && brandNameRegex.test(text));
 
     const processOne = async (p: any) => {
       if (typeof p.content !== 'string') return p;
@@ -2704,7 +2706,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
       // contain the brand name anywhere in the body. Triggers auto-recovery
       // when the LLM ignores the prompt-side rule. Same flag plumbing as
       // detectFabrication so the recovery path runs identically.
-      if (!flagReason && brandNameRegex && pillarForbidsBrand(p.pillar) && brandNameRegex.test(p.content)) {
+      if (!flagReason && violatesPillarBrand(p.content, p.pillar)) {
         flagReason = `pillar "${p.pillar}" forbids brand name but post mentions "${businessName}"`;
       }
       if (!flagReason) {
@@ -2736,7 +2738,7 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
         // pillar rule yet).
         const recoveredOk = recovered?.content
           && !detectFabrication(recovered.content, profileBlock)
-          && !(brandNameRegex && pillarForbidsBrand(p.pillar) && brandNameRegex.test(recovered.content));
+          && !violatesPillarBrand(recovered.content, p.pillar);
         if (recoveredOk) {
           p.content = scrubBannedPhrases(recovered.content);
           if (Array.isArray(recovered.hashtags) && recovered.hashtags.length > 0) p.hashtags = recovered.hashtags;

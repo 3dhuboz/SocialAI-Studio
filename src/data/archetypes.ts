@@ -39,6 +39,22 @@ export interface Archetype {
   bannedTropeExtras?: string[];
 }
 
+/**
+ * Pillar marker — pillars with this suffix forbid the brand name in post body.
+ *
+ * Stringly-typed convention rather than a structured field on Pillar (which
+ * would require migrating contentPillars from string[] to a structured type
+ * across every archetype). The marker is read by:
+ *   - Smart Schedule prompt builder (gemini.ts) — emits a hard NO-BRAND rule
+ *   - processOne post-flight (gemini.ts)        — auto-rejects + recovers
+ *
+ * Both call sites import `pillarForbidsBrand` rather than re-deriving the
+ * regex, so renaming the marker is a one-line change here.
+ */
+export const NO_PRODUCT_MENTION_MARKER = /\(no product mention\)/i;
+export const pillarForbidsBrand = (pillar: unknown): boolean =>
+  typeof pillar === 'string' && NO_PRODUCT_MENTION_MARKER.test(pillar);
+
 export const ARCHETYPES: Archetype[] = [
   {
     slug: 'food-restaurant',
