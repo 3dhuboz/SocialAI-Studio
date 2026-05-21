@@ -28,6 +28,8 @@ import {
   loadPostproxyMappingForPosts,
   lookupPostproxyMapping,
   normalizePostPlatform,
+  buildPublishCaption,
+  loadAiDisclosurePref,
 } from './_shared';
 import { createPost as postproxyCreatePost } from '../lib/postproxy';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
@@ -407,9 +409,6 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         const hashtagsPp = (post as any).hashtags ? JSON.parse((post as any).hashtags as string) : [];
         const contentTextPp = (post as any).content as string;
         const cleanContentPp = contentTextPp.replace(/(\s+#\w+)+\s*$/, '').trim();
-        const fullTextPp = hashtagsPp.length > 0
-          ? `${cleanContentPp}\n\n${hashtagsPp.join(' ')}`
-          : cleanContentPp;
 
         // Pick the first non-null media URL. Audio-mixed > raw video > image
         // matches the legacy path's preference order, just routed through
@@ -417,6 +416,24 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         const mediaUrl = ((post as any).audio_mixed_url
           ?? (post as any).video_url
           ?? (post as any).image_url) as string | null;
+
+        // AI-disclosure suffix — appended after hashtags when the post has
+        // an AI-generated image and the workspace hasn't opted out. Reads
+        // the per-workspace preference from profile JSON (client tier wins
+        // over user tier; absent = default-on). See _shared.ts for the
+        // policy rationale (Meta synthetic-media labelling, publisher
+        // liability).
+        const aiDisclosurePp = await loadAiDisclosurePref(
+          env,
+          (post as any).user_id as string,
+          (post as any).client_id as string | null,
+        );
+        const fullTextPp = buildPublishCaption({
+          content: contentTextPp,
+          hashtags: hashtagsPp,
+          hasImage: !!((post as any).image_url),
+          aiDisclosure: aiDisclosurePp,
+        });
 
         const postTypePp = (post as any).post_type as string | null;
         const isReel = postTypePp === 'video';
@@ -499,9 +516,21 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       const contentText = (post as any).content as string;
       // Strip any trailing hashtags from content (idempotent: handles inline hashtags and double-appended cases)
       const cleanContent = contentText.replace(/(\s+#\w+)+\s*$/, '').trim();
-      const fullText = hashtags.length > 0
-        ? `${cleanContent}\n\n${hashtags.join(' ')}`
-        : cleanContent;
+      // AI-disclosure suffix — appended after hashtags when the post has an
+      // AI-generated image and the workspace hasn't opted out. See _shared.ts
+      // for policy rationale (Meta synthetic-media labelling). Pulled from
+      // profile JSON; client tier wins over user tier; absent = default-on.
+      const aiDisclosureLegacy = await loadAiDisclosurePref(
+        env,
+        (post as any).user_id as string,
+        (post as any).client_id as string | null,
+      );
+      const fullText = buildPublishCaption({
+        content: contentText,
+        hashtags,
+        hasImage: !!((post as any).image_url),
+        aiDisclosure: aiDisclosureLegacy,
+      });
 
       const base = 'https://graph.facebook.com/v21.0';
       const pageId = tokens.facebookPageId;

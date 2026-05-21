@@ -30,6 +30,7 @@
 // and returns false here.
 
 import type { Env } from '../env';
+import { decryptSocialTokensJson } from './social-tokens';
 
 export type Platform = 'facebook' | 'instagram';
 
@@ -82,15 +83,11 @@ export async function isWorkspaceConnected(
       : await env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?')
           .bind(userId).first<{ social_tokens: string | null }>();
     if (!tokensRow?.social_tokens) return false;
-    try {
-      const t = JSON.parse(tokensRow.social_tokens) as {
-        facebookPageId?: string;
-        facebookPageAccessToken?: string;
-      };
-      return !!(t.facebookPageId && t.facebookPageAccessToken);
-    } catch {
-      return false;
-    }
+    const t = await decryptSocialTokensJson<{
+      facebookPageId?: string;
+      facebookPageAccessToken?: string;
+    }>(env, tokensRow.social_tokens);
+    return !!(t?.facebookPageId && t?.facebookPageAccessToken);
   } catch (e: any) {
     // Defensive: a transient D1 error shouldn't open the gate. Log and
     // return false so the user sees "not connected" rather than getting

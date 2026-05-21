@@ -25,6 +25,7 @@ import { buildSafeImagePrompt, sniffArchetypeFromCaption } from '../lib/image-sa
 import { tryCreateClerkUser, tryCreateCFPagesProject } from '../lib/provisioning';
 import { refreshFactsForWorkspace } from '../lib/facebook-facts';
 import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
+import { decryptSocialTokensJson } from '../lib/social-tokens';
 
 export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   // Backfill images for any Scheduled post that has an image_prompt but no image_url.
@@ -459,19 +460,29 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!provided || provided !== (c.env as any).FACTS_BOOTSTRAP_SECRET) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    // Encryption-aware: json_extract can't see inside the AES-GCM
+    // envelope, so we pull every non-empty social_tokens row and filter
+    // in code after decryption. refreshFactsForWorkspace itself returns
+    // an "[no FB page connected]" error for rows without a page token,
+    // so an unrelated row in the result set is a no-op-with-message
+    // rather than a crash.
     const users = await c.env.DB.prepare(
-      `SELECT id FROM users WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL`
-    ).all();
+      `SELECT id, social_tokens FROM users WHERE social_tokens IS NOT NULL AND social_tokens != '{}'`
+    ).all<{ id: string; social_tokens: string }>();
     const clients = await c.env.DB.prepare(
-      `SELECT id, user_id FROM clients WHERE social_tokens IS NOT NULL AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL AND COALESCE(status,'active') != 'on_hold'`
-    ).all();
+      `SELECT id, user_id, social_tokens FROM clients WHERE social_tokens IS NOT NULL AND social_tokens != '{}' AND COALESCE(status,'active') != 'on_hold'`
+    ).all<{ id: string; user_id: string; social_tokens: string }>();
     const results: any[] = [];
     for (const u of (users.results || [])) {
-      const r = await refreshFactsForWorkspace(c.env.DB, (u as any).id, null);
+      const t = await decryptSocialTokensJson<{ facebookPageAccessToken?: string }>(c.env, (u as any).social_tokens);
+      if (!t?.facebookPageAccessToken) continue;
+      const r = await refreshFactsForWorkspace(c.env, (u as any).id, null);
       results.push({ workspace: 'user:' + (u as any).id, ...r });
     }
     for (const cl of (clients.results || [])) {
-      const r = await refreshFactsForWorkspace(c.env.DB, (cl as any).user_id, (cl as any).id);
+      const t = await decryptSocialTokensJson<{ facebookPageAccessToken?: string }>(c.env, (cl as any).social_tokens);
+      if (!t?.facebookPageAccessToken) continue;
+      const r = await refreshFactsForWorkspace(c.env, (cl as any).user_id, (cl as any).id);
       results.push({ workspace: 'client:' + (cl as any).id, ...r });
     }
     return c.json({ workspaces_processed: results.length, results });

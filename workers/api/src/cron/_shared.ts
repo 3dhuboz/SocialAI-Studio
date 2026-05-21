@@ -8,6 +8,7 @@
 // named and centralised so any future cron query can include it explicitly.
 
 import type { Env } from '../env';
+import { decryptSocialTokensJson } from '../lib/social-tokens';
 
 export const ACTIVE_CLIENT_FILTER =
   `(client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`;
@@ -201,11 +202,6 @@ export async function loadSocialTokensForPosts<
   }
 
   const map = new Map<string, SocialTokens>();
-  const parse = (raw: string | null, key: string) => {
-    if (!raw) return;
-    try { map.set(key, JSON.parse(raw) as SocialTokens); }
-    catch { /* malformed JSON for this workspace — treat as missing tokens */ }
-  };
 
   // D1 supports parameterised IN lists via splat-bound placeholders. Run both
   // queries in parallel — they're against different tables, no contention.
@@ -222,8 +218,25 @@ export async function loadSocialTokensForPosts<
       : Promise.resolve({ results: [] as { id: string; social_tokens: string | null }[] }),
   ]);
 
-  for (const r of clientRows.results ?? []) parse(r.social_tokens, `c:${r.id}`);
-  for (const r of userRows.results ?? []) parse(r.social_tokens, `u:${r.id}`);
+  // decryptSocialTokensJson handles both legacy plaintext and the v1
+  // AES-GCM envelope transparently. Returns null on malformed/unrecoverable
+  // values so a single bad row maps to "no entry in map" — the publish
+  // cron then marks just that workspace's posts Missed with the standard
+  // "Reconnect Facebook" message, same as the pre-encryption behaviour.
+  const decrypts: Promise<void>[] = [];
+  for (const r of clientRows.results ?? []) {
+    decrypts.push((async () => {
+      const t = await decryptSocialTokensJson<SocialTokens>(env, r.social_tokens);
+      if (t) map.set(`c:${r.id}`, t);
+    })());
+  }
+  for (const r of userRows.results ?? []) {
+    decrypts.push((async () => {
+      const t = await decryptSocialTokensJson<SocialTokens>(env, r.social_tokens);
+      if (t) map.set(`u:${r.id}`, t);
+    })());
+  }
+  await Promise.all(decrypts);
 
   return map;
 }
@@ -237,5 +250,110 @@ export function lookupSocialTokens(
 ): SocialTokens | undefined {
   if (post.client_id) return map.get(`c:${post.client_id}`);
   if (post.user_id) return map.get(`u:${post.user_id}`);
+  return undefined;
+}
+
+// ── AI disclosure suffix ────────────────────────────────────────────────
+// Customer-readiness: Meta's Synthetic & Manipulated Media policy requires
+// AI-generated images to be labelled. The customer is the publisher and
+// theoretically liable, so we auto-append a small disclosure as the
+// defensive default. The workspace can opt out via BusinessProfile.aiDisclosure
+// = false — see frontend Settings → Content & Video toggle.
+//
+// Disclosure shape: a single leading middle-dot to visually break it off
+// from the hashtag block, then the marker. Kept short + neutral so it
+// doesn't dominate the caption. Appears AFTER hashtags (i.e. at the very
+// end of the published body), so feed consumers see it last.
+export const AI_DISCLOSURE_SUFFIX = ' · 🤖 Created with AI';
+
+/**
+ * Build the FB/IG publish caption for a post. Centralised here so the
+ * cron publish path (cron/publish-missed.ts) and the manual publish-now
+ * route (routes/postproxy.ts) produce byte-identical captions.
+ *
+ * Behaviour:
+ *   1. Strip any trailing hashtags from `content` (idempotent — handles
+ *      inline hashtags and double-appended cases).
+ *   2. Append the canonical hashtag block (newline-newline separator)
+ *      iff `hashtags.length > 0`.
+ *   3. Append AI_DISCLOSURE_SUFFIX iff `hasImage` AND the workspace
+ *      hasn't opted out via `aiDisclosure: false`.
+ *
+ * The disclosure is image-only by design — text-only posts get nothing.
+ * That matches Meta's policy (the AI-content label is required when the
+ * image is generated; the policy says nothing about AI-assisted captions).
+ *
+ * Default opt-in: undefined aiDisclosure → disclosure ON. False explicitly
+ * opts out. This matches the BusinessProfile interface docs.
+ */
+export function buildPublishCaption(input: {
+  content: string;
+  hashtags: string[];
+  hasImage: boolean;
+  aiDisclosure?: boolean;
+}): string {
+  const { content, hashtags, hasImage, aiDisclosure } = input;
+  const cleanContent = content.replace(/(\s+#\w+)+\s*$/, '').trim();
+  const withHashtags = hashtags.length > 0
+    ? `${cleanContent}\n\n${hashtags.join(' ')}`
+    : cleanContent;
+  // Disclosure is opt-out: undefined → true. Only append when the post has
+  // an AI-generated image attached. Text-only posts never get it.
+  const wantsDisclosure = hasImage && aiDisclosure !== false;
+  return wantsDisclosure ? `${withHashtags}${AI_DISCLOSURE_SUFFIX}` : withHashtags;
+}
+
+/**
+ * Look up the workspace's `aiDisclosure` preference from the profile JSON.
+ * Two-tier resolution mirrors `loadForbiddenSubjects`:
+ *
+ *   - Client-level (clients.profile.aiDisclosure): per-workspace toggle
+ *     captured in the agency UI. The client tier wins when set.
+ *
+ *   - User-level (users.profile.aiDisclosure): the owner's default. Falls
+ *     back here when there's no client_id, OR when the client tier didn't
+ *     set the field explicitly.
+ *
+ * Returns boolean | undefined. Undefined means "no preference set" — the
+ * caller (buildPublishCaption) interprets that as the default-on policy.
+ * Errors are swallowed + logged with the same rationale as
+ * loadForbiddenSubjects: failing closed at the lookup would halt the cron
+ * publish path entirely.
+ */
+export async function loadAiDisclosurePref(
+  env: Env,
+  userId: string,
+  clientId?: string | null,
+): Promise<boolean | undefined> {
+  if (clientId) {
+    try {
+      const row = await env.DB
+        .prepare('SELECT profile FROM clients WHERE id = ? AND user_id = ?')
+        .bind(clientId, userId)
+        .first<{ profile: string | null }>();
+      if (row?.profile) {
+        try {
+          const parsed = JSON.parse(row.profile);
+          if (typeof parsed?.aiDisclosure === 'boolean') return parsed.aiDisclosure;
+        } catch { /* malformed JSON — fall through to user tier */ }
+      }
+    } catch (err) {
+      console.warn(`[cron-shared] loadAiDisclosurePref client lookup failed for ${clientId}:`, err);
+    }
+  }
+  try {
+    const row = await env.DB
+      .prepare('SELECT profile FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ profile: string | null }>();
+    if (row?.profile) {
+      try {
+        const parsed = JSON.parse(row.profile);
+        if (typeof parsed?.aiDisclosure === 'boolean') return parsed.aiDisclosure;
+      } catch { /* malformed JSON — return undefined → default-on */ }
+    }
+  } catch (err) {
+    console.warn(`[cron-shared] loadAiDisclosurePref user lookup failed for ${userId}:`, err);
+  }
   return undefined;
 }

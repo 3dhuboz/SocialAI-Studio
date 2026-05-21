@@ -1382,6 +1382,14 @@ export const LandingPage: React.FC<Props> = ({ onActivate, onSignIn, portalConte
             <a href={`mailto:${CLIENT.supportEmail}`} className="hover:text-white/40 transition">{CLIENT.supportEmail}</a>
           </span>
         </div>
+        {/* Legal links — required for compliance (AU Privacy Act + GDPR).
+            Rendered on a second row so the brand row above stays uncluttered. */}
+        <div className="max-w-5xl mx-auto mt-4 pt-4 border-t border-white/[0.04] flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-white/15">
+          <a href="/privacy" className="hover:text-white/45 transition">Privacy Policy</a>
+          <a href="/terms" className="hover:text-white/45 transition">Terms of Service</a>
+          <a href="/refunds" className="hover:text-white/45 transition">Refund Policy</a>
+          <a href="/cookies" className="hover:text-white/45 transition">Cookie Notice</a>
+        </div>
       </footer>
     </div>
   );

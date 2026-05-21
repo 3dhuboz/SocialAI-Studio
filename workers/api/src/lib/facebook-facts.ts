@@ -22,6 +22,7 @@
 // endpoint, and the daily refresh-facts cron.
 
 import type { Env } from '../env';
+import { decryptSocialTokensJson } from './social-tokens';
 
 // Lighter sibling of refreshFactsForWorkspace — caller already has tokens
 // resolved (used by /api/onboarding-magic which just JSON.parsed them).
@@ -87,17 +88,33 @@ export async function refreshFactsForUser(
   } catch { /* skip */ }
 }
 
+/**
+ * @param envOrDb - Either the Env object (preferred — needed for
+ *   AES-GCM decryption of the social_tokens column) or a bare
+ *   D1Database for backward compatibility. The D1Database form works
+ *   transparently on legacy plaintext rows but cannot read encrypted
+ *   rows; pass Env wherever possible.
+ */
 export async function refreshFactsForWorkspace(
-  db: D1Database,
+  envOrDb: Env | D1Database,
   uid: string,
   clientId: string | null,
 ): Promise<{ inserted: number; errors: string[] }> {
   const errors: string[] = [];
+  // Accept either Env or D1Database — Env carries the master key needed
+  // to decrypt the v1 envelope. When called with a bare D1Database
+  // (legacy callers), we fall back to plaintext-only parsing which keeps
+  // pre-encryption behaviour identical.
+  const isEnv = (v: any): v is Env => v && typeof v === 'object' && 'DB' in v;
+  const env = isEnv(envOrDb) ? envOrDb : null;
+  const db = isEnv(envOrDb) ? envOrDb.DB : envOrDb;
   // Get tokens
   const tokenRow = clientId
     ? await db.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
     : await db.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
-  const tokens = tokenRow?.social_tokens ? JSON.parse(tokenRow.social_tokens) : null;
+  const tokens: any = env
+    ? await decryptSocialTokensJson<any>(env, tokenRow?.social_tokens)
+    : (tokenRow?.social_tokens ? (() => { try { return JSON.parse(tokenRow.social_tokens!); } catch { return null; } })() : null);
   const pageId = tokens?.facebookPageId;
   const pageToken = tokens?.facebookPageAccessToken;
   if (!pageId || !pageToken) {

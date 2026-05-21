@@ -160,6 +160,16 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
     const email = userRow?.email ?? null;
     const paypalSubId = userRow?.paypal_subscription_id ?? null;
 
+    // Collect R2 poster keys BEFORE we DELETE FROM posters (otherwise the
+    // pointer rows are gone and we leak bucket bytes). The actual R2 delete
+    // loop happens at the bottom after the D1 purge — DB is source of truth.
+    const posterKeyRows = await c.env.DB.prepare(
+      `SELECT image_r2_key FROM posters WHERE user_id = ? AND image_r2_key IS NOT NULL`
+    ).bind(uid).all<{ image_r2_key: string | null }>();
+    const posterKeys = (posterKeyRows.results ?? [])
+      .map((r) => r.image_r2_key)
+      .filter((k): k is string => typeof k === 'string' && k.length > 0);
+
     // ── Cancel active PayPal subscription first (audit P0-7, 2026-05-22) ──
     // Pre-fix: the delete-account flow purged the user's data but left
     // PayPal billing them forever. Customer lost data AND kept getting
@@ -215,6 +225,23 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // Finally the users row itself.
     await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(uid).run();
+
+    // R2 poster-bytes purge (audit P1 follow-up, 2026-05-22). Best-effort
+    // — D1 is already consistent above, so an R2 failure here doesn't
+    // roll the delete back. Mirrors the shop/redact pattern. R2 deletes
+    // are cheap (no quota cost) and the customer expects their data
+    // gone, so we just iterate.
+    if (c.env.POSTER_ASSETS && posterKeys.length > 0) {
+      for (const key of posterKeys) {
+        try {
+          await c.env.POSTER_ASSETS.delete(key);
+        } catch (e: any) {
+          console.warn(`[user-delete] R2 delete ${key} skipped: ${e?.message || e}`);
+        }
+      }
+      console.log(`[user-delete] purged ${posterKeys.length} R2 objects for uid=${uid}`);
+    }
+
     console.log(`[user-delete] purged uid=${uid} email=${email ?? 'null'}`);
     return c.json({ ok: true });
   });

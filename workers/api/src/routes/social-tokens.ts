@@ -10,10 +10,22 @@
 // cron tick rehydrates the page tokens.
 //
 // Extracted from src/index.ts as Phase B step 17 of the route-module split.
+//
+// At-rest encryption (FB Platform Terms compliance): the column is
+// AES-GCM-encrypted when MASTER_ENCRYPTION_KEY is set on the worker. See
+// lib/social-tokens.ts for the helpers — they handle plaintext-legacy
+// rows transparently, so existing connected workspaces stay working
+// through the rollout. The GET path also opportunistically re-encrypts
+// any plaintext rows it reads via ctx.waitUntil.
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId } from '../auth';
+import {
+  decryptSocialTokensJson,
+  encryptSocialTokensJson,
+  scheduleSocialTokensReencrypt,
+} from '../lib/social-tokens';
 
 export function registerSocialTokensRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/db/social-tokens', async (c) => {
@@ -23,7 +35,16 @@ export function registerSocialTokensRoutes(app: Hono<{ Bindings: Env }>): void {
     const raw = clientId
       ? await c.env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
       : await c.env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
-    const tokens = raw?.social_tokens ? JSON.parse(raw.social_tokens) : {};
+    const tokens = (await decryptSocialTokensJson(c.env, raw?.social_tokens)) ?? {};
+    // Lazy migration — if the row was legacy plaintext, re-write it as
+    // ciphertext in the background. No-op when MASTER_ENCRYPTION_KEY is
+    // unset or the value is already encrypted.
+    scheduleSocialTokensReencrypt(
+      c.env,
+      c.executionCtx,
+      clientId ? { scope: 'clients', id: clientId } : { scope: 'users', id: uid },
+      raw?.social_tokens,
+    );
     return c.json({ tokens });
   });
 
@@ -32,11 +53,11 @@ export function registerSocialTokensRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') ?? null;
     const body = await c.req.json<Record<string, unknown>>();
-    const json = JSON.stringify(body);
+    const stored = await encryptSocialTokensJson(c.env, body);
     if (clientId) {
-      await c.env.DB.prepare('UPDATE clients SET social_tokens = ? WHERE id = ? AND user_id = ?').bind(json, clientId, uid).run();
+      await c.env.DB.prepare('UPDATE clients SET social_tokens = ? WHERE id = ? AND user_id = ?').bind(stored, clientId, uid).run();
     } else {
-      await c.env.DB.prepare('UPDATE users SET social_tokens = ? WHERE id = ?').bind(json, uid).run();
+      await c.env.DB.prepare('UPDATE users SET social_tokens = ? WHERE id = ?').bind(stored, uid).run();
     }
     return c.json({ ok: true });
   });
