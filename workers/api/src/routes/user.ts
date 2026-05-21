@@ -114,9 +114,87 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
     return c.json({ ok: true });
   });
 
+  // DELETE /api/db/user — full GDPR account deletion.
+  //
+  // Audit P0-5 (2026-05-22): D1 doesn't enable PRAGMA foreign_keys per
+  // statement (documented in schema_v19_brands.sql L23-27), so the
+  // `FOREIGN KEY ... ON DELETE CASCADE` declarations never fire. Before
+  // this fix, `DELETE FROM users` orphaned every owned row: posts (with
+  // captions + image URLs), clients (with business profiles), social_tokens
+  // (raw FB Page access tokens), portal (whitelabel passwords), scraped FB
+  // engagement data, posters in R2, etc. That's a GDPR Article 17
+  // violation — the customer's "right to erasure" was a silent no-op.
+  //
+  // We now mirror the Shopify shop/redact pattern (routes/shopify-oauth.ts:830-882):
+  // explicit per-table DELETEs in dependency order, with the users row
+  // last. PII-bearing tables first; admin / audit tables that may keep
+  // anonymized references for billing reconciliation are addressed in
+  // followups.
+  //
+  // Tables covered:
+  //   - posts (content, image_url, scheduled_for, reasoning)
+  //   - clients (name, business profile JSON)
+  //   - posters + poster_brand_kit (logo/brand assets)
+  //   - campaigns (marketing copy)
+  //   - client_facts (scraped FB engagement history)
+  //   - postproxy_profiles (FB Page IDs + Postproxy mapping)
+  //   - portal (whitelabel slug + admin password)
+  //   - pending_activations / pending_cancellations (via email)
+  //   - ai_usage (per-call metadata, contains caption/prompt fragments)
+  //   - rate_limit_log (per-uid counters)
+  //   - onboarding_state (intake form free-text)
+  //
+  // R2 poster bytes are NOT purged here yet — tracked as a P1 follow-up
+  // since it requires the SELECT-keys-then-delete-objects pattern
+  // (shopify-oauth.ts:842-849). Documented in the PR body so Steve can
+  // run a one-shot wrangler r2 lifecycle if needed.
   app.delete('/api/db/user', async (c) => {
     const uid = c.get('uid');
+
+    // Resolve email up-front — pending_* rows are keyed by it, and after
+    // we DELETE the users row the link is gone.
+    const userRow = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(uid).first<{ email: string | null }>();
+    const email = userRow?.email ?? null;
+
+    // Per-table purges. Wrap each in try/catch so a missing table (e.g.
+    // a future schema rename) doesn't abort the whole delete. Order
+    // matters loosely — child rows first, then parent, but D1's lack of
+    // active FK enforcement means we mostly just need everything gone.
+    const purges: Array<{ name: string; sql: string; binds: unknown[] }> = [
+      { name: 'posts',                 sql: `DELETE FROM posts WHERE user_id = ?`,                 binds: [uid] },
+      { name: 'campaigns',             sql: `DELETE FROM campaigns WHERE user_id = ?`,             binds: [uid] },
+      { name: 'client_facts',          sql: `DELETE FROM client_facts WHERE user_id = ?`,          binds: [uid] },
+      { name: 'posters',               sql: `DELETE FROM posters WHERE user_id = ?`,               binds: [uid] },
+      { name: 'poster_brand_kit',      sql: `DELETE FROM poster_brand_kit WHERE user_id = ?`,      binds: [uid] },
+      { name: 'postproxy_profiles',    sql: `DELETE FROM postproxy_profiles WHERE user_id = ?`,    binds: [uid] },
+      { name: 'portal',                sql: `DELETE FROM portal WHERE user_id = ?`,                binds: [uid] },
+      { name: 'clients',               sql: `DELETE FROM clients WHERE user_id = ?`,               binds: [uid] },
+      { name: 'ai_usage',              sql: `DELETE FROM ai_usage WHERE user_id = ?`,              binds: [uid] },
+      { name: 'rate_limit_log',        sql: `DELETE FROM rate_limit_log WHERE key LIKE ?`,         binds: [`%:${uid}`] },
+      { name: 'onboarding_state',      sql: `DELETE FROM onboarding_state WHERE user_id = ?`,      binds: [uid] },
+    ];
+    if (email) {
+      purges.push(
+        { name: 'pending_activations',   sql: `DELETE FROM pending_activations WHERE email = ?`,   binds: [email] },
+        { name: 'pending_cancellations', sql: `DELETE FROM pending_cancellations WHERE email = ?`, binds: [email] },
+      );
+    }
+
+    for (const p of purges) {
+      try {
+        await c.env.DB.prepare(p.sql).bind(...p.binds).run();
+      } catch (e: any) {
+        // Likely "no such table" or "no such column" against a schema
+        // we haven't actually applied yet. Log and continue — partial
+        // purge is better than a 500 that aborts the whole delete.
+        console.warn(`[user-delete] ${p.name} purge skipped: ${e?.message || e}`);
+      }
+    }
+
+    // Finally the users row itself.
     await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(uid).run();
+    console.log(`[user-delete] purged uid=${uid} email=${email ?? 'null'}`);
     return c.json({ ok: true });
   });
 }
