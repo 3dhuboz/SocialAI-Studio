@@ -107,7 +107,7 @@ async function generatePosterImage(
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://socialai-shopify.pages.dev',
+          'HTTP-Referer': 'https://app.socialaistudio.au',
           'X-Title': 'SocialAI Studio for Shopify',
         },
         body: JSON.stringify({

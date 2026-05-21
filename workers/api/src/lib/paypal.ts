@@ -123,6 +123,41 @@ export async function paypalAccessToken(env: Env): Promise<string> {
   return data.access_token;
 }
 
+// Cancel an active PayPal subscription via the Billing API (audit P0-7,
+// 2026-05-22). Called from the user-delete cascade so a customer who
+// clicks Delete Account doesn't keep getting billed forever — the
+// previous code purged the users row but never told PayPal to stop the
+// recurring charge.
+//
+// PayPal returns 204 on success. If the subscription is already
+// cancelled / expired / not found, PayPal returns 422 — we treat that
+// as already-cancelled and don't throw. Any other error logs + throws
+// so the caller can decide whether to roll back the user-delete.
+export async function cancelPayPalSubscription(
+  env: Env,
+  subscriptionId: string,
+  reason: string = 'user_account_deleted',
+): Promise<{ cancelled: boolean; alreadyTerminal: boolean }> {
+  const token = await paypalAccessToken(env);
+  const res = await fetch(
+    `${PAYPAL_API_BASE}/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason.slice(0, 128) }),
+    },
+  );
+  if (res.status === 204) return { cancelled: true, alreadyTerminal: false };
+  // 404 (not found) or 422 (invalid state — already cancelled / expired)
+  // are both equivalent to "the subscription isn't active and won't
+  // be charged again." Don't throw — proceed with the user delete.
+  if (res.status === 404 || res.status === 422) {
+    return { cancelled: false, alreadyTerminal: true };
+  }
+  const text = await res.text().catch(() => '');
+  throw new Error(`PayPal cancel failed (${res.status}): ${text.slice(0, 200)}`);
+}
+
 export async function paypalVerifyWebhookSignature(req: Request, rawBody: string, token: string, env: Env): Promise<boolean> {
   if (!env.PAYPAL_WEBHOOK_ID) throw new Error('PAYPAL_WEBHOOK_ID worker secret missing');
   const body = {

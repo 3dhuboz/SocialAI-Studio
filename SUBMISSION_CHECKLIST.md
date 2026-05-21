@@ -60,8 +60,8 @@ The state of every requirement Shopify checks during review, with file links to 
 | Asset | Status | Where |
 |---|---|---|
 | **App icon (1200×1200 PNG)** | ✅ Generated | [shopify-app/assets/app-icon.png](shopify-app/assets/app-icon.png) — 391 KB. Dark slate background, amber speech bubble with AI sparkles + typing dots, rounded square. Source SVG at [shopify-app/public/app-icon.svg](shopify-app/public/app-icon.svg). Rendered via headless Chrome from the SVG. |
-| **Privacy policy page (HTML)** | ✅ Drafted + built | [shopify-app/public/privacy.html](shopify-app/public/privacy.html) → goes live at `https://socialai-shopify.pages.dev/privacy` |
-| **Support page (HTML)** | ✅ Drafted + built | [shopify-app/public/support.html](shopify-app/public/support.html) → goes live at `https://socialai-shopify.pages.dev/support` |
+| **Privacy policy page (HTML)** | ✅ Drafted + built | [shopify-app/public/privacy.html](shopify-app/public/privacy.html) → goes live at `https://app.socialaistudio.au/privacy` |
+| **Support page (HTML)** | ✅ Drafted + built | [shopify-app/public/support.html](shopify-app/public/support.html) → goes live at `https://app.socialaistudio.au/support` |
 | **Screenshots** | ✅ 2 captured (auto-saved to `~/Downloads/`) | Install consent screen + embedded-app loaded state. Both functional; reviewers accept 1280×720 minimum so these meet spec. |
 
 ## ⏳ One blocker, then ship
@@ -96,8 +96,8 @@ The rate limit eventually clears. Try `npx wrangler whoami` periodically; once t
 Once any option succeeds, verify:
 
 ```bash
-curl -I https://socialai-shopify.pages.dev/privacy   # → 200 OK + CSP headers
-curl -I https://socialai-shopify.pages.dev/support   # → 200 OK + CSP headers
+curl -I https://app.socialaistudio.au/privacy   # → 200 OK + CSP headers
+curl -I https://app.socialaistudio.au/support   # → 200 OK + CSP headers
 ```
 
 ## What's still optional
@@ -134,4 +134,4 @@ If reviewers ask about anything in the "Code & compliance" table above, point th
 
 ---
 
-_Last updated: 19 May 2026. State of the world: worker version `91f5884b`, Pages deployment at `socialai-shopify.pages.dev`, schema_v21 applied, 90/90 tests passing, 1 dev-store install live with encrypted token._
+_Last updated: 22 May 2026. State of the world: Pages deployment at `app.socialaistudio.au` (CNAME → `socialai-shopify.pages.dev`), schema_v21 applied, 90/90 tests passing, 1 dev-store install live with encrypted token. Domain swap from `socialai-shopify.pages.dev` made for Shopify Partners hostname compliance (Partners blocks any URL containing "shopify")._

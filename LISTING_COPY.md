@@ -55,7 +55,7 @@ This document holds every piece of copy that goes into the Shopify App Store lis
 >
 > ### Privacy & security
 >
-> We request `read_products` only. We don't see your customers, orders, or storefront visitors. OAuth access tokens are AES-256 encrypted at rest. Full privacy policy: https://socialai-shopify.pages.dev/privacy
+> We request `read_products` only. We don't see your customers, orders, or storefront visitors. OAuth access tokens are AES-256 encrypted at rest. Full privacy policy: https://app.socialaistudio.au/privacy
 >
 > ### Built for Shopify merchants
 >
@@ -98,8 +98,8 @@ Secondary: **Sales channels → Social media**
 ## Support details
 
 - **Support email**: steve@pennywiseit.com.au
-- **Support URL**: https://socialai-shopify.pages.dev/support
-- **Privacy policy URL**: https://socialai-shopify.pages.dev/privacy
+- **Support URL**: https://app.socialaistudio.au/support
+- **Privacy policy URL**: https://app.socialaistudio.au/privacy
 - **Developer name**: Penny Wise I.T
 
 ## Demo store URL (if applicable)
@@ -134,8 +134,8 @@ _(TODO: spin up a dev store with seeded products + the app pre-installed, so rev
 | App icon — 1200×1200 PNG, ≤1 MB, with safe area | Required | `shopify-app/assets/app-icon.png` |
 | 3-8 screenshots — 1600×900 or 1280×800, JPEG/PNG | Required | `C:\Users\Steve\Desktop\app-store-screenshots\01-autopilot.png` … `06-products.png` — see Screenshot list below |
 | Demo video — 30-60s MP4 (recommended) | Recommended | TODO — optional, can submit without |
-| Privacy policy URL | Required | https://socialai-shopify.pages.dev/privacy |
-| Support URL | Required | https://socialai-shopify.pages.dev/support |
+| Privacy policy URL | Required | https://app.socialaistudio.au/privacy |
+| Support URL | Required | https://app.socialaistudio.au/support |
 | Pricing structure | Required (above) | Done — see "Pricing structure" |
 | Developer name + business address | Required | Penny Wise I.T, Australia |
 | App store description copy | Required | Done — see above |

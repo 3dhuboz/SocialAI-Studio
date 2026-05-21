@@ -51,9 +51,15 @@ generated `dist/index.html` for any unresolved `%VITE_*%` placeholders
 and fails the build if it finds any — belt-and-braces against silently
 shipping a misconfigured bundle.
 
-Deploy `dist/` to a new Cloudflare Pages project (e.g. `socialai-shopify`) on
-the custom domain that matches `application_url` in `/shopify.app.toml`. The
-recommended subdomain is `shopify.socialaistudio.au`.
+Deploy `dist/` to the `socialai-shopify` Cloudflare Pages project. The
+project's custom domain is `app.socialaistudio.au`, which matches
+`application_url` in `/shopify.app.toml`.
+
+> Why `app.` and not `shopify.`? Shopify Partners blocks any URL containing
+> "shopify" in the hostname (including subdomains) when validating App URL +
+> Redirect URLs, so the public origin can't reference "shopify" at all. The
+> Pages project name stays as `socialai-shopify` internally — only the public
+> custom domain matters for Partners.
 
 ## Architecture
 
