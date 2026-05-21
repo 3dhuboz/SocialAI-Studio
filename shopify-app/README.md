@@ -32,9 +32,24 @@ worker's `SHOPIFY_APP_URL` secret during development.
 
 ## Build & deploy
 
+The build **requires** `VITE_SHOPIFY_API_KEY` at build time. The Vite config
+fails fast if it's unset — a missing key would otherwise ship the literal
+`%VITE_SHOPIFY_API_KEY%` placeholder into `dist/index.html`, App Bridge
+can't initialise, and every merchant hangs on "Connecting to your shop…"
+forever (the 2026-05-21 outage). Pass it inline or via `.env.local`:
+
 ```bash
+# Inline (recommended for one-off / CI deploys):
+VITE_SHOPIFY_API_KEY=<client-id-from-shopify.app.toml> npm run build
+
+# Or copy .env.example → .env.local, fill the value, then:
 npm run build           # outputs dist/
 ```
+
+A post-build script (`scripts/verify-build.mjs`) double-checks the
+generated `dist/index.html` for any unresolved `%VITE_*%` placeholders
+and fails the build if it finds any — belt-and-braces against silently
+shipping a misconfigured bundle.
 
 Deploy `dist/` to a new Cloudflare Pages project (e.g. `socialai-shopify`) on
 the custom domain that matches `application_url` in `/shopify.app.toml`. The

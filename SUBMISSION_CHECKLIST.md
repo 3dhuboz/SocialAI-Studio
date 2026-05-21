@@ -73,10 +73,17 @@ The Pages deploy is **fully built and staged in `shopify-app/dist/`** (12 files:
 **Option A — Fresh wrangler login (fastest, ~30 seconds):**
 ```bash
 cd shopify-app
+VITE_SHOPIFY_API_KEY=f191b1dcbd73ce52f9c4b0d27591545e npm run build   # REQUIRED env var or build fails fast
 npx wrangler logout
 npx wrangler login              # opens browser, click Allow once
 npx wrangler pages deploy dist --project-name socialai-shopify --branch main --commit-dirty=true
 ```
+
+> **Why the inline env var?** Without `VITE_SHOPIFY_API_KEY` the built HTML
+> ships with the literal `%VITE_SHOPIFY_API_KEY%` placeholder and App Bridge
+> hangs at boot (the 2026-05-21 outage). The build now fails fast if it's
+> missing — but the inline form here makes the dependency obvious to anyone
+> reading the runbook.
 
 **Option B — Direct upload via dashboard (no CLI needed):**
 1. Open https://dash.cloudflare.com/?to=/:account/pages/view/socialai-shopify/deployments/new
