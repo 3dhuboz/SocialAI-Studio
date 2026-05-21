@@ -22,7 +22,7 @@ const PrivacyPolicy: React.FC = () => {
     >
       <h2>Who we are</h2>
       <p>
-        {CLIENT.appName} is operated by Steve, sole trader (ABN 16 477 079 626), based in
+        {CLIENT.appName} is operated by Penny Wise I.T (ABN 16 477 079 626), based in
         Queensland, Australia. For privacy enquiries you can reach the operator at{' '}
         <a href={`mailto:${supportEmail}`}>{supportEmail}</a> or{' '}
         <a href="mailto:steve@3dhub.au">steve@3dhub.au</a>.
