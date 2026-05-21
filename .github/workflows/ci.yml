@@ -64,3 +64,36 @@ jobs:
             echo "::error::App.tsx is calling postToPageScheduled — this creates uncancellable Facebook orphan posts. See root_cause_fb_scheduled_publish_time.md."
             exit 1
           fi
+
+      # Guard against silent removal of the Shopify embedded-app surface.
+      # Pre-merge history: the worker was deployed multiple times from a
+      # different branch that lacked Shopify code, wiping every /api/shopify/*
+      # route from prod. Now that this code lives on main, this guard ensures
+      # the routes cannot be quietly dropped by a future refactor.
+      - name: Guard — Shopify routes registered
+        run: |
+          required_imports=(
+            registerShopifyOauthRoutes
+            registerAdminShopifyRoutes
+            registerShopifyProductsRoutes
+            registerShopifyComposeRoutes
+            registerShopifyPostsRoutes
+            registerShopifySocialConnectRoutes
+            registerShopifyInsightsRoutes
+            registerShopifyPostQualityRoutes
+            registerShopifyPostersRoutes
+            registerShopifyAutopilotRoutes
+            registerShopifyCampaignRoutes
+            registerShopifyFactsRoutes
+            registerShopifyProfileRoutes
+          )
+          missing=()
+          for fn in "${required_imports[@]}"; do
+            if ! grep -q "$fn" workers/api/src/index.ts; then
+              missing+=("$fn")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::workers/api/src/index.ts is missing Shopify route registrations: ${missing[*]}"
+            exit 1
+          fi

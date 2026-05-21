@@ -1,0 +1,13 @@
+# Security headers for the Shopify embedded app (Cloudflare Pages _headers format).
+# CSP frame-ancestors: allow embedding inside admin.shopify.com + shop *.myshopify.com iframes (required for embedded apps).
+# HSTS: force HTTPS for 2 years incl. subdomains; preload-eligible.
+# X-Content-Type-Options: block MIME sniffing.
+# Referrer-Policy: send origin only on cross-origin, full URL same-origin.
+# Permissions-Policy: deny camera/mic/geolocation/payment — app doesn't use them.
+# Note: deliberately NOT setting X-Frame-Options; it conflicts with frame-ancestors.
+/*
+  Content-Security-Policy: frame-ancestors https://*.myshopify.com https://admin.shopify.com;
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()

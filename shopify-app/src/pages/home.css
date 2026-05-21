@@ -1,0 +1,67 @@
+/* Home page polish — hero card, quick-action cards, stat cards.
+   Keeps Polaris primitives but adds the subtle hover/lift that makes
+   the dashboard feel like a control center, not a settings dump. */
+
+/* Hero card gets a soft magic-tinted background. Same accent as the
+   Autopilot hero so the two surfaces share a visual vocabulary. */
+.home-hero {
+  background: var(--p-color-bg-surface-magic-subdued, #f4f1ff);
+  border-radius: 12px;
+}
+
+/* Quick-action cards lift on hover and press on active. The whole
+   card is clickable — wrapped in a RouterLink at the React layer. */
+.home-quick-action {
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+  border-radius: 12px;
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.home-quick-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+.home-quick-action:active {
+  transform: translateY(0);
+}
+.home-quick-action:focus-visible {
+  outline: 2px solid var(--p-color-border-focus);
+  outline-offset: 2px;
+}
+
+/* Stat tiles get a softer lift — they aren't actionable, just
+   visually rewarding to scan as a row. */
+.home-stat-card {
+  transition: box-shadow 160ms ease;
+  border-radius: 12px;
+}
+.home-stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* Setup-checklist rows: subtle hover affordance so each row feels
+   navigable (we wrap each in a RouterLink at the React layer). */
+.home-checklist-row {
+  border-radius: 8px;
+  padding: 8px 12px;
+  transition: background 120ms ease;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+.home-checklist-row:hover {
+  background: var(--p-color-bg-surface-hover, #f6f6f7);
+}
+.home-checklist-row:focus-visible {
+  outline: 2px solid var(--p-color-border-focus);
+  outline-offset: 2px;
+}
+
+/* Tinted backgrounds for cards that want to feel AI-powered without
+   losing Polaris contrast guarantees. */
+.home-tint-magic {
+  background: var(--p-color-bg-surface-magic-subdued, #f4f1ff);
+  border-radius: 12px;
+}

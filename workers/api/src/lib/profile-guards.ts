@@ -149,6 +149,62 @@ export async function resolveBusinessType(
 }
 
 /**
+ * Shopify-shop variant of loadForbiddenSubjects. Reads from
+ * `shopify_stores.profile` (JSON column added by the shopify_stores
+ * migration) and tokenises the same way as the user/client tiers.
+ *
+ * Why a separate function instead of unioning into loadForbiddenSubjects:
+ * shop posts use the schema_v22 tenant abstraction (owner_kind='shop',
+ * user_id=<shop_domain> as a sentinel — no real users row, no clients row).
+ * The Clerk-tenant loader would do a wasted lookup against users(id=<shop>)
+ * which returns the empty sentinel. Calling this loader directly is faster
+ * and makes the intent obvious at the call site.
+ *
+ * Storage shape: `shopify_stores.profile.forbiddenSubjects` is a JSON
+ * array of strings (the embedded-app Settings → Brand safety card writes
+ * arrays directly because they're cleaner than comma-joined strings for
+ * JSON storage). The shared parseForbiddenSubjects only accepts strings,
+ * so we tokenise the array locally here.
+ *
+ * Same fail-open posture as the Clerk version: errors are logged and we
+ * return []. Halting the platform is worse than publishing unguarded.
+ */
+export async function loadForbiddenSubjectsForShop(
+  env: Env,
+  shopDomain: string,
+): Promise<string[]> {
+  try {
+    const row = await env.DB
+      .prepare('SELECT profile FROM shopify_stores WHERE shop_domain = ?')
+      .bind(shopDomain)
+      .first<{ profile: string | null }>();
+    if (!row?.profile) return [];
+    let parsed: any;
+    try { parsed = JSON.parse(row.profile); } catch { return []; }
+    const raw = parsed?.forbiddenSubjects;
+    // Accept either array (preferred new format) or string (legacy / future
+    // string-based field). Same trim/lowercase/dedupe/length rules.
+    if (Array.isArray(raw)) {
+      return [
+        ...new Set(
+          raw
+            .filter((v): v is string => typeof v === 'string')
+            .map((s) => s.trim().toLowerCase())
+            .filter((s) => s.length > 0 && s.length < 60),
+        ),
+      ];
+    }
+    if (typeof raw === 'string') {
+      return parseForbiddenSubjects(raw);
+    }
+    return [];
+  } catch (err) {
+    console.warn(`[profile-guards] loadForbiddenSubjectsForShop lookup failed for ${shopDomain}:`, err);
+    return [];
+  }
+}
+
+/**
  * Scan a block of text for the first occurrence of any denylisted subject.
  * Returns the matched subject (lowercase) so the caller can log/persist a
  * specific reason, or null if no match.

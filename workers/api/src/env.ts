@@ -116,4 +116,42 @@ export type Env = {
   //   rollback mid-cutover. Defaults to enabled (any other value treated as
   //   on, including unset).
   ENABLE_POSTPROXY?: string;
+
+  // ── Shopify embedded app (Phase 1+2, schema_v25_shopify_*) ─────────────
+  // SHOPIFY_API_KEY is the Client ID from your Shopify Partners dashboard
+  // (also called the "API key"). Public — appears in the embedded app's
+  // HTML <meta> tag and in the OAuth authorize URL. Safe to ship in vars.
+  SHOPIFY_API_KEY?: string;
+  // SHOPIFY_API_SECRET is the Client Secret. Used to:
+  //   1. Verify HMAC on OAuth callbacks (query-string HMAC)
+  //   2. Verify HMAC on inbound webhooks (X-Shopify-Hmac-Sha256 header)
+  //   3. Verify session token JWTs from App Bridge (HS256 with this key)
+  // MUST be set as a secret: `wrangler secret put SHOPIFY_API_SECRET`.
+  SHOPIFY_API_SECRET?: string;
+  // Public base URL where the embedded React app is hosted (CF Pages).
+  // The OAuth callback handler redirects merchants here after install.
+  SHOPIFY_APP_URL?: string;
+  // OAuth scopes requested at install. Comma-separated. Phase 1 uses
+  // "read_products" only. Keep the scope list minimal — the App Store
+  // reviewer asks why each scope is needed.
+  SHOPIFY_APP_SCOPES?: string;
+  // Comma-separated shop domains where Shopify Billing API charges MUST
+  // be created with `test: true`. Use this for dev stores whose plan_name
+  // reports as a real paid plan but which can't be charged for real (no
+  // payment method on file). Read by shouldForceTestMode in
+  // lib/shopify-billing.ts.
+  SHOPIFY_FORCE_TEST_SHOPS?: string;
+
+  // ── At-rest encryption for D1-stored OAuth tokens ──────────────────────
+  // 32-byte (256-bit) master key, hex-encoded. Used by lib/crypto.ts to
+  // AES-GCM-encrypt Shopify access_tokens before they hit D1. Generate
+  // with: node -e "console.log(crypto.randomBytes(32).toString('hex'))"
+  // Set with: wrangler secret put MASTER_ENCRYPTION_KEY
+  MASTER_ENCRYPTION_KEY?: string;
+
+  // ── R2 bucket for Shopify-poster images ────────────────────────────────
+  // The shop-scoped AI poster gallery (routes/shopify-posters.ts) stores
+  // generated PNGs at shopify-posters/<id>.png. Shared with the main-app
+  // poster bucket (binding: POSTER_ASSETS in wrangler.toml) — namespaced
+  // by key prefix.
 };

@@ -38,6 +38,19 @@ import { registerProxyRoutes } from './routes/proxies';
 import { registerPennybuildRoutes } from './routes/pennybuilder';
 import { registerPostproxyRoutes } from './routes/postproxy';
 import { registerRecommendationsRoutes } from './routes/recommendations';
+import { registerShopifyOauthRoutes } from './routes/shopify-oauth';
+import { registerAdminShopifyRoutes } from './routes/admin-shopify';
+import { registerShopifyProductsRoutes } from './routes/shopify-products';
+import { registerShopifyComposeRoutes } from './routes/shopify-compose';
+import { registerShopifyPostsRoutes } from './routes/shopify-posts';
+import { registerShopifySocialConnectRoutes } from './routes/shopify-social-connect';
+import { registerShopifyInsightsRoutes } from './routes/shopify-insights';
+import { registerShopifyPostQualityRoutes } from './routes/shopify-post-quality';
+import { registerShopifyPostersRoutes } from './routes/shopify-posters';
+import { registerShopifyAutopilotRoutes } from './routes/shopify-autopilot';
+import { registerShopifyCampaignRoutes } from './routes/shopify-campaigns';
+import { registerShopifyFactsRoutes } from './routes/shopify-facts';
+import { registerShopifyProfileRoutes } from './routes/shopify-profile';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -102,6 +115,24 @@ registerProxyRoutes(app);
 registerPennybuildRoutes(app);
 registerPostproxyRoutes(app);
 registerRecommendationsRoutes(app);
+
+// ── Shopify embedded app ──────────────────────────────────────────────────
+// All /api/shopify/* routes — install + GDPR webhooks + Phase 2 product
+// sync, AI compose, scheduled-post CRUD, FB/IG connect, insights, posters,
+// autopilot, campaigns, facts, content-safety denylist.
+registerShopifyOauthRoutes(app);
+registerAdminShopifyRoutes(app);
+registerShopifyProductsRoutes(app);
+registerShopifyComposeRoutes(app);
+registerShopifyPostsRoutes(app);
+registerShopifySocialConnectRoutes(app);
+registerShopifyInsightsRoutes(app);
+registerShopifyPostQualityRoutes(app);
+registerShopifyPostersRoutes(app);
+registerShopifyAutopilotRoutes(app);
+registerShopifyCampaignRoutes(app);
+registerShopifyFactsRoutes(app);
+registerShopifyProfileRoutes(app);
 
 // ── Global error handler ──────────────────────────────────────────────────
 // Without this, a thrown error in any handler falls through to Hono's
