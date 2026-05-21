@@ -26,6 +26,40 @@ import { isWorkspaceConnected, normalizePlatform } from '../lib/connection-check
 
 const uuid = () => crypto.randomUUID();
 
+// ── scheduled_for canonical format ─────────────────────────────────────────
+// Audit P0-2 (2026-05-22): Smart Schedule (services/gemini.ts toLocalISO)
+// writes naive AEST "YYYY-MM-DDTHH:MM:SS" but PostModal.handleSave uses
+// `new Date(editDate).toISOString()` → UTC "YYYY-MM-DDTHH:MM:SS.sssZ".
+// publish-missed.ts cron compares against `Date.now() + 10h → toISOString
+// → strip Z`, which is naive AEST. Lexicographic compare of mixed formats
+// publishes UTC-edited posts ~10 hours early.
+//
+// Fix: normalize whatever the client sends at the route layer to the cron's
+// canonical naive-AEST format. Pass-through if already naive (Smart
+// Schedule's output is unchanged). DST is a known P1 follow-up — this
+// helper just unifies the format.
+//
+// Accepts: null/empty/undefined (→ null), naive "YYYY-MM-DDTHH:MM:SS"
+// (passthrough), UTC ISO with Z, ISO with explicit ±HH:MM offset.
+// Anything unparseable falls through unchanged so we don't accidentally
+// nuke a valid value we didn't anticipate.
+export function normalizeScheduledFor(input: unknown): string | null {
+  if (input == null || input === '') return null;
+  if (typeof input !== 'string') return null;
+  // Already canonical naive: "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DDTHH:MM:SS.sss"
+  // — no trailing Z, no ±HH:MM offset. Pass through.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(input)) return input;
+  // Has timezone marker — convert to AEST wall-clock (UTC+10, mirrors the
+  // cron's `Date.now() + 10*60*60*1000` convention).
+  if (/[zZ]$/.test(input) || /[+-]\d{2}:?\d{2}$/.test(input)) {
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return input;
+    const aest = new Date(d.getTime() + 10 * 60 * 60 * 1000);
+    return aest.toISOString().replace(/\.\d+Z$/, '').replace(/Z$/, '');
+  }
+  return input;
+}
+
 // Safety-net classifier: kicked off in the background when an own-workspace
 // post is created and users.archetype_slug is still NULL. Onboarding-magic
 // and the App.tsx useEffect are the primary paths that populate the slug;
@@ -196,7 +230,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     ).bind(
       id, uid, body.clientId ?? null,
       body.content ?? '', body.platform ?? null, body.status ?? null,
-      body.scheduledFor ?? null, JSON.stringify(body.hashtags ?? []),
+      normalizeScheduledFor(body.scheduledFor), JSON.stringify(body.hashtags ?? []),
       body.imageUrl ?? null, body.topic ?? null, body.pillar ?? null,
       body.latePostId ?? null, body.imagePrompt ?? null, body.reasoning ?? null,
       body.postType ?? null,
@@ -243,6 +277,7 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       const v = body[k];
       if (k === 'hashtags') { vals.push(JSON.stringify(v ?? [])); }
       else if ((k === 'videoScript' || k === 'videoShots') && v && typeof v !== 'string') { vals.push(JSON.stringify(v)); }
+      else if (k === 'scheduledFor') { vals.push(normalizeScheduledFor(v)); }
       else { vals.push(v ?? null); }
     }
     if (sets.length) {
