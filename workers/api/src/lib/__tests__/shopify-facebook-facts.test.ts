@@ -179,9 +179,9 @@ describe('refreshFactsForShop', () => {
     const result = await refreshFactsForShop({ DB: db } as any, SHOP, PAGE, TOKEN);
 
     // At least 1 fetch call should be to graph.facebook.com
-    const urls = fetchSpy.mock.calls.map(c => String(c[0]));
-    expect(urls.some(u => u.includes('graph.facebook.com'))).toBe(true);
-    expect(urls.some(u => u.includes(PAGE))).toBe(true);
+    const urls = fetchSpy.mock.calls.map((c: any[]) => String(c[0]));
+    expect(urls.some((u: string) => u.includes('graph.facebook.com'))).toBe(true);
+    expect(urls.some((u: string) => u.includes(PAGE))).toBe(true);
     expect(Array.isArray(result.errors)).toBe(true);
   });
 
