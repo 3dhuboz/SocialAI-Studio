@@ -19,7 +19,12 @@
 // so this file stays a pure-function lockbox).
 
 import { describe, it, expect } from 'vitest';
-import { buildSafeImagePrompt, isGenericBusinessType } from './image-safety';
+import {
+  buildSafeImagePrompt,
+  isGenericBusinessType,
+  isAbstractServiceProduct,
+  ABSTRACT_SERVICE_FALLBACK_PROMPT,
+} from './image-safety';
 
 describe('isGenericBusinessType', () => {
   it('matches each canonical generic value', () => {
@@ -181,5 +186,59 @@ describe('buildSafeImagePrompt — businessType gate (2026-05-21 hardening)', ()
     expect(buildSafeImagePrompt(null, '', 'tech-saas-agency')).toBeNull();
     expect(buildSafeImagePrompt(undefined, '', 'tech-saas-agency')).toBeNull();
     expect(buildSafeImagePrompt('  ', '', 'tech-saas-agency')).toBeNull();
+  });
+});
+
+describe('isAbstractServiceProduct', () => {
+  // Regression-pin for the Shopify image-gen "Monthly Curdial" bug — when
+  // a merchant lists an intangible service ("Monthly Website Care Plan"),
+  // the raw product title used to flow into "Professional product photograph
+  // of …" which FLUX confabulated as a skincare bottle. Now we detect
+  // services at prompt-build time and swap to a workspace scene.
+
+  it('flags services by product_type alone (strong signal)', () => {
+    // product_type with a service keyword is high-precision — merchants
+    // type "Service" / "Subscription" deliberately. Single hit suffices.
+    expect(isAbstractServiceProduct('Monthly Website Care Plan', 'Service')).toBe(true);
+    expect(isAbstractServiceProduct('Premium Support', 'Subscription')).toBe(true);
+    expect(isAbstractServiceProduct('Annual Retainer', 'Consulting')).toBe(true);
+    expect(isAbstractServiceProduct('Pro Plan', 'SaaS')).toBe(true);
+  });
+
+  it('flags services by 2+ title keywords when product_type is null/empty', () => {
+    // Title-only path requires multiple hits — single common words like
+    // "Care" or "Support" alone are NOT enough (they legitimately appear
+    // in physical product names).
+    expect(isAbstractServiceProduct('Monthly Website Care Plan', null)).toBe(true); // monthly + care
+    expect(isAbstractServiceProduct('Social Media Management Subscription', null)).toBe(true); // management + subscription
+    expect(isAbstractServiceProduct('Annual Maintenance Plan', '')).toBe(true); // annual + maintenance
+    expect(isAbstractServiceProduct('Done-for-you Setup & Onboarding', null)).toBe(true); // done-for-you + setup + onboarding
+  });
+
+  it('PHYSICAL: tangible products are not falsely flagged', () => {
+    // The classic false-positive risks — single keyword hits that should
+    // stay PHYSICAL. If one of these flips to true, the heuristic is too
+    // loose and needs tightening.
+    expect(isAbstractServiceProduct('Hair Care Set', null)).toBe(false); // "care" alone
+    expect(isAbstractServiceProduct('Lumbar Support Cushion', null)).toBe(false); // "support" alone
+    expect(isAbstractServiceProduct('Stainless Steel Coffee Mug', null)).toBe(false);
+    expect(isAbstractServiceProduct('T-shirt', 'Apparel')).toBe(false);
+    expect(isAbstractServiceProduct('Bluetooth Headphones', 'Electronics')).toBe(false);
+    expect(isAbstractServiceProduct('Yoga Mat', 'Fitness')).toBe(false);
+  });
+
+  it('handles null / empty / non-string title defensively', () => {
+    expect(isAbstractServiceProduct('', 'Service')).toBe(false);
+    expect(isAbstractServiceProduct(null, 'Service')).toBe(false);
+    expect(isAbstractServiceProduct(undefined, 'Service')).toBe(false);
+  });
+
+  it('fallback prompt is non-empty and contains no product noun', () => {
+    // Sanity check on the swap-in scene — it should be a workspace, not
+    // imply a physical product. If a future edit accidentally puts a
+    // product noun in here, this test fails loudly.
+    expect(ABSTRACT_SERVICE_FALLBACK_PROMPT.length).toBeGreaterThan(50);
+    expect(ABSTRACT_SERVICE_FALLBACK_PROMPT).toMatch(/workspace|desk|laptop|notebook/i);
+    expect(ABSTRACT_SERVICE_FALLBACK_PROMPT).not.toMatch(/\bphotograph of\b/i);
   });
 });

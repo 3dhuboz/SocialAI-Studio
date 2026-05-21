@@ -36,6 +36,10 @@ import { generateImageWithGuardrails } from '../lib/image-gen';
 import { loadShopFactsForPrompt } from '../lib/facebook-facts';
 import { loadForbiddenSubjectsForShop, scanForForbidden } from '../lib/profile-guards';
 import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from '../lib/prompt-safety';
+import {
+  isAbstractServiceProduct,
+  ABSTRACT_SERVICE_FALLBACK_PROMPT,
+} from '../lib/image-safety';
 
 // ── Config helpers (mirror shopify-oauth.ts so the route file stays self-contained) ──
 
@@ -247,6 +251,15 @@ function buildCaptionUserPrompt(product: ProductRow, platform: Platform, tone: T
 // downstream image-gen lib applies archetype guardrails + brand-ref grounding
 // on top of this.
 function buildImagePrompt(product: ProductRow): string {
+  // Abstract-service short-circuit. "Monthly Website Care Plan",
+  // "Social Media Management Subscription", etc. have no physical form —
+  // FLUX confabulates a product if we ask for one (most famously a skincare
+  // bottle for "Monthly Curdial"). Substitute a workspace scene that
+  // signals "this is a service we provide" without inventing a product.
+  if (isAbstractServiceProduct(product.title, product.product_type)) {
+    return ABSTRACT_SERVICE_FALLBACK_PROMPT;
+  }
+
   const parts: string[] = [];
   parts.push(`Professional product photograph of ${product.title}`);
   if (product.product_type) parts.push(`(${product.product_type})`);

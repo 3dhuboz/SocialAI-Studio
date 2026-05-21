@@ -369,6 +369,60 @@ const FALLBACK_CENTERPIECE_PATTERNS: Array<{ pattern: RegExp; }> = [
   { pattern: /small potted plant, closed laptop and geometric wall art/i },
 ];
 
+// ── Abstract-service product detection (Shopify image-gen) ────────────
+//
+// Some Shopify products are intangible services rather than physical goods —
+// "Monthly Website Care Plan", "Social Media Management Subscription",
+// "Annual Consulting Retainer". Asking FLUX for a "Professional product
+// photograph of Monthly Website Care Plan" produces cross-domain bleed —
+// the model invents a physical artefact (most famously a skincare bottle
+// labelled "Monthly Curdial"). We need to detect these at prompt-build
+// time and substitute a workspace scene that gestures at the transactional
+// nature of the service without imagining a product that doesn't exist.
+//
+// Heuristic — favours precision over recall:
+//   - Strong signal: product_type contains a service category word
+//     (matches a single keyword)
+//   - Weaker signal: title contains 2+ service-vocabulary words (single
+//     hits like "Care" or "Support" are kept out — they legitimately
+//     appear in physical products: "Hair Care Set", "Lumbar Support")
+//
+// False positives downgrade to a workspace scene (acceptable). False
+// negatives are caught by the existing critique pipeline's cross-domain
+// bleed check.
+const SERVICE_PRODUCT_TYPE_RE =
+  /\b(service|plan|subscription|support|consulting|coaching|training|license|membership|course|audit|review|assessment|retainer|package|maintenance|saas)\b/i;
+
+const SERVICE_TITLE_KEYWORD_RE =
+  /\b(care|management|support|consulting|coaching|planning|strategy|audit|managed|subscription|retainer|maintenance|onboarding|monthly|annual|recurring|done[- ]for[- ]you|setup|workshop|seminar)\b/gi;
+
+export function isAbstractServiceProduct(
+  title: string | null | undefined,
+  productType?: string | null,
+): boolean {
+  if (!title || typeof title !== 'string') return false;
+
+  // Strong signal — product_type explicitly names a service category. One
+  // keyword is enough here because product_type is rarely free-form prose;
+  // merchants typically type "Service", "Subscription", "Plan", etc.
+  if (productType && SERVICE_PRODUCT_TYPE_RE.test(productType)) {
+    return true;
+  }
+
+  // Weaker signal — title contains 2+ service keywords. The threshold
+  // suppresses common false positives: "Hair Care Set" (1 hit) stays
+  // PHYSICAL, but "Monthly Website Care Plan" (monthly + care) flips.
+  const matches = title.match(SERVICE_TITLE_KEYWORD_RE);
+  return matches !== null && matches.length >= 2;
+}
+
+// Drop-in image-gen prompt for abstract services. Generic workspace scene
+// that signals "this is a service we provide" without specifying a product
+// form. Negative-prompt suppressors are appended by the shared image-gen
+// pipeline.
+export const ABSTRACT_SERVICE_FALLBACK_PROMPT =
+  'A serene modern workspace with closed laptop, open notebook, and ceramic mug on a clean wooden desk, soft natural daylight, calm focused professional atmosphere, no people, minimalist composition, clean composition';
+
 export function injectCaptionSubject(
   scene: string,
   captionSubject: string | null | undefined,
