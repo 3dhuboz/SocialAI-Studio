@@ -132,7 +132,7 @@ _(TODO: spin up a dev store with seeded products + the app pre-installed, so rev
 | Asset | Required | Where it lives |
 |---|---|---|
 | App icon — 1200×1200 PNG, ≤1 MB, with safe area | Required | `shopify-app/assets/app-icon.png` |
-| 3-8 screenshots — 1600×900 or 1280×800, JPEG/PNG | Required | TODO — blocked on populated dev store |
+| 3-8 screenshots — 1600×900 or 1280×800, JPEG/PNG | Required | `C:\Users\Steve\Desktop\app-store-screenshots\01-autopilot.png` … `06-products.png` — see Screenshot list below |
 | Demo video — 30-60s MP4 (recommended) | Recommended | TODO — optional, can submit without |
 | Privacy policy URL | Required | https://socialai-shopify.pages.dev/privacy |
 | Support URL | Required | https://socialai-shopify.pages.dev/support |
@@ -140,6 +140,27 @@ _(TODO: spin up a dev store with seeded products + the app pre-installed, so rev
 | Developer name + business address | Required | Penny Wise I.T, Australia |
 | App store description copy | Required | Done — see above |
 | Categories | Required | Marketing → Content marketing |
+
+---
+
+## Screenshot list (upload in this order)
+
+All files live in `C:\Users\Steve\Desktop\app-store-screenshots\`. Captured at ~1900×1075 (above the 1600×900 minimum, 16:9). Upload via Partners → Apps → SocialAI Studio → App Store listing → Screenshots.
+
+| # | File | Caption (suggested) | What it shows |
+|---|---|---|---|
+| 1 | `01-autopilot.png` | **Autopilot — 7 days of posts ready in one click** | Autopilot landing with "7 posts ready to publish" banner + first post (Laptop Screen Replacement) showing AI caption and product image |
+| 2 | `02-compose.png` | **Compose — AI captions + Live Preview before you publish** | Compose page lower section: caption editor, generated image, Publish dropdown (Now / Schedule / Draft), and Live Preview rendering an FB-style post card |
+| 3 | `03-calendar.png` | **Month-grid calendar — drag posts between days** | Calendar month view with 6 scheduled posts across May 20-27, today highlighted, drag-to-reschedule UX |
+| 4 | `04-insights.png` | **Insights — engagement metrics from connected pages** | KPI tiles (63 followers, 44 interactions, 69.8% engagement) plus post queue list and FB/Instagram platform split |
+| 5 | `05-home.png` | **Home — greeting, KPIs, and quick actions** | Greeting + 7-day trial badge, four KPI cards (posts this week / drafts / scheduled / engagement), three quick-action cards (Sync products / Compose / Connect FB) |
+| 6 | `06-products.png` | **Products — Shopify catalog synced, one-click compose** | Six synced products with prices and ACTIVE badges; each row has a "Compose post" CTA that jumps straight into the AI editor |
+
+### Submission notes
+
+- Captions are **suggested** — Shopify allows a short title per screenshot; tighten or rewrite to your voice before uploading.
+- File `02-compose.png` shows a 2/10 critique score on the generated image. **Keep it** — it demonstrates the honest AI-feedback loop, which is a selling point, not a bug. The Live Preview panel below shows a polished social card.
+- The placeholder thumbnails on `06-products.png` are because the dev store products were imported via CSV without images. Real merchants will see their own product photography here. Acceptable for v1 submission.
 
 ---
 
