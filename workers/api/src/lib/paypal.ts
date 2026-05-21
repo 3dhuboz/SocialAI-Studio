@@ -284,6 +284,50 @@ export async function recordPaymentEvent(c: Context<{ Bindings: Env }>, event: a
     }
   }
 
+  // ── Persist plan to users row (audit 2026-05-22 P0-1) ──────────────────────
+  // The previous flow staged plan in pending_activations and relied on the
+  // frontend's `db.upsertUser` to write users.plan. A 2026-05 security fix
+  // removed `plan` from the PUT /api/db/user field map (to prevent self-
+  // promotion via crafted JWTs), which left the chain unreachable for
+  // self-serve PayPal buyers: webhook → pending_activations → (no writer) →
+  // users.plan stays NULL → routes/posts.ts:124 treats them as trial → 429
+  // at 7 posts. The downstream `routes/activations.ts:consumeActivation`
+  // now also writes plan atomically on first sign-in, but doing it here too
+  // covers the case where the user already exists at webhook time (PB
+  // bridge, manual re-link).
+  if (eventType === 'BILLING.SUBSCRIPTION.ACTIVATED' && userId && plan && subscriptionId) {
+    const paypalPlanId: string | undefined = (event?.resource || {}).plan_id;
+    const billingCycle = paypalPlanId && PAYPAL_YEARLY_PLAN_IDS.has(paypalPlanId) ? 'yearly' : 'monthly';
+    try {
+      await c.env.DB.prepare(
+        `UPDATE users
+         SET plan = ?,
+             billing_cycle = COALESCE(billing_cycle, ?),
+             paypal_subscription_id = COALESCE(paypal_subscription_id, ?)
+         WHERE id = ?`
+      ).bind(plan, billingCycle, subscriptionId, userId).run();
+      console.log(`[billing] user ${userId} plan stamped → ${plan} (${billingCycle}) via ACTIVATED webhook`);
+    } catch (e: any) {
+      console.warn(`[billing] failed to stamp plan for user ${userId}:`, e?.message);
+    }
+  }
+
+  // Cancellation downgrade — without this, a user who cancels via PayPal but
+  // never signs back in to consume the pending_cancellations row keeps full
+  // plan quota indefinitely. checkBillingGate only blocks `past_due`, not
+  // cancelled. Mirrors the PennyBuilder cancel-from-PB path in
+  // routes/pennybuilder.ts:257.
+  if (eventType === 'BILLING.SUBSCRIPTION.CANCELLED' && userId) {
+    try {
+      await c.env.DB.prepare(
+        `UPDATE users SET plan = 'free', billing_cycle = NULL WHERE id = ?`
+      ).bind(userId).run();
+      console.log(`[billing] user ${userId} downgraded to free via CANCELLED webhook`);
+    } catch (e: any) {
+      console.warn(`[billing] failed to downgrade user ${userId}:`, e?.message);
+    }
+  }
+
   // ── Plan resolution race fallback (security audit 2026-05-19 #I6) ─────────
   // PAYMENT.SALE.COMPLETED fires at PayPal-checkout time, which is BEFORE the
   // user signs back in to consume their pending_activation row. In that window

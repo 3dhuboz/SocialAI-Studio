@@ -41,13 +41,18 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
     // holder could curl `{ "isAdmin": true, "plan": "agency", "reelCredits":
     // 9999 }` and self-promote. Now they're admin-only / webhook-only:
     //
-    //   isAdmin         → flipped manually via wrangler d1 / admin tooling
-    //   plan            → set by PayPal webhook (lib/paypal.ts) on subscription activate
-    //   billingCycle    → set by PayPal webhook alongside plan
-    //   reelCredits     → set by PayPal webhook (renewal grant) or admin-actions credit-grant
-    //   posterCredits   → same as reelCredits (already absent from field map, but listed
-    //                     here so future devs don't add it back)
-    //   agencyBillingUrl→ admin-only — passed via admin onboarding flow
+    //   isAdmin               → flipped manually via wrangler d1 / admin tooling
+    //   plan                  → set by PayPal webhook (lib/paypal.ts) on subscription activate
+    //   billingCycle          → set by PayPal webhook alongside plan
+    //   reelCredits           → set by PayPal webhook (renewal grant) or admin-actions credit-grant
+    //   posterCredits         → same as reelCredits (already absent from field map, but listed
+    //                           here so future devs don't add it back)
+    //   agencyBillingUrl      → admin-only — passed via admin onboarding flow
+    //   paypalSubscriptionId  → webhook-only / activation-consume-only — removed from field
+    //                           map 2026-05-22 (audit P1) so a client cannot steal another
+    //                           user's PayPal link by POSTing { paypalSubscriptionId: "sub_..." }.
+    //                           Set by lib/paypal.ts on ACTIVATED webhook + routes/activations.ts
+    //                           consume path.
     //
     // The frontend (App.tsx) tries to send `isAdmin: true` for admin-email
     // accounts, but that determination is client-side and trivially spoofed.
@@ -71,7 +76,8 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
         body.lateProfileId ?? null,
         JSON.stringify(body.lateConnectedPlatforms ?? []),
         JSON.stringify(body.lateAccountIds ?? {}),
-        body.falApiKey ?? null, body.paypalSubscriptionId ?? null,
+        body.falApiKey ?? null,
+        null,                                         // paypal_subscription_id — webhook-only
         JSON.stringify(body.profile ?? {}), JSON.stringify(body.stats ?? {}),
         body.insightReport ? JSON.stringify(body.insightReport) : null,
         null,                                         // billing_cycle — webhook-only
@@ -79,14 +85,15 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
     } else {
       const sets: string[] = [];
       const vals: unknown[] = [];
-      // NOTE: isAdmin / plan / billingCycle / reelCredits / agencyBillingUrl
-      // are deliberately absent — see the privileged-fields comment above.
+      // NOTE: isAdmin / plan / billingCycle / reelCredits / agencyBillingUrl /
+      // paypalSubscriptionId are deliberately absent — see the privileged-
+      // fields comment above.
       const fieldMap: Record<string, string> = {
         email: 'email', setupStatus: 'setup_status',
         onboardingDone: 'onboarding_done', intakeFormDone: 'intake_form_done',
         lateProfileId: 'late_profile_id',
         lateConnectedPlatforms: 'late_connected_platforms', lateAccountIds: 'late_account_ids',
-        falApiKey: 'fal_api_key', paypalSubscriptionId: 'paypal_subscription_id',
+        falApiKey: 'fal_api_key',
         profile: 'profile', stats: 'stats', insightReport: 'insight_report',
       };
       const jsonFields = new Set(['lateConnectedPlatforms', 'lateAccountIds', 'profile', 'stats', 'insightReport']);

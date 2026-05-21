@@ -73,13 +73,52 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
     // user.email (or the row.id must equal uid — the by-uid bootstrap path).
     const id = c.req.param('id');
     const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
-    const row = await c.env.DB.prepare('SELECT id, email FROM pending_activations WHERE id = ?').bind(id).first<{ id: string; email: string | null }>();
+    // Read the FULL pending_activations row — we need plan + billing_cycle +
+    // paypal_subscription_id to stamp onto the user atomically below.
+    const row = await c.env.DB.prepare(
+      'SELECT id, email, plan, billing_cycle, paypal_subscription_id, consumed FROM pending_activations WHERE id = ?'
+    ).bind(id).first<{
+      id: string;
+      email: string | null;
+      plan: string | null;
+      billing_cycle: string | null;
+      paypal_subscription_id: string | null;
+      consumed: number;
+    }>();
     if (!row) return c.json({ error: 'Not found' }, 404);
     const matchesUid = row.id === uid;
     const matchesEmail = !!me?.email && !!row.email && (me.email as string).toLowerCase() === (row.email as string).toLowerCase();
     if (!matchesUid && !matchesEmail) return c.json({ error: 'Not found' }, 404);
+
+    // ── Atomic plan write (audit 2026-05-22 P0-1) ───────────────────────
+    // The PayPal ACTIVATED webhook stages plan/billing_cycle into
+    // pending_activations but cannot write users.plan when the user row
+    // doesn't exist yet (self-serve buyer hasn't signed up). This consume
+    // path is the bridge — when the user finally signs in, propagate the
+    // staged values onto their users row in the same batch as the consume
+    // flip so they can never come apart. Without this, paying customers
+    // hit the 7-post TRIAL_POST_LIMIT despite being on a paid plan.
+    //
+    // Privileged fields (plan, billing_cycle, paypal_subscription_id) are
+    // deliberately absent from PUT /api/db/user's field map (see user.ts
+    // comment) to prevent self-promotion via crafted JWTs — they can ONLY
+    // be set by this consume path or by the webhook directly.
+    // Sequential rather than D1.batch: if the second statement fails after
+    // the first succeeds, the next sign-in will re-poll activations, find
+    // the still-unconsumed row, and retry — both writes are idempotent.
+    // Conversely if the first fails, the pending row stays unconsumed so
+    // the frontend will retry. Recoverable in both directions.
+    if (row.plan) {
+      await c.env.DB.prepare(
+        `UPDATE users
+         SET plan = ?,
+             billing_cycle = COALESCE(?, billing_cycle),
+             paypal_subscription_id = COALESCE(?, paypal_subscription_id)
+         WHERE id = ?`
+      ).bind(row.plan, row.billing_cycle, row.paypal_subscription_id, uid).run();
+    }
     await c.env.DB.prepare('UPDATE pending_activations SET consumed = 1 WHERE id = ?').bind(id).run();
-    return c.json({ ok: true });
+    return c.json({ ok: true, plan: row.plan, billingCycle: row.billing_cycle });
   });
 
   app.get('/api/db/cancellations', async (c) => {

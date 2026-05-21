@@ -84,6 +84,19 @@ function makeD1(db: MiniDb): D1Database {
       });
       return { changes: 1, rows: [] };
     }
+    // activations.ts: UPDATE users SET plan = ?, billing_cycle = COALESCE(?, billing_cycle),
+    //                 paypal_subscription_id = COALESCE(?, paypal_subscription_id) WHERE id = ?
+    // Matched BEFORE the generic UPDATE users handler below — the generic
+    // splits the SET clause on commas, which mis-parses COALESCE(?, col).
+    if (/^UPDATE users\s+SET plan = \?,\s+billing_cycle = COALESCE\(\?, billing_cycle\),\s+paypal_subscription_id = COALESCE\(\?, paypal_subscription_id\)\s+WHERE id = \?$/is.test(s)) {
+      const [plan, billing_cycle, paypal_subscription_id, uid] = params as [string, string | null, string | null, string];
+      const row = db.users.get(uid);
+      if (!row) return { changes: 0, rows: [] };
+      row.plan = plan;
+      if (billing_cycle != null) row.billing_cycle = billing_cycle;
+      if (paypal_subscription_id != null) row.paypal_subscription_id = paypal_subscription_id;
+      return { changes: 1, rows: [] };
+    }
     // user.ts: UPDATE users SET ... WHERE id = ?
     const userUpdate = s.match(/^UPDATE users SET (.*) WHERE id = \?$/i);
     if (userUpdate) {
@@ -143,6 +156,19 @@ function makeD1(db: MiniDb): D1Database {
     if (/^SELECT id, email FROM pending_activations WHERE id = \?$/i.test(s)) {
       const row = db.pending_activations.get(params[0] as string);
       return { changes: 0, rows: row ? [{ id: row.id, email: row.email }] : [] };
+    }
+    // activations.ts: SELECT id, email, plan, billing_cycle, paypal_subscription_id, consumed
+    //                 FROM pending_activations WHERE id = ?   (audit-P0-1 widened SELECT)
+    if (/^SELECT id, email, plan, billing_cycle, paypal_subscription_id, consumed FROM pending_activations WHERE id = \?$/i.test(s)) {
+      const row = db.pending_activations.get(params[0] as string);
+      return { changes: 0, rows: row ? [{
+        id: row.id,
+        email: row.email,
+        plan: row.plan,
+        billing_cycle: row.billing_cycle ?? null,
+        paypal_subscription_id: row.paypal_subscription_id ?? null,
+        consumed: row.consumed,
+      }] : [] };
     }
     // activations.ts: UPDATE pending_activations SET consumed = 1 WHERE id = ?
     if (/^UPDATE pending_activations SET consumed = 1 WHERE id = \?$/i.test(s)) {
@@ -438,6 +464,32 @@ describe('Fix 4: activations email-scope check', () => {
       method: 'PUT', headers: { 'X-Test-Uid': 'user_alice' },
     }, env);
     expect(res.status).toBe(200);
+    expect(db.pending_activations.get('act_a')!.consumed).toBe(1);
+  });
+
+  // ── Audit P0-1 regression (2026-05-22) ────────────────────────────────
+  // Before this fix the PayPal self-serve flow staged plan in
+  // pending_activations but no path actually wrote it to users.plan — the
+  // upstream `PUT /api/db/user` field map had been hardened to drop `plan`
+  // for security. consumeActivation now stamps plan/billing_cycle/
+  // paypal_subscription_id onto the user row atomically alongside the
+  // `consumed = 1` flip, so paying customers don't get treated as trial
+  // users and 429'd at TRIAL_POST_LIMIT.
+  it('PUT /:id/consume stamps plan + billing_cycle + paypal_sub_id onto users row', async () => {
+    db.users.set('user_alice', { id: 'user_alice', email: 'alice@example.com', plan: null, billing_cycle: null, paypal_subscription_id: null });
+    db.pending_activations.set('act_a', {
+      id: 'act_a', email: 'alice@example.com', plan: 'agency', billing_cycle: 'yearly', consumed: 0,
+      paypal_subscription_id: 'I-ALICE', paypal_customer_id: null, activated_at: '2026-05-22',
+    });
+    const { app, env } = makeApp(db);
+    const res = await app.request('/api/db/activations/act_a/consume', {
+      method: 'PUT', headers: { 'X-Test-Uid': 'user_alice' },
+    }, env);
+    expect(res.status).toBe(200);
+    const u = db.users.get('user_alice')!;
+    expect(u.plan).toBe('agency');
+    expect(u.billing_cycle).toBe('yearly');
+    expect(u.paypal_subscription_id).toBe('I-ALICE');
     expect(db.pending_activations.get('act_a')!.consumed).toBe(1);
   });
 });
