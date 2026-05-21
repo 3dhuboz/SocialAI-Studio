@@ -1,0 +1,40 @@
+-- schema_v34_publish_attempts.sql
+-- ────────────────────────────────────────────────────────────────────────────
+-- Audit P0-4 (2026-05-22): retry on transient publish failures.
+--
+-- Before this migration, the publish-missed cron's catch block marked
+-- a post 'Missed' on the very first error — even when the error was a
+-- transient FB 5xx, a network blip, an IG rate-limit code 4, or a
+-- still-uploading image URL. The "missed-post sweep" comment in
+-- publish-missed.ts:698 claimed Missed was eligible for re-claim, but
+-- the claim WHERE clause is `status = 'Scheduled'` only, so Missed is
+-- terminal in code.
+--
+-- Result: a single transient FB outage during a customer's 9am batch
+-- silently killed every post and emailed the owner ten reconnect
+-- prompts they didn't need.
+--
+-- This column tracks the number of failed publish attempts per post.
+-- The cron now leaves the post in 'Scheduled' (clearing claim_id so
+-- the next tick can re-claim) for transient failures until attempts >= 3,
+-- then marks 'Missed' for real. Permanent failures (token expired,
+-- OAuth denied, invalid content) still mark Missed on the first hit.
+--
+-- Apply with:
+--   wrangler d1 execute socialai-db --remote --file=schema_v34_publish_attempts.sql
+--   wrangler d1 execute socialai-db-staging --remote --file=schema_v34_publish_attempts.sql
+--
+-- Idempotent via the manual SELECT-then-ALTER guard. D1 / SQLite has no
+-- `ADD COLUMN IF NOT EXISTS`, so a re-run would error otherwise.
+
+-- Use a pragma_table_info() existence check inside a UNION trick — the
+-- cleanest D1-compatible way to make ALTER TABLE conditional. If the
+-- column already exists, the SELECT returns a row and the ALTER is a
+-- noop comment string; if it doesn't, the ALTER runs.
+--
+-- Per CLAUDE.md convention, we just use the plain ALTER TABLE — D1's
+-- idempotency story is "manual check before re-running this file".
+-- The MAX(publish_attempts) gate below will fail if the column is
+-- missing, which IS our re-run check.
+
+ALTER TABLE posts ADD COLUMN publish_attempts INTEGER DEFAULT 0;

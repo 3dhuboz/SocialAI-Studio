@@ -177,7 +177,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v16
+**Current schema version:** v34
 
 ### Migration process
 ```bash
