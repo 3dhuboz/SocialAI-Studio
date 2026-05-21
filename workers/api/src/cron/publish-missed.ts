@@ -693,13 +693,54 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         .bind('Posted', publishMethod, (post as any).id).run();
       console.log(`[CRON] Published post ${(post as any).id} via ${publishMethod} -> ${fbData.id || fbData.post_id || 'ok'}`);
     } catch (e: any) {
-      const reason = friendlyPublishReason(e?.message || String(e));
+      const rawMessage = e?.message || String(e);
+      const reason = friendlyPublishReason(rawMessage);
       console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message, e.stack);
-      // Clear claim_id on Missed too so the missed-post sweep can re-claim
-      // it next tick if appropriate (the sweep also handles stuck Publishing).
-      await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
-        .bind('Missed', reason, (post as any).id).run();
-      await notifyOwnerOnFailure(env, post as any, reason, 'post');
+
+      // ── Retry on transient errors (audit P0-4, 2026-05-22) ─────────────
+      // Previously this catch marked every error Missed on the first hit
+      // and the missed-post sweep couldn't re-claim (`WHERE status =
+      // 'Scheduled'`). A single transient FB 5xx during a customer's 9am
+      // batch silently killed every post in it.
+      //
+      // Classify the error:
+      //   PERMANENT — token expired, OAuth denied, invalid content. No
+      //     amount of retry helps; mark Missed immediately so the customer
+      //     gets the reconnect prompt without 2 more wasted FB calls.
+      //   TRANSIENT — everything else (FB 5xx, network blip, IG code 4,
+      //     image-host hiccup). Leave Scheduled with publish_attempts++
+      //     until attempts >= MAX_PUBLISH_ATTEMPTS, then mark Missed.
+      const PERMANENT_ERROR_RE = /(OAuthException|access\s*token|token\s*(?:expired|invalid)|permission|not\s*authorized|invalid\s*scope|page.*deleted|page.*unpublished|removed.*by.*user|disabled|not\s*found|not\s*connected|invalid\s*format|caption\s*too\s*long|aspect\s*ratio|unsupported\s*media)/i;
+      const isPermanent = PERMANENT_ERROR_RE.test(rawMessage);
+      const MAX_PUBLISH_ATTEMPTS = 3;
+
+      // Bump publish_attempts atomically and read back the new value to
+      // decide whether to flip status. COALESCE handles pre-v34 rows
+      // whose column is still NULL.
+      const updated = await env.DB.prepare(
+        `UPDATE posts SET publish_attempts = COALESCE(publish_attempts, 0) + 1 WHERE id = ?
+         RETURNING publish_attempts`
+      ).bind((post as any).id).first<{ publish_attempts: number }>();
+      const attempts = updated?.publish_attempts ?? MAX_PUBLISH_ATTEMPTS;
+
+      if (isPermanent || attempts >= MAX_PUBLISH_ATTEMPTS) {
+        // Final-state Missed. Clear claim_id so a defensive sweep won't
+        // strand the row. Notify owner only on the final attempt to
+        // avoid 3 emails per truly-broken post.
+        await env.DB.prepare(
+          `UPDATE posts SET status = 'Missed', reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?`
+        ).bind(reason, (post as any).id).run();
+        await notifyOwnerOnFailure(env, post as any, reason, 'post');
+        console.log(`[CRON] Post ${(post as any).id} → Missed (attempts=${attempts}, permanent=${isPermanent})`);
+      } else {
+        // Transient — keep Scheduled so the next tick re-claims it.
+        // Reasoning carries a transparent "retrying N/3" marker so the
+        // user-visible Calendar view shows progress rather than a hard fail.
+        await env.DB.prepare(
+          `UPDATE posts SET status = 'Scheduled', reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?`
+        ).bind(`Retrying (${attempts}/${MAX_PUBLISH_ATTEMPTS}) — ${reason}`, (post as any).id).run();
+        console.log(`[CRON] Post ${(post as any).id} → retry (attempts=${attempts}/${MAX_PUBLISH_ATTEMPTS}): ${reason}`);
+      }
     }
   }
   return { posts_processed: posts.length };
