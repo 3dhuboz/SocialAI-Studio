@@ -55,6 +55,13 @@ import { BrandKitProvider } from './contexts/BrandKitContext';
 // PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
 // the user actually clicks the Posters tab — keeps the home/calendar bundle small.
 const PosterManager = lazy(() => import('./pages/PosterManager').then(m => ({ default: m.default ?? (m as any).PosterManager })));
+// Legal pages are lazy-imported — they're static-ish content but visited rarely,
+// so there's no point pulling them into the dashboard bundle. They're served
+// by the URL path interceptor in the App wrapper at the bottom of this file.
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const Terms = lazy(() => import('./pages/Terms'));
+const Refunds = lazy(() => import('./pages/Refunds'));
+const Cookies = lazy(() => import('./pages/Cookies'));
 
 /**
  * RecommendationActionButton — renders the contextual 1-click action for
@@ -411,6 +418,9 @@ const DEFAULT_PROFILE: BusinessProfile = {
   socialGoal: '',
   contentTopics: '',
   videoEnabled: false,
+  // AI-image disclosure ON by default — Meta's Synthetic & Manipulated
+  // Media policy requires labelling. Customer can opt out in Settings.
+  aiDisclosure: true,
 };
 
 const DEFAULT_STATS: ContentCalendarStats = {
@@ -6170,6 +6180,49 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
+            {/* AI Disclosure Toggle — Meta Synthetic & Manipulated Media
+                policy compliance. Default ON: the customer is the publisher
+                and theoretically liable, so we ship the disclosure as a
+                defensive default and let them opt out explicitly. Stored
+                in BusinessProfile.aiDisclosure (undefined → treated as on).
+                Persisted into the existing profile JSON column — no new
+                D1 column needed. */}
+            <div className="glass-card border border-white/[0.08] rounded-2xl p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-blue-500/15 border border-blue-500/20 rounded-xl flex items-center justify-center">
+                    <span className="text-base">🤖</span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white">AI content disclosure</h3>
+                    <p className="text-xs text-white/30 mt-0.5">Auto-append AI disclosure on AI-generated posts (recommended for Meta compliance)</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setProfile(prev => ({ ...prev, aiDisclosure: !(prev.aiDisclosure ?? true) }));
+                  }}
+                  className={`relative w-12 h-6 rounded-full transition flex-shrink-0 cursor-pointer ${
+                    (profile.aiDisclosure ?? true) ? 'bg-blue-500' : 'bg-white/15'
+                  }`}
+                  aria-label="Toggle AI content disclosure"
+                >
+                  <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${
+                    (profile.aiDisclosure ?? true) ? 'left-7' : 'left-1'
+                  }`} />
+                </button>
+              </div>
+              {(profile.aiDisclosure ?? true) ? (
+                <div className="mt-4 bg-blue-500/8 border border-blue-500/15 rounded-xl px-4 py-3">
+                  <p className="text-xs text-blue-300">A small <span className="font-mono">· 🤖 Created with AI</span> tag will be appended to posts that include AI-generated images. Text-only posts get nothing. Captions you write yourself with an AI-generated image are still considered AI posts.</p>
+                </div>
+              ) : (
+                <div className="mt-4 glass-card border border-amber-500/20 rounded-xl px-4 py-3">
+                  <p className="text-xs text-amber-300">Disclosure off. Meta's Synthetic &amp; Manipulated Media policy may require you to label AI-generated images yourself — by turning this off you take responsibility for compliance.</p>
+                </div>
+              )}
+            </div>
+
             {/* ── SECTION: Connected Accounts ── */}
             <div className="flex items-center gap-3">
               <span className="text-[10px] font-black text-white/20 uppercase tracking-widest whitespace-nowrap">Connected Accounts</span>
@@ -6741,6 +6794,14 @@ const Dashboard: React.FC = () => {
             )}
           </div>
         </div>
+        {/* Legal links — same set as the public landing footer so signed-in
+            customers can always find the policies they agreed to at signup. */}
+        <div className="max-w-6xl mx-auto px-4 pb-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-white/15">
+          <a href="/privacy" className="hover:text-white/40 transition">Privacy Policy</a>
+          <a href="/terms" className="hover:text-white/40 transition">Terms of Service</a>
+          <a href="/refunds" className="hover:text-white/40 transition">Refund Policy</a>
+          <a href="/cookies" className="hover:text-white/40 transition">Cookie Notice</a>
+        </div>
       </footer>
     </div>
     </BrandKitProvider>
@@ -6847,11 +6908,46 @@ const AuthGate: React.FC = () => {
   return <Dashboard />;
 };
 
+// ── Legal page router ──
+// The app is otherwise a tab-router SPA — these four URL paths are the only
+// ones that need true URL-based routing (so they can be linked from the
+// footer, emails, and the signup TOS checkbox). We short-circuit BEFORE the
+// ToastProvider + AuthGate so a visitor can read the policies without
+// signing in, without Clerk being configured, and without any auth latency.
+const LEGAL_ROUTES: Record<string, React.LazyExoticComponent<React.FC>> = {
+  '/privacy': PrivacyPolicy,
+  '/terms': Terms,
+  '/refunds': Refunds,
+  '/cookies': Cookies,
+};
+
+const LegalRouteOutlet: React.FC<{ path: string }> = ({ path }) => {
+  const Page = LEGAL_ROUTES[path];
+  return (
+    <Suspense fallback={<LoadingShell />}>
+      <Page />
+    </Suspense>
+  );
+};
+
 // ── App Wrapper ──
-const App: React.FC = () => (
-  <ToastProvider>
-    <AuthGate />
-  </ToastProvider>
-);
+const App: React.FC = () => {
+  // Resolve the legal path once at render time. We deliberately don't
+  // subscribe to popstate here — clicking the in-app legal links uses a
+  // full anchor navigation (target="_blank" from AuthScreen, plain <a> in
+  // footers), so the app reloads cleanly. If we ever wire client-side
+  // navigation to /privacy we'll need to swap this for a useEffect +
+  // popstate listener.
+  const path = typeof window !== 'undefined' ? window.location.pathname : '/';
+  const normalised = path.replace(/\/+$/, '') || '/';
+  if (LEGAL_ROUTES[normalised]) {
+    return <LegalRouteOutlet path={normalised} />;
+  }
+  return (
+    <ToastProvider>
+      <AuthGate />
+    </ToastProvider>
+  );
+};
 
 export default App;

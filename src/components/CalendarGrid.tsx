@@ -61,6 +61,16 @@ export const CalendarGrid: React.FC<Props> = ({
   const [selectedDay, setSelectedDay] = useState<Date | null>(today);
   const [selectedPost, setSelectedPost] = useState<SocialPost | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  // Audit P0 (2026-05-22): "click again to confirm" mutex for the
+  // destructive delete actions. Native confirm() was easy to mistap on
+  // mobile and there's no undo (each post = AI tokens). Now the button
+  // visually arms itself on first click and the second click within 3s
+  // actually deletes. Auto-disarms after 3s if user changes their mind.
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const armDelete = (key: string) => {
+    setConfirmDeleteKey(key);
+    setTimeout(() => setConfirmDeleteKey((current) => (current === key ? null : current)), 3000);
+  };
 
   const year = viewDate.getFullYear();
   const month = viewDate.getMonth();
@@ -225,18 +235,31 @@ export const CalendarGrid: React.FC<Props> = ({
               <p className="text-xs text-white/30 mt-0.5">{selectedPosts.length} post{selectedPosts.length !== 1 ? 's' : ''}</p>
             </div>
             <div className="flex items-center gap-2">
-              {selectedPosts.length > 1 && (
-                <button
-                  onClick={() => {
-                    if (!confirm(`Delete all ${selectedPosts.length} posts for this day?`)) return;
-                    selectedPosts.forEach(p => onDelete(p.id));
-                    toastFn?.(`${selectedPosts.length} posts deleted.`, 'success');
-                  }}
-                  className="text-red-400/60 hover:text-red-400 text-[10px] font-semibold flex items-center gap-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/15 px-2 py-1 rounded-lg transition"
-                >
-                  <Trash2 size={10} /> Delete All
-                </button>
-              )}
+              {selectedPosts.length > 1 && (() => {
+                const dayKey = `day:${selectedDay.toISOString().slice(0, 10)}`;
+                const armed = confirmDeleteKey === dayKey;
+                return (
+                  <button
+                    onClick={() => {
+                      if (!armed) {
+                        armDelete(dayKey);
+                        toastFn?.(`Click "Confirm" within 3s to delete all ${selectedPosts.length} posts.`, 'warning');
+                        return;
+                      }
+                      setConfirmDeleteKey(null);
+                      selectedPosts.forEach(p => onDelete(p.id));
+                      toastFn?.(`${selectedPosts.length} posts deleted.`, 'success');
+                    }}
+                    className={`text-[10px] font-semibold flex items-center gap-1 px-2 py-1 rounded-lg transition ${
+                      armed
+                        ? 'text-white bg-red-500 hover:bg-red-600 border border-red-600'
+                        : 'text-red-400/60 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/15'
+                    }`}
+                  >
+                    <Trash2 size={10} /> {armed ? `Confirm — delete ${selectedPosts.length}` : 'Delete All'}
+                  </button>
+                );
+              })()}
               <button onClick={() => setSelectedDay(null)} className="text-white/20 hover:text-white/50 transition">
                 <X size={15} />
               </button>
@@ -358,18 +381,32 @@ export const CalendarGrid: React.FC<Props> = ({
                       {publishingId === post.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Retry
                     </button>
                   )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!confirm('Delete this post?')) return;
-                      onDelete(post.id);
-                      toastFn?.('Post deleted.', 'success');
-                    }}
-                    className="shrink-0 text-white/10 hover:text-red-400 transition p-1 rounded-lg hover:bg-red-500/10"
-                    title="Delete post"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  {(() => {
+                    const postKey = `post:${post.id}`;
+                    const armed = confirmDeleteKey === postKey;
+                    return (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!armed) {
+                            armDelete(postKey);
+                            return;
+                          }
+                          setConfirmDeleteKey(null);
+                          onDelete(post.id);
+                          toastFn?.('Post deleted.', 'success');
+                        }}
+                        className={`shrink-0 transition p-1 rounded-lg ${
+                          armed
+                            ? 'text-white bg-red-500 hover:bg-red-600'
+                            : 'text-white/10 hover:text-red-400 hover:bg-red-500/10'
+                        }`}
+                        title={armed ? 'Click again to confirm' : 'Delete post'}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    );
+                  })()}
                   <div className="text-white/15 group-hover:text-white/35 transition shrink-0 self-center text-xs">›</div>
                 </button>
               ))}

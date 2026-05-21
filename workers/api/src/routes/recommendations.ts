@@ -35,6 +35,7 @@ import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 import { backfillImagesForPastDrafts } from '../lib/backfill';
+import { decryptSocialTokensJson } from '../lib/social-tokens';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -577,7 +578,10 @@ async function handleRegenDraftImages(
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /** Load the social_tokens JSON blob for a workspace tuple. Returns null
- *  if the row isn't found OR the tokens JSON is malformed. */
+ *  if the row isn't found OR the tokens JSON is malformed.
+ *
+ *  Handles AES-GCM encryption transparently via decryptSocialTokensJson —
+ *  legacy plaintext rows continue to parse unchanged. */
 async function loadTokens(
   env: Env,
   uid: string,
@@ -591,7 +595,7 @@ async function loadTokens(
       `SELECT social_tokens FROM users WHERE id = ?`
     ).bind(uid).first<{ social_tokens: string | null }>();
   if (!row?.social_tokens) return null;
-  try { return JSON.parse(row.social_tokens); } catch { return null; }
+  return decryptSocialTokensJson<Record<string, unknown>>(env, row.social_tokens);
 }
 
 /** Is `iso` inside Mon-Fri 9am-5pm? We work in UTC here because that's

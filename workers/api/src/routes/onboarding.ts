@@ -25,6 +25,7 @@ import { getAuthUserId, isRateLimited } from '../auth';
 import { ArchetypeRow, classifyArchetypeFromFingerprint } from '../lib/archetypes';
 import { refreshFactsForUser } from '../lib/facebook-facts';
 import { wrapUntrusted } from '../lib/prompt-safety';
+import { decryptSocialTokensJson, scheduleSocialTokensReencrypt } from '../lib/social-tokens';
 
 export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>): void {
   // Body: { force?: boolean — bypass cache, re-derive everything }
@@ -45,10 +46,22 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!userRow?.social_tokens) {
       return c.json({ error: 'Facebook not connected — connect a Page first, then call /api/onboarding-magic' }, 400);
     }
-    const tokens = JSON.parse(userRow.social_tokens);
+    const tokens = await decryptSocialTokensJson<{
+      facebookPageId?: string;
+      facebookPageAccessToken?: string;
+    }>(c.env, userRow.social_tokens);
     if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
       return c.json({ error: 'Facebook Page ID + access token missing — reconnect Facebook' }, 400);
     }
+    // Lazy migration — opportunistically re-encrypt the row if it's still
+    // legacy plaintext. The onboarding-magic path always runs from a real
+    // ExecutionContext so waitUntil is available.
+    scheduleSocialTokensReencrypt(
+      c.env,
+      c.executionCtx,
+      { scope: 'users', id: uid },
+      userRow.social_tokens,
+    );
 
     // 2. Trigger fresh fact scrape (re-uses existing logic; idempotent)
     try {

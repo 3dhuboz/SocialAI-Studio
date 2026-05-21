@@ -40,7 +40,11 @@ import {
   planWebhookAction,
   verifyWebhookSignature,
 } from '../lib/postproxy-webhook';
-import { normalizePostPlatform } from '../cron/_shared';
+import {
+  normalizePostPlatform,
+  buildPublishCaption,
+  loadAiDisclosurePref,
+} from '../cron/_shared';
 
 const uuid = () => crypto.randomUUID();
 
@@ -583,9 +587,24 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const hashtags = post.hashtags ? (JSON.parse(post.hashtags) as string[]) : [];
     const cleanContent = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-    const fullText = hashtags.length > 0 ? `${cleanContent}\n\n${hashtags.join(' ')}` : cleanContent;
     const media = [post.audio_mixed_url, post.video_url, post.image_url].find((u): u is string => !!u);
     if (!media) return c.json({ error: 'Post has no media (image or video) to publish' }, 400);
+
+    // AI-disclosure suffix — see cron/_shared.ts and the cron path in
+    // publish-missed.ts for the policy. Manual publish path resolves the
+    // workspace preference the same way (client tier wins; absent = default-on)
+    // so the published caption is byte-identical between cron + publish-now.
+    const aiDisclosure = await loadAiDisclosurePref(
+      c.env,
+      post.user_id ?? uid,
+      post.client_id,
+    );
+    const fullText = buildPublishCaption({
+      content: post.content,
+      hashtags,
+      hasImage: !!post.image_url,
+      aiDisclosure,
+    });
 
     // Match the cron's format-per-platform mapping: FB uses 'feed' (legacy
     // alias), IG uses the docs-canonical 'post'. Reels are 'reel' on both.

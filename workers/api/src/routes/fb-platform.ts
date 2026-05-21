@@ -25,8 +25,85 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
+import { decryptSocialTokensJson } from '../lib/social-tokens';
 
 const uuid = () => crypto.randomUUID();
+
+/**
+ * Invalidate every users/clients row whose stored social_tokens contains
+ * the given facebookUserId — wiping the column to '{}' so the publish
+ * pipeline stops trying to use the token.
+ *
+ * Two-phase scan to handle the mixed encrypted/plaintext fleet during
+ * the at-rest encryption rollout:
+ *   1. LIKE pattern catches every legacy plaintext row that still has
+ *      `"facebookUserId":"<id>"` literally in the JSON. Same query the
+ *      pre-encryption code used.
+ *   2. For encrypted rows the LIKE can't see through, fall back to a
+ *      bounded SELECT + decrypt + match pass. Bounded by the number of
+ *      AES-GCM-encrypted rows on the fleet (~thousands max), and only
+ *      runs on the deauth/data-deletion paths which are inherently
+ *      bounded by FB's webhook rate.
+ *
+ * Returns the total number of rows wiped across both phases so the
+ * caller can log it.
+ */
+async function invalidateTokensForFbUser(
+  env: Env,
+  fbUserId: string,
+): Promise<number> {
+  let wiped = 0;
+  // Phase 1 — plaintext rows (existing behaviour).
+  try {
+    const likePattern = `%"facebookUserId":"${fbUserId}"%`;
+    const u = await env.DB.prepare(
+      `UPDATE users SET social_tokens = '{}' WHERE social_tokens LIKE ?`
+    ).bind(likePattern).run();
+    const c = await env.DB.prepare(
+      `UPDATE clients SET social_tokens = '{}' WHERE social_tokens LIKE ?`
+    ).bind(likePattern).run();
+    wiped += (u.meta?.changes || 0) + (c.meta?.changes || 0);
+  } catch (e: any) {
+    console.error(`[fb-deauth] plaintext invalidation failed: ${e?.message || e}`);
+  }
+
+  // Phase 2 — encrypted rows. Pull v1: blobs (matched by prefix in SQL —
+  // we can do this without decrypting because the v1: marker is in the
+  // clear) and decrypt each in code. The blast radius is bounded by the
+  // number of currently-connected workspaces.
+  if (!env.MASTER_ENCRYPTION_KEY) {
+    return wiped; // no key configured → no encrypted rows possible
+  }
+  try {
+    const users = await env.DB.prepare(
+      `SELECT id, social_tokens FROM users WHERE social_tokens LIKE 'v1:%'`
+    ).all<{ id: string; social_tokens: string }>();
+    for (const row of users.results ?? []) {
+      const t = await decryptSocialTokensJson<{ facebookUserId?: string }>(env, row.social_tokens);
+      if (t?.facebookUserId === fbUserId) {
+        const r = await env.DB.prepare(
+          `UPDATE users SET social_tokens = '{}' WHERE id = ?`
+        ).bind(row.id).run();
+        wiped += r.meta?.changes || 0;
+      }
+    }
+    const clients = await env.DB.prepare(
+      `SELECT id, social_tokens FROM clients WHERE social_tokens LIKE 'v1:%'`
+    ).all<{ id: string; social_tokens: string }>();
+    for (const row of clients.results ?? []) {
+      const t = await decryptSocialTokensJson<{ facebookUserId?: string }>(env, row.social_tokens);
+      if (t?.facebookUserId === fbUserId) {
+        const r = await env.DB.prepare(
+          `UPDATE clients SET social_tokens = '{}' WHERE id = ?`
+        ).bind(row.id).run();
+        wiped += r.meta?.changes || 0;
+      }
+    }
+  } catch (e: any) {
+    console.error(`[fb-deauth] encrypted invalidation failed: ${e?.message || e}`);
+  }
+  return wiped;
+}
 
 /**
  * Verify and parse a Facebook signed_request payload.
@@ -104,19 +181,13 @@ export function registerFbPlatformRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     // Best-effort invalidate any social_tokens JSON whose facebookUserId
-    // field matches. The token is stored as a TEXT blob; SQLite's LIKE
-    // on a json_extract is the simplest portable filter without adding a
-    // dedicated fb_user_id column (P1 follow-up). Conservative pattern —
-    // wrapped in quotes so we don't match partial substrings.
+    // field matches. invalidateTokensForFbUser handles both legacy plaintext
+    // (LIKE) and encrypted (v1: scan + decrypt) rows so the deauth keeps
+    // working post-migration. Total wipe count is logged so Steve can spot
+    // anomalies (e.g. multiple workspaces sharing a single FB user).
     try {
-      const likePattern = `%"facebookUserId":"${fbUserId}"%`;
-      await c.env.DB.prepare(
-        `UPDATE users SET social_tokens = '{}' WHERE social_tokens LIKE ?`
-      ).bind(likePattern).run();
-      await c.env.DB.prepare(
-        `UPDATE clients SET social_tokens = '{}' WHERE social_tokens LIKE ?`
-      ).bind(likePattern).run();
-      console.log(`[fb-deauth] invalidated tokens for FB user_id=${fbUserId}`);
+      const wiped = await invalidateTokensForFbUser(c.env, fbUserId);
+      console.log(`[fb-deauth] invalidated ${wiped} row(s) for FB user_id=${fbUserId}`);
     } catch (e: any) {
       console.error(`[fb-deauth] token invalidation failed: ${e?.message || e}`);
       // Don't surface the error to FB — they retry on non-200, and a
@@ -163,14 +234,11 @@ export function registerFbPlatformRoutes(app: Hono<{ Bindings: Env }>): void {
     const confirmationCode = `del_${uuid().replace(/-/g, '').slice(0, 24)}`;
 
     // Invalidate tokens immediately so no further publishing happens.
+    // Same two-phase scan as the deauth path — handles both plaintext
+    // legacy rows and AES-GCM-encrypted rows.
     try {
-      const likePattern = `%"facebookUserId":"${fbUserId}"%`;
-      await c.env.DB.prepare(
-        `UPDATE users SET social_tokens = '{}' WHERE social_tokens LIKE ?`
-      ).bind(likePattern).run();
-      await c.env.DB.prepare(
-        `UPDATE clients SET social_tokens = '{}' WHERE social_tokens LIKE ?`
-      ).bind(likePattern).run();
+      const wiped = await invalidateTokensForFbUser(c.env, fbUserId);
+      console.log(`[fb-data-deletion] invalidated ${wiped} row(s) for FB user_id=${fbUserId}`);
     } catch (e: any) {
       console.error(`[fb-data-deletion] token invalidation failed: ${e?.message || e}`);
     }

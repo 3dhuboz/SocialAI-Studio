@@ -63,6 +63,14 @@ interface Props {
 
 export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }) => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
+  // Legal-acceptance gate for signup. Required before the Clerk SignUp form
+  // becomes interactive. We can't intercept the SignUp's submit button (it's
+  // rendered inside Clerk's component), so instead we wrap the SignUp in a
+  // pointer-events-none / opacity-50 / aria-disabled gate until the box is
+  // ticked. This prevents both clicks and keyboard interactions reaching the
+  // Clerk form. Always defaults to false on mount — never persisted, since
+  // consent must be expressed fresh for each signup attempt.
+  const [tosAccepted, setTosAccepted] = useState(false);
 
   return (
     <div className="min-h-screen bg-[#06060a] flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -92,12 +100,86 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }
             fallbackRedirectUrl="/"
           />
         ) : (
-          <SignUp
-            appearance={clerkAppearance}
-            routing="hash"
-            signInUrl="#signin"
-            fallbackRedirectUrl="/"
-          />
+          <>
+            {/* TOS gate — must be checked BEFORE the SignUp form is interactive.
+                We use a relative wrapper so the disabled overlay can sit
+                absolutely on top of the Clerk-rendered form when the box is
+                unchecked. */}
+            <div className="relative">
+              <div
+                aria-disabled={!tosAccepted}
+                style={{
+                  pointerEvents: tosAccepted ? 'auto' : 'none',
+                  opacity: tosAccepted ? 1 : 0.5,
+                  filter: tosAccepted ? 'none' : 'grayscale(0.4)',
+                  transition: 'opacity 200ms ease, filter 200ms ease',
+                }}
+              >
+                <SignUp
+                  appearance={clerkAppearance}
+                  routing="hash"
+                  signInUrl="#signin"
+                  fallbackRedirectUrl="/"
+                />
+              </div>
+              {/* Helper overlay — invisible click-catcher so any stray click
+                  on the dimmed form is intercepted and the user's attention
+                  is bounced to the checkbox below. */}
+              {!tosAccepted && (
+                <div
+                  className="absolute inset-0 cursor-not-allowed"
+                  aria-hidden="true"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                />
+              )}
+            </div>
+
+            {/* TOS checkbox — required for signup. Placed BELOW the form so
+                a user reading top-to-bottom sees the (greyed-out) form first,
+                understands what they're signing up for, then ticks the box. */}
+            <label
+              htmlFor="legal-accept"
+              className={`mt-4 flex items-start gap-3 cursor-pointer rounded-2xl p-3 border transition ${
+                tosAccepted
+                  ? 'border-amber-500/30 bg-amber-500/[0.04]'
+                  : 'border-white/10 bg-white/[0.02] hover:border-white/20'
+              }`}
+            >
+              <input
+                id="legal-accept"
+                type="checkbox"
+                checked={tosAccepted}
+                onChange={(e) => setTosAccepted(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-white/20 bg-black accent-amber-500 cursor-pointer"
+              />
+              <span className="text-xs text-white/65 leading-relaxed">
+                I agree to the{' '}
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-amber-400/90 hover:text-amber-300 underline"
+                >
+                  Terms of Service
+                </a>{' '}
+                and{' '}
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-amber-400/90 hover:text-amber-300 underline"
+                >
+                  Privacy Policy
+                </a>
+                .
+              </span>
+            </label>
+            {!tosAccepted && (
+              <p className="mt-2 text-[11px] text-white/30 text-center">
+                Tick the box above to enable the sign-up form.
+              </p>
+            )}
+          </>
         )}
 
         {!loginOnly && (
@@ -105,7 +187,7 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }
             {mode === 'login' ? (
               <p className="text-xs text-white/20">
                 No account?{' '}
-                <button onClick={() => setMode('signup')} className="text-amber-400/80 hover:text-amber-300 transition font-semibold">
+                <button onClick={() => { setTosAccepted(false); setMode('signup'); }} className="text-amber-400/80 hover:text-amber-300 transition font-semibold">
                   Sign up free
                 </button>
                 <span className="mx-2 text-white/10">·</span>
@@ -116,7 +198,7 @@ export const AuthScreen: React.FC<Props> = ({ onShowLanding, loginOnly = false }
             ) : (
               <p className="text-xs text-white/20">
                 Have an account?{' '}
-                <button onClick={() => setMode('login')} className="text-amber-400/80 hover:text-amber-300 transition font-semibold">
+                <button onClick={() => { setTosAccepted(false); setMode('login'); }} className="text-amber-400/80 hover:text-amber-300 transition font-semibold">
                   Sign in
                 </button>
               </p>

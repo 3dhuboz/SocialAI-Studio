@@ -11,6 +11,7 @@
 // crons, single caller (the scheduled() handler).
 
 import type { Env } from '../env';
+import { decryptSocialTokensJson, encryptSocialTokensJson } from '../lib/social-tokens';
 
 export async function cronRefreshTokens(env: Env) {
   const appId = env.FACEBOOK_APP_ID;
@@ -53,7 +54,10 @@ export async function cronRefreshTokens(env: Env) {
   let refreshed = 0, failed = 0;
   for (const ws of workspaces) {
     try {
-      const tokens = JSON.parse(ws.tokens as string);
+      // Tokens may be plaintext (legacy) or AES-GCM ciphertext — the
+      // helper auto-detects via the v1: prefix. Returns null on malformed
+      // rows so a single bad workspace can't kill the whole refresh.
+      const tokens = (await decryptSocialTokensJson<any>(env, ws.tokens as string)) || {};
       if (!tokens.longLivedUserToken) continue;
 
       // Exchange for a fresh long-lived token
@@ -82,7 +86,11 @@ export async function cronRefreshTokens(env: Env) {
       };
 
       const col = ws.table === 'users' ? 'users' : 'clients';
-      await env.DB.prepare(`UPDATE ${col} SET social_tokens = ? WHERE id = ?`).bind(JSON.stringify(updated), ws.id).run();
+      // Re-encrypt the refreshed token blob before persisting. The helper
+      // falls back to plaintext (with a warning) if MASTER_ENCRYPTION_KEY
+      // isn't set so a misconfigured deploy doesn't break the refresh.
+      const stored = await encryptSocialTokensJson(env, updated);
+      await env.DB.prepare(`UPDATE ${col} SET social_tokens = ? WHERE id = ?`).bind(stored, ws.id).run();
       refreshed++;
     } catch (e: any) {
       console.error(`[CRON] Token refresh failed for ${ws.table}/${ws.id}:`, e.message);

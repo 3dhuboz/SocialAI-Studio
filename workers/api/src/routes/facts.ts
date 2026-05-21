@@ -19,7 +19,7 @@ export function registerFactsRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/db/refresh-facts', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    const result = await refreshFactsForWorkspace(c.env.DB, uid, null);
+    const result = await refreshFactsForWorkspace(c.env, uid, null);
     return c.json(result);
   });
 
@@ -27,7 +27,7 @@ export function registerFactsRoutes(app: Hono<{ Bindings: Env }>): void {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.param('clientId');
-    const result = await refreshFactsForWorkspace(c.env.DB, uid, clientId);
+    const result = await refreshFactsForWorkspace(c.env, uid, clientId);
     return c.json(result);
   });
 

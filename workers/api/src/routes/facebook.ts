@@ -28,6 +28,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { getAuthUserId } from '../auth';
+import { decryptSocialTokensJson, scheduleSocialTokensReencrypt } from '../lib/social-tokens';
 
 export function registerFacebookRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/facebook-exchange-token', async (c) => {
@@ -86,7 +87,19 @@ export function registerFacebookRoutes(app: Hono<{ Bindings: Env }>): void {
     const tokensRaw = clientId
       ? await c.env.DB.prepare('SELECT social_tokens FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).first<{ social_tokens: string | null }>()
       : await c.env.DB.prepare('SELECT social_tokens FROM users WHERE id = ?').bind(uid).first<{ social_tokens: string | null }>();
-    const tokens = tokensRaw?.social_tokens ? JSON.parse(tokensRaw.social_tokens) : null;
+    const tokens = await decryptSocialTokensJson<{
+      facebookPageId?: string;
+      facebookPageAccessToken?: string;
+    }>(c.env, tokensRaw?.social_tokens);
+    // Lazy migration — opportunistically re-encrypt plaintext legacy rows
+    // we read here. No-op for already-encrypted rows or when the master
+    // key isn't configured.
+    scheduleSocialTokensReencrypt(
+      c.env,
+      c.executionCtx,
+      clientId ? { scope: 'clients', id: clientId } : { scope: 'users', id: uid },
+      tokensRaw?.social_tokens,
+    );
     if (!tokens?.facebookPageId || !tokens?.facebookPageAccessToken) {
       return c.json({
         ok: false,

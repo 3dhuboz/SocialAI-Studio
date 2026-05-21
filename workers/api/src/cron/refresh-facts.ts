@@ -20,24 +20,33 @@
 import type { Env } from '../env';
 import { refreshFactsForWorkspace, refreshFactsForShop } from '../lib/facebook-facts';
 import { refreshFactsViaPostproxy } from '../lib/postproxy-facts';
+import { decryptSocialTokensJson } from '../lib/social-tokens';
 
 export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: number }> {
   // ── Legacy FB-token workspaces ─────────────────────────────────────────
   // Filter out use_postproxy=1 so a migrated workspace doesn't get
   // double-refreshed (the Postproxy path below handles it instead).
+  //
+  // Encryption-aware: we used to filter rows by
+  //   json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL
+  // but that SQL function can't see inside an AES-GCM envelope. Now we
+  // pull every social_tokens row and filter in code after decryption.
+  // refreshFactsForWorkspace itself does the page-token check, so a row
+  // with empty tokens just gets a no-op refresh instead of being elided
+  // up-front.
   const legacyUsers = await env.DB.prepare(
-    `SELECT id FROM users
+    `SELECT id, social_tokens FROM users
      WHERE social_tokens IS NOT NULL
-       AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL
+       AND social_tokens != '{}'
        AND COALESCE(use_postproxy, 0) = 0`
-  ).all();
+  ).all<{ id: string; social_tokens: string }>();
   const legacyClients = await env.DB.prepare(
-    `SELECT id, user_id FROM clients
+    `SELECT id, user_id, social_tokens FROM clients
      WHERE social_tokens IS NOT NULL
-       AND json_extract(social_tokens, '$.facebookPageAccessToken') IS NOT NULL
+       AND social_tokens != '{}'
        AND COALESCE(status,'active') != 'on_hold'
        AND COALESCE(use_postproxy, 0) = 0`
-  ).all();
+  ).all<{ id: string; user_id: string; social_tokens: string }>();
 
   // ── Postproxy-migrated workspaces ─────────────────────────────────────
   // Use postproxy_profiles existence + active status as the signal — a
@@ -75,11 +84,21 @@ export async function cronRefreshFacts(env: Env): Promise<{ posts_processed: num
 
   let processed = 0;
   for (const u of (legacyUsers.results || [])) {
-    try { await refreshFactsForWorkspace(env.DB, (u as any).id, null); processed++; }
+    try {
+      const t = await decryptSocialTokensJson<{ facebookPageAccessToken?: string }>(env, (u as any).social_tokens);
+      if (!t?.facebookPageAccessToken) continue; // pre-encryption parity with the old json_extract filter
+      await refreshFactsForWorkspace(env, (u as any).id, null);
+      processed++;
+    }
     catch (e: any) { console.warn(`[CRON facts] legacy user ${(u as any).id}: ${e.message}`); }
   }
   for (const cl of (legacyClients.results || [])) {
-    try { await refreshFactsForWorkspace(env.DB, (cl as any).user_id, (cl as any).id); processed++; }
+    try {
+      const t = await decryptSocialTokensJson<{ facebookPageAccessToken?: string }>(env, (cl as any).social_tokens);
+      if (!t?.facebookPageAccessToken) continue;
+      await refreshFactsForWorkspace(env, (cl as any).user_id, (cl as any).id);
+      processed++;
+    }
     catch (e: any) { console.warn(`[CRON facts] legacy client ${(cl as any).id}: ${e.message}`); }
   }
   for (const u of (ppUsers.results || [])) {
