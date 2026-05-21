@@ -62,6 +62,52 @@ describe('verifyEmbedToken — roundtrip', () => {
     expect(verified?.email).toBeUndefined();
     expect(verified?.name).toBeUndefined();
   });
+
+  it('roundtrips claims with non-ASCII characters in email/name (UTF-8)', async () => {
+    // Regression for the encoder/decoder asymmetry bug: the minter encodes
+    // payload bytes via `TextEncoder().encode(json)` (UTF-8), but a previous
+    // verifier decoded `atob(payload)` directly as a JS string — which is
+    // Latin-1. For any payload byte ≥ 0x80 (every multi-byte UTF-8 char:
+    // é = C3 A9, ë = C3 AB, em-dash = E2 80 94, …) the verifier silently
+    // produced mojibake, breaking JSON.parse OR corrupting the claim values.
+    //
+    // PB buyer emails include real-world accented characters (José, Müller,
+    // names with em-dashes), so this is a latent production bug that only
+    // manifested once a non-ASCII buyer hit the bridge. The fix decodes
+    // atob() output as UTF-8 to match the minter — and this test would
+    // fail with the old `atob(payload)` then `JSON.parse(raw)` decode path.
+    const claims = freshClaims({
+      email: 'tëst@é.com',
+      name: 'Stéve—Smith', // em-dash (U+2014, 3 bytes UTF-8)
+    });
+    const token = await mintEmbedToken(SECRET, claims);
+    const verified = await verifyEmbedToken(SECRET, token);
+    expect(verified).not.toBeNull();
+    expect(verified?.email).toBe('tëst@é.com');
+    expect(verified?.name).toBe('Stéve—Smith');
+    expect(verified).toEqual(claims);
+  });
+
+  it('roundtrips a wider set of non-ASCII payloads (CJK, Arabic, emoji)', async () => {
+    // Broaden the surface beyond Latin-1-extended. CJK + emoji are 3- and
+    // 4-byte UTF-8 sequences respectively, which is where a Latin-1 decode
+    // most obviously breaks. We also assert verify returns the literal
+    // input strings — not a "fixed-up" approximation.
+    const cases: Array<{ email: string; name: string }> = [
+      { email: 'user@example.com', name: '日本語名前' }, // CJK
+      { email: 'буратино@example.com', name: 'Иван Иванов' }, // Cyrillic
+      { email: 'user@example.com', name: 'محمد عبد الله' }, // Arabic
+      { email: 'user@example.com', name: 'Alex 🚀 Buyer' }, // emoji (4-byte UTF-8)
+    ];
+    for (const { email, name } of cases) {
+      const claims = freshClaims({ email, name });
+      const token = await mintEmbedToken(SECRET, claims);
+      const verified = await verifyEmbedToken(SECRET, token);
+      expect(verified, `verify failed for ${name}`).not.toBeNull();
+      expect(verified?.email).toBe(email);
+      expect(verified?.name).toBe(name);
+    }
+  });
 });
 
 describe('verifyEmbedToken — rejection cases', () => {
