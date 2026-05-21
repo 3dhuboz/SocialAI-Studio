@@ -11,10 +11,13 @@ client_id = "f191b1dcbd73ce52f9c4b0d27591545e"
 
 name = "SocialAI Studio"
 handle = "socialai-studio"
-# Must match SHOPIFY_APP_URL in workers/api/wrangler.toml exactly. On
-# pages.dev for now; flip both files in lockstep when the custom domain
-# (shopify.socialaistudio.au) is wired up.
-application_url = "https://socialai-shopify.pages.dev"
+# Must match SHOPIFY_APP_URL in workers/api/wrangler.toml exactly.
+# Hosted on the app.socialaistudio.au custom domain — Shopify Partners
+# rejects URLs containing "shopify" in the hostname (incl. subdomain), so
+# socialai-shopify.pages.dev and shopify.socialaistudio.au can't be used here.
+# The CNAME app.socialaistudio.au → socialai-shopify.pages.dev keeps the Pages
+# project name internal-only.
+application_url = "https://app.socialaistudio.au"
 embedded = true
 
 [build]

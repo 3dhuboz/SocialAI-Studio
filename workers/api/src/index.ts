@@ -26,6 +26,7 @@ import { registerPostsRoutes } from './routes/posts';
 import { registerClientsRoutes } from './routes/clients';
 import { registerArchetypeRoutes } from './routes/archetypes';
 import { registerFacebookRoutes } from './routes/facebook';
+import { registerFbPlatformRoutes } from './routes/fb-platform';
 import { registerAiRoutes } from './routes/ai';
 import { registerPaypalRoutes } from './routes/paypal';
 import { registerAdminStatsRoutes } from './routes/admin-stats';
@@ -67,6 +68,10 @@ app.use(
       const allowed = [
         'http://localhost:5173', 'http://localhost:5174',
         'https://socialaistudio.au',
+        // Embedded Shopify app — Shopify Partners rejects URLs containing
+        // "shopify" in the hostname, so the public-facing origin is the
+        // app.socialaistudio.au custom domain (CNAME → socialai-shopify.pages.dev).
+        'https://app.socialaistudio.au',
         'https://social.picklenick.au', 'https://social.streetmeatzbbq.com.au',
         'https://social.hugheseysque.au', 'https://hugheseysque.au',
         // Additional whitelabel portal origins
@@ -104,6 +109,7 @@ registerCampaignRoutes(app);
 registerFactsRoutes(app);
 registerArchetypeRoutes(app);
 registerFacebookRoutes(app);
+registerFbPlatformRoutes(app);
 registerPaypalRoutes(app);
 registerAdminStatsRoutes(app);
 registerAdminActionsRoutes(app);

@@ -151,11 +151,32 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
   app.delete('/api/db/user', async (c) => {
     const uid = c.get('uid');
 
-    // Resolve email up-front — pending_* rows are keyed by it, and after
-    // we DELETE the users row the link is gone.
-    const userRow = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
-      .bind(uid).first<{ email: string | null }>();
+    // Resolve email + active PayPal subscription_id up-front — pending_*
+    // rows are keyed by email, and the PayPal cancel call needs the
+    // subscription_id before we DELETE the users row.
+    const userRow = await c.env.DB.prepare(
+      'SELECT email, paypal_subscription_id FROM users WHERE id = ?'
+    ).bind(uid).first<{ email: string | null; paypal_subscription_id: string | null }>();
     const email = userRow?.email ?? null;
+    const paypalSubId = userRow?.paypal_subscription_id ?? null;
+
+    // ── Cancel active PayPal subscription first (audit P0-7, 2026-05-22) ──
+    // Pre-fix: the delete-account flow purged the user's data but left
+    // PayPal billing them forever. Customer lost data AND kept getting
+    // charged — direct refund-magnet scenario.
+    // Now: cancel via PayPal Billing API before purging D1. Failures
+    // here are NON-fatal so a transient PayPal outage doesn't block the
+    // GDPR delete — we log + continue, and the customer can dispute the
+    // charge if PayPal really didn't honour the cancel.
+    if (paypalSubId) {
+      try {
+        const { cancelPayPalSubscription } = await import('../lib/paypal');
+        const result = await cancelPayPalSubscription(c.env, paypalSubId, 'user_account_deleted');
+        console.log(`[user-delete] PayPal sub ${paypalSubId} → cancelled=${result.cancelled} alreadyTerminal=${result.alreadyTerminal}`);
+      } catch (e: any) {
+        console.warn(`[user-delete] PayPal cancel failed for ${paypalSubId}: ${e?.message || e} — proceeding with D1 purge anyway`);
+      }
+    }
 
     // Per-table purges. Wrap each in try/catch so a missing table (e.g.
     // a future schema rename) doesn't abort the whole delete. Order

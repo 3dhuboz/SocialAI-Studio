@@ -13,8 +13,9 @@
 // ── Embedded-iframe gotchas ───────────────────────────────────────────────
 //  • FB.login MUST be invoked from a user gesture (button onClick) — browsers
 //    block popups from inside iframes otherwise.
-//  • The embedded app's hosting origin (e.g. socialai-shopify.pages.dev)
-//    needs to be on the FB App's Allowed Domains list. If FB.login returns
+//  • The embedded app's hosting origin (app.socialaistudio.au — the public
+//    custom domain that fronts the socialai-shopify Pages project) needs to
+//    be on the FB App's Allowed Domains list. If FB.login returns
 //    `status: 'unknown'` immediately, that's the symptom — fix in the FB
 //    App Dashboard → Settings → Basic → App Domains, AND in Login product →
 //    Settings → Valid OAuth Redirect URIs.

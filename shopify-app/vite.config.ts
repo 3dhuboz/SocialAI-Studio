@@ -3,7 +3,9 @@ import react from '@vitejs/plugin-react';
 
 // Shopify embedded app build. Outputs to dist/; the static bundle is hosted
 // on Cloudflare Pages at the URL configured in shopify.app.toml as
-// `application_url` (e.g. https://shopify.socialaistudio.au).
+// `application_url` (https://app.socialaistudio.au — Pages project
+// `socialai-shopify` with that domain as a custom CNAME, because Shopify
+// Partners rejects URLs containing "shopify" in the hostname).
 //
 // The Shopify API key is injected into index.html at build time via the
 // VITE_SHOPIFY_API_KEY env var so App Bridge can identify the app. The

@@ -22,11 +22,13 @@ R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev"
 
 # ── Shopify embedded app ──────────────────────────────────────────────────
 # SHOPIFY_APP_URL is where the embedded React app lives — CF Pages serves
-# shopify-app/dist at this hostname (project `socialai-shopify`). Used by
-# the Token Exchange handler / Managed Install flow to bounce merchants
-# into the embedded admin UI after install. Must match `application_url`
-# in shopify.app.toml exactly.
-SHOPIFY_APP_URL = "https://socialai-shopify.pages.dev"
+# shopify-app/dist at this hostname. The Pages project is internally named
+# `socialai-shopify` but the public origin is app.socialaistudio.au because
+# Shopify Partners blocks any URL containing "shopify" in the hostname.
+# Used by the Token Exchange handler / Managed Install flow to bounce
+# merchants into the embedded admin UI after install. Must match
+# `application_url` in shopify.app.toml exactly.
+SHOPIFY_APP_URL = "https://app.socialaistudio.au"
 # Comma-separated OAuth scopes requested at install. Phase 1: read-only
 # product access. Keep this list minimal — App Store reviewers ask why
 # each scope is needed.

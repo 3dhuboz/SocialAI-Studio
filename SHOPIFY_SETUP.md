@@ -29,8 +29,9 @@ Everything in this guide is one-time setup. Once it's done, the dev loop is
 1. Sign up at https://partners.shopify.com (free).
 2. Partners dashboard → **Apps** → **Create app** → **Create app manually**.
    - Name: `SocialAI Studio` (or whatever the public name will be).
-   - App URL: `https://shopify.socialaistudio.au` (placeholder — you'll
-     update once the Pages domain is wired up).
+   - App URL: `https://app.socialaistudio.au` (Shopify rejects URLs
+     containing "shopify" in the hostname, so the public origin can't
+     reference the Pages project name `socialai-shopify`).
    - Allowed redirection URL: `https://socialai-api.steve-700.workers.dev/api/shopify/auth/callback`.
 3. After creation, grab two values from **Configuration → API credentials**:
    - **Client ID** (also called API key) — public, goes in two places.
@@ -72,7 +73,7 @@ block (these aren't secrets — they appear in URLs):
 
 ```toml
 [vars]
-SHOPIFY_APP_URL = "https://shopify.socialaistudio.au"
+SHOPIFY_APP_URL = "https://app.socialaistudio.au"
 SHOPIFY_APP_SCOPES = "read_products"
 ```
 
@@ -90,7 +91,7 @@ npx wrangler deploy --config wrangler.toml
 In the repo root, edit `shopify.app.toml` and replace
 `REPLACE_WITH_SHOPIFY_CLIENT_ID` with your Client ID.
 
-If `application_url` differs from `https://shopify.socialaistudio.au` (e.g.
+If `application_url` differs from `https://app.socialaistudio.au` (e.g.
 you're using a tunnel during dev), update it here too. The CLI syncs this
 file with Partners on every `shopify app deploy`.
 
@@ -134,7 +135,8 @@ the post-install redirect lands on the tunnel, not the prod Pages domain.
    - Environment variables:
      - `VITE_SHOPIFY_API_KEY` = (Client ID)
      - `VITE_API_BASE_URL` = `https://socialai-api.steve-700.workers.dev`
-3. Add custom domain `shopify.socialaistudio.au` under **Custom domains**.
+3. Add custom domain `app.socialaistudio.au` under **Custom domains**.
+   (Shopify Partners rejects URLs containing "shopify" in the hostname.)
 4. Once live, push the manifest to Shopify:
    ```bash
    shopify app deploy --client-id=<CLIENT_ID>
@@ -152,7 +154,7 @@ offline access token server-side.
 1. In Partners dashboard, open the app → **Test on development store** → choose your dev store.
 2. Shopify performs Managed Install (consent screen + scope grant) entirely
    on Shopify's side and drops the merchant straight into the embedded app
-   at `https://socialai-shopify.pages.dev?shop=<dev-store>&host=<host>&embedded=1`.
+   at `https://app.socialaistudio.au?shop=<dev-store>&host=<host>&embedded=1`.
 3. The embedded React app boots, calls `shopify.idToken()` to grab a fresh
    session token, and POSTs it to `/api/shopify/token-exchange`. The worker
    verifies the JWT, exchanges it for an offline access token via Shopify's
