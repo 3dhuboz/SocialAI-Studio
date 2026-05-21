@@ -304,6 +304,22 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       await f(`/api/db/clients/${id}`, del());
     },
 
+    /**
+     * Atomic reel-credit debit (audit P0-3, 2026-05-22). Replaces the
+     * client-side read-modify-write that two concurrent tabs would both
+     * stomp. Throws ApiError with status 402 + code 'INSUFFICIENT_CREDITS'
+     * when the workspace doesn't have enough credits — caller should toast
+     * and bail rather than retry. Returns the new server-side balance.
+     *
+     * clientId=null debits the user's own workspace (users.reel_credits);
+     * otherwise debits clients.reel_credits for the specified client.
+     */
+    async debitReelCredits(params: { clientId: string | null; count: number }): Promise<{ balance: number }> {
+      const res = await f('/api/db/reel-credits/debit', j(params));
+      const data = await res.json() as { balance: number };
+      return { balance: Number(data.balance ?? 0) };
+    },
+
     // ── Campaigns ────────────────────────────────────────────────────────────
     async getCampaigns(clientId?: string | null): Promise<DbCampaign[]> {
       const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';

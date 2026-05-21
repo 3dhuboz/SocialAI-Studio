@@ -693,6 +693,13 @@ const Dashboard: React.FC = () => {
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalError, setVideoModalError] = useState<string | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
+  // Synchronous mutex for handleAcceptSmartPosts (audit P0-3, 2026-05-22).
+  // React batches setIsAccepting(true), so two rapid double-clicks both
+  // see isAccepting=false in their closure and race past the early-return
+  // guard. The Promise.all over smartPosts.map then fires twice → 14 posts
+  // become 28 rows. useRef writes/reads are synchronous so the second click
+  // sees the mutex set by the first within the same event tick.
+  const acceptInFlight = useRef(false);
   const [acceptProgress, setAcceptProgress] = useState(0);
   const [acceptSaved, setAcceptSaved] = useState(0);
   const [isScanningPosts, setIsScanningPosts] = useState(false);
@@ -2354,6 +2361,13 @@ const Dashboard: React.FC = () => {
 
   const handleAcceptSmartPosts = async () => {
     if (!user) return;
+    // Synchronous mutex (audit P0-3): the isAccepting state-based guard at
+    // the call-site disabled prop is batched by React, so two rapid double-
+    // clicks both see isAccepting=false in their closure and race past it.
+    // useRef.current flips synchronously within the same event tick so the
+    // second click bounces here. Reset in the finally below.
+    if (acceptInFlight.current) return;
+    acceptInFlight.current = true;
     // Pre-flight: scheduling without a connected Facebook page is a guaranteed
     // miss for every post in the batch. The cron will mark them all "Missed" and
     // (now) send a failure email — but we'd rather catch it BEFORE the user
@@ -2364,6 +2378,7 @@ const Dashboard: React.FC = () => {
         'warning',
       );
       setActiveTab('settings');
+      acceptInFlight.current = false;
       return;
     }
     const total = smartPosts.length;
@@ -2445,13 +2460,27 @@ const Dashboard: React.FC = () => {
       // accept-time so you can't bank video posts you can't pay for).
       const videosInBatch = results.filter((p: any) => p.postType === 'video').length;
       if (videosInBatch > 0 && !isAdminMode) {
-        const newBalance = Math.max(0, effectiveReelCredits - videosInBatch);
-        if (activeClientId) {
-          await db.updateClient(activeClientId, { reelCredits: newBalance }).catch(() => {});
-          setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, reelCredits: newBalance } : c));
-        } else {
-          await db.upsertUser({ reelCredits: newBalance }).catch(() => {});
-          setUserReelCredits(newBalance);
+        // Atomic server-side debit (audit P0-3, 2026-05-22). Previously a
+        // read-modify-write of effectiveReelCredits → newBalance via
+        // updateClient/upsertUser, which two concurrent tabs would both
+        // stomp (double-spend or free reels when Math.max(0,…) clamped).
+        // Own-workspace upsertUser was also a silent no-op since
+        // reelCredits was removed from the user PUT field map — own-
+        // workspace customers were getting unlimited free reels until now.
+        try {
+          const { balance } = await db.debitReelCredits({ clientId: activeClientId ?? null, count: videosInBatch });
+          if (activeClientId) {
+            setClients(prev => prev.map(c => c.id === activeClientId ? { ...c, reelCredits: balance } : c));
+          } else {
+            setUserReelCredits(balance);
+          }
+        } catch (e) {
+          // Insufficient credits or transient backend error — the posts
+          // are already saved, so we just toast and let the user re-up.
+          // The prewarm cron will still attempt video gen; that gate is
+          // post_type, not credits, so we may need a credit-aware skip
+          // there too — tracked as a follow-up.
+          toast('Reel credits couldn\'t be debited — buy a credit pack or contact support.', 'warning');
         }
       }
       // Surface image-gen failures so silent text-only publishes stop happening.
@@ -2488,6 +2517,7 @@ const Dashboard: React.FC = () => {
       setIsAccepting(false);
       setAcceptProgress(0);
       setAcceptSaved(0);
+      acceptInFlight.current = false; // release mutex (audit P0-3)
     }
   };
 

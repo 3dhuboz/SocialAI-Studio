@@ -520,9 +520,12 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!body?.postId) return c.json({ error: 'postId required' }, 400);
 
     // Load the post + verify ownership (own-workspace OR agency client owned by uid).
+    // Also pulls postproxy_post_id + status so we can short-circuit a duplicate
+    // publish from a double-click (audit P0-3 2026-05-22).
     const post = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.client_id, p.content, p.hashtags, p.platform,
-              p.image_url, p.video_url, p.audio_mixed_url, p.post_type
+              p.image_url, p.video_url, p.audio_mixed_url, p.post_type,
+              p.postproxy_post_id, p.status
        FROM posts p
        LEFT JOIN clients c ON c.id = p.client_id
        WHERE p.id = ?
@@ -532,8 +535,28 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       content: string; hashtags: string | null; platform: string | null;
       image_url: string | null; video_url: string | null;
       audio_mixed_url: string | null; post_type: string | null;
+      postproxy_post_id: string | null; status: string | null;
     }>();
     if (!post) return c.json({ error: 'Post not found' }, 404);
+
+    // ── Idempotency guard ──────────────────────────────────────────────────
+    // Double-click on the Calendar "Publish now" button → React doesn't
+    // re-render between the two onClick fires, so two requests hit this
+    // route in parallel. Without this check, both call createPost() and
+    // we end up with two real Postproxy posts → two real FB/IG posts.
+    // The user sees "duplicate publish" support tickets within hours of
+    // launch.
+    //
+    // If the post already has a postproxy_post_id OR is already in
+    // Publishing/Posted, return the existing id with 200 so the frontend's
+    // optimistic UI keeps showing success without re-firing.
+    if (post.postproxy_post_id || post.status === 'Publishing' || post.status === 'Posted') {
+      return c.json({
+        ok: true,
+        postproxyPostId: post.postproxy_post_id ?? null,
+        alreadyPublished: true,
+      });
+    }
 
     // ig-wire (schema_v24): derive platform from posts.platform so an
     // IG-targeted post resolves to the workspace's IG mapping (not the FB

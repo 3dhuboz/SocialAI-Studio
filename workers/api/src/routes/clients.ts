@@ -108,8 +108,11 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
       profile: 'profile', stats: 'stats', insightReport: 'insight_report',
       lateProfileId: 'late_profile_id', lateConnectedPlatforms: 'late_connected_platforms',
       lateAccountIds: 'late_account_ids', clientSlug: 'client_slug',
-      // v5 — reel credits per workspace; plan + purchased credits accrue here.
-      reelCredits: 'reel_credits',
+      // reelCredits intentionally removed from this map (audit P0-3, 2026-05-22):
+      // it was the race vector — two tabs would both read 10, both compute
+      // newBalance=8, both PUT 8 (one debit's worth lost). Use the
+      // POST /api/db/reel-credits/debit endpoint below for atomic
+      // workspace decrement, or admin-actions for absolute-set / grants.
     };
     const jsonFields = new Set(['profile', 'stats', 'insightReport', 'lateConnectedPlatforms', 'lateAccountIds']);
     for (const [k, col] of Object.entries(colMap)) {
@@ -130,5 +133,51 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
     await c.env.DB.prepare('DELETE FROM posts WHERE user_id = ? AND client_id = ?').bind(uid, clientId).run();
     await c.env.DB.prepare('DELETE FROM clients WHERE id = ? AND user_id = ?').bind(clientId, uid).run();
     return c.json({ ok: true });
+  });
+
+  // POST /api/db/reel-credits/debit (audit P0-3, 2026-05-22)
+  //   Body: { clientId?: string | null, count: number }
+  //   Returns: 200 { ok: true, balance } | 402 INSUFFICIENT_CREDITS | 400 bad input
+  //
+  // Atomic decrement — replaces App.tsx's read-modify-write that two
+  // concurrent tabs would both stomp (double-spend or, when Math.max(0, ...)
+  // clamped, free reels). Also fixes the own-workspace silent no-op: the
+  // 2026-05 security hardening removed `reelCredits` from PUT /api/db/user's
+  // field map, so `db.upsertUser({ reelCredits: newBalance })` was silently
+  // dropped for users with no activeClientId — they got unlimited free
+  // reels until this endpoint went in.
+  //
+  // Conditional UPDATE: only decrements if the row already has enough,
+  // so meta.changes=0 signals insufficient-credits (or wrong ownership)
+  // without an explicit SELECT-then-UPDATE race window.
+  app.post('/api/db/reel-credits/debit', async (c) => {
+    const uid = c.get('uid');
+    const body = await c.req.json<{ clientId?: string | null; count?: number }>().catch(() => null);
+    const count = Math.floor(Number(body?.count) || 0);
+    if (!body || count <= 0) {
+      return c.json({ error: 'count must be a positive integer' }, 400);
+    }
+    const clientId = body.clientId ?? null;
+
+    const result = clientId
+      ? await c.env.DB.prepare(
+          `UPDATE clients SET reel_credits = reel_credits - ?
+           WHERE id = ? AND user_id = ? AND COALESCE(reel_credits, 0) >= ?`
+        ).bind(count, clientId, uid, count).run()
+      : await c.env.DB.prepare(
+          `UPDATE users SET reel_credits = reel_credits - ?
+           WHERE id = ? AND COALESCE(reel_credits, 0) >= ?`
+        ).bind(count, uid, count).run();
+
+    if ((result.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'Insufficient reel credits', code: 'INSUFFICIENT_CREDITS' }, 402);
+    }
+
+    const balanceRow = clientId
+      ? await c.env.DB.prepare(`SELECT reel_credits FROM clients WHERE id = ? AND user_id = ?`)
+          .bind(clientId, uid).first<{ reel_credits: number | null }>()
+      : await c.env.DB.prepare(`SELECT reel_credits FROM users WHERE id = ?`)
+          .bind(uid).first<{ reel_credits: number | null }>();
+    return c.json({ ok: true, balance: Number(balanceRow?.reel_credits ?? 0) });
   });
 }
