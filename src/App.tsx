@@ -1782,6 +1782,77 @@ const Dashboard: React.FC = () => {
     setIsPublishing(false);
   };
 
+  // Calendar publish path — used by both the Publish button and the Retry
+  // button on failed posts. Mirrors handlePublishDirect's dual-path logic
+  // (Postproxy when the workspace has a profile for the post's platform,
+  // legacy Graph otherwise) but works against a SocialPost that's already
+  // in D1 (we have post.id, so the Postproxy worker route can resolve
+  // workspace ownership and media itself).
+  //
+  // Why this helper exists: pre-refactor the gate was a bare
+  // `socialTokens.postproxyPlacementId` check, which is FB-centric. An
+  // IG-only Postproxy user (no FB placement, only postproxyInstagramProfileId)
+  // would fall through to the legacy Graph branch and fail because the
+  // workspace has no Graph token at all. The new gate is platform-aware:
+  // FB posts route to Postproxy when postproxyPlacementId is set, IG posts
+  // route to Postproxy when postproxyInstagramProfileId is set. Same shape
+  // as the worker's per-platform mapping resolution in publish-now.
+  const publishCalendarPost = async (
+    post: SocialPost,
+    labels: { success: string; failurePrefix: string },
+  ): Promise<void> => {
+    try {
+      // Postproxy dual-path — gate per post.platform, not per workspace
+      // wholesale. A workspace can hold both an FB placement and an IG
+      // profile (or just one) and the right path depends on what this
+      // specific post is targeting. The worker's /publish-now route runs
+      // the same per-platform mapping lookup, so the gate here only needs
+      // to be correct enough to know SOMETHING is connected.
+      const onPostproxyPath = post.platform === 'Instagram'
+        ? !!socialTokens.postproxyInstagramProfileId
+        : !!socialTokens.postproxyPlacementId;
+      if (onPostproxyPath) {
+        await postproxyService.publishNow(post.id);
+        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+        toast(labels.success, 'success');
+        return;
+      }
+
+      // Legacy Graph path — preserved for the dual-path migration window.
+      // Cleanup specialist drops it once every workspace is on Postproxy.
+      const _base = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
+      const text = post.hashtags?.length ? `${_base}\n\n${post.hashtags.join(' ')}` : _base;
+      if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
+      const imageSource = calendarImages[post.id] || post.image;
+      const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
+      if (post.platform === 'Facebook') {
+        if (imageUrl) {
+          await FacebookService.postToPageWithImageUrl(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
+        } else if (imageSource?.startsWith('data:')) {
+          await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageSource);
+        } else {
+          await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
+        }
+      } else if (post.platform === 'Instagram' && socialTokens.instagramBusinessAccountId && imageUrl) {
+        await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
+      }
+      setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
+      await db.updatePost(post.id, { status: 'Posted' });
+      toast(labels.success, 'success');
+    } catch (e: any) {
+      // 409 NOT_CONNECTED: the worker's publish-now route couldn't find a
+      // Postproxy mapping for the chosen platform. Drop the user on
+      // Settings so they can connect — same handling as handlePublishDirect.
+      if (isNotConnectedError(e)) {
+        const platLabel = e.body?.platform === 'instagram' ? 'Instagram' : 'Facebook';
+        toast(`${platLabel} not connected for this workspace. Open Settings → Connections to connect ${platLabel}.`, 'warning');
+        setActiveTab('settings');
+        return;
+      }
+      toast(`${labels.failurePrefix}: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+    }
+  };
+
   // ── Content Generation ──
   const handleGenerate = async (): Promise<{ content: string; hashtags: string[]; imagePrompt?: string } | null> => {
     if (!topic.trim()) { toast('Enter a topic first.', 'warning'); return null; }
@@ -4036,71 +4107,14 @@ const Dashboard: React.FC = () => {
               hasApiKey={hasApiKey}
               onDelete={deletePost}
               onSave={handleUpdatePost}
-              onPublish={async (post) => {
-                try {
-                  // Postproxy migration: when this workspace has chosen a
-                  // placement, route through the worker — it loads the post
-                  // from D1, sends Postproxy a single create-post call, and
-                  // flips status to Publishing pending the webhook. Legacy
-                  // Graph fallback below is preserved for the dual-path
-                  // window. Cleanup specialist drops it once cutover lands.
-                  if (socialTokens.postproxyPlacementId) {
-                    await postproxyService.publishNow(post.id);
-                    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                    toast('Publishing to Facebook — confirmation in moments.', 'success');
-                    return;
-                  }
-                  const _pubBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-                  const text = post.hashtags?.length ? `${_pubBase}\n\n${post.hashtags.join(' ')}` : _pubBase;
-                  if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
-                  const imageSource = calendarImages[post.id] || post.image;
-                  const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
-                  if (post.platform === 'Facebook') {
-                    if (imageUrl) {
-                      await FacebookService.postToPageWithImageUrl(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
-                    } else if (imageSource?.startsWith('data:')) {
-                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageSource);
-                    } else {
-                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
-                    }
-                  } else if (post.platform === 'Instagram' && socialTokens.instagramBusinessAccountId && imageUrl) {
-                    await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
-                  }
-                  setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                  await db.updatePost(post.id, { status: 'Posted' });
-                  toast('Published successfully!', 'success');
-                } catch (e: any) { toast(`Publish failed: ${e?.message?.substring(0, 80)}`, 'error'); }
-              }}
-              onRetry={async (post) => {
-                try {
-                  // Postproxy migration — same dual-path rationale as onPublish above.
-                  if (socialTokens.postproxyPlacementId) {
-                    await postproxyService.publishNow(post.id);
-                    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                    toast('Retrying publish — Facebook will confirm in moments.', 'success');
-                    return;
-                  }
-                  const _retryBase = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-                  const text = post.hashtags?.length ? `${_retryBase}\n\n${post.hashtags.join(' ')}` : _retryBase;
-                  if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
-                  const imageSource = calendarImages[post.id] || post.image;
-                  const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
-                  if (post.platform === 'Facebook') {
-                    if (imageUrl) {
-                      await FacebookService.postToPageWithImageUrl(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
-                    } else if (imageSource?.startsWith('data:')) {
-                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageSource);
-                    } else {
-                      await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
-                    }
-                  } else if (post.platform === 'Instagram' && socialTokens.instagramBusinessAccountId && imageUrl) {
-                    await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
-                  }
-                  await db.updatePost(post.id, { status: 'Posted' });
-                  setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-                  toast('Post published successfully!', 'success');
-                } catch (e: any) { toast(`Retry failed: ${e?.message?.substring(0, 80)}`, 'error'); }
-              }}
+              onPublish={(post) => publishCalendarPost(post, {
+                success: 'Published successfully!',
+                failurePrefix: 'Publish failed',
+              })}
+              onRetry={(post) => publishCalendarPost(post, {
+                success: 'Post published successfully!',
+                failurePrefix: 'Retry failed',
+              })}
               onRegenImage={handleCalendarRegenImage}
               onUpload={handleCalendarUpload}
               onRetryReel={async (postId) => {
