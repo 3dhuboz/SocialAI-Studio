@@ -131,11 +131,11 @@ _(TODO: spin up a dev store with seeded products + the app pre-installed, so rev
 
 | Asset | Required | Where it lives |
 |---|---|---|
-| App icon — 1200×1200 PNG, ≤1 MB, with safe area | Required | TODO — generate via image tool, store as `assets/app-icon.png` |
-| 3-8 screenshots — 1600×900 or 1280×800, JPEG/PNG | Required | TODO — capture via Chrome MCP, see `assets/screenshots/` |
+| App icon — 1200×1200 PNG, ≤1 MB, with safe area | Required | `shopify-app/assets/app-icon.png` |
+| 3-8 screenshots — 1600×900 or 1280×800, JPEG/PNG | Required | TODO — blocked on populated dev store |
 | Demo video — 30-60s MP4 (recommended) | Recommended | TODO — optional, can submit without |
-| Privacy policy URL | Required | Host `PRIVACY_POLICY.md` somewhere stable |
-| Support URL | Required | TODO |
+| Privacy policy URL | Required | https://socialai-shopify.pages.dev/privacy |
+| Support URL | Required | https://socialai-shopify.pages.dev/support |
 | Pricing structure | Required (above) | Done — see "Pricing structure" |
 | Developer name + business address | Required | Penny Wise I.T, Australia |
 | App store description copy | Required | Done — see above |
