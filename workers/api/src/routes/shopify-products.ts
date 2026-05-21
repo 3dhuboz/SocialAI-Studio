@@ -359,6 +359,30 @@ export function registerShopifyProductsRoutes(app: Hono<{ Bindings: Env }>): voi
       );
     }
 
+    // Purge products that disappeared from Shopify (merchant deleted them, or
+    // they're now in a state Shopify's GraphQL excludes). Every product seen
+    // in this sync was UPSERTed with synced_at=syncedAt — anything older is
+    // a row Shopify no longer returns and should not show up in the cached
+    // catalog. Skipped when hardCapHit is true: a capped sync only saw the
+    // first 500 products, so we can't infer the remainder are deleted.
+    let purgedCount = 0;
+    if (!hardCapHit) {
+      try {
+        const purgeResult = await c.env.DB.prepare(
+          `DELETE FROM shopify_products WHERE shop_domain = ? AND synced_at < ?`,
+        )
+          .bind(shop, syncedAt)
+          .run();
+        // D1 exposes meta.changes — defensive coalesce in case the binding
+        // ever shifts.
+        purgedCount = (purgeResult.meta?.changes as number | undefined) ?? 0;
+      } catch (e) {
+        // Non-fatal — leaving stale rows is a UX bug, not a data-integrity
+        // one. Log and continue so the sync as a whole still returns 200.
+        console.error('[shopify-products] purge failed:', String(e));
+      }
+    }
+
     // Stamp the shop. Even on partial syncs (hit MAX_PRODUCTS or an early
     // hasNextPage=false), the timestamp reflects "we successfully talked to
     // Shopify". The GET endpoint surfaces this so the UI can render
@@ -377,6 +401,7 @@ export function registerShopifyProductsRoutes(app: Hono<{ Bindings: Env }>): voi
 
     return c.json({
       synced: syncedCount,
+      purged: purgedCount,
       total_pages: pages,
       hard_cap_hit: hardCapHit,
       last_synced_at: syncedAt,
