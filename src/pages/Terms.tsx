@@ -74,7 +74,6 @@ const Terms: React.FC = () => {
         Some plans include a monthly allotment of AI-generated reel credits. Unused monthly
         credits do not roll over. Separately purchased credit packs do not expire while
         your account is active.
-        {/* STEVE: please review — confirm this matches your actual policy (currently CreditPackModal.tsx says credits never expire on active accounts). */}
       </p>
 
       <h2>Intellectual property</h2>
