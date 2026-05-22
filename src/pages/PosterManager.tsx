@@ -22,7 +22,15 @@ import {
   MessageCircle, Smartphone, Mail, Clock,
   Search, X, CalendarClock, CalendarX, CalendarPlus,
 } from 'lucide-react';
-import { useAuth } from '@clerk/react';
+// Use the internal AuthContext (not @clerk/react directly) so this page
+// works in BOTH modes:
+//   - owner mode  → AuthProvider wraps the tree and delegates to Clerk
+//   - portal mode → PortalAuthProvider populates the same AuthContext
+// Importing useAuth from @clerk/react crashes in portal mode because
+// ClerkProvider is never mounted there (see main.tsx). PortalAuthContext
+// is designed for this exact pattern — its comment reads "Provides values
+// through the SAME AuthContext so useAuth() works everywhere."
+import { useAuth } from '../contexts/AuthContext';
 import { useBrandKit } from '../contexts/BrandKitContext';
 import {
   composeCookDayPoster,
@@ -95,7 +103,10 @@ const PosterManager: FC<PosterManagerProps> = ({ activeClientId, authMode = 'cle
   // useAuth() and rebuild the api wrapper only when authMode flips —
   // activeClientId is passed per-call so a workspace switch never invalidates
   // an in-flight save.
-  const { getToken } = useAuth();
+  // Internal context exposes the token as `getApiToken` (both modes — see
+  // AuthContext.tsx:110 and PortalAuthContext.tsx:133). Alias locally so
+  // the rest of the file's `getToken` call sites stay untouched.
+  const { getApiToken: getToken } = useAuth();
   const stableGetToken = useCallback(async () => getToken(), [getToken]);
   const posterApi = useMemo(
     () => createPosterApi(stableGetToken, authMode),
