@@ -31,7 +31,7 @@ import {
   extractCaptionSubjectPhrase,
   injectCaptionSubject,
 } from './image-safety';
-import { hashStringToSceneSeed } from '../../../../shared/archetype-scenes';
+import { hashStringToSceneSeed, ARCHETYPE_POSITIVE_SUBJECTS } from '../../../../shared/archetype-scenes';
 import { resolveArchetypeSlug } from './archetypes';
 import { logAiUsage } from './ai-usage';
 
@@ -88,9 +88,30 @@ export async function generateImageWithGuardrails(
   // bank is pre-vetted photographable; caption injection keeps each scene
   // topically tied to the post.
   const FORCE_FALLBACK_ARCHETYPES = new Set(['tech-saas-agency']);
-  const forceFallback = options.forceFallback || (archetypeSlug !== null && FORCE_FALLBACK_ARCHETYPES.has(archetypeSlug));
+  const archetypeForcesFallback = archetypeSlug !== null && FORCE_FALLBACK_ARCHETYPES.has(archetypeSlug);
+
+  // Positive-subject check (2026-05-22): for archetypes that have CONCRETE
+  // inventory to photograph, ensure the LLM-generated image_prompt actually
+  // names one of the expected subjects. Catches the failure mode where the
+  // captioner correctly writes BBQ copy but the image_prompt drifts to
+  // aesthetic-but-irrelevant scenes (candlelit book, coffee cup, streetscape,
+  // pastries) that wouldn't trip the negative-subject `forbidden` regex.
+  //
+  // Only applies when the archetype has a defined positive-subject list AND
+  // the prompt doesn't already match — so a well-written prompt like
+  // "close-up of brisket bark with smoke trail" passes through normally.
+  // Mirrors the unconditional force-fallback for tech-saas-agency, but
+  // gated on subject-absence so concrete archetypes still benefit from
+  // LLM creativity when the LLM gets it right.
+  const positiveSubjectRegex = archetypeSlug ? ARCHETYPE_POSITIVE_SUBJECTS[archetypeSlug] : undefined;
+  const promptMissingPositiveSubject = !!positiveSubjectRegex && !positiveSubjectRegex.test(safePrompt.prompt);
+
+  const forceFallback = options.forceFallback || archetypeForcesFallback || promptMissingPositiveSubject;
   if (forceFallback && !options.forceFallback) {
-    console.log(`[image-gen] archetype=${archetypeSlug} — auto-forcing fallback scene bank (abstract-caption archetype)`);
+    const reason = archetypeForcesFallback
+      ? 'abstract-caption archetype'
+      : `prompt missing required positive subject for ${archetypeSlug}`;
+    console.log(`[image-gen] archetype=${archetypeSlug} — auto-forcing fallback scene bank (${reason})`);
   }
 
   let guarded: { prompt: string; negativePrompt: string; swappedForFallback: boolean };

@@ -222,6 +222,31 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
   },
 };
 
+// ── Positive-subject requirement per archetype ───────────────────────────
+//
+// Some archetypes have CONCRETE inventory (BBQ smoker, brisket, ribs) that
+// must appear in any decent image prompt — but the LLM smart-schedule path
+// regularly emits beautifully-written prompts about candlelit books, coffee
+// cups, streetscapes, pastries… anything aesthetic but topically wrong.
+//
+// The `forbidden` regex in ARCHETYPE_IMAGE_GUARDRAILS catches OBVIOUSLY wrong
+// subjects (dashboard for a butcher, gym for a smokehouse). It doesn't catch
+// "aesthetically neutral but completely off-topic" — that's the failure mode
+// behind 2026-05-22 Hugheseys-style preview screenshots.
+//
+// This map flips the check: instead of asking "is the prompt forbidden?",
+// it asks "does the prompt contain at least one of the required subjects?".
+// If not, image-gen.ts force-falls-back to the curated scene bank (same
+// path tech-saas-agency takes unconditionally, just with a different
+// trigger).
+//
+// Conservative inclusion — only add archetypes where the failure mode is
+// well-evidenced. False positives here force a perfectly good prompt onto
+// a generic fallback, which makes posts look samey.
+export const ARCHETYPE_POSITIVE_SUBJECTS: Record<string, RegExp> = {
+  'bbq-smokehouse': /\b(?:bbq|barbecue|barbeque|brisket|smoker|smokehouse|smoked|smoking|pulled\s*pork|pork\s*belly|pit\b|ribs|sausage|grill(?:ed|ing)?|charcoal|wood\s*fire|cookout|low\s*and\s*slow|smoke\s*ring|burnt\s*end|bark|dry\s*rub|beef\s*rib|short\s*rib|coleslaw|baked\s*beans|smoke\s*trail|butcher\s*paper|meat)\b/i,
+};
+
 // ── Caption-based archetype sniffer keyword bank ─────────────────────────
 //
 // Last-resort archetype detection from the post caption itself. The full

@@ -276,6 +276,75 @@ describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.prompt).not.toContain('this prompt should be ignored');
   });
+
+  // ── Positive-subject force-fallback for concrete archetypes ─────────
+  //
+  // Bug: 2026-05-22 Hugheseys Que Smart Schedule preview shipped BBQ
+  // captions paired with abstract aesthetic images (candlelit book, coffee
+  // cup, streetscape, donuts). The bbq-smokehouse `forbidden` regex only
+  // catches OBVIOUSLY wrong subjects (laptop, gym, salon) — it didn't
+  // catch "aesthetically neutral but completely off-topic". Positive-
+  // subject check fills that gap: if a bbq-smokehouse prompt has none of
+  // the BBQ subject keywords, force-fallback to the curated bbq scenes.
+  it('bbq-smokehouse + off-topic aesthetic prompt → force-falls-back to BBQ scene', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
+    );
+    const env = makeEnv({ userArchetype: 'bbq-smokehouse', photoUrls: [] });
+    await generateImageWithGuardrails(env, 'user-1', null, {
+      prompt: 'a candlelit book and coffee cup on a wooden table at golden hour, cozy ambient lighting',
+      negativePrompt: 'people',
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // Off-topic prompt discarded — must NOT be in the final flux call.
+    expect(body.prompt.toLowerCase()).not.toContain('candlelit book');
+    expect(body.prompt.toLowerCase()).not.toContain('coffee cup');
+    // Final prompt must reference one of the bbq-smokehouse fallback scenes
+    // (brisket bark / pulled pork / offset smoker).
+    expect(body.prompt.toLowerCase()).toMatch(/brisket|pulled\s*pork|smoker|smokehouse/);
+    // Negative prompt extended with bbq archetype's avoid-list.
+    expect(body.negative_prompt.toLowerCase()).toMatch(/dashboard|laptop|gym|salon/);
+  });
+
+  it('bbq-smokehouse + on-topic BBQ prompt → passes through (no false-positive fallback)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
+    );
+    const env = makeEnv({ userArchetype: 'bbq-smokehouse', photoUrls: [] });
+    await generateImageWithGuardrails(env, 'user-1', null, {
+      prompt: 'close-up of slow-smoked brisket bark on a butcher board, thin blue smoke trail behind, warm afternoon light',
+      negativePrompt: 'people',
+    });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // Well-written BBQ prompt survives — "brisket" satisfies the positive-
+    // subject check so we don't force a generic fallback.
+    expect(body.prompt.toLowerCase()).toContain('brisket');
+  });
+
+  it('NULL archetype + BBQ caption sniff + off-topic prompt → caption sniff routes to bbq-smokehouse positive check, force-falls-back', async () => {
+    // Belt-and-braces case: workspace never ran classify-business so
+    // archetype_slug is NULL. Caption screams BBQ → sniffArchetypeFromCaption
+    // returns 'bbq-smokehouse'. Then the positive-subject check fires
+    // because the off-topic prompt has zero BBQ keywords, forcing fallback.
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
+    );
+    const env = makeEnv({ userArchetype: null, photoUrls: [] });
+    const bbqCaption = 'Nothing beats low and slow brisket. 12+ hours in the smoker, bark on point, that pink smoke ring.';
+    await generateImageWithGuardrails(
+      env,
+      'user-1',
+      null,
+      {
+        prompt: 'streetscape of weatherboard shopfronts at sunset, no people',
+        negativePrompt: 'people',
+      },
+      { caption: bbqCaption },
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.prompt.toLowerCase()).not.toContain('streetscape');
+    expect(body.prompt.toLowerCase()).toMatch(/brisket|pulled\s*pork|smoker|smokehouse/);
+  });
 });
 
 // ── Error paths ──────────────────────────────────────────────────────
