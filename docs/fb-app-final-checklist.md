@@ -6,9 +6,9 @@ Status: **Ready to submit pending Privacy Policy URL going live + screencast.** 
 
 | Item | Status | Who | Notes |
 | --- | --- | --- | --- |
-| Privacy Policy URL live + linked | 🟡 Shipped 2026-05-22 in PR (this audit) — verify `https://socialaistudio.au/privacy` resolves to a 200 with real content, not the SPA shell | Steve | Open the URL in incognito after Pages deploy |
-| Data Deletion URL endpoint | ✅ Done — `POST /api/fb/deauthorize` + `POST /api/fb/data-deletion` shipped in PR #158, deployed `7edeb8bc` | — | See "Endpoint URLs to paste" below |
-| Deauthorize Callback URL | ✅ Done — same PR | — | |
+| Privacy Policy URL live + linked | ✅ Shipped + verified 2026-05-22 (PR #160). `curl https://socialaistudio.au/privacy` → HTTP 200, deployed chunk `PrivacyPolicy-CxFDE2qa.js` contains "Penny Wise I.T (ABN 16 477 079 626)". **Caveat:** content renders client-side from the JS bundle — the raw HTML response is the SPA shell. Meta's reviewer opens URLs in a real browser so this is expected to pass, but if they run a JS-disabled crawler the page will look empty. If review bounces on this, prerender legal routes at build time (~30 min of work). | — | — |
+| Data Deletion URL endpoint | ✅ Done — `POST /api/fb/deauthorize` + `POST /api/fb/data-deletion` shipped in PR #158, deployed `7edeb8bc`. Re-verified 2026-05-22: both return `HTTP 400 {"error":"signed_request required"}` on empty POST. | — | See "Endpoint URLs to paste" below |
+| Deauthorize Callback URL | ✅ Done + verified — same PR, same smoke check | — | |
 | Token encryption at rest | ✅ Shipped 2026-05-22 in this audit | — | FB Platform Terms compliance |
 | App icon (1024×1024 PNG) | 🟡 Per `LISTING_COPY.md` checklist — verify with Steve | Steve | |
 | App category set | 🟡 Verify in App Dashboard → Settings → Basic | Steve | "Business and Pages" |
