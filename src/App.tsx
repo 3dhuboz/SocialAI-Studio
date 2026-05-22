@@ -771,6 +771,38 @@ const Dashboard: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authMode, portalClientId]);
 
+  // Connect-flow workspace alignment (2026-05-23): the postproxy connect
+  // flow redirects with ?step=pick-placement&workspace=<clientId|own>. The
+  // user kicked it off from inside a client workspace (e.g. Hugheseys Que),
+  // but the redirect lands them on the page with activeClientId=null (own
+  // workspace) because we never wired up URL → activeClientId. Result: the
+  // PostproxyConnectButton's useEffect sees workspace=hughesq-001 in the
+  // URL but clientId=null in props, bails out early, and the picker never
+  // fires — the user has to manually switch back into Hugheseys Que to
+  // continue the flow ("connect, get bounced to my own workspace, switch
+  // back, see it's connected").
+  //
+  // Honour the URL on mount when ?step= signals we're returning from a
+  // connect-flow redirect. Waits for clients to load so we can validate
+  // the target workspace exists before flipping.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlStep = params.get('step');
+    const urlWorkspace = params.get('workspace');
+    if (!urlStep || !urlWorkspace) return;
+    if (urlWorkspace === 'own') {
+      if (activeClientId !== null) setActiveClientId(null);
+      return;
+    }
+    if (clients.length === 0) return; // wait for clients to load
+    const target = clients.find(c => c.id === urlWorkspace);
+    if (target && activeClientId !== urlWorkspace) {
+      setActiveClientId(urlWorkspace);
+    }
+  // activeClientId omitted from deps so we don't re-fire after the switch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients]);
+
   const [clientHealthMap, setClientHealthMap] = useState<Record<string, { scheduledCount: number; lastPostAt: string | null }>>({});
   const [portalInputs, setPortalInputs] = useState<Record<string, { slug: string; email: string; password: string; showPw: boolean; saving: boolean }>>({});
 
