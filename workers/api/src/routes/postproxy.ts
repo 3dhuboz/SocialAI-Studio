@@ -188,6 +188,79 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     try {
+      // 0. Profile-reuse short-circuit (2026-05-22): if the same user already
+      //    has an active profile for this platform on a DIFFERENT workspace,
+      //    reuse it. Postproxy's "one FB account = one Profile" model means
+      //    a second OAuth attempt with the same FB account always fails with
+      //    `account_is_already_connected`. The legitimate path for an agency
+      //    owner managing multiple clients' Pages from their personal FB
+      //    account is to share the underlying Postproxy profile and pick a
+      //    different placement (FB Page) per workspace.
+      //
+      //    We bypass OAuth + Postproxy entirely here — copy the profile_id +
+      //    group_id from the donor row onto the target workspace row, mark
+      //    active, and return the placement-picker URL as the "authUrl" so
+      //    the frontend's `window.location.href = authUrl` lands the user
+      //    straight in the picker. From there they pick the right Page for
+      //    the new workspace and save-placement runs as normal.
+      const sharedProfile = await c.env.DB.prepare(
+        `SELECT postproxy_profile_id, postproxy_group_id
+         FROM postproxy_profiles
+         WHERE user_id = ?
+           AND platform = ?
+           AND profile_status = 'active'
+           AND postproxy_profile_id IS NOT NULL
+           AND COALESCE(client_id, 'OWN') != COALESCE(?, 'OWN')
+         ORDER BY connected_at DESC
+         LIMIT 1`
+      ).bind(uid, platform, clientId).first<{ postproxy_profile_id: string; postproxy_group_id: string }>();
+
+      if (sharedProfile) {
+        const existing = await selectProfileByWorkspace(c.env, uid, clientId, platform);
+        const nowIso = new Date().toISOString();
+        if (existing) {
+          await c.env.DB.prepare(
+            `UPDATE postproxy_profiles
+             SET postproxy_profile_id = ?, postproxy_group_id = ?,
+                 profile_status = 'active', connected_at = ?,
+                 oauth_state = NULL, updated_at = ?
+             WHERE id = ?`
+          ).bind(
+            sharedProfile.postproxy_profile_id,
+            sharedProfile.postproxy_group_id,
+            nowIso,
+            nowIso,
+            existing.id,
+          ).run();
+        } else {
+          await c.env.DB.prepare(
+            `INSERT INTO postproxy_profiles
+               (id, user_id, client_id, postproxy_profile_id, postproxy_group_id,
+                profile_status, platform, connected_at, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`
+          ).bind(
+            uuid(),
+            uid,
+            clientId,
+            sharedProfile.postproxy_profile_id,
+            sharedProfile.postproxy_group_id,
+            'active',
+            platform,
+            nowIso,
+            nowIso,
+            nowIso,
+          ).run();
+        }
+        console.log(`[postproxy] init-connection: reused profile ${sharedProfile.postproxy_profile_id} for uid=${uid} platform=${platform} clientId=${clientId ?? 'own'} (skipped OAuth — shared underlying FB account)`);
+        return c.json({
+          authUrl: postOauthRedirect(c.env, clientId),
+          oauthState: null,
+          platform,
+          reusedProfileId: sharedProfile.postproxy_profile_id,
+          skipOauth: true,
+        });
+      }
+
       // 1. Resolve / create profile_group via Postproxy (workspace label first;
       //    falls back to the default group if POST returns 404 — see lib doc).
       const label = workspaceLabel(uid, clientId);
