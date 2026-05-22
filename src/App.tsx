@@ -47,9 +47,11 @@ import {
   Lightbulb, ArrowRight, MessageSquare, Info, LogOut, ClipboardList, ShoppingCart, Pencil, Play, ExternalLink,
   Key, EyeOff, Home, AlertCircle, Target, ChevronRight, Receipt, Film, Lock, CalendarPlus
 } from 'lucide-react';
-// AdminCustomers is tab-gated (only mounted when activeTab === 'customers' && isAdminMode).
+// AdminCustomers is tab-gated (only mounted when activeTab === 'customers' && isSuperAdmin).
+// Owner-only — exposes self-serve signup emails, MRR, churn, payment history.
 const AdminCustomers = lazy(() => import('./components/AdminCustomers').then(m => ({ default: m.AdminCustomers })));
-// AdminShopifyStores is tab-gated (only mounted when activeTab === 'shopify-stores' && isAdminMode).
+// AdminShopifyStores is tab-gated (only mounted when activeTab === 'shopify-stores' && isSuperAdmin).
+// Owner-only — exposes Shopify-merchant tenant count + table for monitoring.
 const AdminShopifyStores = lazy(() => import('./components/AdminShopifyStores').then(m => ({ default: m.AdminShopifyStores })));
 import { BrandKitProvider } from './contexts/BrandKitContext';
 // PosterManager is lazy-loaded so its ~97kB / 29kB-gz module only ships when
@@ -2771,20 +2773,18 @@ const Dashboard: React.FC = () => {
     // and the worker still 403s mutating endpoints as defence-in-depth.
     { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
-    // Customers + Shopify tabs — cross-tenant views (self-serve signups,
-    // payment activity, Shopify-merchant tenants). Pulled from /api/admin/*.
-    // Hidden in clientMode (whitelabel deployments) AND when "inside" a
-    // specific client workspace (these tabs are not per-client).
+    // Customers + Shopify tabs — owner-only cross-tenant views. Pulled from
+    // /api/admin/*. Hidden in clientMode (whitelabel deployments) AND when
+    // "inside" a specific client workspace (these tabs are not per-client).
     //
-    // Customers: gated on isAdminMode (localStorage flag — any future
-    // co-admin can flip it on once we widen the admin set).
-    //
-    // Shopify: gated on isSuperAdmin (hard email whitelist against
-    // CLIENT.adminEmails). Owner-only — exposes the Shopify-merchant
-    // count + tenant table which is for Steve's monitoring use only.
-    // Never widened to client admins; the render block below applies
-    // the same gate so URL-direct navigation is also locked.
-    ...(!CLIENT.clientMode && isAdminMode && !activeClientId ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
+    // Both gated on isSuperAdmin (hard email whitelist against
+    // CLIENT.adminEmails) — NOT isAdminMode (localStorage flag any user can
+    // flip via DevTools). Customers shows self-serve signup emails, MRR,
+    // churn, and per-user payment history. Shopify shows the Shopify-
+    // merchant tenant count + table. Both are owner-monitoring data and
+    // must never widen to future co-admins. Render blocks below apply the
+    // same gate so URL-direct navigation is also locked.
+    ...(!CLIENT.clientMode && isSuperAdmin && !activeClientId ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
     ...(!CLIENT.clientMode && isSuperAdmin && !activeClientId ? [{ id: 'shopify-stores' as const, label: 'Shopify', icon: ShoppingCart }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
@@ -5563,8 +5563,11 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {/* ═══ CUSTOMERS TAB ═══ — admin-only, see tabs array gate above */}
-        {activeTab === 'customers' && isAdminMode && (
+        {/* ═══ CUSTOMERS TAB ═══ — owner-only (isSuperAdmin). Email
+            whitelist gate matches the tab nav above; URL-direct navigation
+            is locked too. Exposes self-serve signup emails / MRR / churn /
+            per-user payment history. */}
+        {activeTab === 'customers' && isSuperAdmin && (
           <Suspense fallback={<LoadingShell />}>
             <AdminCustomers />
           </Suspense>
