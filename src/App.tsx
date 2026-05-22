@@ -2771,16 +2771,21 @@ const Dashboard: React.FC = () => {
     // and the worker still 403s mutating endpoints as defence-in-depth.
     { id: 'posters' as const, label: 'Posters', icon: ImageIcon },
     ...(!CLIENT.clientMode && (activePlan === 'agency' || isAdminMode) ? [{ id: 'clients' as const, label: 'Clients', icon: Users }] : []),
-    // Customers + Shopify tabs — admin-only cross-tenant views (self-serve
-    // signups, payment activity, Shopify-merchant tenants). Pulled from
-    // /api/admin/*. Hidden in clientMode (whitelabel deployments) AND when
-    // the admin is "inside" a specific client workspace — these tabs make
-    // no sense from a single-client dashboard view (e.g. Hugheseys Que, a
-    // BBQ restaurant, doesn't need a "Shopify stores" tab in its nav).
-    // The admin lands back in the cross-tenant view by clicking "Back to my
-    // workspace" which clears activeClientId.
+    // Customers + Shopify tabs — cross-tenant views (self-serve signups,
+    // payment activity, Shopify-merchant tenants). Pulled from /api/admin/*.
+    // Hidden in clientMode (whitelabel deployments) AND when "inside" a
+    // specific client workspace (these tabs are not per-client).
+    //
+    // Customers: gated on isAdminMode (localStorage flag — any future
+    // co-admin can flip it on once we widen the admin set).
+    //
+    // Shopify: gated on isSuperAdmin (hard email whitelist against
+    // CLIENT.adminEmails). Owner-only — exposes the Shopify-merchant
+    // count + tenant table which is for Steve's monitoring use only.
+    // Never widened to client admins; the render block below applies
+    // the same gate so URL-direct navigation is also locked.
     ...(!CLIENT.clientMode && isAdminMode && !activeClientId ? [{ id: 'customers' as const, label: 'Customers', icon: Receipt }] : []),
-    ...(!CLIENT.clientMode && isAdminMode && !activeClientId ? [{ id: 'shopify-stores' as const, label: 'Shopify', icon: ShoppingCart }] : []),
+    ...(!CLIENT.clientMode && isSuperAdmin && !activeClientId ? [{ id: 'shopify-stores' as const, label: 'Shopify', icon: ShoppingCart }] : []),
     { id: 'settings' as const, label: 'Settings', icon: Settings }
   ];
 
@@ -5565,8 +5570,12 @@ const Dashboard: React.FC = () => {
           </Suspense>
         )}
 
-        {/* ═══ SHOPIFY STORES TAB ═══ — admin-only Shopify-merchant tenant view */}
-        {activeTab === 'shopify-stores' && isAdminMode && (
+        {/* ═══ SHOPIFY STORES TAB ═══ — owner-only Shopify-merchant tenant
+            view. Gated on isSuperAdmin (email whitelist) rather than
+            isAdminMode (localStorage flag), matching the tab nav above —
+            no URL-direct navigation by a future co-admin who flips the
+            localStorage admin toggle. */}
+        {activeTab === 'shopify-stores' && isSuperAdmin && (
           <Suspense fallback={<LoadingShell />}>
             <AdminShopifyStores />
           </Suspense>
