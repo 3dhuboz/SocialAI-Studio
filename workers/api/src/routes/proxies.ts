@@ -223,6 +223,13 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ balance: data?.balance ?? data?.credits ?? null });
     }
     if (action === 'check-credits-alert') {
+      try {
+        return c.json(await checkFalCreditsAlert(c.env));
+      } catch (e: any) {
+        return c.json({ error: e?.message || 'fal.ai credit check failed' }, 502);
+      }
+    }
+    if (action === 'check-credits-alert') {
       const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
       const data = await res.json() as any;
       if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
