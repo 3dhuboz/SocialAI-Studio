@@ -2,11 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
   RefreshCw, Search, Loader2, ExternalLink, Clock,
-  ChevronDown, ChevronRight, ShieldCheck, X,
+  ChevronDown, ChevronRight, ShieldCheck, X, MessageSquare,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
   AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons, AdminPrewarmReadiness,
+  AdminPostFeedback,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
 import { PaymentList } from './PaymentList';
@@ -63,6 +64,7 @@ export const AdminCustomers: React.FC = () => {
 
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [prewarmReadiness, setPrewarmReadiness] = useState<AdminPrewarmReadiness | null>(null);
+  const [postFeedback, setPostFeedback] = useState<AdminPostFeedback[] | null>(null);
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
@@ -85,6 +87,9 @@ export const AdminCustomers: React.FC = () => {
       db.getAdminPrewarmReadiness(24, 25)
         .then(setPrewarmReadiness)
         .catch(() => setPrewarmReadiness(null));
+      db.getAdminPostFeedback(10)
+        .then(r => setPostFeedback(r.feedback))
+        .catch(() => setPostFeedback(null));
     } catch (e: any) {
       setError(e?.message || 'Failed to load customers');
     } finally {
@@ -138,6 +143,8 @@ export const AdminCustomers: React.FC = () => {
       <AdminQualityScan />
 
       <PrewarmReadinessCard readiness={prewarmReadiness} loading={loading && !prewarmReadiness} />
+
+      <PostFeedbackCard feedback={postFeedback} loading={loading && !postFeedback} />
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -345,6 +352,82 @@ const PrewarmReadinessCard: React.FC<{
               </div>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const feedbackReasonLabel: Record<NonNullable<AdminPostFeedback['qa_feedback_reason']>, string> = {
+  off_brand: 'Off brand',
+  bad_image: 'Bad image',
+  bad_caption: 'Bad caption',
+  other: 'Other',
+};
+
+const feedbackTargetLabel: Record<NonNullable<AdminPostFeedback['qa_feedback_target']>, string> = {
+  post: 'Post',
+  image: 'Image',
+  caption: 'Caption',
+};
+
+const PostFeedbackCard: React.FC<{
+  feedback: AdminPostFeedback[] | null;
+  loading: boolean;
+}> = ({ feedback, loading }) => {
+  const rows = feedback?.slice(0, 5) || [];
+  const hasFeedback = rows.length > 0;
+
+  return (
+    <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${hasFeedback ? 'border-sky-500/20 bg-sky-500/[0.03]' : 'border-white/[0.06]'}`}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2">
+            <MessageSquare size={15} className={hasFeedback ? 'text-sky-300' : 'text-emerald-300'} />
+            <h3 className="text-sm font-black text-white">Customer QA feedback</h3>
+          </div>
+          <p className="text-xs text-white/35 mt-1">Recent post, image, and caption feedback submitted from the editor.</p>
+        </div>
+        <div className="text-[10px] font-bold">
+          {loading ? (
+            <span className="inline-flex items-center gap-1.5 text-white/40"><Loader2 size={11} className="animate-spin" /> Loading</span>
+          ) : (
+            <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-white/55">{feedback?.length ?? 0} recent</span>
+          )}
+        </div>
+      </div>
+
+      {!loading && rows.length === 0 && (
+        <div className="mt-3 flex items-center gap-2 text-xs text-emerald-300/75">
+          <CheckCircle size={13} /> No recent customer QA feedback.
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="mt-4 divide-y divide-white/[0.05]">
+          {rows.map(item => {
+            const target = item.qa_feedback_target ? feedbackTargetLabel[item.qa_feedback_target] : 'Post';
+            const reason = item.qa_feedback_reason ? feedbackReasonLabel[item.qa_feedback_reason] : 'Feedback';
+            const workspace = item.client_name || item.email || item.client_id || item.user_id || 'Unknown workspace';
+
+            return (
+              <div key={item.id} className="grid grid-cols-1 sm:grid-cols-[120px_140px_1fr] gap-1 sm:gap-3 py-2.5 text-xs">
+                <div>
+                  <span className="font-bold text-sky-300">{reason}</span>
+                  <span className="block text-[10px] text-white/30">{target} - {item.platform || 'Platform unknown'}</span>
+                </div>
+                <div className="text-white/35">
+                  <span className="block">{fmtDue(item.qa_feedback_at)}</span>
+                  <span className="block text-[10px]">{item.status || 'Status unknown'}</span>
+                </div>
+                <div className="min-w-0">
+                  {item.qa_feedback_note && <span className="block text-white/70 line-clamp-1">{item.qa_feedback_note}</span>}
+                  <span className="block text-white/45 line-clamp-1">{item.content_preview || 'No caption preview'}</span>
+                  <span className="text-[10px] text-white/25">{workspace}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

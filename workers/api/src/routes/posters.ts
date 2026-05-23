@@ -28,11 +28,13 @@ import { getAuthUserId, isRateLimited } from '../auth';
 import { checkBillingGate } from '../lib/billing-gate';
 import { POSTER_QUOTA_PER_MONTH, PLAN_INCLUDES_POSTERS, userHasFeature } from '../lib/pricing';
 import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
+import { logAiUsage } from '../lib/ai-usage';
 
 const uuid = () => crypto.randomUUID();
 
 const POSTER_MAX_BYTES = 5 * 1024 * 1024;
 const POSTER_BRAND_KIT_MAX_BYTES = 64 * 1024;
+const POSTER_IMAGE_COST_USD = 0.04;
 
 /** Normalise the workspace id read from ?clientId= or body — '' means own. */
 function normalizeClientId(raw: string | null | undefined): string | null {
@@ -570,6 +572,25 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
       'google/gemini-2.0-flash-exp:free',
     ];
 
+    const logPosterImageUsage = async (
+      model: string,
+      data: any,
+      imageFound: boolean,
+    ) => {
+      await logAiUsage(c.env, {
+        userId: uid,
+        clientId,
+        provider: 'openrouter',
+        model,
+        operation: 'poster-image',
+        tokensIn: data?.usage?.prompt_tokens != null ? Number(data.usage.prompt_tokens) : undefined,
+        tokensOut: data?.usage?.completion_tokens != null ? Number(data.usage.completion_tokens) : undefined,
+        imagesGenerated: imageFound ? 1 : 0,
+        estCostUsd: imageFound ? POSTER_IMAGE_COST_USD : 0,
+        ok: imageFound,
+      });
+    };
+
     for (const model of imageModels) {
       try {
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -590,6 +611,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
 
         if (!res.ok) {
           console.warn(`[poster-image] OpenRouter (${model}):`, res.status);
+          await logPosterImageUsage(model, null, false);
           continue;
         }
 
@@ -598,19 +620,26 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
 
         // Three response shapes seen in the wild — handle them all.
         if (msg?.images?.[0]?.image_url?.url) {
+          await logPosterImageUsage(model, data, true);
           return c.json({ dataUrl: msg.images[0].image_url.url });
         }
         if (Array.isArray(msg?.content)) {
           const imgPart = msg.content.find((p: any) => p.type === 'image_url' || p.image_url);
-          if (imgPart?.image_url?.url) return c.json({ dataUrl: imgPart.image_url.url });
+          if (imgPart?.image_url?.url) {
+            await logPosterImageUsage(model, data, true);
+            return c.json({ dataUrl: imgPart.image_url.url });
+          }
         }
         if (typeof msg?.content === 'string' && msg.content.startsWith('data:image')) {
+          await logPosterImageUsage(model, data, true);
           return c.json({ dataUrl: msg.content });
         }
 
         console.warn(`[poster-image] no image in response from ${model}`);
+        await logPosterImageUsage(model, data, false);
       } catch (e: any) {
         console.warn(`[poster-image] ${model} threw:`, e?.message || e);
+        await logPosterImageUsage(model, null, false);
       }
     }
 

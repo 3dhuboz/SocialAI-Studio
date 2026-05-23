@@ -270,6 +270,49 @@ export function registerAdminStatsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   /**
+   * GET /api/admin/post-feedback?limit=50
+   * Recent customer QA feedback captured from PostModal. This keeps support
+   * visibility on feedback rows so they don't become write-only audit dust.
+   */
+  app.get('/api/admin/post-feedback', async (c) => {
+    const adminCheck = await requireAdmin(c);
+    if (adminCheck instanceof Response) return adminCheck;
+
+    const rawLimit = parseInt(c.req.query('limit') || '50', 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 50;
+    const rows = await c.env.DB.prepare(
+      `SELECT
+          p.id,
+          p.user_id,
+          p.client_id,
+          u.email,
+          cl.name AS client_name,
+          p.platform,
+          p.status,
+          p.scheduled_for,
+          p.image_url,
+          p.qa_feedback_target,
+          p.qa_feedback_reason,
+          p.qa_feedback_note,
+          p.qa_feedback_at,
+          substr(COALESCE(p.content,''),1,240) AS content_preview
+         FROM posts p
+         LEFT JOIN users u ON u.id = p.user_id
+         LEFT JOIN clients cl ON cl.id = p.client_id
+        WHERE p.qa_feedback_at IS NOT NULL
+           OR p.qa_feedback_target IS NOT NULL
+           OR p.qa_feedback_reason IS NOT NULL
+        ORDER BY p.qa_feedback_at DESC
+        LIMIT ?`
+    ).bind(limit).all();
+
+    return c.json({
+      feedback: rows.results || [],
+      limit,
+    });
+  });
+
+  /**
    * GET /api/admin/prewarm-readiness?hours=24&limit=50
    * Lightweight visibility into scheduled posts due soon that the image/video
    * prewarm crons have not made publish-ready yet.

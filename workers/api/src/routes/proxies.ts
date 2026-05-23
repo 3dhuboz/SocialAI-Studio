@@ -28,6 +28,10 @@ import { getAuthUserId, isRateLimited } from '../auth';
 import { checkBillingGate } from '../lib/billing-gate';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
+import { logAiUsage } from '../lib/ai-usage';
+
+const NANO_BANANA_PRO_COST_USD = 0.15;
+const KLING_STANDARD_VIDEO_COST_USD = 0.30;
 
 export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── fal.ai Proxy (query-param based — matches Pages Function pattern) ────
@@ -111,10 +115,40 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
             const data = await res.json() as any;
             const imageUrl = data?.images?.[0]?.url || null;
             if (imageUrl) {
+              await logAiUsage(c.env, {
+                userId: uid,
+                clientId: clientId || null,
+                provider: 'fal',
+                model: 'nano-banana-pro',
+                operation: 'image-gen-nano-banana-pro',
+                imagesGenerated: 1,
+                estCostUsd: NANO_BANANA_PRO_COST_USD,
+                ok: true,
+              });
               return c.json({ imageUrl, model_used: 'nano-banana-pro' });
             }
+            await logAiUsage(c.env, {
+              userId: uid,
+              clientId: clientId || null,
+              provider: 'fal',
+              model: 'nano-banana-pro',
+              operation: 'image-gen-nano-banana-pro',
+              imagesGenerated: 0,
+              estCostUsd: 0,
+              ok: false,
+            });
           } else {
             console.warn(`[fal-proxy] nano-banana-pro failed (status ${res.status}), falling through to flux chain`);
+            await logAiUsage(c.env, {
+              userId: uid,
+              clientId: clientId || null,
+              provider: 'fal',
+              model: 'nano-banana-pro',
+              operation: 'image-gen-nano-banana-pro',
+              imagesGenerated: 0,
+              estCostUsd: 0,
+              ok: false,
+            });
           }
         }
         // Fall through to the default delegation if nano-banana-pro had no
@@ -143,6 +177,16 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         body: JSON.stringify({ prompt: promptText || 'cinematic, smooth motion', image_url: promptImage, duration: String(duration), aspect_ratio: '9:16' }),
       });
       const data = await res.json() as any;
+      await logAiUsage(c.env, {
+        userId: uid,
+        clientId: null,
+        provider: 'fal',
+        model: 'kling-video/v1.6/standard/image-to-video',
+        operation: 'video-start',
+        imagesGenerated: 0,
+        estCostUsd: res.ok && data?.request_id ? KLING_STANDARD_VIDEO_COST_USD : 0,
+        ok: res.ok && !!data?.request_id,
+      });
       if (!res.ok) return c.json({ error: data?.detail || data?.message || `fal.ai HTTP ${res.status}` }, res.status as any);
       return c.json({ requestId: data.request_id, statusUrl: data.status_url || null, responseUrl: data.response_url || null });
     }
@@ -159,6 +203,16 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       if (!requestId) return c.json({ error: 'requestId required' }, 400);
       const res = await fetch(`https://queue.fal.run/fal-ai/kling-video/requests/${requestId}`, { headers: authHeader });
       const data = await res.json() as any;
+      await logAiUsage(c.env, {
+        userId: uid,
+        clientId: null,
+        provider: 'fal',
+        model: 'kling-video',
+        operation: 'video-result',
+        imagesGenerated: 0,
+        estCostUsd: 0,
+        ok: res.ok && !!(data?.video?.url || data?.output?.video?.url),
+      });
       return c.json(data, { status: res.status as any });
     }
     if (action === 'get-credits') {
@@ -262,6 +316,16 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     };
 
     const res = await fetch(url, { method, headers, body });
+    await logAiUsage(c.env, {
+      userId: uid,
+      clientId: null,
+      provider: 'runway',
+      model: path || '/',
+      operation: 'runway-proxy',
+      imagesGenerated: 0,
+      estCostUsd: undefined,
+      ok: res.ok,
+    });
     const contentType = res.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
       const data = await res.json();

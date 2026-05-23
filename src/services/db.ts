@@ -477,6 +477,11 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<AdminPrewarmReadiness>;
     },
 
+    async getAdminPostFeedback(limit = 25): Promise<{ feedback: AdminPostFeedback[]; limit: number }> {
+      const res = await f(`/api/admin/post-feedback?limit=${limit}`);
+      return res.json() as Promise<{ feedback: AdminPostFeedback[]; limit: number }>;
+    },
+
     // Shopify Stores — admin-only tenant view (schema_v17/v18). Each row is
     // one Shopify merchant who's ever installed our app. `bucket` is a
     // derived filter category (active/trial/pending/cancelled/uninstalled).
@@ -846,6 +851,23 @@ export interface FlaggedPost {
   content_preview: string;
   image_prompt_preview: string | null;
   reasons: string[];
+}
+
+export interface AdminPostFeedback {
+  id: string;
+  user_id: string | null;
+  client_id: string | null;
+  email: string | null;
+  client_name: string | null;
+  platform: string | null;
+  status: string | null;
+  scheduled_for: string | null;
+  image_url: string | null;
+  qa_feedback_target: 'post' | 'image' | 'caption' | null;
+  qa_feedback_reason: 'off_brand' | 'bad_image' | 'bad_caption' | 'other' | null;
+  qa_feedback_note: string | null;
+  qa_feedback_at: string | null;
+  content_preview: string;
 }
 
 export interface AdminPrewarmReadinessPost {

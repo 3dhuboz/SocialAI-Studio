@@ -24,6 +24,9 @@
 
 import type { Env } from '../env';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
+import { logAiUsage } from '../lib/ai-usage';
+
+const KLING_STANDARD_VIDEO_COST_USD = 0.30;
 
 async function cacheVideoToR2(env: Env, sourceUrl: string, postId: string): Promise<string | null> {
   if (!env.REELS_R2) {
@@ -87,7 +90,7 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
   ).bind(eightMinAgoAEST).run();
 
   const rows = await env.DB.prepare(
-    `SELECT id, image_url, video_script, video_request_id, video_status
+    `SELECT id, user_id, client_id, image_url, video_script, video_request_id, video_status
      FROM posts
      WHERE post_type = 'video' AND status = 'Scheduled'
        AND scheduled_for > ? AND scheduled_for <= ?
@@ -105,6 +108,8 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
 
   for (const post of posts) {
     const postId = (post as any).id as string;
+    const userId = ((post as any).user_id as string | null) || null;
+    const clientId = ((post as any).client_id as string | null) || null;
     const status = (post as any).video_status as string | null;
     const requestId = (post as any).video_request_id as string | null;
     try {
@@ -133,6 +138,17 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
         });
         clearTimeout(timeout);
         const startData: any = await startRes.json();
+        await logAiUsage(env, {
+          userId,
+          clientId,
+          provider: 'fal',
+          model: 'kling-video/v1.6/standard/image-to-video',
+          operation: 'prewarm-video-start',
+          imagesGenerated: 0,
+          estCostUsd: startRes.ok && !!startData.request_id ? KLING_STANDARD_VIDEO_COST_USD : 0,
+          postId,
+          ok: startRes.ok && !!startData.request_id,
+        });
         if (!startRes.ok || !startData.request_id) {
           const reason = startData?.detail || startData?.message || `Kling HTTP ${startRes.status}`;
           await env.DB.prepare(
@@ -168,6 +184,17 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
         );
         const resultData: any = await resultRes.json();
         const falVideoUrl = resultData?.video?.url || resultData?.output?.video?.url;
+        await logAiUsage(env, {
+          userId,
+          clientId,
+          provider: 'fal',
+          model: 'kling-video',
+          operation: 'prewarm-video-result',
+          imagesGenerated: 0,
+          estCostUsd: 0,
+          postId,
+          ok: resultRes.ok && !!falVideoUrl,
+        });
         if (!falVideoUrl) {
           await env.DB.prepare(
             `UPDATE posts SET video_status = 'failed', video_error = 'No video URL in Kling result' WHERE id = ?`

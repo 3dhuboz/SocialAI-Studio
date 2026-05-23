@@ -41,7 +41,7 @@ import type { Env } from '../env';
 export type AiUsageRow = {
   userId?: string | null;
   clientId?: string | null;
-  provider: 'fal' | 'anthropic' | 'gemini' | 'openrouter';
+  provider: 'fal' | 'anthropic' | 'gemini' | 'openrouter' | 'runway';
   model: string;
   operation: string;
   tokensIn?: number;
