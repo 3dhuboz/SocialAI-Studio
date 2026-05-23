@@ -35,6 +35,12 @@ export interface SocialPost {
   imageCritiqueScore?: number;        // 0-10
   imageCritiqueReasoning?: string;    // one-sentence explanation
   imageCritiqueAt?: string;           // ISO timestamp
+  // Customer QA feedback loop (schema v36). Set when a user marks a post,
+  // image, or caption as off-brand/bad from PostModal.
+  qaFeedbackTarget?: 'post' | 'image' | 'caption';
+  qaFeedbackReason?: 'off_brand' | 'bad_image' | 'bad_caption' | 'other';
+  qaFeedbackNote?: string;
+  qaFeedbackAt?: string;
 }
 
 /**

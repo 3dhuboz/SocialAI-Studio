@@ -60,6 +60,37 @@ export function normalizeScheduledFor(input: unknown): string | null {
   return input;
 }
 
+export type PostFeedbackTarget = 'post' | 'image' | 'caption';
+export type PostFeedbackReason = 'off_brand' | 'bad_image' | 'bad_caption' | 'other';
+
+export function buildPostFeedbackPatch(
+  input: Record<string, unknown>,
+  now: () => string = () => new Date().toISOString(),
+): Record<string, string | null> {
+  const target = input.qaFeedbackTarget;
+  const reason = input.qaFeedbackReason;
+  const allowedTargets = new Set<PostFeedbackTarget>(['post', 'image', 'caption']);
+  const allowedReasons = new Set<PostFeedbackReason>(['off_brand', 'bad_image', 'bad_caption', 'other']);
+
+  if (typeof target !== 'string' || !allowedTargets.has(target as PostFeedbackTarget)) {
+    throw new Error('Invalid post feedback target');
+  }
+  if (typeof reason !== 'string' || !allowedReasons.has(reason as PostFeedbackReason)) {
+    throw new Error('Invalid post feedback reason');
+  }
+
+  const note = typeof input.qaFeedbackNote === 'string'
+    ? input.qaFeedbackNote.trim().slice(0, 500)
+    : null;
+
+  return {
+    qa_feedback_target: target,
+    qa_feedback_reason: reason,
+    qa_feedback_note: note || null,
+    qa_feedback_at: now(),
+  };
+}
+
 // Safety-net classifier: kicked off in the background when an own-workspace
 // post is created and users.archetype_slug is still NULL. Onboarding-magic
 // and the App.tsx useEffect are the primary paths that populate the slug;
@@ -259,6 +290,16 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const body = await c.req.json<Record<string, unknown>>();
     const sets: string[] = [];
     const vals: unknown[] = [];
+    if ('qaFeedbackTarget' in body || 'qaFeedbackReason' in body || 'qaFeedbackNote' in body) {
+      try {
+        for (const [col, value] of Object.entries(buildPostFeedbackPatch(body))) {
+          sets.push(`${col} = ?`);
+          vals.push(value);
+        }
+      } catch (e: any) {
+        return c.json({ error: e?.message || 'Invalid post feedback' }, 400);
+      }
+    }
     const colMap: Record<string, string> = {
       content: 'content', platform: 'platform', status: 'status',
       scheduledFor: 'scheduled_for', hashtags: 'hashtags',

@@ -23,6 +23,7 @@ import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { loadForbiddenSubjects, resolveBusinessType, scanForForbidden } from '../lib/profile-guards';
 import {
   ACTIVE_CLIENT_FILTER,
+  NON_SHOP_OWNER_FILTER,
   loadSocialTokensForPosts,
   lookupSocialTokens,
   loadPostproxyMappingForPosts,
@@ -145,7 +146,8 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // entire heavy claim sweep.
   const dueCheck = await env.DB.prepare(
     `SELECT COUNT(*) as c FROM posts
-     WHERE status IN ('Scheduled', 'Publishing') AND scheduled_for <= ?`
+     WHERE status IN ('Scheduled', 'Publishing') AND scheduled_for <= ?
+       AND ${NON_SHOP_OWNER_FILTER}`
   ).bind(nowAEST).first<{ c: number }>();
   if (!dueCheck || dueCheck.c === 0) {
     return { posts_processed: 0 };
@@ -191,6 +193,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
            OR (claim_at IS NULL AND scheduled_for <= ?)
          )
          AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))
+         AND ${NON_SHOP_OWNER_FILTER}
          AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(tenMinAgoUtc, tenMinAgo).run();
 
@@ -223,6 +226,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
      WHERE status = 'Scheduled' AND scheduled_for <= ?
        AND image_critique_score IS NOT NULL AND image_critique_score <= ?
        AND COALESCE(image_regen_count, 0) >= ?
+       AND ${NON_SHOP_OWNER_FILTER}
        AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(nowAEST, QUALITY_GUARD_THRESHOLD, MAX_REGEN_ATTEMPTS).all<{
     id: string; user_id: string | null; client_id: string | null;
@@ -248,6 +252,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
     `UPDATE posts SET status = 'Publishing', claim_id = ?, claim_at = ?
      WHERE status = 'Scheduled' AND scheduled_for <= ?
        AND claim_id IS NULL
+       AND ${NON_SHOP_OWNER_FILTER}
        AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(claimId, claimAt, nowAEST).run();
 

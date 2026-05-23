@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   X, Facebook, Instagram, Send, Trash2, Save, Loader2,
   Calendar, Clock, Edit2, CheckCircle, Image as ImageIcon,
-  RefreshCw, Upload, Hash, TrendingUp, Sparkles, ShieldCheck, ShieldAlert
+  RefreshCw, Upload, Hash, TrendingUp, Sparkles, ShieldCheck, ShieldAlert, Flag
 } from 'lucide-react';
 import { SocialPost } from '../types';
 import { AnimatedReelPreview } from './AnimatedReelPreview';
@@ -114,6 +114,21 @@ export const PostModal: React.FC<Props> = ({
   const scoringContent = isEditing ? editContent : post.content;
   const [viralityScore, setViralityScore] = useState<ViralityScore | null>(null);
   const [isScoringPost, setIsScoringPost] = useState(false);
+  const [qaFeedbackReason, setQaFeedbackReason] = useState(post.qaFeedbackReason);
+  const [isSendingFeedback, setIsSendingFeedback] = useState(false);
+  type FeedbackReason = NonNullable<SocialPost['qaFeedbackReason']>;
+  type FeedbackTarget = NonNullable<SocialPost['qaFeedbackTarget']>;
+  const markFeedback = async (target: FeedbackTarget, reason: FeedbackReason) => {
+    setIsSendingFeedback(true);
+    try {
+      await db.markPostFeedback({ postId: post.id, target, reason });
+      setQaFeedbackReason(reason);
+    } catch (e) {
+      console.warn('[post-feedback]', e);
+    } finally {
+      setIsSendingFeedback(false);
+    }
+  };
   useEffect(() => {
     if (!isScorable) return;
     if (!scoringContent || scoringContent.trim().length < 10) return;
@@ -402,6 +417,56 @@ export const PostModal: React.FC<Props> = ({
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {post.status !== 'Posted' && (
+              <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/35">
+                    <Flag size={11} /> Feedback
+                  </span>
+                  {qaFeedbackReason && (
+                    <span className="text-[10px] font-bold text-rose-300 bg-rose-500/15 border border-rose-400/20 rounded-full px-2 py-0.5">
+                      Marked
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    onClick={() => markFeedback('post', 'off_brand')}
+                    disabled={isSendingFeedback}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition ${
+                      qaFeedbackReason === 'off_brand'
+                        ? 'bg-rose-500/20 border-rose-400/35 text-rose-200'
+                        : 'bg-black/20 border-white/10 text-white/45 hover:text-white/70 hover:bg-white/[0.06]'
+                    } disabled:opacity-50`}
+                  >
+                    <ShieldAlert size={11} /> Off-brand
+                  </button>
+                  <button
+                    onClick={() => markFeedback('image', 'bad_image')}
+                    disabled={isSendingFeedback}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition ${
+                      qaFeedbackReason === 'bad_image'
+                        ? 'bg-rose-500/20 border-rose-400/35 text-rose-200'
+                        : 'bg-black/20 border-white/10 text-white/45 hover:text-white/70 hover:bg-white/[0.06]'
+                    } disabled:opacity-50`}
+                  >
+                    <ImageIcon size={11} /> Bad image
+                  </button>
+                  <button
+                    onClick={() => markFeedback('caption', 'bad_caption')}
+                    disabled={isSendingFeedback}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold transition ${
+                      qaFeedbackReason === 'bad_caption'
+                        ? 'bg-rose-500/20 border-rose-400/35 text-rose-200'
+                        : 'bg-black/20 border-white/10 text-white/45 hover:text-white/70 hover:bg-white/[0.06]'
+                    } disabled:opacity-50`}
+                  >
+                    <Edit2 size={11} /> Bad caption
+                  </button>
+                </div>
               </div>
             )}
 

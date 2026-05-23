@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
-  RefreshCw, Search, Loader2, ExternalLink,
+  RefreshCw, Search, Loader2, ExternalLink, Clock,
   ChevronDown, ChevronRight, ShieldCheck, X,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
-  AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons,
+  AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons, AdminPrewarmReadiness,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
 import { PaymentList } from './PaymentList';
@@ -62,6 +62,7 @@ export const AdminCustomers: React.FC = () => {
   const db = useDb();
 
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [prewarmReadiness, setPrewarmReadiness] = useState<AdminPrewarmReadiness | null>(null);
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
@@ -81,6 +82,9 @@ export const AdminCustomers: React.FC = () => {
       ]);
       setStats(s);
       setCustomers(c.customers);
+      db.getAdminPrewarmReadiness(24, 25)
+        .then(setPrewarmReadiness)
+        .catch(() => setPrewarmReadiness(null));
     } catch (e: any) {
       setError(e?.message || 'Failed to load customers');
     } finally {
@@ -132,6 +136,8 @@ export const AdminCustomers: React.FC = () => {
           Added 2026-05 audit follow-up. Mounted here (above stats) so admins
           see flagged-post counts before drilling into customer metrics. */}
       <AdminQualityScan />
+
+      <PrewarmReadinessCard readiness={prewarmReadiness} loading={loading && !prewarmReadiness} />
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -274,6 +280,76 @@ export const AdminCustomers: React.FC = () => {
 // ──────────────────────────────────────────────────────────────────────────────
 // StatCard — top strip metric card. Tone controls the icon colour.
 // ──────────────────────────────────────────────────────────────────────────────
+
+const issueLabel: Record<AdminPrewarmReadiness['posts'][number]['issue'], string> = {
+  missing_image: 'Missing image',
+  video_pending: 'Video pending',
+  video_failed: 'Video failed',
+  video_missing: 'Missing video',
+};
+
+const fmtDue = (iso: string | null) => {
+  if (!iso) return 'No date';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Invalid date';
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+const PrewarmReadinessCard: React.FC<{
+  readiness: AdminPrewarmReadiness | null;
+  loading: boolean;
+}> = ({ readiness, loading }) => {
+  const rows = readiness?.posts.slice(0, 5) || [];
+  const hasGaps = !!readiness && readiness.total > 0;
+
+  return (
+    <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${hasGaps ? 'border-amber-500/20 bg-amber-500/[0.03]' : 'border-white/[0.06]'}`}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2">
+            <Clock size={15} className={hasGaps ? 'text-amber-300' : 'text-emerald-300'} />
+            <h3 className="text-sm font-black text-white">Prewarm readiness</h3>
+          </div>
+          <p className="text-xs text-white/35 mt-1">Scheduled posts due in the next 24 hours with missing media or video still not ready.</p>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] font-bold">
+          {loading ? (
+            <span className="inline-flex items-center gap-1.5 text-white/40"><Loader2 size={11} className="animate-spin" /> Loading</span>
+          ) : (
+            <>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-white/55">{readiness?.total ?? 0} gaps</span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-white/55">{readiness?.counts.missing_images ?? 0} images</span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-white/55">{readiness?.counts.video_pending ?? 0} pending</span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-white/55">{readiness?.counts.video_failed ?? 0} failed</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {!loading && rows.length === 0 && (
+        <div className="mt-3 flex items-center gap-2 text-xs text-emerald-300/75">
+          <CheckCircle size={13} /> Due-soon scheduled posts look ready.
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="mt-4 divide-y divide-white/[0.05]">
+          {rows.map(post => (
+            <div key={post.id} className="grid grid-cols-1 sm:grid-cols-[110px_120px_1fr] gap-1 sm:gap-3 py-2.5 text-xs">
+              <span className={`font-bold ${post.issue === 'video_failed' ? 'text-rose-300' : 'text-amber-300'}`}>{issueLabel[post.issue]}</span>
+              <span className="text-white/35">{fmtDue(post.scheduled_for)}</span>
+              <div className="min-w-0">
+                <span className="text-white/60 line-clamp-1">{post.content_preview || 'No caption'}</span>
+                <span className="text-[10px] text-white/25">{post.workspace} - {post.platform || 'Platform unknown'}</span>
+                {post.video_error && <span className="block text-[10px] text-rose-300/70 truncate">{post.video_error}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const StatCard: React.FC<{
   icon: React.ElementType;

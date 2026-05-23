@@ -13,6 +13,12 @@ import { decryptSocialTokensJson } from '../lib/social-tokens';
 export const ACTIVE_CLIENT_FILTER =
   `(client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`;
 
+// The generic SocialAI publisher still resolves tokens through users/clients.
+// Shop-owned rows need shopify_stores.social_tokens and must not be claimed
+// here until that path exists.
+export const NON_SHOP_OWNER_FILTER =
+  `(COALESCE(owner_kind, 'user') != 'shop')`;
+
 // Shape of the JSON blob stored in users.social_tokens / clients.social_tokens.
 // Only the FB fields are typed because that's all the cron paths read — other
 // platforms (IG, etc.) come along as `any` extras via the index signature.

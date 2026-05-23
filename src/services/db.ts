@@ -125,6 +125,11 @@ export interface DbPost {
   image_critique_score?: number | null;
   image_critique_reasoning?: string | null;
   image_critique_at?: string | null;
+  // v36 - customer QA feedback from PostModal.
+  qa_feedback_target?: 'post' | 'image' | 'caption' | null;
+  qa_feedback_reason?: 'off_brand' | 'bad_image' | 'bad_caption' | 'other' | null;
+  qa_feedback_note?: string | null;
+  qa_feedback_at?: string | null;
 }
 
 /** Maps a `DbPost` row (snake_case from D1) to the front-end `SocialPost`
@@ -158,6 +163,10 @@ export function mapDbPostToSocialPost(p: DbPost): import('../types').SocialPost 
     imageCritiqueScore: p.image_critique_score ?? undefined,
     imageCritiqueReasoning: p.image_critique_reasoning ?? undefined,
     imageCritiqueAt: p.image_critique_at ?? undefined,
+    qaFeedbackTarget: p.qa_feedback_target ?? undefined,
+    qaFeedbackReason: p.qa_feedback_reason ?? undefined,
+    qaFeedbackNote: p.qa_feedback_note ?? undefined,
+    qaFeedbackAt: p.qa_feedback_at ?? undefined,
   };
 }
 
@@ -257,6 +266,19 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async updatePost(id: string, fields: Partial<DbPost>): Promise<void> {
       await f(`/api/db/posts/${id}`, put(fields));
+    },
+
+    async markPostFeedback(input: {
+      postId: string;
+      target: 'post' | 'image' | 'caption';
+      reason: 'off_brand' | 'bad_image' | 'bad_caption' | 'other';
+      note?: string | null;
+    }): Promise<void> {
+      await f(`/api/db/posts/${input.postId}`, put({
+        qaFeedbackTarget: input.target,
+        qaFeedbackReason: input.reason,
+        qaFeedbackNote: input.note ?? null,
+      }));
     },
 
     async deletePost(id: string): Promise<void> {
@@ -448,6 +470,11 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       parts.push(`limit=${limit}`);
       const res = await f(`/api/admin/payments?${parts.join('&')}`);
       return res.json() as Promise<{ payments: PaymentEvent[] }>;
+    },
+
+    async getAdminPrewarmReadiness(hours = 24, limit = 50): Promise<AdminPrewarmReadiness> {
+      const res = await f(`/api/admin/prewarm-readiness?hours=${hours}&limit=${limit}`);
+      return res.json() as Promise<AdminPrewarmReadiness>;
     },
 
     // Shopify Stores — admin-only tenant view (schema_v17/v18). Each row is
@@ -819,6 +846,33 @@ export interface FlaggedPost {
   content_preview: string;
   image_prompt_preview: string | null;
   reasons: string[];
+}
+
+export interface AdminPrewarmReadinessPost {
+  id: string;
+  user_id: string | null;
+  client_id: string | null;
+  workspace: string;
+  scheduled_for: string | null;
+  platform: string | null;
+  post_type: string | null;
+  video_status: string | null;
+  video_error: string | null;
+  issue: 'missing_image' | 'video_pending' | 'video_failed' | 'video_missing';
+  content_preview: string;
+}
+
+export interface AdminPrewarmReadiness {
+  window_hours: number;
+  due_before: string;
+  total: number;
+  counts: {
+    missing_images: number;
+    video_pending: number;
+    video_failed: number;
+    video_missing: number;
+  };
+  posts: AdminPrewarmReadinessPost[];
 }
 
 export interface PaymentEvent {
