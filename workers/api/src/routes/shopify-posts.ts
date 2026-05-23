@@ -58,6 +58,7 @@ import type { Env } from '../env';
 import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
+import { requireActiveShopSubscription } from '../lib/shopify-billing';
 
 // Match the OAuth route — keep both files in sync if the limit changes.
 const RATE_LIMIT_PER_MIN = 60;
@@ -67,6 +68,13 @@ const ALLOWED_PLATFORMS = new Set(['facebook', 'instagram', 'both']);
 
 // Status transitions allowed on PATCH. Anything else is rejected with 400.
 const ALLOWED_PATCH_STATUSES = new Set(['Draft', 'Scheduled']);
+const SHOPIFY_SCHEDULER_DISABLED = {
+  error: 'Shopify scheduling is temporarily disabled while shop-owned publishing is being finalized.',
+  code: 'SHOPIFY_SCHEDULER_DISABLED',
+};
+function isShopifySchedulerDisabled(): boolean {
+  return true;
+}
 
 // Editable status — only Draft posts are editable via PATCH or deletable
 // from-anywhere via DELETE. The DELETE handler ALSO allows 'Scheduled' (a
@@ -105,6 +113,12 @@ async function gate(c: any): Promise<string | Response> {
   return shop;
 }
 
+async function requireBilling(c: any, shop: string): Promise<Response | null> {
+  const billing = await requireActiveShopSubscription(c.env, shop);
+  if (billing.ok) return null;
+  return c.json({ error: billing.message, code: billing.code }, billing.status);
+}
+
 // Narrow type for the row shape we return on GET. We hand-pick columns so
 // callers (the embedded app calendar / composer) don't accidentally see
 // columns reserved for the Clerk-user pipeline (e.g. late_post_id).
@@ -139,6 +153,8 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const shopOrResp = await gate(c);
     if (shopOrResp instanceof Response) return shopOrResp;
     const shop = shopOrResp;
+    const billingResp = await requireBilling(c, shop);
+    if (billingResp) return billingResp;
 
     let body: { content?: unknown; image_url?: unknown; platform?: unknown; product_id?: unknown };
     try { body = await c.req.json(); }
@@ -232,6 +248,8 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const shopOrResp = await gate(c);
     if (shopOrResp instanceof Response) return shopOrResp;
     const shop = shopOrResp;
+    const billingResp = await requireBilling(c, shop);
+    if (billingResp) return billingResp;
 
     const postId = c.req.param('id');
 
@@ -276,6 +294,9 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       const v = body.status;
       if (typeof v !== 'string' || !ALLOWED_PATCH_STATUSES.has(v)) {
         return c.json({ error: "status must be 'Draft' or 'Scheduled'" }, 400);
+      }
+      if (v === 'Scheduled' && isShopifySchedulerDisabled()) {
+        return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
       }
       sets.push('status = ?');
       vals.push(v);
@@ -336,6 +357,8 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const shopOrResp = await gate(c);
     if (shopOrResp instanceof Response) return shopOrResp;
     const shop = shopOrResp;
+    const billingResp = await requireBilling(c, shop);
+    if (billingResp) return billingResp;
 
     const postId = c.req.param('id');
 
@@ -343,6 +366,9 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
     ).bind(postId, shop).first<{ status: string | null }>();
     if (!current) return c.json({ error: 'Post not found' }, 404);
+    if (isShopifySchedulerDisabled()) {
+      return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
+    }
     // Allow publish-now from:
     //   - Draft    — normal "skip the schedule, publish right now" path
     //   - Missed   — retry a post that the cron couldn't publish at the

@@ -107,6 +107,10 @@ export const AccountPanel: React.FC<Props> = ({
     setDeleteError('');
     if (deleteConfirm !== 'DELETE') { setDeleteError('Type DELETE to confirm.'); return; }
     if (!clerkUser || !user) return;
+    if (billingSummary?.subscription_id) {
+      setDeleteError('Cancel your PayPal subscription before deleting your account so billing cannot continue after access is removed.');
+      return;
+    }
     setDeleteLoading(true);
     try {
       await db.deleteUser().catch(() => {});
@@ -355,7 +359,7 @@ export const AccountPanel: React.FC<Props> = ({
               <div className="bg-red-500/8 border border-red-500/20 rounded-2xl p-3 mb-4 text-xs text-red-300/70 space-y-1">
                 <p>• All your posts and calendar data will be deleted</p>
                 <p>• All client workspaces will be removed</p>
-                <p>• Your subscription will not be automatically cancelled — contact support to cancel billing</p>
+                <p>• Active subscriptions must be cancelled before account deletion</p>
               </div>
 
               <div className="space-y-3">
@@ -374,7 +378,7 @@ export const AccountPanel: React.FC<Props> = ({
                 )}
                 <button
                   onClick={handleDeleteAccount}
-                  disabled={deleteLoading || deleteConfirm !== 'DELETE'}
+                  disabled={deleteLoading || deleteConfirm !== 'DELETE' || !!billingSummary?.subscription_id}
                   className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3 rounded-xl disabled:opacity-40 transition text-sm"
                 >
                   {deleteLoading ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={14} />}

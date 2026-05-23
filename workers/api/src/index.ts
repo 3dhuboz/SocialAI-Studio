@@ -151,7 +151,7 @@ registerShopifyProfileRoutes(app);
 app.onError((err, c) => {
   const requestId = c.get('requestId');
   console.error(`[error] requestId=${requestId} path=${c.req.path}`, err);
-  return c.json({ error: 'internal_error', message: err.message, requestId }, 500);
+  return c.json({ error: 'internal_error', message: 'Internal server error', requestId }, 500);
 });
 
 // ── 404 handler ───────────────────────────────────────────────────────────

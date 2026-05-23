@@ -1915,7 +1915,13 @@ const Dashboard: React.FC = () => {
         } else {
           await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
         }
-      } else if (post.platform === 'Instagram' && socialTokens.instagramBusinessAccountId && imageUrl) {
+      } else if (post.platform === 'Instagram') {
+        if (!socialTokens.instagramBusinessAccountId) {
+          throw new Error('Instagram is not connected. Connect an Instagram Business account before publishing.');
+        }
+        if (!imageUrl || !imageUrl.startsWith('http')) {
+          throw new Error('Instagram publishing requires a public image URL. Generate or upload an image first.');
+        }
         await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
       }
       setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
@@ -1929,9 +1935,10 @@ const Dashboard: React.FC = () => {
         const platLabel = e.body?.platform === 'instagram' ? 'Instagram' : 'Facebook';
         toast(`${platLabel} not connected for this workspace. Open Settings → Connections to connect ${platLabel}.`, 'warning');
         setActiveTab('settings');
-        return;
+        throw e;
       }
       toast(`${labels.failurePrefix}: ${e?.message?.substring(0, 80) || 'Unknown error'}`, 'error');
+      throw e;
     }
   };
 
@@ -2862,8 +2869,7 @@ const Dashboard: React.FC = () => {
   // the app — landing is for marketing, not gating signed-in customers.
   const shouldShowLanding =
     showLanding
-    || (!activePlan && dbLoaded && !isOnFreeTrial)
-    || (!activePlan && dbLoaded && isTrialExhausted);
+    || (!activePlan && dbLoaded && !isOnFreeTrial);
   if (!CLIENT.clientMode && shouldShowLanding) {
     return (
       <Suspense fallback={<LoadingShell />}>
@@ -5761,7 +5767,7 @@ const Dashboard: React.FC = () => {
                           <div>
                             <p className={`text-sm font-black bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>{plan.name}</p>
                             <p className="text-xl font-black text-white mt-0.5">${plan.price}<span className="text-xs text-white/30 font-normal">/mo</span></p>
-                            {isNew && <p className="text-[9px] text-amber-400/70 mt-0.5">+ ${CLIENT.setupFee} setup fee</p>}
+                            {isNew && CLIENT.setupFee > 0 && <p className="text-[9px] text-amber-400/70 mt-0.5">+ ${CLIENT.setupFee} setup fee</p>}
                           </div>
                           <ul className="space-y-1">
                             {plan.features.slice(0, 3).map((f, i) => (
@@ -5796,7 +5802,7 @@ const Dashboard: React.FC = () => {
                       <div className="w-8 h-8 bg-blue-500/20 rounded-xl flex items-center justify-center shrink-0 mt-0.5"><span className="text-sm">⚡</span></div>
                       <div className="flex-1">
                         <p className="text-xs font-bold text-blue-300 mb-0.5">New to SocialAI Studio?</p>
-                        <p className="text-xs text-white/45 leading-relaxed">Pick a plan, pay securely with PayPal, and you'll be guided through setup instantly — Facebook connection, business profile, first AI posts. No forms. No waiting. <span className="text-amber-300 font-semibold">${CLIENT.setupFee} one-time setup fee</span> included.</p>
+                        <p className="text-xs text-white/45 leading-relaxed">Pick a plan, pay securely with PayPal, and you'll be guided through setup instantly — Facebook connection, business profile, first AI posts. No forms. No waiting.{CLIENT.setupFee > 0 && <span className="text-amber-300 font-semibold"> ${CLIENT.setupFee} one-time setup fee included.</span>}</p>
                       </div>
                       <button onClick={() => setShowPricing(true)}
                         className="shrink-0 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/25 text-blue-300 text-xs font-bold px-3 py-2 rounded-xl transition">
@@ -6408,7 +6414,7 @@ const Dashboard: React.FC = () => {
                   permission/token issues at config time instead of letting a
                   whole batch of scheduled reels silently fall back to image
                   posts. Cheap (no Kling cost — just FB Graph API ping). */}
-              {fbConnected && <TestReelPublishButton clientId={activeClientId} />}
+              {fbConnected && isSuperAdmin && <TestReelPublishButton clientId={activeClientId} />}
 
             </div>
 

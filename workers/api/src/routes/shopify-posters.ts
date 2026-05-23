@@ -35,6 +35,7 @@ import type { Env } from '../env';
 import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { loadForbiddenSubjectsForShop, scanForForbidden } from '../lib/profile-guards';
+import { requireActiveShopSubscription } from '../lib/shopify-billing';
 
 const uuid = () => crypto.randomUUID();
 
@@ -172,6 +173,11 @@ export function registerShopifyPostersRoutes(app: Hono<{ Bindings: Env }>): void
     const sessionOrResp = await requireSession(c);
     if (sessionOrResp instanceof Response) return sessionOrResp;
     const shop = sessionOrResp.shopDomain;
+
+    const billing = await requireActiveShopSubscription(c.env, shop);
+    if (!billing.ok) {
+      return c.json({ error: billing.message, code: billing.code }, billing.status);
+    }
 
     if (await isRateLimited(c.env.DB, `shopify-poster-gen:${shop}`, 10)) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);

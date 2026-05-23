@@ -36,6 +36,7 @@ import { generateImageWithGuardrails } from '../lib/image-gen';
 import { loadShopFactsForPrompt } from '../lib/facebook-facts';
 import { loadForbiddenSubjectsForShop, scanForForbidden } from '../lib/profile-guards';
 import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from '../lib/prompt-safety';
+import { requireActiveShopSubscription } from '../lib/shopify-billing';
 import {
   isAbstractServiceProduct,
   ABSTRACT_SERVICE_FALLBACK_PROMPT,
@@ -516,6 +517,11 @@ export function registerShopifyComposeRoutes(app: Hono<{ Bindings: Env }>): void
     const sessionOrResp = await requireSession(c);
     if (sessionOrResp instanceof Response) return sessionOrResp;
     const shop = sessionOrResp.shopDomain;
+
+    const billing = await requireActiveShopSubscription(c.env, shop);
+    if (!billing.ok) {
+      return c.json({ error: billing.message, code: billing.code }, billing.status);
+    }
 
     // Rate limit: 10/min/shop. Each compose call does an LLM call + an image
     // generation, both of which we pay per-call for. Burst protection beats

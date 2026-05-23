@@ -42,6 +42,18 @@ jobs:
         run: npm test --if-present
         working-directory: workers/api
 
+      # Shopify embedded app
+      - name: Install Shopify app deps
+        run: npm ci --prefix shopify-app
+      - name: Shopify app typecheck
+        run: npm run typecheck
+        working-directory: shopify-app
+      - name: Shopify app build
+        run: npm run build
+        working-directory: shopify-app
+        env:
+          VITE_SHOPIFY_API_KEY: f191b1dcbd73ce52f9c4b0d27591545e
+
       # Guard against the on_hold filter being silently removed again.
       # If this grep fails, the cron query no longer skips paused clients.
       # Searches the entire workers/api/src/ tree — Phase B route-module split

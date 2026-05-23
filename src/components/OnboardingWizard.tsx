@@ -58,6 +58,7 @@ export const OnboardingWizard: React.FC<Props> = ({
   const [isLearningVoice, setIsLearningVoice] = useState(false);
   const [brandDna, setBrandDna] = useState<MagicOnboardingResponse | null>(null);
   const [voiceLearnError, setVoiceLearnError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const stepIdx = STEPS.indexOf(step);
   const progress = Math.round((stepIdx / (STEPS.length - 1)) * 100);
@@ -65,7 +66,14 @@ export const OnboardingWizard: React.FC<Props> = ({
   const next = async (skip = false) => {
     if (!skip) {
       setIsSaving(true);
-      await onSave().catch(() => {});
+      setSaveError(null);
+      try {
+        await onSave();
+      } catch (e: any) {
+        setSaveError(e?.message?.slice(0, 180) || 'Could not save setup. Check your connection and try again.');
+        setIsSaving(false);
+        return;
+      }
       setIsSaving(false);
     }
     const nextStep = STEPS[stepIdx + 1];
@@ -652,12 +660,12 @@ export const OnboardingWizard: React.FC<Props> = ({
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() => next(false)}
-                  disabled={isSaving || !socialTokens.facebookPageId}
+                  disabled={isSaving}
                   className="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-40 disabled:cursor-not-allowed text-black font-black py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2 hover:opacity-90 transition"
-                  title={socialTokens.facebookPageId ? 'Continue' : 'Connect a Facebook Page first'}
+                  title={socialTokens.facebookPageId ? 'Continue' : 'Continue in draft mode'}
                 >
                   {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
-                  {socialTokens.facebookPageId ? <>Continue <ArrowRight size={16} /></> : 'Connect Facebook to continue'}
+                  {socialTokens.facebookPageId ? <>Continue <ArrowRight size={16} /></> : <>Continue in draft mode <ArrowRight size={16} /></>}
                 </button>
               </div>
             </div>
@@ -768,6 +776,11 @@ export const OnboardingWizard: React.FC<Props> = ({
 
         </div>
       </div>
+      {saveError && (
+        <div className="fixed left-1/2 bottom-6 z-[1001] -translate-x-1/2 max-w-sm rounded-2xl border border-red-500/30 bg-red-950/95 px-4 py-3 text-xs text-red-100 shadow-2xl">
+          {saveError}
+        </div>
+      )}
     </div>
   );
 };

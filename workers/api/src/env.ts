@@ -71,6 +71,7 @@ export type Env = {
   PAYPAL_WEBHOOK_ID?: string;
   RESEND_API_KEY?: string;
   FACTS_BOOTSTRAP_SECRET?: string;
+  MONITOR_SECRET?: string;
   // Phase B portal automation — when these are set, the provision endpoint
   // also creates the CF Pages project and attaches the custom domain.
   // Without them, those steps stay as manual instructions in the response.

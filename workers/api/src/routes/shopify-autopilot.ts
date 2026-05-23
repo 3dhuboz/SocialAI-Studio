@@ -37,6 +37,7 @@ import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
 import { composeProductPost, ComposeError } from './shopify-compose';
+import { requireActiveShopSubscription } from '../lib/shopify-billing';
 
 const RATE_LIMIT_PER_MIN = 20;
 const ALLOWED_PLATFORMS = new Set(['facebook', 'instagram', 'both']);
@@ -49,6 +50,13 @@ const ALLOWED_POST_TYPES = new Set(['image', 'video']);
  *  generic "cinematic, smooth motion" fallback if this is omitted. */
 const DEFAULT_MOTION_PROMPT =
   'cinematic product showcase, slow camera dolly forward, soft natural light, gentle subject rotation, premium tabletop staging';
+const SHOPIFY_SCHEDULER_DISABLED = {
+  error: 'Shopify scheduling is temporarily disabled while shop-owned publishing is being finalized.',
+  code: 'SHOPIFY_SCHEDULER_DISABLED',
+};
+function isShopifySchedulerDisabled(): boolean {
+  return true;
+}
 
 function requireShopifyConfig(env: Env): { key: string; secret: string } | null {
   if (!env.SHOPIFY_API_KEY || !env.SHOPIFY_API_SECRET) return null;
@@ -109,6 +117,11 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     if (sessionOrResp instanceof Response) return sessionOrResp;
     const shop = sessionOrResp.shopDomain;
 
+    const billing = await requireActiveShopSubscription(c.env, shop);
+    if (!billing.ok) {
+      return c.json({ error: billing.message, code: billing.code }, billing.status);
+    }
+
     if (await isRateLimited(c.env.DB, `shopify-autopilot:${shop}`, RATE_LIMIT_PER_MIN)) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);
     }
@@ -135,6 +148,9 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
 
     const dryRun = body.dryRun === true;
+    if (!dryRun && isShopifySchedulerDisabled()) {
+      return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
+    }
 
     const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
     if (!productId) return c.json({ error: 'productId is required' }, 400);
@@ -317,6 +333,11 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
       if (sessionOrResp instanceof Response) return sessionOrResp;
       const shop = sessionOrResp.shopDomain;
 
+      const billing = await requireActiveShopSubscription(c.env, shop);
+      if (!billing.ok) {
+        return c.json({ error: billing.message, code: billing.code }, billing.status);
+      }
+
       if (await isRateLimited(c.env.DB, `shopify-autopilot:${shop}`, RATE_LIMIT_PER_MIN)) {
         return c.json({ error: 'Rate limit exceeded — try again in a minute' }, 429);
       }
@@ -340,6 +361,10 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
       }
       if (posts.length > 50) {
         return c.json({ error: 'Batch capped at 50 posts' }, 400);
+      }
+
+      if (isShopifySchedulerDisabled()) {
+        return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
       }
 
       const saved: string[] = [];

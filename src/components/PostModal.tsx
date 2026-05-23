@@ -36,7 +36,8 @@ export const PostModal: React.FC<Props> = ({
   const [editHashtags, setEditHashtags] = useState((post.hashtags || []).join(' '));
   const [editDate, setEditDate] = useState(() => {
     const d = new Date(post.scheduledFor);
-    return d.toISOString().slice(0, 16);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 16);
+    return new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16);
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -69,23 +70,29 @@ export const PostModal: React.FC<Props> = ({
 
   const handleSave = async () => {
     setIsSaving(true);
-    const tags = editHashtags.trim()
-      ? editHashtags.trim().split(/\s+/).map(t => t.startsWith('#') ? t : `#${t}`)
-      : [];
-    await onSave(post.id, {
-      content: editContent,
-      hashtags: tags,
-      scheduledFor: new Date(editDate).toISOString(),
-    });
-    setIsSaving(false);
-    setIsEditing(false);
+    try {
+      const tags = editHashtags.trim()
+        ? editHashtags.trim().split(/\s+/).map(t => t.startsWith('#') ? t : `#${t}`)
+        : [];
+      await onSave(post.id, {
+        content: editContent,
+        hashtags: tags,
+        scheduledFor: new Date(editDate).toISOString(),
+      });
+      setIsEditing(false);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handlePublish = async () => {
     setIsPublishing(true);
-    await onPublish(post);
-    setIsPublishing(false);
-    onClose();
+    try {
+      await onPublish(post);
+      onClose();
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const handleDelete = async () => {

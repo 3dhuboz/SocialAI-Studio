@@ -80,6 +80,11 @@ export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // Public post schedule feed — used by deploy monitor widget
   app.get('/api/post-schedule', async (c) => {
+    const expected = c.env.MONITOR_SECRET;
+    const provided = c.req.header('X-Monitor-Secret') || c.req.query('secret');
+    if (!expected || provided !== expected) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
     // Filter to active clients only so the monitor view matches what the
     // publish cron will actually do. On-hold clients' scheduled posts are
     // never claimed by the cron — showing them here is misleading.

@@ -56,9 +56,7 @@ const planCheckColor: Record<string, string> = {
 
 export const PricingTable: React.FC<Props> = ({ onClose, onPlanActivated, userId, onAccountSetup, defaultPlanId }) => {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(defaultPlanId ?? null);
-  // Default to YEARLY — defaults dominate behavior in B2B SaaS pricing UX,
-  // and the 2-months-free anchor lifts annual prepay take-rate (and LTV).
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('yearly');
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [activating, setActivating] = useState(false);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activated, setActivated] = useState(false);

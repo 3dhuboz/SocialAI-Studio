@@ -50,6 +50,10 @@ SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e"
 # SHOPIFY_API_SECRET      (Shopify Client Secret — signs OAuth HMACs, webhook HMACs, session JWTs)
 # MASTER_ENCRYPTION_KEY   (32-byte hex — AES-GCM key for at-rest token encryption)
 
+# POSTPROXY_API_KEY       (Postproxy publishing API key)
+# POSTPROXY_WEBHOOK_SECRET or POSTPROXY_WEBHOOK_QUERY_SECRET
+# MONITOR_SECRET          (protects /api/post-schedule deploy monitor feed)
+
 [[d1_databases]]
 binding = "DB"
 database_name = "socialai-db"

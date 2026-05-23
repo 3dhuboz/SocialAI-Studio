@@ -47,6 +47,10 @@ export interface SubscriptionError {
   raw?: unknown;
 }
 
+export type ShopSubscriptionGateResult =
+  | { ok: true }
+  | { ok: false; status: 402; code: 'SHOPIFY_BILLING_REQUIRED'; message: string };
+
 /** True for Shopify-defined dev/test stores that can never be charged. */
 export function isTestStore(planName: string | null | undefined): boolean {
   if (!planName) return false;
@@ -69,6 +73,32 @@ export function shouldForceTestMode(
   if (!forceTestShopsCsv) return false;
   const forced = new Set(forceTestShopsCsv.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
   return forced.has(shopDomain.toLowerCase());
+}
+
+export async function requireActiveShopSubscription(
+  env: { DB: D1Database },
+  shopDomain: string,
+): Promise<ShopSubscriptionGateResult> {
+  const row = await env.DB.prepare(
+    `SELECT subscription_status, uninstalled_at
+       FROM shopify_stores
+      WHERE shop_domain = ?`,
+  ).bind(shopDomain).first<{
+    subscription_status: string | null;
+    uninstalled_at: string | null;
+  }>();
+
+  const status = (row?.subscription_status || '').toUpperCase();
+  if (row && !row.uninstalled_at && status === 'ACTIVE') {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    status: 402,
+    code: 'SHOPIFY_BILLING_REQUIRED',
+    message: 'Approve the SocialAI Studio Shopify subscription before using paid AI and publishing features.',
+  };
 }
 
 /**

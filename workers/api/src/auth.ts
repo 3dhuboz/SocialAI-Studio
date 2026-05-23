@@ -9,6 +9,19 @@ import type { Context } from 'hono';
 import { verifyToken } from '@clerk/backend';
 import type { Env } from './env';
 
+function isPortalAllowedPath(req: Request): boolean {
+  const path = new URL(req.url).pathname;
+  return (
+    path === '/api/db/user' ||
+    path === '/api/db/posts' ||
+    path.startsWith('/api/db/posts/') ||
+    path === '/api/db/clients' ||
+    path.startsWith('/api/db/clients/') ||
+    path === '/api/db/portal' ||
+    path.startsWith('/api/db/portal/')
+  );
+}
+
 // ── Auth helper — verifies Clerk JWT or Portal token and returns userId ──
 //
 // Portal tokens (schema_v14, 2026-05): tokens carry expires_at / revoked_at /
@@ -27,6 +40,10 @@ export async function getAuthUserId(
 
   // Portal token auth — used by white-label client portals (no Clerk needed)
   if (auth.startsWith('Portal ') && db) {
+    if (!isPortalAllowedPath(req)) {
+      console.warn('[auth] portal token rejected: route not portal-scoped');
+      return null;
+    }
     const portalToken = auth.slice(7);
     try {
       const row = await db.prepare(
@@ -97,6 +114,8 @@ export async function getAuthUserId(
 export async function requireAdmin(
   c: Context<{ Bindings: Env }>,
 ): Promise<{ uid: string; email: string | null } | Response> {
+  const auth = c.req.raw.headers.get('Authorization') || '';
+  if (!auth.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401);
   const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const row = await c.env.DB.prepare(

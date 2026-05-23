@@ -19,6 +19,7 @@ import {
   isTestStore,
   PLAN_INFO,
   createAppSubscription,
+  requireActiveShopSubscription,
 } from '../shopify-billing';
 
 // ── isTestStore ─────────────────────────────────────────────────────────────
@@ -83,6 +84,51 @@ describe('PLAN_INFO', () => {
 });
 
 // ── createAppSubscription ───────────────────────────────────────────────────
+
+describe('requireActiveShopSubscription', () => {
+  function makeEnv(row: Record<string, unknown> | null) {
+    return {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            first: async () => row,
+          }),
+        }),
+      },
+    } as any;
+  }
+
+  it('allows active installed shops', async () => {
+    const result = await requireActiveShopSubscription(makeEnv({
+      subscription_status: 'ACTIVE',
+      uninstalled_at: null,
+    }), 'test-shop.myshopify.com');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects pending billing with a stable 402 error', async () => {
+    const result = await requireActiveShopSubscription(makeEnv({
+      subscription_status: 'PENDING',
+      uninstalled_at: null,
+    }), 'test-shop.myshopify.com');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(402);
+      expect(result.code).toBe('SHOPIFY_BILLING_REQUIRED');
+    }
+  });
+
+  it('rejects uninstalled shops even if their last subscription status was active', async () => {
+    const result = await requireActiveShopSubscription(makeEnv({
+      subscription_status: 'ACTIVE',
+      uninstalled_at: '2026-05-01T00:00:00Z',
+    }), 'test-shop.myshopify.com');
+
+    expect(result.ok).toBe(false);
+  });
+});
 
 const SHOP = 'test-shop.myshopify.com';
 const TOKEN = 'shpat_testtoken';
