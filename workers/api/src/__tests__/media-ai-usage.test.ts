@@ -177,6 +177,33 @@ describe('media routes ai_usage telemetry', () => {
     expect(usage?.bindings[10]).toBe(1);
   });
 
+  it('uses caption/prompt seed and the diversified SaaS scene bank for default image generation', async () => {
+    let falBody: any = null;
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      falBody = JSON.parse(String(init?.body || '{}'));
+      return new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/saas.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }));
+    const usageCalls: UsageCall[] = [];
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+
+    const res = await app.request('/api/fal-proxy?action=generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_1' },
+      body: JSON.stringify({
+        prompt: 'dashboard with scheduling metrics, candid iPhone photo',
+        caption: 'SocialAI Studio auto-publishes a content calendar for small business owners.',
+      }),
+    }, makeRouteEnv(usageCalls));
+
+    expect(res.status).toBe(200);
+    expect(String(falBody?.prompt).toLowerCase()).not.toMatch(/\b(car dashboard|highway|main street|golden hour|sunrise|sunset|road)\b/);
+    expect(String(falBody?.prompt).toLowerCase()).toMatch(/\b(calendar|planner|sticky|checklist|timer|content|cards|notebook)\b/);
+  });
+
   it('logs Kling video starts and completed task results in the fal proxy', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

@@ -60,7 +60,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const authHeader = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
 
     if (action === 'generate-image' && c.req.method === 'POST') {
-      const { prompt, negativePrompt, clientId, forceModel, caption } = await c.req.json() as {
+      const { prompt, negativePrompt, clientId, forceModel, caption, seedHint } = await c.req.json() as {
         prompt?: string;
         negativePrompt?: string;
         clientId?: string | null;
@@ -73,6 +73,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         //   'flux-dev'       — FLUX Dev baseline (default path, square_hd, 35 steps)
         //   'nano-banana-pro' — Gemini 3 Pro Image with up to 14 brand refs ($0.15/img)
         forceModel?: 'flux-dev' | 'nano-banana-pro';
+        seedHint?: string | null;
       };
       if (!prompt) return c.json({ error: 'prompt is required' }, 400);
       if (!/candid iPhone/i.test(prompt)) {
@@ -163,7 +164,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const result = await generateImageWithGuardrails(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
-        { caption: caption || null },
+        { caption: caption || null, seedHint: seedHint || `${prompt}\n${caption || ''}` },
       );
       if (!result.imageUrl) {
         return c.json({ error: 'Image generation failed — flux-dev returned no image' }, 502);

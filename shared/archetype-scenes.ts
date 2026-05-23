@@ -243,6 +243,32 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
 // Conservative inclusion — only add archetypes where the failure mode is
 // well-evidenced. False positives here force a perfectly good prompt onto
 // a generic fallback, which makes posts look samey.
+// 2026-05-23 customer audit: replace the original tech-saas fallback bank
+// at module-load time. The older list included several golden-hour travel
+// and car-dashboard scenes, so SocialAI promo batches converged into the
+// same sunset road/phone visual family. Keep this override deliberately
+// physical, people-free, screen-free, and tied to scheduling/content work.
+ARCHETYPE_IMAGE_GUARDRAILS['tech-saas-agency'].fallbackScenes = [
+  'overhead flatlay of a weekly planner page with blank colored sticky notes arranged into posting slots, stopwatch and pencil beside it, bright morning daylight',
+  'clean desk with three stacked index-card piles grouped by color, small analog clock and ceramic mug nearby, crisp side light',
+  'minimal corkboard with blank color-coded cards pinned in a neat campaign grid, string line and push pins, daylight office wall',
+  'close-up of a paper checklist on a clipboard beside a closed smartphone and timer, sharp focus, natural window light',
+  'two inbox trays on a desk, one overflowing with loose blank notes and one neatly sorted with colored cards, bright daylight, no screen visible',
+  'wide shot of a tidy studio desk with closed laptop, notebook, desk lamp and calendar pad, clean midday light, no screen visible',
+  'macro photo of a mechanical keyboard beside a closed notebook and small hourglass, shallow depth of field, cool daylight',
+  'overhead shot of a blank monthly wall calendar with colored magnets marking publishing days, white wall, even daylight',
+  'single smartphone face-down on a matte desk beside a neat row of blank content cards and a small analog clock, top-down, bright natural light',
+  'founder planning table with open notebook, pencil sketches of simple boxes and arrows, sticky tabs and coffee, no readable text, morning light',
+  'side angle of a closed laptop beside neatly bundled envelopes and a calendar block, soft window light, uncluttered workspace',
+  'close-up of a timer, pencil and blank notepad page with a single highlighted sticky note, minimal white desk, sharp focus',
+  'overhead composition of three blank social-post cards represented by colored paper squares beside a camera lens cap and notebook, daylight',
+  'desk corner with brass pen, closed leather journal and small stack of colored reminder cards, neutral background, soft afternoon light',
+  'minimal shelf with stacked business books, folded reading glasses and a small card file box, soft lamp light, no people',
+  'clean tabletop with a small paper calendar, row of binder clips, sticky notes and a closed phone, bright editorial product photography',
+  'workbench-style desk with cable organizer, closed notebook, pencil, timer and neatly coiled charger, crisp daylight, practical small-business mood',
+  'flatlay of a simple content batching kit: blank cards, pen, calendar pad, analog clock and coffee mug on a matte white desk, high-key daylight',
+];
+
 export const ARCHETYPE_POSITIVE_SUBJECTS: Record<string, RegExp> = {
   'bbq-smokehouse': /\b(?:bbq|barbecue|barbeque|brisket|smoker|smokehouse|smoked|smoking|pulled\s*pork|pork\s*belly|pit\b|ribs|sausage|grill(?:ed|ing)?|charcoal|wood\s*fire|cookout|low\s*and\s*slow|smoke\s*ring|burnt\s*end|bark|dry\s*rub|beef\s*rib|short\s*rib|coleslaw|baked\s*beans|smoke\s*trail|butcher\s*paper|meat)\b/i,
 };

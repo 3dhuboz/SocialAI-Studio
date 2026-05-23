@@ -99,6 +99,14 @@ describe('ARCHETYPE_IMAGE_GUARDRAILS content guards', () => {
       expect(g.fallbackScenes.length, `${slug}.fallbackScenes non-empty`).toBeGreaterThan(0);
     }
   });
+
+  it('tech-saas-agency fallback scenes avoid the old sunset road/car-dashboard collapse', () => {
+    const scenes = ARCHETYPE_IMAGE_GUARDRAILS['tech-saas-agency'].fallbackScenes;
+    expect(scenes.length).toBeGreaterThanOrEqual(18);
+    const joined = scenes.join(' ').toLowerCase();
+    expect(joined).not.toMatch(/\b(car dashboard|highway|main street|golden hour|sunrise|sunset|road)\b/);
+    expect(joined).toMatch(/\b(calendar|planner|sticky|checklist|timer|content|cards)\b/);
+  });
 });
 
 describe('CAPTION_ARCHETYPE_KEYWORDS content guards', () => {
