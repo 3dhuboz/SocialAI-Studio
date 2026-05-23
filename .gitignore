@@ -8,3 +8,4 @@ workers/api/.wrangler/
 .claude/plans/
 .claude/worktrees/
 .claude/settings.local.json
+.codex/

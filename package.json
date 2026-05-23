@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "tsx scripts/audit-smoke-test.ts"
+    "smoke": "tsx scripts/audit-smoke-test.ts",
+    "codex:save": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/codex-save.ps1"
   },
   "dependencies": {
     "@clerk/react": "^6.1.0",
