@@ -9,7 +9,10 @@
 --   wrangler d1 execute socialai-db --remote --file=schema_v36_customer_feedback.sql
 --   wrangler d1 execute socialai-db-staging --remote --file=schema_v36_customer_feedback.sql
 
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS qa_feedback_target TEXT;
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS qa_feedback_reason TEXT;
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS qa_feedback_note TEXT;
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS qa_feedback_at TEXT;
+-- D1/Wrangler v3 rejects `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+-- This migration is one-time; if an environment partially applied it,
+-- inspect `PRAGMA table_info(posts)` and apply only missing columns manually.
+ALTER TABLE posts ADD COLUMN qa_feedback_target TEXT;
+ALTER TABLE posts ADD COLUMN qa_feedback_reason TEXT;
+ALTER TABLE posts ADD COLUMN qa_feedback_note TEXT;
+ALTER TABLE posts ADD COLUMN qa_feedback_at TEXT;

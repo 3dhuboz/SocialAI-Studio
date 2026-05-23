@@ -195,7 +195,7 @@ jonesysgarage.ts / picklenick.ts / streetmeats.ts
 cd workers/api
 wrangler d1 execute socialai-db --remote --file=schema_vN.sql
 ```
-New migrations go in `workers/api/schema_vN.sql`. Always use `IF NOT EXISTS` / `IF NOT EXISTS` guards and `ADD COLUMN IF NOT EXISTS` for safety.
+New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards where D1 supports them. Current D1/Wrangler v3 rejects `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`; for column adds, verify with `PRAGMA table_info(table)` or use a one-time plain `ADD COLUMN` migration.
 
 ### Key tables
 | Table | Purpose |
