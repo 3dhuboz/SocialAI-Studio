@@ -7,8 +7,9 @@
  *   3. Prints a pass/fail report with examples
  *
  * Usage:
- *   node scripts/eval-ai-quality.mjs              # uses production worker
- *   AI_TOKEN=<clerk-jwt> node scripts/eval-ai-quality.mjs
+ *   npm run eval:ai                              # offline fixture scan
+ *   tsx scripts/eval-ai-quality.mjs --offline    # offline fixture scan
+ *   AI_TOKEN=<clerk-jwt> tsx scripts/eval-ai-quality.mjs
  *
  * Get a Clerk JWT from your browser:
  *   await window.Clerk.session.getToken()
@@ -17,10 +18,13 @@
  * lightweight smoke test for "did my prompt change break anything obvious".
  */
 
+import { scanContentForTropes } from '../shared/fabrication-patterns.ts';
+
 const WORKER = process.env.AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev';
 const TOKEN = process.env.AI_TOKEN;
+const OFFLINE = process.argv.includes('--offline') || process.env.OFFLINE === '1';
 
-if (!TOKEN) {
+if (!TOKEN && !OFFLINE) {
   console.error('[eval] Set AI_TOKEN env var to your Clerk JWT.');
   console.error('[eval] In browser console: await window.Clerk.session.getToken()');
   process.exit(1);
@@ -69,25 +73,27 @@ const CASES = [
 ];
 
 // ─── Fabrication detector (mirrors src/services/gemini.ts) ────────────────
-const PATTERNS = [
-  [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented testimonial'],
-  [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
-  [/\b(?:says|told\s+us|reported|shared|raved)\s*[:,]?\s*["']/i, 'invented quote'],
-  [/\b[A-Z][a-z]+\s+[A-Z]\.?\s*,\s*(?:from\s+)?[A-Z][a-z]+/i, 'fake testimonial signature'],
-  [/\b\d{1,3}(?:\.\d+)?%\s+(?:increase|boost|growth|improvement|more|less|reduction|saving)/i, 'invented percentage'],
-  [/\bsaved\s+(?:them\s+)?\d+\s+(?:hours?|days?|weeks?|minutes?)/i, 'invented time-saving'],
-  [/\b\d+x\s+(?:more|better|faster|increase|growth)/i, 'invented multiplier'],
-  [/\b(?:over|more\s+than)\s+\d{2,}\s+(?:clients?|customers?|users?|businesses)/i, 'invented user count'],
-  [/\b(?:today\s+only|this\s+weekend\s+only|limited\s+(?:time|spots)|hurry|act\s+now|don'?t\s+miss\s+out)/i, 'fake urgency'],
-  [/\b(?:countdown|just\s+\d+\s+(?:hours?|days?)\s+left|ends\s+(?:tomorrow|tonight|soon))/i, 'invented countdown'],
-];
 function detectFabrication(content) {
-  for (const [pattern, reason] of PATTERNS) {
-    const m = content.match(pattern);
-    if (m) return `${reason} ("${m[0]}")`;
-  }
-  return null;
+  return scanContentForTropes(content)[0] || null;
 }
+
+const OFFLINE_FIXTURES = [
+  {
+    name: 'clean BBQ post',
+    content: 'Brisket is resting and the smoker has done its work. Swing by before lunch if you want the good slices.',
+    shouldFlag: false,
+  },
+  {
+    name: 'invented testimonial signature',
+    content: 'Sarah J., Brisbane says: "This brisket changed our weekend."',
+    shouldFlag: true,
+  },
+  {
+    name: 'invented stat',
+    content: 'Boost engagement by 45% with one quick post.',
+    shouldFlag: true,
+  },
+];
 
 // ─── Run ──────────────────────────────────────────────────────────────────
 async function callAI(prompt) {
@@ -123,6 +129,18 @@ Return JSON: {"content": "post body", "hashtags": ["#tag"]}`;
 }
 
 (async () => {
+  if (OFFLINE) {
+    console.log('[eval] Offline fixture scan');
+    let fail = 0;
+    for (const f of OFFLINE_FIXTURES) {
+      const violation = detectFabrication(f.content);
+      const ok = f.shouldFlag ? !!violation : !violation;
+      console.log(`${ok ? 'PASS' : 'FAIL'}  ${f.name}${violation ? ` - ${violation}` : ''}`);
+      if (!ok) fail++;
+    }
+    process.exit(fail > 0 ? 1 : 0);
+  }
+
   console.log(`[eval] Testing against ${WORKER}`);
   console.log(`[eval] Running ${CASES.length} cases...\n`);
   let pass = 0, fail = 0;

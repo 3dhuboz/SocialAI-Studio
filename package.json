@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:ai": "tsx scripts/eval-ai-quality.mjs --offline",
     "smoke": "tsx scripts/audit-smoke-test.ts",
     "codex:save": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/codex-save.ps1"
   },

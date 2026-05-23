@@ -410,13 +410,6 @@ function matchIndustry(businessType: string): string {
 function getTimezone(location: string): TimezoneInfo {
   const lower = location.toLowerCase();
 
-  if (lower.includes('australia') || lower.includes('queensland') || lower.includes('qld') ||
-      lower.includes('brisbane') || lower.includes('gold coast') || lower.includes('sunshine coast') ||
-      lower.includes('ipswich') || lower.includes('toowoomba') || lower.includes('cairns') ||
-      lower.includes('townsville') || lower.includes('rockhampton') || lower.includes('mackay')) {
-    // Queensland does NOT observe daylight saving time
-    return { timezone: 'AEST', utcOffset: '+10:00', label: 'Australian Eastern Standard Time', note: 'Queensland — no daylight saving time' };
-  }
   if (lower.includes('sydney') || lower.includes('nsw') || lower.includes('new south wales') ||
       lower.includes('melbourne') || lower.includes('victoria') || lower.includes('vic') ||
       lower.includes('canberra') || lower.includes('act') || lower.includes('hobart') || lower.includes('tasmania')) {
@@ -438,6 +431,13 @@ function getTimezone(location: string): TimezoneInfo {
   }
   if (lower.includes('darwin') || lower.includes('northern territory') || lower.includes('nt ')) {
     return { timezone: 'ACST', utcOffset: '+09:30', label: 'Australian Central Standard Time', note: 'NT — no daylight saving time' };
+  }
+  if (lower.includes('queensland') || lower.includes('qld') ||
+      lower.includes('brisbane') || lower.includes('gold coast') || lower.includes('sunshine coast') ||
+      lower.includes('ipswich') || lower.includes('toowoomba') || lower.includes('cairns') ||
+      lower.includes('townsville') || lower.includes('rockhampton') || lower.includes('mackay')) {
+    // Queensland does NOT observe daylight saving time
+    return { timezone: 'AEST', utcOffset: '+10:00', label: 'Australian Eastern Standard Time', note: 'Queensland — no daylight saving time' };
   }
 
   // Default for unrecognized Australian locations

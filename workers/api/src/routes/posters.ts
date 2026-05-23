@@ -27,6 +27,7 @@ import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { checkBillingGate } from '../lib/billing-gate';
 import { POSTER_QUOTA_PER_MONTH, PLAN_INCLUDES_POSTERS, userHasFeature } from '../lib/pricing';
+import { loadForbiddenSubjects, scanForForbidden } from '../lib/profile-guards';
 
 const uuid = () => crypto.randomUUID();
 
@@ -531,14 +532,29 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
     if (isLimited) return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
     if (denied) return denied;
 
-    let body: { prompt?: string; aspectRatio?: '1:1' | '9:16' | '16:9' };
+    let body: { prompt?: string; aspectRatio?: '1:1' | '9:16' | '16:9'; clientId?: string | null };
     try { body = await c.req.json(); }
     catch { return c.json({ error: 'Invalid JSON body.' }, 400); }
     const prompt = (body.prompt || '').trim();
     if (!prompt) return c.json({ error: 'prompt is required.' }, 400);
+    const clientId = normalizeClientId(body.clientId);
 
     const aspectRatio: '1:1' | '9:16' | '16:9' =
       body.aspectRatio === '9:16' || body.aspectRatio === '16:9' ? body.aspectRatio : '1:1';
+
+    const forbiddenSubjects = await loadForbiddenSubjects(c.env, uid, clientId);
+    if (forbiddenSubjects.length > 0) {
+      const hit = scanForForbidden(prompt, forbiddenSubjects);
+      if (hit) {
+        return c.json(
+          {
+            error: `Prompt mentions "${hit}" which is on your forbidden-subjects list. Reword the prompt or update the list in Settings.`,
+            forbidden: hit,
+          },
+          400,
+        );
+      }
+    }
 
     // Aspect-ratio hint paired with image_config improves framing (image_config
     // alone gives the dimensions but the model still composes the subject for a
