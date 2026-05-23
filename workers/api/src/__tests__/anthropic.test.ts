@@ -66,6 +66,50 @@ describe('callAnthropicDirect — happy path', () => {
     expect(out.usage).toEqual({ input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 8 });
   });
 
+  it('logs Anthropic cache creation at 2x input price and cache reads at 0.1x', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: {
+          input_tokens: 1000,
+          cache_creation_input_tokens: 2000,
+          cache_read_input_tokens: 3000,
+          output_tokens: 400,
+        },
+      }),
+    );
+    const calls: any[] = [];
+    const env: any = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind: (...bindings: unknown[]) => ({
+            run: async () => {
+              calls.push({ sql, bindings });
+              return { success: true };
+            },
+          }),
+        }),
+      },
+      ENVIRONMENT: 'production',
+    };
+
+    await callAnthropicDirect({
+      apiKey: 'test-key',
+      model: 'claude-haiku-4-5',
+      prompt: 'hi',
+      temperature: 0.2,
+      maxTokens: 100,
+      responseFormat: 'text',
+      metering: { env, operation: 'caption' },
+    });
+
+    expect(calls).toHaveLength(1);
+    const bindings = calls[0].bindings;
+    expect(bindings[5]).toBe(6000);
+    expect(bindings[6]).toBe(400);
+    expect(bindings[8]).toBeCloseTo(0.0073, 8);
+  });
+
   it('POSTs to https://api.anthropic.com/v1/messages with anthropic-version + extended-cache-ttl beta headers', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ content: [{ type: 'text', text: 'ok' }], usage: {} }));
     await callAnthropicDirect({
@@ -84,6 +128,21 @@ describe('callAnthropicDirect — happy path', () => {
     expect(init.headers['anthropic-version']).toBe('2023-06-01');
     expect(init.headers['anthropic-beta']).toBe('extended-cache-ttl-2025-04-11');
     expect(init.headers['Content-Type']).toBe('application/json');
+  });
+
+  it('adds an AbortSignal timeout to direct Anthropic fetches', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ content: [{ type: 'text', text: 'ok' }], usage: {} }));
+    await callAnthropicDirect({
+      apiKey: 'sk-test',
+      model: 'claude-haiku-4-5',
+      prompt: 'x',
+      temperature: 0,
+      maxTokens: 1,
+      responseFormat: 'text',
+    });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.signal).toBeDefined();
+    expect(typeof init.signal.aborted).toBe('boolean');
   });
 
   it('passes through model + temperature + max_tokens to the request body', async () => {
@@ -301,6 +360,23 @@ describe('callAnthropicVision', () => {
     expect(init.headers['anthropic-beta']).toBeUndefined();
   });
 
+  it('adds an AbortSignal timeout to vision fetches', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ content: [{ type: 'text', text: 'ok' }], usage: {} }));
+    await callAnthropicVision({
+      apiKey: 'k',
+      model: 'claude-haiku-4-5',
+      systemPrompt: 's',
+      prompt: 'p',
+      imageUrl: 'https://x/y.jpg',
+      temperature: 0,
+      maxTokens: 10,
+      responseFormat: 'text',
+    });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.signal).toBeDefined();
+    expect(typeof init.signal.aborted).toBe('boolean');
+  });
+
   it('throws on 5xx with vision-specific error message', async () => {
     fetchMock.mockResolvedValueOnce(new Response('server died', { status: 502 }));
     await expect(
@@ -348,6 +424,16 @@ describe('callOpenRouter', () => {
     expect(init.headers.Authorization).toBe('Bearer k-test');
     expect(init.headers['HTTP-Referer']).toBe('https://socialaistudio.au');
     expect(init.headers['X-Title']).toBe('SocialAI Studio');
+  });
+
+  it('adds an AbortSignal timeout to OpenRouter fetches', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ choices: [{ message: { content: '{"ok":true}' } }] }),
+    );
+    await callOpenRouter('k-test', 'sys', 'user', 0.2, 100);
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.signal).toBeDefined();
+    expect(typeof init.signal.aborted).toBe('boolean');
   });
 
   it('always uses anthropic/claude-haiku-4.5 model + json_object response format', async () => {

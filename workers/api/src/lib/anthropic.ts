@@ -20,18 +20,35 @@ import { logAiUsage, type AiUsageRow } from './ai-usage';
 // default vision/text model; the Sonnet/Opus paths in lib/campaign-research
 // pay more — callers override via the `metering.estCostUsd` field when
 // they want to record an explicit number instead of trusting the lookup.
-const ANTHROPIC_PRICING_USD_PER_M: Record<string, { in: number; out: number }> = {
-  'claude-haiku-4-5': { in: 1.0, out: 5.0 },
-  'claude-sonnet-4-5': { in: 3.0, out: 15.0 },
+const ANTHROPIC_PRICING_USD_PER_M: Record<string, { in: number; cacheCreate: number; cacheRead: number; out: number }> = {
+  'claude-haiku-4-5': { in: 1.0, cacheCreate: 2.0, cacheRead: 0.1, out: 5.0 },
+  'claude-sonnet-4-5': { in: 3.0, cacheCreate: 6.0, cacheRead: 0.3, out: 15.0 },
 };
 
 function estimateAnthropicCost(model: string, usage: any): number {
   const p = ANTHROPIC_PRICING_USD_PER_M[model] || ANTHROPIC_PRICING_USD_PER_M['claude-haiku-4-5'];
-  const tokensIn = Number(usage?.input_tokens ?? 0)
-    + Number(usage?.cache_creation_input_tokens ?? 0)
-    + Number(usage?.cache_read_input_tokens ?? 0) * 0.1; // cache reads are 10% list
+  const tokensIn = Number(usage?.input_tokens ?? 0);
+  const cacheCreationTokens = Number(usage?.cache_creation_input_tokens ?? 0);
+  const cacheReadTokens = Number(usage?.cache_read_input_tokens ?? 0);
   const tokensOut = Number(usage?.output_tokens ?? 0);
-  return (tokensIn * p.in + tokensOut * p.out) / 1_000_000;
+  return (
+    tokensIn * p.in
+    + cacheCreationTokens * p.cacheCreate
+    + cacheReadTokens * p.cacheRead
+    + tokensOut * p.out
+  ) / 1_000_000;
+}
+
+const LLM_FETCH_TIMEOUT_MS = 45_000;
+
+function llmFetchSignal(): AbortSignal | undefined {
+  if (typeof AbortSignal !== 'undefined' && typeof (AbortSignal as any).timeout === 'function') {
+    return (AbortSignal as any).timeout(LLM_FETCH_TIMEOUT_MS);
+  }
+  if (typeof AbortController === 'undefined') return undefined;
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), LLM_FETCH_TIMEOUT_MS);
+  return controller.signal;
 }
 
 /** Optional metering context for Anthropic helper calls. Callers that pass
@@ -158,6 +175,7 @@ export async function callAnthropicDirect(opts: {
       'anthropic-beta': 'extended-cache-ttl-2025-04-11',
     },
     body: JSON.stringify(body),
+    signal: llmFetchSignal(),
   });
 
   if (!res.ok) {
@@ -232,6 +250,7 @@ export async function callAnthropicVision(opts: {
         },
       ],
     }),
+    signal: llmFetchSignal(),
   });
 
   if (!res.ok) {
@@ -280,6 +299,7 @@ export async function callOpenRouter(
       'X-Title': 'SocialAI Studio',
     },
     body: JSON.stringify(body),
+    signal: llmFetchSignal(),
   });
   if (!res.ok) {
     const errText = await res.text().catch(() => '');

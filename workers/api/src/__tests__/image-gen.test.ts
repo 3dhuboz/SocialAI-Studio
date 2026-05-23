@@ -383,6 +383,42 @@ describe('generateImageWithGuardrails — error handling', () => {
     expect(allWarnCalls).toMatch(/unknown/i);
   });
 
+  it('flux-dev non-JSON failure still returns imageUrl=null and records failed telemetry', async () => {
+    const calls: Array<{ sql: string; bindings: unknown[]; kind: string }> = [];
+    const env: any = {
+      FAL_API_KEY: 'k',
+      ENVIRONMENT: 'production',
+      DB: {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: (...bindings: unknown[]) => ({
+            first: () => Promise.resolve(/from users/i.test(sql) ? { archetype_slug: 'food-restaurant' } : null),
+            all: () => Promise.resolve({ results: [] }),
+            run: async () => {
+              calls.push({ sql, bindings, kind: 'run' });
+              return { success: true };
+            },
+          }),
+        })),
+      },
+    };
+    fetchMock.mockResolvedValueOnce(new Response('gateway timeout', {
+      status: 504,
+      headers: { 'content-type': 'text/plain' },
+    }));
+
+    const result = await generateImageWithGuardrails(env, 'user-1', null, {
+      prompt: 'overhead flatlay',
+      negativePrompt: 'people',
+    });
+
+    expect(result.imageUrl).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toMatch(/INSERT INTO ai_usage/i);
+    expect(calls[0].bindings[2]).toBe('fal');
+    expect(calls[0].bindings[4]).toBe('image-gen');
+    expect(calls[0].bindings[calls[0].bindings.length - 1]).toBe(0);
+  });
+
   it('brand-ref DB lookup failure does NOT throw — falls through to flux-dev', async () => {
     // Simulate the photo query crashing. Prepare returns an object whose
     // .all() rejects; the rest of the function should swallow and proceed.

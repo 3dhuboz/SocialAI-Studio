@@ -46,6 +46,32 @@ const FLUX_DEV_COST_USD = 0.025;
 // adherence. Cost scales roughly with step count: ~$0.011 extra per image.
 const FLUX_DEV_SAAS_COST_USD = 0.036;
 
+async function readFalResponse(res: Response): Promise<{ data: any; text: string }> {
+  const text = await res.text().catch(() => '');
+  if (text) {
+    try {
+      return { data: JSON.parse(text), text };
+    } catch {
+      return { data: {}, text };
+    }
+  }
+  return { data: {}, text: '' };
+}
+
+function falErrorMessage(data: any, text: string): string {
+  const fallbackText = text.trim() && text.trim() !== '{}' ? text : undefined;
+  const value = data?.detail ?? data?.message ?? fallbackText;
+  if (typeof value === 'string' && value.trim()) return value;
+  if (value != null) {
+    try {
+      return JSON.stringify(value).slice(0, 300);
+    } catch {
+      return String(value).slice(0, 300);
+    }
+  }
+  return 'unknown';
+}
+
 // When `forceFallback` is true, skip the LLM-generated prompt entirely and
 // pick a guaranteed-safe scene from the archetype's fallback bank. Used by
 // the critique retry loop in cronPrewarmImages — if the first attempt
@@ -179,9 +205,9 @@ export async function generateImageWithGuardrails(
       guidance_scale: guidance,
     }),
   });
-  const data = await res.json() as any;
+  const { data, text } = await readFalResponse(res);
   if (!res.ok) {
-    console.warn(`[image-gen] ${modelName} failed: ${res.status} ${data?.detail || data?.message || 'unknown'}`);
+    console.warn(`[image-gen] ${modelName} failed: ${res.status} ${falErrorMessage(data, text)}`);
     // Log the failed call too — useful for understanding which prompt
     // patterns trigger fal.ai 4xx/5xx responses.
     await logAiUsage(env, {
