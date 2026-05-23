@@ -874,6 +874,8 @@ export interface AdminPrewarmReadinessPost {
   id: string;
   user_id: string | null;
   client_id: string | null;
+  email: string | null;
+  client_name: string | null;
   workspace: string;
   scheduled_for: string | null;
   platform: string | null;

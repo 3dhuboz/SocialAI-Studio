@@ -347,7 +347,9 @@ const PrewarmReadinessCard: React.FC<{
               <span className="text-white/35">{fmtDue(post.scheduled_for)}</span>
               <div className="min-w-0">
                 <span className="text-white/60 line-clamp-1">{post.content_preview || 'No caption'}</span>
-                <span className="text-[10px] text-white/25">{post.workspace} - {post.platform || 'Platform unknown'}</span>
+                <span className="text-[10px] text-white/25">
+                  {post.workspace}{post.client_name && post.email ? ` - ${post.email}` : ''} - {post.platform || 'Platform unknown'}
+                </span>
                 {post.video_error && <span className="block text-[10px] text-rose-300/70 truncate">{post.video_error}</span>}
               </div>
             </div>

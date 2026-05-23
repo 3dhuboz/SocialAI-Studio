@@ -17,10 +17,9 @@
 //   POST /api/shopify/autopilot/generate-one
 //     Body: { productId, platform, scheduledFor, tone? }
 //     1. Re-uses composeProductPost() from shopify-compose.ts (caption + image)
-//     2. Inserts a Scheduled post directly into the posts table with
-//        owner_kind='shop', owner_id=<shopDomain>, status='Scheduled'
-//        and the provided scheduledFor.
-//     3. Returns the created post.
+//     2. Allows dryRun=true preview generation only.
+//     3. Non-dry-run persistence is intentionally blocked with
+//        SHOPIFY_SCHEDULER_DISABLED until shop-owned publishing is ready.
 //
 // Rate limit: 20/min per shop. Higher than the 10/min cap on /compose
 // because the bulk gen does naturally space things out (3 parallel × 5–20s
@@ -207,16 +206,17 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
       return c.json({ error: String(err?.message ?? err).slice(0, 300) }, 500);
     }
 
-    // Insert as Scheduled. Mirror shopify-posts.ts contract: write BOTH
+    // Persistence is disabled while Shopify publish readiness is no-go. When
+    // re-enabled, this insert must mirror shopify-posts.ts contract: write BOTH
     // legacy (user_id, client_id) AND tenant-abstracted (owner_kind, owner_id)
     // columns. user_id is the shop sentinel because the column is NOT NULL.
     //
     // For postType='video' we also set:
     //   post_type='video', video_status='pending', video_script=<motion>
     // which the prewarm-videos cron (runs every 5 min) picks up to fire
-    // off Kling i2v generation against image_url as the thumbnail. When
-    // the video lands the cron flips video_status to 'ready' and sets
-    // video_url; publish-missed then ships it to FB via the Reels API.
+    // off Kling i2v generation against image_url as the thumbnail. Before
+    // Shopify persistence is re-enabled, the downstream publish path must be
+    // explicitly wired for shop-owned rows.
     const id = crypto.randomUUID();
     const nowIso = new Date().toISOString();
     const scheduledIso = new Date(scheduleMs).toISOString();

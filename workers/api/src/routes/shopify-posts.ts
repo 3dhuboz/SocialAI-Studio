@@ -9,7 +9,7 @@
 //   GET    /api/shopify/posts             — list shop's posts (optional ?status)
 //   PATCH  /api/shopify/posts/:id         — edit a Draft (content/image/schedule/status)
 //   DELETE /api/shopify/posts/:id         — delete (Draft or Scheduled only; not Posted)
-//   POST   /api/shopify/posts/:id/publish-now — flip a Draft into the publish queue
+//   POST   /api/shopify/posts/:id/publish-now — currently returns 503 until shop-owned publishing is wired
 //
 // ── Tenant isolation ──────────────────────────────────────────────────────
 // Every query scopes by `owner_kind='shop' AND owner_id=?` (the verified
@@ -33,11 +33,11 @@
 // composer needs to remember which product a post came from, add a
 // posts.metadata or shopify_post_products column in schema_v23.
 //
-// ── ⚠ CRON DEPENDENCY — READ BEFORE LANDING ───────────────────────────────
-// The publish-now endpoint sets status='Scheduled' + scheduled_for=now-1ms
-// expecting `workers/api/src/cron/publish-missed.ts` to pick it up within
-// 5 minutes. **That cron currently filters by user_id and assumes a Clerk
-// user.** It must be extended to also handle `owner_kind='shop'` rows by:
+// ── ⚠ PUBLISH READINESS — READ BEFORE LANDING ─────────────────────────────
+// Shopify scheduling and publish-now are deliberately hard-disabled with
+// SHOPIFY_SCHEDULER_DISABLED until shop-owned publishing has its own safe
+// token and scheduling path. Before enabling this endpoint, publish-missed
+// must be extended to also handle `owner_kind='shop'` rows by:
 //   1. SELECTing posts WHERE owner_kind='shop' AND status='Scheduled' AND
 //      scheduled_for <= now, *in addition to* the existing user-scoped query.
 //   2. Resolving the shop's FB Page + IG Business Account tokens from
@@ -45,10 +45,8 @@
 //      instead of the per-user/per-client social_tokens path it uses today.
 //   3. On success: mark status='Posted'. On failure: status='Missed' +
 //      preserve any per-post error/late_post_id fields you already use.
-// Until that cron change lands, shop-owned scheduled posts will sit at
-// status='Scheduled' indefinitely. The /api/shopify/posts/:id/publish-now
-// route will return 202-ish (we ack with the new state) regardless — the
-// dependency is purely cron-side.
+// Until those changes land, this route must keep returning 503 before it can
+// flip any row to status='Scheduled'. See docs/shopify-publish-readiness.md.
 //
 // ── Rate limiting ─────────────────────────────────────────────────────────
 // 60 req/min per shop on every endpoint. Key: `shopify-posts:<shop>`.
@@ -343,16 +341,12 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   // ── POST /api/shopify/posts/:id/publish-now ──────────────────────────
-  // Force a Draft into the publish queue immediately. We set scheduled_for
-  // to (now - 1ms) so the publish-missed cron's "WHERE scheduled_for <= now"
-  // predicate picks it up on the next 5-minute tick.
+  // Force a Draft into the publish queue immediately.
   //
-  // NOTE — this is half of a contract. The other half is the cron change
-  // documented at the top of this file: publish-missed.ts currently filters
-  // by user_id and won't see owner_kind='shop' rows until extended. Without
-  // that cron change, this endpoint flips the status correctly but no
-  // actual FB/IG publish will happen. Surface this clearly in the UI as
-  // "Scheduled for next publish tick" until the cron lands.
+  // Disabled by design: this must return SHOPIFY_SCHEDULER_DISABLED until
+  // shop-owned publishing has a tested token loader, platform fan-out, and
+  // cron claim path. The write below is intentionally unreachable while the
+  // guard remains enabled.
   app.post('/api/shopify/posts/:id/publish-now', async (c) => {
     const shopOrResp = await gate(c);
     if (shopOrResp instanceof Response) return shopOrResp;

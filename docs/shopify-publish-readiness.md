@@ -8,10 +8,10 @@ This is intentional. Shopify merchants can compose and preview posts, but the pu
 
 - Shopify scheduler is disabled in `workers/api/src/routes/shopify-posts.ts`.
   - `PATCH /api/shopify/posts/:id` rejects `status='Scheduled'` with `SHOPIFY_SCHEDULER_DISABLED`.
-  - `POST /api/shopify/posts/:id/publish-now` rejects before it can flip a row to `Scheduled`.
+  - `POST /api/shopify/posts/:id/publish-now` rejects with `SHOPIFY_SCHEDULER_DISABLED` before it can flip a row to `Scheduled`.
 - Shopify autopilot persistence is disabled in `workers/api/src/routes/shopify-autopilot.ts`.
   - `/api/shopify/autopilot/generate-one` still allows `dryRun=true` preview generation.
-  - Non-dry-run `generate-one` and `/save-batch` reject with `SHOPIFY_SCHEDULER_DISABLED`.
+  - Non-dry-run `generate-one` and `/save-batch` reject with `SHOPIFY_SCHEDULER_DISABLED` before any `posts` insert.
 - Generic `publish-missed` excludes shop-owned rows through `NON_SHOP_OWNER_FILTER`.
   - The count gate, zombie sweep, quality guard, and claim query all exclude `owner_kind='shop'`.
   - Existing `owner_kind='shop'` rows should not be claimed, marked missed by the generic zombie sweep, or quality-blocked by the generic publisher.
@@ -45,4 +45,4 @@ Remaining implementation:
 
 `workers/api/src/__tests__/publish-missed-shop-guard.test.ts` proves the generic cron does not claim or mutate shop-owned scheduled rows.
 
-`workers/api/src/__tests__/shopify-publish-readiness.test.ts` locks the protective state: Shopify scheduling remains disabled, autopilot persistence remains disabled, and generic token loading still does not read from `shopify_stores`.
+`workers/api/src/__tests__/shopify-publish-readiness.test.ts` locks the protective state: Shopify scheduling remains disabled before scheduling writes, autopilot persistence remains disabled before `posts` inserts, and generic token loading still does not read from `shopify_stores`.

@@ -29,6 +29,7 @@ import { checkBillingGate } from '../lib/billing-gate';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { logAiUsage } from '../lib/ai-usage';
+import { checkFalCreditsAlert } from '../cron/check-fal-credits';
 
 const NANO_BANANA_PRO_COST_USD = 0.15;
 const KLING_STANDARD_VIDEO_COST_USD = 0.30;

@@ -19,34 +19,58 @@ interface FalCreditAlertRow {
   fire_count: number;
 }
 
+export interface FalCreditAlertResult {
+  balance: unknown;
+  alert: 'sent' | 'suppressed' | 'no_resend_key' | 'not_needed';
+  threshold: number;
+}
+
 export async function cronCheckFalCredits(env: Env) {
   const apiKey = env.FAL_API_KEY;
   const resendKey = env.RESEND_API_KEY;
   if (!apiKey || !resendKey) return;
 
   try {
-    const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
-    const data = await res.json() as any;
-    const balance = data?.balance ?? data?.credits ?? null;
+    const result = await checkFalCreditsAlert(env);
+    const balance = result.balance;
     console.log(`[CRON] fal.ai balance: $${balance}`);
-
-    if (balance !== null && balance < LOW_CREDIT_THRESHOLD) {
-      const row = await recordLowCreditFire(env, balance);
-      if (row?.last_email_at) {
-        console.log(`[CRON] Low balance alert suppressed; already sent for current incident (fire_count=${row.fire_count})`);
-        return;
-      }
-
-      await sendLowCreditEmail(resendKey, balance);
-      await markLowCreditEmailed(env);
+    if (result.alert === 'suppressed') {
+      console.log('[CRON] Low balance alert suppressed; already sent for current incident');
+    } else if (result.alert === 'sent') {
       console.log(`[CRON] Low balance alert sent ($${balance})`);
-      return;
     }
-
-    if (balance !== null) await resolveLowCreditAlert(env);
   } catch (e: any) {
     console.error('[CRON] Credit check failed:', e.message);
   }
+}
+
+export async function checkFalCreditsAlert(env: Env): Promise<FalCreditAlertResult> {
+  const apiKey = env.FAL_API_KEY;
+  if (!apiKey) throw new Error('fal.ai API key not configured');
+
+  const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
+  const data = await res.json() as any;
+  if (!res.ok) throw new Error(data?.message || `fal.ai HTTP ${res.status}`);
+
+  const balance = data?.balance ?? data?.credits ?? null;
+  if (balance !== null && Number(balance) < LOW_CREDIT_THRESHOLD) {
+    const resendKey = env.RESEND_API_KEY;
+    if (!resendKey) {
+      return { balance, alert: 'no_resend_key', threshold: LOW_CREDIT_THRESHOLD };
+    }
+
+    const row = await recordLowCreditFire(env, balance);
+    if (row?.last_email_at) {
+      return { balance, alert: 'suppressed', threshold: LOW_CREDIT_THRESHOLD };
+    }
+
+    await sendLowCreditEmail(resendKey, balance);
+    await markLowCreditEmailed(env);
+    return { balance, alert: 'sent', threshold: LOW_CREDIT_THRESHOLD };
+  }
+
+  if (balance !== null) await resolveLowCreditAlert(env);
+  return { balance, alert: 'not_needed', threshold: LOW_CREDIT_THRESHOLD };
 }
 
 async function recordLowCreditFire(env: Env, balance: unknown): Promise<FalCreditAlertRow | null> {

@@ -21,6 +21,8 @@ describe('summarizePrewarmReadiness', () => {
         id: 'video-pending',
         user_id: 'user_1',
         client_id: 'client_1',
+        email: 'agency@example.com',
+        client_name: 'Gladstone BBQ',
         content: 'Reel is still waiting',
         platform: 'Instagram',
         scheduled_for: '2026-05-23T11:00:00.000Z',
@@ -58,7 +60,9 @@ describe('summarizePrewarmReadiness', () => {
       'video_failed',
     ]);
     expect(result.posts[0].workspace).toBe('Own Workspace');
-    expect(result.posts[1].workspace).toBe('client_1');
+    expect(result.posts[1].workspace).toBe('Gladstone BBQ');
+    expect(result.posts[1].email).toBe('agency@example.com');
+    expect(result.posts[1].client_name).toBe('Gladstone BBQ');
     expect(result.posts[2].video_error).toBe('fal queue timeout');
   });
 });

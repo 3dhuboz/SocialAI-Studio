@@ -34,6 +34,8 @@ type PrewarmReadinessRow = {
   id: string;
   user_id: string | null;
   client_id: string | null;
+  email?: string | null;
+  client_name?: string | null;
   content: string | null;
   platform: string | null;
   scheduled_for: string | null;
@@ -88,7 +90,9 @@ export function summarizePrewarmReadiness(rows: PrewarmReadinessRow[]) {
       id: row.id,
       user_id: row.user_id,
       client_id: row.client_id,
-      workspace: row.client_id || 'Own Workspace',
+      email: row.email || null,
+      client_name: row.client_name || null,
+      workspace: row.client_name || row.email || row.client_id || 'Own Workspace',
       scheduled_for: row.scheduled_for,
       platform: row.platform,
       post_type: row.post_type,
@@ -327,23 +331,27 @@ export function registerAdminStatsRoutes(app: Hono<{ Bindings: Env }>): void {
     const dueBefore = new Date(now.getTime() + hours * 3_600_000).toISOString();
 
     const rows = await c.env.DB.prepare(
-      `SELECT id, user_id, client_id, content, platform, scheduled_for,
-              post_type, image_url, video_url, video_status, video_error
-         FROM posts
-        WHERE status = 'Scheduled'
-          AND scheduled_for IS NOT NULL
-          AND scheduled_for <= ?
+      `SELECT
+              p.id, p.user_id, p.client_id, u.email, cl.name AS client_name,
+              p.content, p.platform, p.scheduled_for, p.post_type, p.image_url,
+              p.video_url, p.video_status, p.video_error
+         FROM posts p
+         LEFT JOIN users u ON u.id = p.user_id
+         LEFT JOIN clients cl ON cl.id = p.client_id
+        WHERE p.status = 'Scheduled'
+          AND p.scheduled_for IS NOT NULL
+          AND p.scheduled_for <= ?
           AND (
-            image_url IS NULL OR image_url = ''
+            p.image_url IS NULL OR p.image_url = ''
             OR (
-              lower(COALESCE(post_type,'')) IN ('video','reel')
+              lower(COALESCE(p.post_type,'')) IN ('video','reel')
               AND (
-                video_url IS NULL OR video_url = ''
-                OR lower(COALESCE(video_status,'pending')) IN ('pending','generating','failed')
+                p.video_url IS NULL OR p.video_url = ''
+                OR lower(COALESCE(p.video_status,'pending')) IN ('pending','generating','failed')
               )
             )
           )
-        ORDER BY scheduled_for ASC
+        ORDER BY p.scheduled_for ASC
         LIMIT ?`
     ).bind(dueBefore, limit).all<PrewarmReadinessRow>();
 

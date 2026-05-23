@@ -10,6 +10,14 @@ function source(pathFromSrc: string): string {
   return readFileSync(resolve(srcRoot, pathFromSrc), 'utf8');
 }
 
+function expectInOrder(sourceText: string, earlier: string, later: string): void {
+  const earlierIdx = sourceText.indexOf(earlier);
+  const laterIdx = sourceText.indexOf(later);
+  expect(earlierIdx).toBeGreaterThanOrEqual(0);
+  expect(laterIdx).toBeGreaterThanOrEqual(0);
+  expect(earlierIdx).toBeLessThan(laterIdx);
+}
+
 describe('Shopify publish readiness guardrails', () => {
   it('keeps manual Shopify scheduling and publish-now disabled', () => {
     const posts = source('routes/shopify-posts.ts');
@@ -18,6 +26,11 @@ describe('Shopify publish readiness guardrails', () => {
     expect(posts).toMatch(/function isShopifySchedulerDisabled\(\): boolean \{\s*return true;\s*\}/);
     expect(posts).toMatch(/if \(v === 'Scheduled' && isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
     expect(posts).toMatch(/if \(isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
+    expectInOrder(
+      posts,
+      "return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);",
+      "UPDATE posts SET status = 'Scheduled', scheduled_for = ?",
+    );
   });
 
   it('keeps Shopify autopilot persistence disabled while allowing dry-run preview generation', () => {
@@ -28,6 +41,16 @@ describe('Shopify publish readiness guardrails', () => {
     expect(autopilot).toMatch(/if \(!dryRun && isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
     expect(autopilot).toMatch(/if \(dryRun\) \{[\s\S]*status: 'Preview'[\s\S]*\}, 200\);[\s\S]*\}/);
     expect(autopilot).toMatch(/if \(isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
+    expectInOrder(
+      autopilot,
+      "if (!dryRun && isShopifySchedulerDisabled())",
+      "INSERT INTO posts",
+    );
+    expectInOrder(
+      autopilot,
+      "if (isShopifySchedulerDisabled())",
+      "const saved: string[] = [];",
+    );
   });
 
   it('keeps the generic publish cron scoped away from shop-owned posts', () => {

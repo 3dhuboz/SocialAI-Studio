@@ -23,9 +23,17 @@ function makeD1(options: {
   usageCalls: UsageCall[];
   photoUrls?: string[];
   prewarmPosts?: Array<Record<string, unknown>>;
+  cronAlerts?: Map<string, {
+    alert_key: string;
+    last_email_at: string | null;
+    fire_count: number;
+    last_resolved_at: string | null;
+  }>;
 }): D1Database {
   const photoRows = (options.photoUrls ?? []).map((url) => ({ metadata: JSON.stringify({ url }) }));
   const prewarmPosts = options.prewarmPosts ?? [];
+  const cronAlerts = options.cronAlerts;
+  const now = () => new Date().toISOString();
 
   return {
     prepare(sql: string) {
@@ -33,6 +41,9 @@ function makeD1(options: {
         bind(...bindings: unknown[]) {
           return {
             async first<T>() {
+              if (/FROM cron_alerts WHERE alert_key = \?/i.test(sql)) {
+                return (cronAlerts?.get(String(bindings[0])) ?? null) as T | null;
+              }
               if (/SELECT plan, addon_features, poster_credits FROM users/i.test(sql)) {
                 return { plan: 'pro', addon_features: null, poster_credits: 0 } as T;
               }
@@ -53,6 +64,31 @@ function makeD1(options: {
               if (/INSERT INTO ai_usage/i.test(sql)) {
                 options.usageCalls.push({ sql, bindings });
               }
+              if (/INSERT INTO cron_alerts/i.test(sql) && cronAlerts) {
+                const key = String(bindings[0]);
+                const existing = cronAlerts.get(key);
+                if (existing) {
+                  existing.fire_count += 1;
+                } else {
+                  cronAlerts.set(key, {
+                    alert_key: key,
+                    last_email_at: null,
+                    fire_count: 1,
+                    last_resolved_at: null,
+                  });
+                }
+              }
+              if (/UPDATE cron_alerts SET last_email_at/i.test(sql) && cronAlerts) {
+                const row = cronAlerts.get(String(bindings[0]));
+                if (row) row.last_email_at = now();
+              }
+              if (/UPDATE cron_alerts\s+SET last_resolved_at/i.test(sql) && cronAlerts) {
+                const row = cronAlerts.get(String(bindings[0]));
+                if (row) {
+                  row.last_resolved_at = now();
+                  row.last_email_at = null;
+                }
+              }
               return { success: true };
             },
           };
@@ -64,7 +100,11 @@ function makeD1(options: {
 
 function makeRouteEnv(usageCalls: UsageCall[], extra: Partial<Env> = {}): Env {
   return {
-    DB: makeD1({ usageCalls, photoUrls: ['https://brand.example/ref.jpg'] }),
+    DB: makeD1({
+      usageCalls,
+      photoUrls: ['https://brand.example/ref.jpg'],
+      cronAlerts: new Map(),
+    }),
     OPENROUTER_API_KEY: 'openrouter-test-key',
     FAL_API_KEY: 'fal-test-key',
     RUNWAY_API_KEY: 'runway-test-key',
@@ -187,6 +227,37 @@ describe('media routes ai_usage telemetry', () => {
     expect(usage?.bindings[2]).toBe('runway');
     expect(usage?.bindings[3]).toBe('/image_to_video');
     expect(usage?.bindings[10]).toBe(1);
+  });
+
+  it('suppresses duplicate low-credit emails from manual fal credit checks', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === 'https://fal.ai/api/users/me') {
+        return new Response(JSON.stringify({ balance: 2.5 }), { status: 200 });
+      }
+      if (url === 'https://api.resend.com/emails') {
+        return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const usageCalls: UsageCall[] = [];
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+    const env = makeRouteEnv(usageCalls, { RESEND_API_KEY: 'resend-test-key' });
+
+    const first = await app.request('/api/fal-proxy?action=check-credits-alert', {
+      headers: { 'X-Test-Uid': 'user_1' },
+    }, env);
+    const second = await app.request('/api/fal-proxy?action=check-credits-alert', {
+      headers: { 'X-Test-Uid': 'user_1' },
+    }, env);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await first.json()).alert).toBe('sent');
+    expect((await second.json()).alert).toBe('suppressed');
+    expect(fetchMock.mock.calls.filter(([url]) => url === 'https://api.resend.com/emails')).toHaveLength(1);
   });
 });
 
