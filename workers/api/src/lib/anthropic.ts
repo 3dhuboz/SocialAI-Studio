@@ -256,7 +256,21 @@ export async function callOpenRouter(
   userPrompt: string,
   temperature: number,
   maxTokens: number,
+  opts: { responseFormat?: 'json' | 'text' } = {},
 ): Promise<{ text: string }> {
+  const body: Record<string, unknown> = {
+    model: 'anthropic/claude-haiku-4.5',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature,
+    max_tokens: maxTokens,
+  };
+  if ((opts.responseFormat ?? 'json') === 'json') {
+    body.response_format = { type: 'json_object' };
+  }
+
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -265,16 +279,7 @@ export async function callOpenRouter(
       'HTTP-Referer': 'https://socialaistudio.au',
       'X-Title': 'SocialAI Studio',
     },
-    body: JSON.stringify({
-      model: 'anthropic/claude-haiku-4.5',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const errText = await res.text().catch(() => '');

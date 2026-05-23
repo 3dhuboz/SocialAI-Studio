@@ -1998,11 +1998,11 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
 /**
  * Fetch a URL's text content via the Worker proxy for AI research.
  */
-const fetchUrlContent = async (url: string): Promise<string> => {
+export const fetchUrlContent = async (url: string): Promise<string> => {
   try {
-    const res = await fetch(`${AI_WORKER}/api/web-fetch`, {
+    const res = await fetch(`${AI_WORKER}/api/ai/web-fetch`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await aiAuthHeaders(),
       body: JSON.stringify({ url }),
     });
     const data = await res.json() as { text?: string; error?: string };

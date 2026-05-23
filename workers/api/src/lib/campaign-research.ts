@@ -27,6 +27,7 @@
 // feel intelligent.
 
 import { callAnthropicDirect } from './anthropic';
+import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from './prompt-safety';
 import { fetchUrlText, extractUrls, type WebFetchResult } from './web-fetch';
 
 export interface CampaignResearchInput {
@@ -62,17 +63,20 @@ export interface CampaignResearchResult {
   failureReason?: string;
 }
 
-const RESEARCH_SYSTEM_PROMPT = `You are a senior B2B copywriter researching a marketing campaign for a small business. Your job is to turn the business owner's loose description and (when supplied) the actual content of their website into a structured brief that another AI will use to write 14 social-media posts over the next 1–4 weeks.
+export const RESEARCH_SYSTEM_PROMPT = `You are a small-business social campaign strategist researching a marketing campaign. Your job is to turn the business owner's loose description and (when supplied) the actual content of their website into a structured brief that another AI will use to write 14 social-media posts over the next 1–4 weeks.
+
+${UNTRUSTED_CONTENT_DIRECTIVE}
 
 Hard rules:
 - Use ONLY information present in the BUSINESS CONTEXT or WEB CONTENT blocks. Never invent features, prices, or guarantees.
 - If a fact isn't in the materials, OMIT it — do not hedge ("possibly", "perhaps", "may include").
 - Specific > generic. "AI Content Autopilot writes 14 posts/week from a 30-min onboarding" beats "AI-powered content creation".
+- Match the business type: B2B can use operational value, while B2C should lead with product, occasion, sensory detail, trust, and purchase intent.
 - Australian small-business voice. No corporate fluff. No "in today's fast-paced world".
 - The summary line must read like a person speaking — "Checked your homepage and the AI Tools page — here's the angle…" — not a status report.
 - Output STRICT JSON, no prose, no code fences.`;
 
-function buildResearchPrompt(input: CampaignResearchInput, fetched: WebFetchResult[]): string {
+export function buildResearchPrompt(input: CampaignResearchInput, fetched: WebFetchResult[]): string {
   const window = input.startDate && input.endDate
     ? `${input.startDate} → ${input.endDate}`
     : input.startDate
@@ -82,7 +86,7 @@ function buildResearchPrompt(input: CampaignResearchInput, fetched: WebFetchResu
         : '(open-ended)';
 
   const webBlock = fetched.filter(f => f.ok).map(f =>
-    `### ${f.title || f.finalUrl || f.url}\nSource: ${f.finalUrl || f.url}\n\n${f.text}\n`
+    `### ${f.title || f.finalUrl || f.url}\nSource: ${f.finalUrl || f.url}\n\n${wrapUntrusted(f.text || '', 'campaign_web_content', { maxLen: 8000 })}\n`
   ).join('\n---\n\n');
 
   return `BUSINESS CONTEXT
@@ -100,9 +104,7 @@ ${input.campaignName ? `Name: ${input.campaignName}` : ''}
 Window: ${window}
 
 User's brief (verbatim):
-"""
-${input.campaignText.trim()}
-"""
+${wrapUntrusted(input.campaignText.trim(), 'campaign_user_brief', { maxLen: 2000 })}
 
 ${webBlock ? `WEB CONTENT (real text scraped from URLs the user mentioned)\n────────────\n${webBlock}` : 'WEB CONTENT\n────────────\n(no URLs fetched — work from BUSINESS CONTEXT + user brief only)'}
 

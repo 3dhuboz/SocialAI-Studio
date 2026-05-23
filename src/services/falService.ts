@@ -9,6 +9,16 @@ const PROXY = `${WORKER}/api/fal-proxy`;
 // so X-Fal-Key from localStorage is no longer accepted (security).
 const proxyHeaders = () => aiAuthHeaders();
 
+export function extractCompletedFalVideoUrl(payload: any): string | null {
+  const candidates = [
+    payload?.video?.url,
+    payload?.output?.video?.url,
+    Array.isArray(payload?.output) ? payload.output[0] : null,
+  ];
+  const found = candidates.find((value) => typeof value === 'string' && value.trim());
+  return found || null;
+}
+
 export const FalService = {
   /**
    * Generate a short vertical reel from an image + text prompt via fal.ai (Kling v1.6).
@@ -45,8 +55,15 @@ export const FalService = {
       );
       const poll = await pollRes.json();
 
-      if (poll.status === 'SUCCEEDED') {
-        const url = poll.output?.[0];
+      if (poll.status === 'SUCCEEDED' || poll.status === 'COMPLETED') {
+        const resultQuery = new URLSearchParams({ action: 'task-result', requestId });
+        const resultRes = await fetch(
+          `${PROXY}?${resultQuery.toString()}`,
+          { headers: await proxyHeaders() },
+        );
+        const result = await resultRes.json();
+        if (!resultRes.ok || result.error) throw new Error(result.error || 'Failed to load completed video');
+        const url = extractCompletedFalVideoUrl(result);
         if (!url) throw new Error('No video URL in completed task');
         onProgress?.(1);
         return url;

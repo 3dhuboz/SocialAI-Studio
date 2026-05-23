@@ -23,6 +23,7 @@
 import type { Env } from '../env';
 import { callAnthropicVision } from './anthropic';
 import { logAiUsage } from './ai-usage';
+import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from './prompt-safety';
 
 // Rough per-call cost estimate for ai_usage logging — refined when the
 // Anthropic / OpenRouter invoice settles. Critique runs on Haiku 4.5
@@ -78,6 +79,8 @@ INTRA-DOMAIN HARD RULE — owner-declared exclusions for this business:
 
   return `You are an image-caption mismatch detector for a social-media SaaS that publishes posts to Facebook and Instagram. Given an image and the caption it will be paired with, your job is to flag mismatches BEFORE they get published.
 
+${UNTRUSTED_CONTENT_DIRECTIVE}
+
 Score the image-caption pair on a 0-10 scale:
 - 10 = perfect match: image visually reinforces the caption's specific topic
 - 7-9 = good match: image fits the caption's theme and business archetype
@@ -130,6 +133,14 @@ Return JSON ONLY, no prose. Schema:
 {"score": <0-10>, "match": "yes"|"partial"|"no", "reasoning": "<one sentence>"}`;
 }
 
+export function buildCritiqueUserPrompt(caption: string): string {
+  return `Caption that will be published with this image:
+
+${wrapUntrusted(caption, 'post_caption', { maxLen: 1200 })}
+
+Does the image match?`;
+}
+
 export async function critiqueImageInternal(
   env: Env,
   params: {
@@ -162,7 +173,7 @@ export async function critiqueImageInternal(
 
   const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug, forbiddenSubjects ?? []);
 
-  const userPrompt = `Caption that will be published with this image:\n\n"${caption}"\n\nDoes the image match?`;
+  const userPrompt = buildCritiqueUserPrompt(caption);
   let raw = '';
   // Which provider we ultimately consumed credits from — used for the
   // ai_usage row at the end. 'anthropic' wins if Anthropic direct returned

@@ -19,6 +19,11 @@ import { callAnthropicDirect } from '../lib/anthropic';
 import { checkBillingGate } from '../lib/billing-gate';
 import { fetchUrlText } from '../lib/web-fetch';
 
+const ALLOWED_GENERATION_MODELS = new Set([
+  'anthropic/claude-haiku-4.5',
+  'claude-haiku-4-5',
+]);
+
 export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
   /**
    * POST /api/ai/generate
@@ -27,9 +32,8 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
    * Routes to OpenRouter — key never leaves the worker.
    */
   app.post('/api/ai/generate', async (c) => {
-    const apiKey = c.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      return c.json({ error: 'OpenRouter API key not configured on worker.' }, 500);
+    if (!c.env.ANTHROPIC_API_KEY && !c.env.OPENROUTER_API_KEY) {
+      return c.json({ error: 'No AI provider configured on worker.' }, 500);
     }
 
     // AUTH GATE — require Clerk JWT or Portal token. Stops anonymous abuse of OpenRouter credits.
@@ -85,7 +89,9 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     const requestedModel = (body as any).model as string | undefined;
-    const effectiveModel = requestedModel || 'anthropic/claude-haiku-4.5';
+    const effectiveModel = requestedModel && ALLOWED_GENERATION_MODELS.has(requestedModel)
+      ? requestedModel
+      : 'anthropic/claude-haiku-4.5';
     const isAnthropic = effectiveModel.startsWith('anthropic/') || effectiveModel.startsWith('claude-');
 
     // ── Anthropic direct routing (2026-05 stack upgrade) ──
@@ -122,6 +128,10 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // ── OpenRouter path (original — used as default before Anthropic key set,
     //                     and as failover when direct call fails) ──
+    const apiKey = c.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      return c.json({ error: 'Anthropic direct failed and OpenRouter fallback is not configured.' }, 502);
+    }
     const useAnthropicCaching = !!cachedPrefix && isAnthropic;
 
     const messages: Array<{ role: string; content: any }> = [];

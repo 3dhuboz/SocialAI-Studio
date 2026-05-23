@@ -393,6 +393,7 @@ export async function composeProductPost(
         userPrompt,
         0.7,
         800,
+        { responseFormat: 'text' },
       );
       return (result.text || '').trim().replace(/^```[a-z]*\n?|```$/gi, '').trim();
     }

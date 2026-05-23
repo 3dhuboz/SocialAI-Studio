@@ -18,6 +18,8 @@ import {
   type Product, type AutopilotGeneratedPost, type ShopifyCampaign, type FactsStatus,
 } from '../api';
 
+const SHOPIFY_AUTOPILOT_PREVIEW_ONLY = true;
+
 /**
  * AI Autopilot — bulk content calendar generator with preview-then-accept flow.
  *
@@ -373,6 +375,10 @@ export default function Autopilot() {
   const survivors = progress.succeeded.filter((p) => !removedIds.has(p.id));
 
   const handleAcceptAll = async () => {
+    if (SHOPIFY_AUTOPILOT_PREVIEW_ONLY) {
+      setError('Shopify Autopilot is preview-only while scheduled publishing is being upgraded. Review these drafts here, but they will not be added to the calendar yet.');
+      return;
+    }
     if (survivors.length === 0) {
       setError('Nothing left to save — every post was removed.');
       return;
@@ -668,11 +674,11 @@ export default function Autopilot() {
                           <BlockStack gap="050">
                             <Text as="h3" variant="headingMd">
                               {survivors.length > 0
-                                ? `${survivors.length} ${survivors.length === 1 ? 'post' : 'posts'} ready to schedule`
-                                : 'No posts to schedule'}
+                                ? `${survivors.length} ${survivors.length === 1 ? 'post' : 'posts'} ready to preview`
+                                : 'No posts to preview'}
                             </Text>
                             <Text as="p" variant="bodySm" tone="subdued">
-                              Review the previews below. Anything you don't like, hit the trash icon.
+                              Review the previews below. Shopify scheduling is paused until shop-owned publishing is enabled.
                             </Text>
                           </BlockStack>
                         </InlineStack>
@@ -684,13 +690,19 @@ export default function Autopilot() {
                             variant="primary"
                             size="large"
                             icon={CheckCircleIcon}
-                            disabled={survivors.length === 0}
+                            disabled={survivors.length === 0 || SHOPIFY_AUTOPILOT_PREVIEW_ONLY}
                             onClick={handleAcceptAll}
                           >
-                            {`Accept all ${survivors.length} & schedule`}
+                            {SHOPIFY_AUTOPILOT_PREVIEW_ONLY ? 'Preview only' : `Accept all ${survivors.length} & schedule`}
                           </Button>
                         </InlineStack>
                       </InlineStack>
+
+                      {SHOPIFY_AUTOPILOT_PREVIEW_ONLY && (
+                        <Banner tone="info" title="Preview-only while publishing is upgraded">
+                          <p>Generated Shopify posts are not saved or auto-published from this screen yet.</p>
+                        </Banner>
+                      )}
 
                       <InlineStack gap="200">
                         <Badge tone="success">{`${progress.succeeded.length} generated`}</Badge>
@@ -773,7 +785,7 @@ export default function Autopilot() {
                     </Text>
                     <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
                       {saveProgress.saved} of {saveProgress.total} {saveProgress.total === 1 ? 'post' : 'posts'} scheduled.
-                      We'll publish each one to Facebook + Instagram at its scheduled time.
+                      Shopify auto-publishing is paused until shop-owned scheduling is enabled.
                     </Text>
                   </BlockStack>
 

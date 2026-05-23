@@ -18,6 +18,7 @@ import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 import { checkBillingGate } from '../lib/billing-gate';
 import { critiqueImageInternal } from '../lib/critique';
 import { loadForbiddenSubjects } from '../lib/profile-guards';
+import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from '../lib/prompt-safety';
 
 export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── Vision-grounded image+caption critique (2026-05 image-stack upgrade) ──
@@ -149,8 +150,9 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
     ]);
     if (isLimited) return c.json({ error: 'Rate limit exceeded — 60 score calls per minute' }, 429);
     if (denied) return denied;
-    const apiKey = c.env.OPENROUTER_API_KEY;
-    if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500);
+    if (!c.env.ANTHROPIC_API_KEY && !c.env.OPENROUTER_API_KEY) {
+      return c.json({ error: 'No score-post provider configured' }, 500);
+    }
 
     const body = await c.req.json().catch(() => ({})) as {
       content?: string;
@@ -200,10 +202,10 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
     // the prompt fits in the cache-eligible range (Haiku 4.5 caches at the
     // 1024-token boundary).
     const top = facts.slice(0, 5).map((f, i) =>
-      `TOP ${i + 1} (engagement score ${f.engagement_score}): ${f.content.slice(0, 280)}`
+      `TOP ${i + 1} (engagement score ${f.engagement_score}): ${wrapUntrusted(f.content, `top_post_${i + 1}`, { maxLen: 280 })}`
     ).join('\n\n');
     const bottom = facts.slice(-Math.min(3, facts.length)).map((f, i) =>
-      `BOTTOM ${i + 1} (engagement score ${f.engagement_score}): ${f.content.slice(0, 280)}`
+      `BOTTOM ${i + 1} (engagement score ${f.engagement_score}): ${wrapUntrusted(f.content, `bottom_post_${i + 1}`, { maxLen: 280 })}`
     ).join('\n\n');
 
     // Score distribution stats give the LLM a sense of what "high" means for
@@ -216,6 +218,8 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
     const p95 = scores[Math.floor(scores.length * 0.95)] ?? 0;
 
     const systemPrompt = `You are a social-media performance predictor for a specific business workspace. You have access to that workspace's own historical Facebook/Instagram posts and their actual engagement scores (likes + comments + shares + reactions).
+
+${UNTRUSTED_CONTENT_DIRECTIVE}
 
 Your job: given a NEW draft post, predict how it'll perform on a 0-100 scale relative to THIS workspace's history.
 
@@ -249,7 +253,7 @@ Respond ONLY with valid JSON, no prose, no markdown:
   "suggestions": ["<one short concrete improvement, ≤12 words>", ...]
 }`;
 
-    const userPrompt = `Draft post (platform: ${platform}${pillar ? `, pillar: ${pillar}` : ''}):\n\n"${content.slice(0, 1200)}"${hashtags.length ? `\n\nHashtags: ${hashtags.slice(0, 10).join(' ')}` : ''}`;
+    const userPrompt = `Draft post (platform: ${platform}${pillar ? `, pillar: ${pillar}` : ''}):\n\n${wrapUntrusted(content, 'draft_post', { maxLen: 1200 })}${hashtags.length ? `\n\nHashtags: ${wrapUntrusted(hashtags.slice(0, 10).join(' '), 'draft_hashtags', { maxLen: 280 })}` : ''}`;
 
     // Use Anthropic direct if available — this prompt has a large workspace-
     // specific prefix that benefits massively from 1h caching when the user
@@ -269,10 +273,11 @@ Respond ONLY with valid JSON, no prose, no markdown:
         });
       } catch (e: any) {
         console.warn('[score-post] Anthropic direct failed, falling back to OpenRouter:', e?.message);
-        result = await callOpenRouter(apiKey, systemPrompt, userPrompt, 0.2, 500);
+        if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'Virality scorer unavailable' }, 502);
+        result = await callOpenRouter(c.env.OPENROUTER_API_KEY, systemPrompt, userPrompt, 0.2, 500);
       }
     } else {
-      result = await callOpenRouter(apiKey, systemPrompt, userPrompt, 0.2, 500);
+      result = await callOpenRouter(c.env.OPENROUTER_API_KEY!, systemPrompt, userPrompt, 0.2, 500);
     }
 
     let parsed: { score?: number; tier?: string; reasoning?: string; suggestions?: string[] };
