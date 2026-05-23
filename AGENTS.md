@@ -6,7 +6,9 @@ Quick reference for navigating the codebase. Read this before touching anything.
 
 ## Codex save rule
 
-When finishing a substantive work session, run `npm run codex:save` before the final response unless Steve explicitly says not to commit, push, or back up. This commits the current Git changes, pushes the active branch to GitHub, and mirrors the project to `D:\GitHubBackup\SocialAI-Studio`.
+When finishing a substantive work session, run `npm run codex:save` before the final response unless Steve explicitly says not to commit, push, or back up. This commits the current Git changes, pushes the active branch to GitHub, and mirrors the project to `D:\GitHubBackup\SocialAi`.
+
+`D:\GitHubBackup` is the shared removable-drive backup folder. Each direct child folder is a project; this repo's backup project folder is `SocialAi`.
 
 If `D:\GitHubBackup` is unavailable, report that clearly and do not pretend the local backup succeeded.
 

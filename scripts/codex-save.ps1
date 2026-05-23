@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$BackupRoot = "D:\GitHubBackup",
+  [string]$ProjectName = "SocialAi",
   [string]$Message = "",
   [switch]$NoPush,
   [switch]$NoBackup,
@@ -45,6 +46,7 @@ $timestampText = $timestamp.ToString("yyyy-MM-dd HH:mm:ss zzz")
 
 Write-Host "Repo: $repoRoot"
 Write-Host "Backup root: $BackupRoot"
+Write-Host "Backup project: $ProjectName"
 
 if (-not $NoCommit) {
   $statusOutput = Get-GitOutput @("status", "--porcelain=v1")
@@ -57,7 +59,7 @@ if (-not $NoCommit) {
       $Message = "chore: codex autosave $($timestamp.ToString('yyyy-MM-dd HH:mm'))"
     }
 
-    $body = "Automated Codex save at $timestampText from $env:COMPUTERNAME. Backup target: $BackupRoot."
+    $body = "Automated Codex save at $timestampText from $env:COMPUTERNAME. Backup target: $BackupRoot\$ProjectName."
     Invoke-Git @("commit", "-m", $Message, "-m", $body)
   } else {
     Write-Host "No git changes to commit."
@@ -79,19 +81,20 @@ if (-not $NoBackup) {
     New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
   }
 
-  $backupDir = Join-Path -Path $BackupRoot -ChildPath $repoName
+  $backupDir = Join-Path -Path $BackupRoot -ChildPath $ProjectName
   $bundleDir = Join-Path -Path $backupDir -ChildPath "git-bundles"
   $metadataDir = Join-Path -Path $backupDir -ChildPath "metadata"
   New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
   New-Item -ItemType Directory -Path $metadataDir -Force | Out-Null
 
-  $bundlePath = Join-Path -Path $bundleDir -ChildPath "$repoName.bundle"
+  $bundlePath = Join-Path -Path $bundleDir -ChildPath "$ProjectName.bundle"
   Invoke-Git @("bundle", "create", $bundlePath, "--all")
 
   $commit = Get-GitOutput @("rev-parse", "HEAD")
   $remoteUrl = if ([string]::IsNullOrWhiteSpace($remote)) { "" } else { Get-GitOutput @("remote", "get-url", $remote) }
   $manifest = [ordered]@{
     savedAt = (Get-Date).ToString("o")
+    projectName = $ProjectName
     repoName = $repoName
     repoRoot = $repoRoot
     branch = $branch
