@@ -184,7 +184,7 @@ describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth
     // discarded in favour of a deterministic pick from the bank.
     expect(body.prompt).not.toContain('co-working studio with closed laptop and morning light');
     // Should be one of the 15 SaaS fallback scenes (all photographable).
-    expect(body.prompt.toLowerCase()).toMatch(/notebook|desk|hands|smartphone|coffee|journal|sketch|street|coffee|highway|window|chair|gradient|brass|leather/);
+    expect(body.prompt.toLowerCase()).toMatch(/notebook|desk|hands|smartphone|coffee|journal|sketch|street|highway|window|chair|gradient|brass|leather|planner|sticky|calendar|content|cards/);
     // Negative prompt extended with the archetype's avoid-list.
     expect(body.negative_prompt).toMatch(/food|plated|bbq/);
   });

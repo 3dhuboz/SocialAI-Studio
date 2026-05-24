@@ -59,6 +59,20 @@ function friendlyPublishReason(raw: string): string {
   return raw.slice(0, 200);
 }
 
+function shouldFallbackToLegacyGraphFromPostproxy(raw: string, platform: string): boolean {
+  const r = (raw || '').toLowerCase();
+  return platform === 'facebook'
+    && (r.includes('page not found')
+      || r.includes('placement')
+      || r.includes('does not exist')
+      || r.includes('unknown path')
+      || r.includes('not found'));
+}
+
+export const __test = {
+  shouldFallbackToLegacyGraphFromPostproxy,
+};
+
 // ── Facebook Page Reels publishing — KICK phase ─────────────────────────────
 // Audit P0 (Hono/Workers lane, 2026-05) — was previously a 4-phase blocking
 // function that polled FB for up to 180s per post serially inside the publish
@@ -463,6 +477,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           : postPlatform === 'instagram' ? 'post'
           : 'feed';
 
+        let fallbackToLegacyGraph = false;
         try {
           const result = await postproxyCreatePost(env, {
             profileId: mapping.postproxy_profile_id,
@@ -489,13 +504,23 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           ).bind(result.id, nowIso, (post as any).id).run();
           console.log(`[CRON] Postproxy publish initiated for ${(post as any).id} -> postproxy_id=${result.id}`);
         } catch (err: any) {
-          const reason = friendlyPublishReason(err?.message || String(err));
-          console.error(`[CRON] Postproxy publish failed for ${(post as any).id}:`, err?.message);
-          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
-            .bind('Missed', reason, (post as any).id).run();
-          await notifyOwnerOnFailure(env, post as any, reason, 'post');
+          const rawReason = err?.message || String(err);
+          const legacyTokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null });
+          fallbackToLegacyGraph = shouldFallbackToLegacyGraphFromPostproxy(rawReason, postPlatform)
+            && !!legacyTokens?.facebookPageId
+            && !!legacyTokens?.facebookPageAccessToken;
+
+          if (fallbackToLegacyGraph) {
+            console.warn(`[CRON] Postproxy publish failed for ${(post as any).id} with stale page mapping; falling back to legacy Graph path`);
+          } else {
+            const reason = friendlyPublishReason(rawReason);
+            console.error(`[CRON] Postproxy publish failed for ${(post as any).id}:`, err?.message);
+            await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+              .bind('Missed', reason, (post as any).id).run();
+            await notifyOwnerOnFailure(env, post as any, reason, 'post');
+          }
         }
-        continue;
+        if (!fallbackToLegacyGraph) continue;
       }
 
       // ── Legacy Graph path (use_postproxy=0) ─────────────────────────────
