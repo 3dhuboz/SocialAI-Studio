@@ -17,6 +17,11 @@ function isPortalAllowedPath(req: Request): boolean {
     path.startsWith('/api/db/posts/') ||
     path === '/api/db/clients' ||
     path.startsWith('/api/db/clients/') ||
+    path === '/api/db/social-tokens' ||
+    path === '/api/postproxy/init-connection' ||
+    path === '/api/postproxy/placements' ||
+    path === '/api/postproxy/save-placement' ||
+    path === '/api/postproxy/publish-now' ||
     path === '/api/db/portal' ||
     path.startsWith('/api/db/portal/')
   );

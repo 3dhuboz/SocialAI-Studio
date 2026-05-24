@@ -17,6 +17,25 @@ function makePortalDb(): D1Database {
 }
 
 describe('portal token scope', () => {
+  it.each([
+    '/api/db/social-tokens?clientId=hughesq-001',
+    '/api/postproxy/init-connection',
+    '/api/postproxy/placements?clientId=hughesq-001&platform=facebook',
+    '/api/postproxy/save-placement',
+    '/api/postproxy/publish-now',
+  ])('authenticates portal tokens on whitelabel social route %s', async (path) => {
+    const uid = await getAuthUserId(
+      new Request(`https://worker.example${path}`, {
+        headers: { Authorization: 'Portal valid-portal-token' },
+      }),
+      'sk_test',
+      undefined,
+      makePortalDb(),
+    );
+
+    expect(uid).toBe('owner_admin');
+  });
+
   it('does not authenticate portal tokens on paid provider proxy routes', async () => {
     const uid = await getAuthUserId(
       new Request('https://worker.example/api/fal-proxy?action=generate-image', {
