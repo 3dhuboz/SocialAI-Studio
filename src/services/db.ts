@@ -350,13 +350,13 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return data.campaigns ?? [];
     },
 
-    async createCampaign(campaign: { name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean; clientId?: string | null }): Promise<string> {
+    async createCampaign(campaign: { name: string; type?: string; startDate?: string; endDate?: string; rules?: string; imageNotes?: string; postsPerDay?: number; enabled?: boolean; clientId?: string | null }): Promise<string> {
       const res = await f('/api/db/campaigns', j(campaign));
       const data = await res.json() as { id: string };
       return data.id;
     },
 
-    async updateCampaign(id: string, fields: Partial<{ name: string; type: string; startDate: string; endDate: string; rules: string; postsPerDay: number; enabled: boolean }>): Promise<void> {
+    async updateCampaign(id: string, fields: Partial<{ name: string; type: string; startDate: string; endDate: string; rules: string; imageNotes: string; postsPerDay: number; enabled: boolean }>): Promise<void> {
       await f(`/api/db/campaigns/${id}`, put(fields));
     },
 

@@ -201,6 +201,7 @@ describe('timezone detection', () => {
 describe('generateSmartSchedule campaign research grounding', () => {
   beforeEach(() => {
     clearFactsCache();
+    setActiveArchetype(null);
     vi.restoreAllMocks();
   });
 
@@ -264,6 +265,59 @@ describe('generateSmartSchedule campaign research grounding', () => {
     expect(finalWriterPrompt).toContain('CAMPAIGN RESEARCH BRIEF');
     expect(finalWriterPrompt).toContain('AI Content Autopilot is a verified feature');
     expect(finalWriterPrompt).toContain('Plans mention 7-14 posts/week');
+  });
+
+  it('does not leak a cached SaaS archetype into BBQ festival image prompts', async () => {
+    setActiveArchetype('tech-saas-agency');
+    const aiPrompts: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const href = String(url);
+      if (href.includes('/api/db/facts')) {
+        return new Response(JSON.stringify({ facts: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (href.includes('/api/ai/generate')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { prompt?: string };
+        aiPrompts.push(body.prompt || '');
+        const text = aiPrompts.length === 1
+          ? JSON.stringify({
+              bestPostingTimes: ['17:00'],
+              bestDays: ['Wednesday'],
+              contentPillars: ['Ticket sales'],
+              platformSplit: { facebook: 100, instagram: 0 },
+            })
+          : JSON.stringify({ strategy: 'bbq campaign strategy', posts: [] });
+        return new Response(JSON.stringify({ text }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({}), { status: 404, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    await generateSmartSchedule(
+      'Gladstone BBQ Festival',
+      'BBQ festival and community event',
+      'casual',
+      { followers: 1000, engagement: 4, reach: 5000 },
+      1,
+      'Gladstone, QLD',
+      { facebook: true, instagram: false },
+      false,
+      { description: 'Community BBQ festival with ticket sales, vendors, smoked meat and family entertainment.' },
+      false,
+      'smart',
+      undefined,
+      undefined,
+      [{
+        name: 'Website launch',
+        type: 'launch',
+        startDate: '2026-05-27',
+        endDate: '2026-06-10',
+        rules: 'Promote gladstonebbqfest.au and push ticket sales.',
+        postsPerDay: 1,
+      }],
+    );
+
+    const finalPrompt = aiPrompts.at(-1) || '';
+    expect(finalPrompt).toMatch(/brisket|BBQ ribs|smoker|food truck|festival stage|festival entrance|competition trophies/i);
+    expect(finalPrompt).not.toMatch(/weekly content planner|corkboard filled with printed content cards|closed notebook centred/i);
   });
 });
 
@@ -497,6 +551,15 @@ describe('buildArchetypeVoiceBlock — archetype voice cues reach the prompt', (
     // the keyword bank and still yield the cues.
     const { voiceCuesLine } = buildArchetypeVoiceBlock('BBQ smokehouse');
     expect(voiceCuesLine).toContain('Voice cues');
+  });
+
+  it('uses the current business type when cached archetype belongs to another workspace', () => {
+    setActiveArchetype('tech-saas-agency');
+    const { voiceCuesLine, bannedTropeLine } = buildArchetypeVoiceBlock('BBQ festival and community event');
+
+    expect(voiceCuesLine).toContain('Voice cues');
+    expect(voiceCuesLine.toLowerCase()).toMatch(/countdown-aware|ticket|festival|confident|no-frills/);
+    expect(bannedTropeLine).toBe('');
   });
 
   it('returns empty strings when no archetype matches (graceful degradation)', () => {

@@ -174,6 +174,22 @@ export function setActiveArchetype(slug: string | null) {
   activeArchetypeSlug = slug;
 }
 
+function resolveGenerationArchetype(businessType: string) {
+  const keywordArchetype = matchArchetypeByKeyword(businessType);
+  const cachedArchetype = activeArchetypeSlug ? getArchetypeBySlug(activeArchetypeSlug) : undefined;
+
+  // Agency/client workspace defense: activeArchetypeSlug is module-global.
+  // If the current business type clearly matches an archetype, it must win
+  // over a cached/global archetype from another workspace. This prevents a
+  // tech/SaaS owner archetype from leaking desk/planner image examples into
+  // a BBQ festival client's campaign previews.
+  if (keywordArchetype && cachedArchetype?.slug !== keywordArchetype.slug) {
+    return keywordArchetype;
+  }
+
+  return cachedArchetype ?? keywordArchetype ?? undefined;
+}
+
 /** Build the archetype voice cue + banned-trope prompt lines from the
  *  cached classifier archetype + keyword fallback. Returns two strings
  *  ready for direct prompt-template interpolation (both empty when no
@@ -189,10 +205,7 @@ export function buildArchetypeVoiceBlock(businessType: string): {
   voiceCuesLine: string;
   bannedTropeLine: string;
 } {
-  const archetype =
-    (activeArchetypeSlug ? getArchetypeBySlug(activeArchetypeSlug) : undefined)
-    ?? matchArchetypeByKeyword(businessType)
-    ?? undefined;
+  const archetype = resolveGenerationArchetype(businessType);
   const voiceCuesLine = archetype?.voiceCues
     ? `\nVoice cues (from your brand archetype): ${archetype.voiceCues}`
     : '';
@@ -248,10 +261,8 @@ function filterImagePromptExamples(joined: string, forbiddenSubjects?: string | 
 
 const getImagePromptExamples = (businessType: string): string => {
   // Layer 1: use the user's classified archetype if available
-  if (activeArchetypeSlug) {
-    const arch = getArchetypeBySlug(activeArchetypeSlug);
-    if (arch) return arch.imageExamples.map(s => `'${s}'`).join(' OR ');
-  }
+  const resolvedArchetype = resolveGenerationArchetype(businessType);
+  if (resolvedArchetype) return resolvedArchetype.imageExamples.map(s => `'${s}'`).join(' OR ');
   // Layer 2: synchronous keyword match (works during the brief window before
   // the classifier returns, or for businesses that haven't been classified yet)
   const kwMatch = matchArchetypeByKeyword(businessType);
@@ -2546,7 +2557,7 @@ Respond with ONLY a raw JSON object — no markdown, no code fences:
     // how strong the archetype's voice cues are. Fall back to research pillars
     // only when the archetype doesn't define its own (most don't yet — only
     // tech-saas-agency, professional-services, retail-ecommerce, health-wellness).
-    const archetypeObj = activeArchetypeSlug ? getArchetypeBySlug(activeArchetypeSlug) : undefined;
+    const archetypeObj = resolveGenerationArchetype(effectiveBusinessType);
     const archetypePillars = archetypeObj?.contentPillars?.length ? archetypeObj.contentPillars : null;
     const pillarsForPrompt = archetypePillars
       ?? (saturationMode

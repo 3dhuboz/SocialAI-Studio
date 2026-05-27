@@ -67,12 +67,12 @@ export function registerCampaignRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/db/campaigns', async (c) => {
     const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
-    const body = await c.req.json<{ clientId?: string; name: string; type?: string; startDate?: string; endDate?: string; rules?: string; postsPerDay?: number; enabled?: boolean }>();
+    const body = await c.req.json<{ clientId?: string; name: string; type?: string; startDate?: string; endDate?: string; rules?: string; imageNotes?: string; postsPerDay?: number; enabled?: boolean }>();
     const id = crypto.randomUUID();
     await c.env.DB.prepare(
-      `INSERT INTO campaigns (id, user_id, client_id, name, type, start_date, end_date, rules, posts_per_day, enabled)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
-    ).bind(id, uid, body.clientId ?? null, body.name, body.type ?? 'custom', body.startDate ?? null, body.endDate ?? null, body.rules ?? '', body.postsPerDay ?? 1, body.enabled !== false ? 1 : 0).run();
+      `INSERT INTO campaigns (id, user_id, client_id, name, type, start_date, end_date, rules, image_notes, posts_per_day, enabled)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(id, uid, body.clientId ?? null, body.name, body.type ?? 'custom', body.startDate ?? null, body.endDate ?? null, body.rules ?? '', body.imageNotes ?? '', body.postsPerDay ?? 1, body.enabled !== false ? 1 : 0).run();
     return c.json({ id });
   });
 

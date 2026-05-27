@@ -332,11 +332,15 @@ const RecommendationActionButton: React.FC<{
 const CampaignCard: React.FC<{
   campaign: Campaign;
   onUpdate: (id: string, fields: Record<string, unknown>) => void;
+  onStart: (id: string) => void;
   onDelete: (id: string) => void;
   onFieldChange: (id: string, field: string, value: unknown) => void;
-}> = ({ campaign: c, onUpdate, onDelete, onFieldChange }) => {
+  isResearching?: boolean;
+}> = ({ campaign: c, onUpdate, onStart, onDelete, onFieldChange, isResearching = false }) => {
   const [expanded, setExpanded] = useState(false);
   const daysToGo = Math.max(0, Math.ceil((new Date(c.endDate).getTime() - Date.now()) / 86400000));
+  const canStart = (c.rules || '').trim().length >= 10 && !isResearching;
+  const isReady = c.briefStatus === 'ready';
   return (
     <div className="bg-amber-500/8 border border-amber-500/15 rounded-xl overflow-hidden">
       <button onClick={() => setExpanded(!expanded)} className="w-full px-4 py-3 flex items-center justify-between text-left">
@@ -397,6 +401,19 @@ const CampaignCard: React.FC<{
           </div>
           <div className="flex items-center justify-between pt-1">
             <button onClick={() => onUpdate(c.id, { enabled: false })} className="text-[11px] text-white/25 hover:text-amber-400 transition">Pause</button>
+            <button
+              onClick={() => onStart(c.id)}
+              disabled={!canStart}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition ${
+                canStart
+                  ? 'bg-amber-500 text-black hover:bg-amber-400'
+                  : 'bg-white/5 text-white/20 cursor-not-allowed'
+              }`}
+              title={canStart ? 'Save and research this campaign' : 'Add campaign instructions first'}
+            >
+              {isResearching ? <Loader2 size={12} className="animate-spin" /> : isReady ? <RefreshCw size={12} /> : <Play size={12} />}
+              {isResearching ? 'Starting...' : isReady ? 'Restart campaign' : 'Start campaign'}
+            </button>
             <button onClick={() => onDelete(c.id)} className="text-[11px] text-white/25 hover:text-red-400 transition flex items-center gap-1"><Trash2 size={10} /> Delete</button>
           </div>
         </div>
@@ -4365,6 +4382,21 @@ const Dashboard: React.FC = () => {
                           toast('Campaign paused');
                         }
                       }}
+                      onStart={async (id) => {
+                        const campaign = campaigns.find(x => x.id === id);
+                        if (!campaign) return;
+                        await db.updateCampaign(id, {
+                          name: campaign.name,
+                          startDate: campaign.startDate,
+                          endDate: campaign.endDate,
+                          rules: campaign.rules,
+                          imageNotes: campaign.imageNotes,
+                          enabled: true,
+                        });
+                        setCampaigns(prev => prev.map(x => x.id === id ? { ...x, enabled: true, briefStatus: 'researching' } : x));
+                        toast('Campaign started. Researching the brief now...');
+                        runCampaignResearch(id);
+                      }}
                       onFieldChange={(id, field, value) => {
                         setCampaigns(prev => prev.map(x => x.id === id ? { ...x, [field]: value } : x));
                       }}
@@ -4373,6 +4405,7 @@ const Dashboard: React.FC = () => {
                         setCampaigns(prev => prev.filter(x => x.id !== id));
                         toast('Campaign deleted');
                       }}
+                      isResearching={researchingCampaignId === c.id || c.briefStatus === 'researching'}
                     />
                   ))}
                 </div>
