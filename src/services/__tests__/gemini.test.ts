@@ -318,6 +318,8 @@ describe('generateSmartSchedule campaign research grounding', () => {
     const finalPrompt = aiPrompts.at(-1) || '';
     expect(finalPrompt).toMatch(/brisket|BBQ ribs|smoker|food truck|festival stage|festival entrance|competition trophies/i);
     expect(finalPrompt).not.toMatch(/weekly content planner|corkboard filled with printed content cards|closed notebook centred/i);
+    expect(finalPrompt).toContain('treat that website as the SALES CHANNEL');
+    expect(finalPrompt).toContain('NEVER depict a laptop, website screen, browser, desk, office planner');
   });
 });
 
