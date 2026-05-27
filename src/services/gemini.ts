@@ -1533,7 +1533,7 @@ export function scrubBannedPhrases(content: string): string {
   return out.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
 }
 
-export const generateMarketingImage = async (prompt: string, businessType: string = 'small business', caption?: string | null): Promise<string | null> => {
+export const generateMarketingImage = async (prompt: string, businessType: string = 'small business', caption?: string | null, clientId?: string | null): Promise<string | null> => {
   // Helper: convert a remote image URL to a compressed data URL
   const urlToDataUrl = async (imageUrl: string): Promise<string | null> => {
     try {
@@ -1573,7 +1573,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null, clientId: clientId || null }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) {
@@ -1611,7 +1611,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
  * Same smart prompt logic as generateMarketingImage, but returns a public URL
  * instead of base64. Used by Accept All to persist images to D1.
  */
-export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business', caption?: string | null): Promise<string | null> => {
+export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business', caption?: string | null, clientId?: string | null): Promise<string | null> => {
   // Same shared safety pipeline as generateMarketingImage above — returns
   // null when the post should publish text-only (fail-closed).
   const guardedPrompt = guardMarketingImagePromptForBusinessContext(prompt, businessType, caption);
@@ -1622,7 +1622,7 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null }),
+      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null, clientId: clientId || null }),
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) return data.imageUrl;

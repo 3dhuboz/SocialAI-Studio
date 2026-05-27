@@ -2384,7 +2384,7 @@ const Dashboard: React.FC = () => {
       || profile?.type
       || CLIENT.defaultBusinessType
       || 'small business';
-    return generateMarketingImage(prompt, bizType, caption);
+    return generateMarketingImage(prompt, bizType, caption, activeClientId);
   };
 
   const getSmartImageBusinessType = (): string => (
@@ -2550,14 +2550,14 @@ const Dashboard: React.FC = () => {
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
-              const url = await generateMarketingImageUrl(guardedImagePrompt || sp.topic, getSmartImageBusinessType(), sp.content);
+              const url = await generateMarketingImageUrl(guardedImagePrompt || sp.topic, getSmartImageBusinessType(), sp.content, activeClientId);
               if (url) postImage = url;
               else if (wantsImage) imageGenFailures++;
             } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
           } else if (!postImage && wantsImage) {
             // No image — generate with full smart logic (returns public URL)
             try {
-              const url = await generateMarketingImageUrl(guardedImagePrompt, getSmartImageBusinessType(), sp.content);
+              const url = await generateMarketingImageUrl(guardedImagePrompt, getSmartImageBusinessType(), sp.content, activeClientId);
               if (url) postImage = url;
               else imageGenFailures++;
             } catch { imageGenFailures++; /* post goes without image */ }
