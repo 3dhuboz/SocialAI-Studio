@@ -537,6 +537,7 @@ const getQuickStarts = (businessType: string, businessName: string) => {
 
 // ── Autopilot draft persistence ─────────────────────────
 const DRAFT_KEY_PREFIX = 'sai_autopilot_draft';
+const DRAFT_SCHEMA_VERSION = 4;
 const DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
 // One-time migration: nuke ALL old drafts that were generated with corrupted profile data
 // This version flag ensures it only runs once per browser
@@ -557,13 +558,13 @@ if (!localStorage.getItem(DRAFT_MIGRATION_KEY)) {
   } catch {}
 }
 const getDraftKey = (clientId: string | null) => clientId ? `${DRAFT_KEY_PREFIX}_${clientId}` : DRAFT_KEY_PREFIX;
-const readDraft = (clientId?: string | null): { posts: any[]; strategy: string; savedAt: number; mode: string; platform: string } | null => {
+const readDraft = (clientId?: string | null): { posts: any[]; strategy: string; savedAt: number; mode: string; platform: string; version?: number } | null => {
   try {
     const key = getDraftKey(clientId ?? null);
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw);
-    if (!d?.posts?.length || Date.now() - (d.savedAt || 0) > DRAFT_MAX_AGE_MS) {
+    if (!d?.posts?.length || d.version !== DRAFT_SCHEMA_VERSION || Date.now() - (d.savedAt || 0) > DRAFT_MAX_AGE_MS) {
       localStorage.removeItem(key);
       return null;
     }
@@ -573,7 +574,7 @@ const readDraft = (clientId?: string | null): { posts: any[]; strategy: string; 
 const saveDraft = (posts: any[], strategy: string, mode: string, platform: string, clientId?: string | null) => {
   try {
     const key = getDraftKey(clientId ?? null);
-    localStorage.setItem(key, JSON.stringify({ posts, strategy, savedAt: Date.now(), mode, platform }));
+    localStorage.setItem(key, JSON.stringify({ posts, strategy, savedAt: Date.now(), mode, platform, version: DRAFT_SCHEMA_VERSION }));
   } catch {}
 };
 const clearDraft = (clientId?: string | null) => {
