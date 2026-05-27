@@ -26,7 +26,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 // OnboardingWizard is modal-gated (only mounted when showOnboarding is true).
 const OnboardingWizard = lazy(() => import('./components/OnboardingWizard').then(m => ({ default: m.OnboardingWizard })));
-import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, repairSmartScheduleImagePromptForArchetype, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -537,7 +537,7 @@ const getQuickStarts = (businessType: string, businessName: string) => {
 
 // ── Autopilot draft persistence ─────────────────────────
 const DRAFT_KEY_PREFIX = 'sai_autopilot_draft';
-const DRAFT_SCHEMA_VERSION = 4;
+const DRAFT_SCHEMA_VERSION = 5;
 const DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
 // One-time migration: nuke ALL old drafts that were generated with corrupted profile data
 // This version flag ensures it only runs once per browser
@@ -2155,12 +2155,22 @@ const Dashboard: React.FC = () => {
     setAutoGenSet(allIdxs);
     setImgGenDone(0);
     for (let i = 0; i < posts.length; i++) {
-      const prompt = posts[i].imagePrompt || posts[i].topic;
+      const rawPrompt = posts[i].imagePrompt || posts[i].topic;
+      const prompt = guardSmartImagePrompt({ ...posts[i], imagePrompt: rawPrompt });
       setCurrentGenIdx(i);
       if (!prompt) {
         setAutoGenSet(prev => { const s = new Set(prev); s.delete(i); return s; });
         setImgGenDone(d => d + 1);
         continue;
+      }
+      if (prompt !== rawPrompt) {
+        posts[i] = { ...posts[i], imagePrompt: prompt };
+        setSmartPosts(prev => prev.map((p, idx) => idx === i ? { ...p, imagePrompt: prompt } : p));
+        setSmartPostImages(prev => {
+          const next = { ...prev };
+          delete next[i];
+          return next;
+        });
       }
       try {
         const img = await generateImage(prompt, posts[i].content);
@@ -2302,10 +2312,20 @@ const Dashboard: React.FC = () => {
         } else if (reelsKept > 0 && reelsKept < result.posts.filter((p: any) => p.postType === 'video').length) {
           toast(`${reelsKept} reel${reelsKept === 1 ? '' : 's'} included (matched your credit balance).`, 'info');
         }
-        setSmartPosts(cleanPosts);
+        const guardedPosts = cleanPosts.map(p => {
+          if ((p as any).postType === 'video') return p;
+          const rawPrompt = p.imagePrompt || p.topic || '';
+          const prompt = repairSmartScheduleImagePromptForArchetype({
+            content: p.content || '',
+            topic: p.topic || '',
+            imagePrompt: rawPrompt,
+          }, getSmartImageBusinessType());
+          return prompt && prompt !== rawPrompt ? { ...p, imagePrompt: prompt } : p;
+        });
+        setSmartPosts(guardedPosts);
         setSmartStrategy(result.strategy);
-        saveDraft(cleanPosts, result.strategy, autopilotMode, autopilotPlatform, activeClientId);
-        autoGenerateAllImages(cleanPosts);
+        saveDraft(guardedPosts, result.strategy, autopilotMode, autopilotPlatform, activeClientId);
+        autoGenerateAllImages(guardedPosts);
       }
     } catch (e: any) {
       toast(`Smart schedule failed: ${e?.message?.substring(0, 100) || 'Unknown error — check your API key and connection.'}`, 'error');
@@ -2331,11 +2351,20 @@ const Dashboard: React.FC = () => {
   };
 
   const handleRegenImage = async (idx: number) => {
-    const prompt = smartPosts[idx]?.imagePrompt || smartPosts[idx]?.topic;
+    const rawPrompt = smartPosts[idx]?.imagePrompt || smartPosts[idx]?.topic;
+    const prompt = smartPosts[idx] ? guardSmartImagePrompt({ ...smartPosts[idx], imagePrompt: rawPrompt }) : rawPrompt;
     if (!prompt) return;
+    if (prompt !== rawPrompt) {
+      setSmartPosts(prev => prev.map((p, i) => i === idx ? { ...p, imagePrompt: prompt } : p));
+      setSmartPostImages(prev => {
+        const next = { ...prev };
+        delete next[idx];
+        return next;
+      });
+    }
     setAutoGenSet(prev => new Set(prev).add(idx));
     try {
-      const img = await generateImage(prompt);
+      const img = await generateImage(prompt, smartPosts[idx]?.content);
       if (img) setSmartPostImages(prev => ({ ...prev, [idx]: img }));
       else toast('Image generation failed — try uploading instead.', 'warning');
     } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
@@ -2356,6 +2385,21 @@ const Dashboard: React.FC = () => {
       || CLIENT.defaultBusinessType
       || 'small business';
     return generateMarketingImage(prompt, bizType, caption);
+  };
+
+  const getSmartImageBusinessType = (): string => (
+    activeClientWorkspace?.businessType
+    || profile?.type
+    || CLIENT.defaultBusinessType
+    || 'small business'
+  );
+
+  const guardSmartImagePrompt = (post: Pick<SmartScheduledPost, 'content' | 'topic' | 'imagePrompt'>): string => {
+    return repairSmartScheduleImagePromptForArchetype({
+      content: post.content || '',
+      topic: post.topic || '',
+      imagePrompt: post.imagePrompt || post.topic || '',
+    }, getSmartImageBusinessType());
   };
 
   // ── Auto-generate images for calendar posts that have imagePrompt but no image ──
@@ -2498,19 +2542,22 @@ const Dashboard: React.FC = () => {
         smartPosts.map(async (sp, i) => {
           // Persist image as a public URL using the same smart prompt logic
           // (business-type aware, anti-generic, no people/faces)
-          let postImage = smartPostImages[i] || undefined;
-          const wantsImage = sp.imagePrompt && sp.imagePrompt !== 'N/A';
+          const rawImagePrompt = sp.imagePrompt || sp.topic || '';
+          const guardedImagePrompt = guardSmartImagePrompt({ ...sp, imagePrompt: rawImagePrompt });
+          const promptWasRepaired = Boolean(guardedImagePrompt && guardedImagePrompt !== rawImagePrompt);
+          let postImage = promptWasRepaired ? undefined : (smartPostImages[i] || undefined);
+          const wantsImage = guardedImagePrompt && guardedImagePrompt !== 'N/A';
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
-              const url = await generateMarketingImageUrl(sp.imagePrompt || sp.topic, profile.type, sp.content);
+              const url = await generateMarketingImageUrl(guardedImagePrompt || sp.topic, getSmartImageBusinessType(), sp.content);
               if (url) postImage = url;
               else if (wantsImage) imageGenFailures++;
             } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
           } else if (!postImage && wantsImage) {
             // No image — generate with full smart logic (returns public URL)
             try {
-              const url = await generateMarketingImageUrl(sp.imagePrompt, profile.type, sp.content);
+              const url = await generateMarketingImageUrl(guardedImagePrompt, getSmartImageBusinessType(), sp.content);
               if (url) postImage = url;
               else imageGenFailures++;
             } catch { imageGenFailures++; /* post goes without image */ }
@@ -2523,7 +2570,7 @@ const Dashboard: React.FC = () => {
             scheduledFor: sp.scheduledFor,
             status: 'Scheduled' as const,
             image: postImage,
-            imagePrompt: sp.imagePrompt || undefined,
+            imagePrompt: guardedImagePrompt || undefined,
             reasoning: sp.reasoning || undefined,
             pillar: sp.pillar || undefined,
             topic: sp.topic,

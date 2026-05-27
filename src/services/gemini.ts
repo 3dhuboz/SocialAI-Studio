@@ -250,6 +250,18 @@ export function repairSmartScheduleImagePromptForArchetype(
   return 'sliced smoked brisket and BBQ ribs on butcher paper beside festival ticket wristbands and a small competition trophy, bright natural daylight, no people';
 }
 
+export function guardMarketingImagePromptForBusinessContext(
+  prompt: string,
+  businessType: string = 'small business',
+  caption?: string | null,
+): string {
+  return repairSmartScheduleImagePromptForArchetype({
+    content: caption || '',
+    topic: '',
+    imagePrompt: prompt,
+  }, businessType) || prompt;
+}
+
 /** Generate business-specific image prompt examples.
  *
  *  Resolution order:
@@ -1547,15 +1559,17 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     } catch { return null; }
   };
 
+  const guardedPrompt = guardMarketingImagePromptForBusinessContext(prompt, businessType, caption);
+
   // Single source of truth for the safety pipeline (validation + abstract-UI
   // detection + people-strip + canonical negative + fail-closed). Returns
   // null when the post should publish text-only.
-  const safe = buildSafeImagePromptClient(prompt, businessType);
+  const safe = buildSafeImagePromptClient(guardedPrompt, businessType);
   if (!safe) return null;
 
   // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
   try {
-    console.log('fal.ai FLUX →', prompt.substring(0, 80));
+    console.log('fal.ai FLUX →', guardedPrompt.substring(0, 80));
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
@@ -1585,7 +1599,7 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   };
 
   try {
-    const shortPrompt = prompt.substring(0, 120).trim();
+    const shortPrompt = guardedPrompt.substring(0, 120).trim();
     const img = await pollinationsFetch(`${shortPrompt}, professional photography, sharp focus`);
     if (img) return img;
   } catch (e: any) { console.warn('Pollinations fallback:', e?.message); }
@@ -1600,7 +1614,8 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
 export const generateMarketingImageUrl = async (prompt: string, businessType: string = 'small business', caption?: string | null): Promise<string | null> => {
   // Same shared safety pipeline as generateMarketingImage above — returns
   // null when the post should publish text-only (fail-closed).
-  const safe = buildSafeImagePromptClient(prompt, businessType);
+  const guardedPrompt = guardMarketingImagePromptForBusinessContext(prompt, businessType, caption);
+  const safe = buildSafeImagePromptClient(guardedPrompt, businessType);
   if (!safe) return null;
 
   try {

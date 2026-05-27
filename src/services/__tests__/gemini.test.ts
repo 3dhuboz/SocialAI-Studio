@@ -23,6 +23,7 @@ import {
   neutralizePromptData,
   findForbiddenSubjectViolation,
   repairSmartScheduleImagePromptForArchetype,
+  guardMarketingImagePromptForBusinessContext,
   buildArchetypeVoiceBlock,
   setActiveArchetype,
   clearFactsCache,
@@ -191,6 +192,17 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
 
     expect(repaired).toMatch(/BBQ|ticket|brisket/i);
     expect(repaired).not.toMatch(/clipboard|phone|checklist/i);
+  });
+
+  it('guards stale office prompts at the final image-generation chokepoint', () => {
+    const guarded = guardMarketingImagePromptForBusinessContext(
+      'laptop and desk beside a notebook in soft daylight',
+      'BBQ festival and community event',
+      'The Australian Barbecue Alliance sanctioned BBQ competition is back. Compete for Gladstone best BBQ master.',
+    );
+
+    expect(guarded).toMatch(/BBQ|brisket|smoker|ribs|competition/i);
+    expect(guarded).not.toMatch(/laptop|desk|notebook/i);
   });
 });
 
