@@ -215,6 +215,41 @@ export function buildArchetypeVoiceBlock(businessType: string): {
   return { voiceCuesLine, bannedTropeLine };
 }
 
+const OFFICE_IMAGE_PROMPT_RE =
+  /\b(?:laptop|desk|notebook|notepad|sticky\s*notes?|planner|calendar|corkboard|clipboard|checklist|smartphone|phone|coffee|mug|office|workspace|paper\s+squares?|content\s+cards?)\b/i;
+
+export function repairSmartScheduleImagePromptForArchetype(
+  post: Pick<SmartScheduledPost, 'content' | 'topic' | 'imagePrompt'>,
+  businessType: string,
+): string {
+  const original = (post.imagePrompt || '').trim();
+  const archetype = resolveGenerationArchetype(businessType);
+
+  const text = `${post.topic || ''} ${post.content || ''} ${original}`.toLowerCase();
+  const isBbqContext = archetype?.slug === 'bbq-smokehouse'
+    || /\b(?:bbq|barbecue|barbeque|brisket|smoker|ribs|pitmaster|smoked)\b/i.test(`${businessType} ${text}`);
+  if (!isBbqContext) return original;
+
+  const hasRequiredSubject = ARCHETYPE_POSITIVE_SUBJECTS['bbq-smokehouse']?.test(original) ?? true;
+  const isOfficeScene = OFFICE_IMAGE_PROMPT_RE.test(original);
+  if (hasRequiredSubject && !isOfficeScene) return original;
+
+  if (/\b(ticket|vip|general admission|pre-sale|presale|entry|admission)\b/i.test(text)) {
+    return 'BBQ festival ticket wristbands and printed entry passes beside a small stack of smoked brisket trays, Tannum Seagulls venue signage in soft background, bright natural daylight, no people';
+  }
+  if (/\b(demo|demonstration|brisket|12\+?\s*hours|smoke|smoker|pitmaster|competition|judge|sanctioned)\b/i.test(text)) {
+    return 'offset BBQ smoker open with slow-smoked brisket and ribs on butcher paper, thin blue smoke, competition trophy on a nearby table, warm afternoon light, no people';
+  }
+  if (/\b(vendor|lineup|stall|market|food truck|style|palate)\b/i.test(text)) {
+    return 'row of BBQ food trucks and market stall tents at an outdoor festival ground, smoker barrels and chalkboard menu signs, golden afternoon light, no people';
+  }
+  if (/\b(father|family|kids|primary school|high school|community|mental health|fundraiser)\b/i.test(text)) {
+    return 'outdoor BBQ festival entrance signage with ticket booth, smoker trailer and picnic tables at Tannum Seagulls, bright Queensland daylight, no people';
+  }
+
+  return 'sliced smoked brisket and BBQ ribs on butcher paper beside festival ticket wristbands and a small competition trophy, bright natural daylight, no people';
+}
+
 /** Generate business-specific image prompt examples.
  *
  *  Resolution order:
@@ -580,8 +615,9 @@ import {
   SAFE_FALLBACK_SCENES,
   ARCHETYPE_IMAGE_GUARDRAILS,
   CAPTION_ARCHETYPE_KEYWORDS,
+  ARCHETYPE_POSITIVE_SUBJECTS,
 } from '../../shared/archetype-scenes';
-export { SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS };
+export { SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS, ARCHETYPE_POSITIVE_SUBJECTS };
 
 /**
  * Regional voice block — injected into Smart Schedule and single-post prompts
@@ -2805,6 +2841,16 @@ Respond with ONLY a valid JSON object — no markdown, no code fences:
         if (cleaned !== p.imagePrompt) {
           console.warn(`[gemini] bulk imagePrompt had people-words, scrubbed: "${p.imagePrompt.slice(0, 80)}" → "${cleaned.slice(0, 80)}"`);
           p.imagePrompt = cleaned;
+        }
+      }
+      if (typeof p.imagePrompt === 'string') {
+        const repaired = repairSmartScheduleImagePromptForArchetype(
+          { content: p.content || '', topic: p.topic || '', imagePrompt: p.imagePrompt },
+          effectiveBusinessType,
+        );
+        if (repaired !== p.imagePrompt) {
+          console.warn(`[gemini] bulk imagePrompt failed archetype subject guard, repaired: "${p.imagePrompt.slice(0, 80)}" -> "${repaired.slice(0, 80)}"`);
+          p.imagePrompt = repaired;
         }
       }
       const forbiddenViolation = findForbiddenSubjectViolation(p, safeProfile?.forbiddenSubjects);

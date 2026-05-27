@@ -22,6 +22,7 @@ import {
   scrubBannedPhrases,
   neutralizePromptData,
   findForbiddenSubjectViolation,
+  repairSmartScheduleImagePromptForArchetype,
   buildArchetypeVoiceBlock,
   setActiveArchetype,
   clearFactsCache,
@@ -166,6 +167,30 @@ describe('buildSafeImagePromptClient', () => {
   it('strips people-mentions from positive prompts', () => {
     const r = buildSafeImagePromptClient('chef holding pizza with both hands', 'bakery');
     expect(r!.prompt).not.toMatch(/\bchef\b|\bholding\b|\bhands\b/i);
+  });
+});
+
+describe('repairSmartScheduleImagePromptForArchetype', () => {
+  it('rewrites office-scene BBQ festival prompts before thumbnail generation', () => {
+    const repaired = repairSmartScheduleImagePromptForArchetype({
+      topic: 'Programme Reveal',
+      content: 'Ever wondered how the pros smoke a brisket for 12+ hours? Grab your ticket at gladstonebbqfest.au.',
+      imagePrompt: 'desk calendar with sticky notes, coffee mug and laptop in morning light',
+    }, 'BBQ festival and community event');
+
+    expect(repaired).toMatch(/BBQ|brisket|smoker|ribs/i);
+    expect(repaired).not.toMatch(/desk|sticky|laptop|calendar|coffee/i);
+  });
+
+  it('rewrites BBQ ticket prompts that lack a physical BBQ subject', () => {
+    const repaired = repairSmartScheduleImagePromptForArchetype({
+      topic: 'Save the Date',
+      content: 'VIP $40 and general admission $20 for Gladstone BBQ Festival.',
+      imagePrompt: 'printed checklist on clipboard beside phone',
+    }, 'BBQ festival and community event');
+
+    expect(repaired).toMatch(/BBQ|ticket|brisket/i);
+    expect(repaired).not.toMatch(/clipboard|phone|checklist/i);
   });
 });
 
