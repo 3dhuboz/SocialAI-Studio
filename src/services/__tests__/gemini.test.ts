@@ -24,6 +24,7 @@ import {
   findForbiddenSubjectViolation,
   repairSmartScheduleImagePromptForArchetype,
   guardMarketingImagePromptForBusinessContext,
+  generateMarketingImageUrl,
   buildArchetypeVoiceBlock,
   setActiveArchetype,
   clearFactsCache,
@@ -203,6 +204,34 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
 
     expect(guarded).toMatch(/BBQ|brisket|smoker|ribs|competition/i);
     expect(guarded).not.toMatch(/laptop|desk|notebook/i);
+  });
+
+  it('sends clientId to the worker image chokepoint so archetype guardrails resolve the active workspace', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: any = null;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body || '{}'));
+      return {
+        ok: true,
+        json: async () => ({ imageUrl: 'https://cdn.example.test/bbq.jpg' }),
+      } as Response;
+    }) as typeof fetch;
+
+    try {
+      const url = await generateMarketingImageUrl(
+        'offset BBQ smoker open with slow-smoked brisket and ribs on butcher paper',
+        'BBQ festival and community event',
+        'Gladstone BBQ Festival tickets are live for Saturday 5 September.',
+        'gladstonebbq-001',
+      );
+
+      expect(url).toBe('https://cdn.example.test/bbq.jpg');
+      expect(requestBody.clientId).toBe('gladstonebbq-001');
+      expect(requestBody.caption).toMatch(/Gladstone BBQ Festival/i);
+      expect(requestBody.prompt).toMatch(/brisket|smoker|ribs/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
