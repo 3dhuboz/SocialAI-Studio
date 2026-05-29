@@ -76,15 +76,22 @@ function shouldFallbackToLegacyGraphFromPostproxy(raw: string, platform: string)
 async function pollPostproxyPendingPosts(env: Env): Promise<number> {
   if (!env.POSTPROXY_API_KEY) return 0;
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, platform, postproxy_post_id
+    `SELECT id, user_id, client_id, platform, postproxy_post_id, postproxy_permalink, qa_feedback_note, status
      FROM posts
      WHERE status IN ('Publishing', 'Deleting')
        AND postproxy_status = 'pending'
        AND postproxy_post_id IS NOT NULL
      ORDER BY postproxy_sent_at ASC
      LIMIT 10`
-  ).all<{ id: string; user_id: string | null; client_id: string | null; platform: string | null; postproxy_post_id: string }>();
+  ).all<{
+    id: string; user_id: string | null; client_id: string | null; platform: string | null;
+    postproxy_post_id: string; postproxy_permalink: string | null; qa_feedback_note: string | null; status: string;
+  }>();
   const mappingMap = await loadPostproxyMappingForPosts(
+    env,
+    (rows.results || []) as { user_id?: string | null; client_id?: string | null }[],
+  );
+  const tokensMap = await loadSocialTokensForPosts(
     env,
     (rows.results || []) as { user_id?: string | null; client_id?: string | null }[],
   );
@@ -123,6 +130,59 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
            WHERE id = ?`
         ).bind(new Date().toISOString(), 'Deleted from Facebook via Postproxy after image QA failure.', row.id).run();
         processed++;
+      } else if (row.status === 'Deleting' && state === 'pending_deletion') {
+        const requestedAt = parsePostproxyDeleteRequestedAt(row.qa_feedback_note);
+        const hasWaited = requestedAt ? Date.now() - requestedAt.getTime() > 30 * 60 * 1000 : true;
+        const fbObjectId = extractFacebookObjectId(row.postproxy_permalink);
+        const tokens = lookupSocialTokens(tokensMap, row);
+        const directDeleteAlreadyFailed = String(row.qa_feedback_note || '').includes('DIRECT_DELETE_FAILED:');
+        if (hasWaited && !directDeleteAlreadyFailed && fbObjectId && tokens?.facebookPageAccessToken) {
+          const fbRes = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(fbObjectId)}?access_token=${encodeURIComponent(tokens.facebookPageAccessToken)}`, {
+            method: 'DELETE',
+          });
+          const fbText = await fbRes.text();
+          let ok = fbRes.ok;
+          try {
+            const fbJson = fbText ? JSON.parse(fbText) : {};
+            ok = ok && (fbJson.success === true || fbJson.id || Object.keys(fbJson).length === 0);
+            if (fbJson.error) ok = false;
+          } catch {
+            // Keep HTTP ok as the deciding signal for non-JSON responses.
+          }
+          if (ok) {
+            await env.DB.prepare(
+              `UPDATE posts
+               SET status = 'Deleted',
+                   postproxy_status = 'deleted',
+                   postproxy_finished_at = ?,
+                   reasoning = ?,
+                   claim_id = NULL,
+                   claim_at = NULL
+               WHERE id = ?`
+            ).bind(new Date().toISOString(), 'Deleted directly via Facebook Graph after Postproxy deletion remained pending.', row.id).run();
+            processed++;
+          } else {
+            await env.DB.prepare(
+              `UPDATE posts
+               SET reasoning = ?,
+                   qa_feedback_note = ?
+               WHERE id = ?`
+            ).bind(
+              `Postproxy pending_deletion; direct Facebook delete failed (${new Date().toISOString()}): ${fbText.slice(0, 320)}`,
+              `${row.qa_feedback_note || 'DELETE_PLATFORM_REQUESTED:unknown'}|DIRECT_DELETE_FAILED:${new Date().toISOString()}`,
+              row.id,
+            ).run();
+          }
+        } else {
+          await env.DB.prepare(
+            `UPDATE posts
+             SET reasoning = ?
+             WHERE id = ?`
+          ).bind(
+            `Postproxy pending (state="pending_deletion", checked=${new Date().toISOString()}, postproxy_id=${row.postproxy_post_id})`,
+            row.id,
+          ).run();
+        }
       } else if (['failed', 'error', 'rejected'].includes(state)) {
         const reason = platform?.error || `Postproxy publish failed with status "${state || 'unknown'}"`;
         await env.DB.prepare(
@@ -159,6 +219,21 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
     }
   }
   return processed;
+}
+
+function parsePostproxyDeleteRequestedAt(note: string | null | undefined): Date | null {
+  const match = String(note || '').match(/DELETE_PLATFORM_REQUESTED:([0-9T:.-]+Z)/);
+  if (!match) return null;
+  const date = new Date(match[1]);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function extractFacebookObjectId(permalink: string | null | undefined): string | null {
+  if (!permalink) return null;
+  const match = permalink.match(/facebook\.com\/([^/?#]+)/i);
+  if (!match) return null;
+  const id = decodeURIComponent(match[1]).trim();
+  return /^\d+_\d+$/.test(id) ? id : null;
 }
 
 async function processPostproxyDeleteRequests(env: Env): Promise<number> {
@@ -221,6 +296,8 @@ async function processPostproxyDeleteRequests(env: Env): Promise<number> {
 export const __test = {
   shouldFallbackToLegacyGraphFromPostproxy,
   normalizePostproxyStatus,
+  extractFacebookObjectId,
+  parsePostproxyDeleteRequestedAt,
 };
 
 function normalizePostproxyStatus(raw: any): {

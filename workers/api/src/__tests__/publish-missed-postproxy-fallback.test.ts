@@ -52,3 +52,19 @@ describe('publish-missed Postproxy status normalization', () => {
     expect(result.platform?.error).toBe('Meta rejected the post');
   });
 });
+
+describe('publish-missed Postproxy delete fallback helpers', () => {
+  it('extracts Facebook object ids from permalinks', () => {
+    expect(__test.extractFacebookObjectId('https://facebook.com/422542270945217_122216535362549733'))
+      .toBe('422542270945217_122216535362549733');
+    expect(__test.extractFacebookObjectId('https://facebook.com/not-a-post')).toBeNull();
+  });
+
+  it('parses delete request timestamps', () => {
+    expect(__test.parsePostproxyDeleteRequestedAt('DELETE_PLATFORM_REQUESTED:2026-05-29T01:00:10.696Z')?.toISOString())
+      .toBe('2026-05-29T01:00:10.696Z');
+    expect(__test.parsePostproxyDeleteRequestedAt('DELETE_PLATFORM_REQUESTED:2026-05-29T01:00:10.696Z|DIRECT_DELETE_FAILED:2026-05-29T23:50:37.925Z')?.toISOString())
+      .toBe('2026-05-29T01:00:10.696Z');
+    expect(__test.parsePostproxyDeleteRequestedAt('DELETE_PLATFORM_FAILED:2026-05-29T01:00:10.696Z')).toBeNull();
+  });
+});
