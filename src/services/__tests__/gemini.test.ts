@@ -195,6 +195,28 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
     expect(repaired).not.toMatch(/clipboard|phone|checklist/i);
   });
 
+  it('rewrites BBQ signage prompts because image models misspell rendered text', () => {
+    const repaired = repairSmartScheduleImagePromptForArchetype({
+      topic: 'Website Launch',
+      content: 'The Gladstone BBQ Festival website is live and tickets are ready.',
+      imagePrompt: "Festival entrance gate with bold 'Gladstone BBQ Festival 2026' banner and Tannum Seagulls signage",
+    }, 'BBQ festival and community event');
+
+    expect(repaired).toMatch(/brisket|ribs|wristbands/i);
+    expect(repaired).not.toMatch(/banner|signage|Gladstone BBQ Festival/i);
+  });
+
+  it('guards final BBQ marketing prompts against readable text requests', () => {
+    const guarded = guardMarketingImagePromptForBusinessContext(
+      'ticket price poster showing VIP and general admission',
+      'BBQ festival and community event',
+      'VIP $40 and general admission $20 for Gladstone BBQ Festival.',
+    );
+
+    expect(guarded).toMatch(/brisket|wristbands/i);
+    expect(guarded).not.toMatch(/poster|VIP|general admission/i);
+  });
+
   it('guards stale office prompts at the final image-generation chokepoint', () => {
     const guarded = guardMarketingImagePromptForBusinessContext(
       'laptop and desk beside a notebook in soft daylight',

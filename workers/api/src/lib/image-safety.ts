@@ -20,6 +20,7 @@ import {
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
   isAbstractUIPrompt,
+  isTextRenderingPrompt,
   isGenericBusinessType,
   needsSafeFallback,
   rewriteAbstractUIAsPhotography,
@@ -31,7 +32,7 @@ import {
   hashStringToSceneSeed,
 } from '../../../../shared/archetype-scenes';
 
-export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt, isGenericBusinessType, rewriteAbstractUIAsPhotography };
+export { FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, isAbstractUIPrompt, isGenericBusinessType, isTextRenderingPrompt, rewriteAbstractUIAsPhotography };
 // Re-exported so existing consumers (cron, image-gen, tests) keep their
 // import paths. Source of truth is shared/archetype-scenes.ts — see header
 // comment there for why these were lifted out of this file.
@@ -193,6 +194,8 @@ export function buildSafeImagePrompt(
     // of throwing it away.
     const rewritten = rewriteAbstractUIAsPhotography(prompt, caption ?? null);
     safeBase = rewritten ?? SAFE_FALLBACK_SCENES[Math.floor(Math.random() * SAFE_FALLBACK_SCENES.length)];
+  } else if (isTextRenderingPrompt(prompt)) {
+    safeBase = buildTextlessFallbackScene(prompt, caption);
   } else if (needsSafeFallback(prompt)) {
     safeBase = SAFE_FALLBACK_SCENES[Math.floor(Math.random() * SAFE_FALLBACK_SCENES.length)];
   } else {
@@ -210,6 +213,23 @@ export function buildSafeImagePrompt(
     prompt: `${cleaned || safeBase}, ${FLUX_STYLE_SUFFIX}`,
     negativePrompt: FLUX_NEGATIVE_PROMPT,
   };
+}
+
+function buildTextlessFallbackScene(prompt: string, caption?: string | null): string {
+  const text = `${prompt || ''} ${caption || ''}`.toLowerCase();
+  if (/\b(bbq|barbecue|barbeque|brisket|smoker|ribs|pitmaster|smoked|festival|tannum|seagulls)\b/i.test(text)) {
+    if (/\b(ticket|vip|general admission|pre-sale|presale|entry|admission|price|pricing)\b/i.test(text)) {
+      return 'plain unprinted festival wristbands beside smoked brisket trays on butcher paper, outdoor table, bright Queensland daylight';
+    }
+    if (/\b(demo|demonstration|competition|judge|sanctioned|trophy|pitmaster)\b/i.test(text)) {
+      return 'open offset smoker with sliced brisket and ribs on butcher paper beside a plain trophy silhouette, warm daylight';
+    }
+    if (/\b(vendor|lineup|stall|market|food truck|style|palate)\b/i.test(text)) {
+      return 'row of BBQ smoker trailers and market stall tents at an outdoor festival ground, smoke drifting in bright daylight';
+    }
+    return 'sliced smoked brisket and BBQ ribs on butcher paper beside plain unprinted festival wristbands, bright natural daylight';
+  }
+  return 'clean real-world product scene with plain unprinted props on a table, bright natural daylight';
 }
 
 // ── Caption → photographable centerpiece extraction ──────────────────────

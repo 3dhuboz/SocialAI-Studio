@@ -232,19 +232,20 @@ export function repairSmartScheduleImagePromptForArchetype(
 
   const hasRequiredSubject = ARCHETYPE_POSITIVE_SUBJECTS['bbq-smokehouse']?.test(original) ?? true;
   const isOfficeScene = OFFICE_IMAGE_PROMPT_RE.test(original);
-  if (hasRequiredSubject && !isOfficeScene) return original;
+  const isUnsafeTextScene = isTextRenderingPrompt(original);
+  if (hasRequiredSubject && !isOfficeScene && !isUnsafeTextScene) return original;
 
   if (/\b(ticket|vip|general admission|pre-sale|presale|entry|admission)\b/i.test(text)) {
-    return 'BBQ festival ticket wristbands and printed entry passes beside a small stack of smoked brisket trays, Tannum Seagulls venue signage in soft background, bright natural daylight, no people';
+    return 'plain unprinted festival wristbands beside smoked brisket trays on butcher paper, outdoor table, bright Queensland daylight, no people';
   }
   if (/\b(demo|demonstration|brisket|12\+?\s*hours|smoke|smoker|pitmaster|competition|judge|sanctioned)\b/i.test(text)) {
     return 'offset BBQ smoker open with slow-smoked brisket and ribs on butcher paper, thin blue smoke, competition trophy on a nearby table, warm afternoon light, no people';
   }
   if (/\b(vendor|lineup|stall|market|food truck|style|palate)\b/i.test(text)) {
-    return 'row of BBQ food trucks and market stall tents at an outdoor festival ground, smoker barrels and chalkboard menu signs, golden afternoon light, no people';
+    return 'row of BBQ smoker trailers and market stall tents at an outdoor festival ground, smoke drifting in bright daylight, no people';
   }
   if (/\b(father|family|kids|primary school|high school|community|mental health|fundraiser)\b/i.test(text)) {
-    return 'outdoor BBQ festival entrance signage with ticket booth, smoker trailer and picnic tables at Tannum Seagulls, bright Queensland daylight, no people';
+    return 'sliced smoked brisket and BBQ ribs on butcher paper beside plain unprinted festival wristbands, bright Queensland daylight, no people';
   }
 
   return 'sliced smoked brisket and BBQ ribs on butcher paper beside festival ticket wristbands and a small competition trophy, bright natural daylight, no people';
@@ -610,10 +611,11 @@ import {
   FLUX_NEGATIVE_PROMPT,
   FLUX_STYLE_SUFFIX,
   PEOPLE_REGEX,
+  isTextRenderingPrompt,
   needsSafeFallback,
   rewriteAbstractUIAsPhotography,
 } from '../../shared/flux-prompts';
-export { isAbstractUIPrompt, isGenericBusinessType, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX, rewriteAbstractUIAsPhotography };
+export { isAbstractUIPrompt, isGenericBusinessType, isTextRenderingPrompt, FLUX_NEGATIVE_PROMPT, FLUX_STYLE_SUFFIX, PEOPLE_REGEX, rewriteAbstractUIAsPhotography };
 
 // SAFE_FALLBACK_SCENES, ARCHETYPE_IMAGE_GUARDRAILS, CAPTION_ARCHETYPE_KEYWORDS
 // live in shared/archetype-scenes.ts so the frontend image-prompt swap path
@@ -2689,7 +2691,8 @@ ABSOLUTE RULES:
 5. Every caption must use a strong hook in the FIRST LINE (question, bold statement, or shocking stat). NEVER start with "Exciting news!" or generic filler.
 6. Hashtags: Facebook: ${HASHTAG_LIMITS.facebook.optimal}, Instagram: ${HASHTAG_LIMITS.instagram.optimal}, mix mega+large+medium+niche+local tiers. NO generic or repeated sets.
 7. imagePrompt: HARD RULE — NO PEOPLE, HANDS, OR FACES IN ANY SCENE. Every imagePrompt depicts physical OBJECTS, surfaces, venues, tools, or landscapes only. NEVER write "families enjoying", "customers waiting", "happy diners", "queue of people", "chef cooking", "team meeting", "owner standing", "couple dining", "smiling staff", "hands kneading", "person holding". The downstream post-prompt scrubber strips every people-word and what remains renders garbage — substitute the OBJECT or PLACE that represents the post topic without anyone in it. Concrete rewrites: "families enjoying brisket" → "sliced brisket fanned on butcher paper, golden hour light"; "queue of customers waiting" → "food truck exterior at dusk with empty queue area"; "chef cooking" → "smoker opened showing meat in atmospheric smoke"; "team meeting" → "open notebook with handwritten brainstorm clusters beside two coffee mugs"; "customer holding the product" → "the product on a clean linen surface, soft daylight".
-7a. CAMPAIGN VISUAL SUBJECT RULE — when an active campaign mentions a website, URL, launch page, online ticket sales, bookings, or "push ticket sales", treat that website as the SALES CHANNEL, not the image subject. For non-tech businesses, NEVER depict a laptop, website screen, browser, desk, office planner, corkboard, notebook, content calendar, or generic workspace for those campaign posts. Depict the real-world thing being sold or promoted instead: the venue, entrance gate, ticket wristbands, festival signage, BBQ smoker, brisket/ribs on butcher paper, food truck row, trophies, market stall setup, or other on-archetype physical scene.
+7a. CAMPAIGN VISUAL SUBJECT RULE — when an active campaign mentions a website, URL, launch page, online ticket sales, bookings, or "push ticket sales", treat that website as the SALES CHANNEL, not the image subject. For non-tech businesses, NEVER depict a laptop, website screen, browser, desk, office planner, corkboard, notebook, content calendar, or generic workspace for those campaign posts. Depict the real-world thing being sold or promoted instead: the venue, entrance gate, plain unprinted ticket wristbands, BBQ smoker, brisket/ribs on butcher paper, food truck row, trophies, market stall setup, or other on-archetype physical scene.
+7aa. IMAGE TEXT KILL-SWITCH — NEVER ask the image model to render readable text. Do not request banners, signs, signage, posters, tickets with writing, menus, labels, logos, headlines, brand names, event names, website text, prices, or any words/letters in the image. Image models misspell text and that is a hard customer-facing failure. Use plain unprinted props instead: "festival banner saying Gladstone BBQ Festival" becomes "sliced brisket and ribs beside plain unprinted wristbands"; "ticket price poster" becomes "plain unprinted wristbands beside smoked brisket trays".
 
    Then read this post's topic and content and write a people-free scene that VISUALLY REPRESENTS what this specific post is communicating — match the post's TOPIC and EMOTIONAL MESSAGE, not just the business category. Apply this topic-to-scene mapping (every option below is people-free; do NOT add people back in):
    • Pain Points / Problem / "wasted time" posts → cluttered chaotic surface (people-free): overflowing notebook, desk covered in sticky notes, alarm clock on a crammed schedule planner
@@ -2752,7 +2755,8 @@ RULES:
 5. Each caption: strong hook first line, body matching the caption style, specific CTA last line. NEVER start with "Exciting news!" or generic corporate filler.
 6. Hashtags: Facebook posts get EXACTLY ${HASHTAG_LIMITS.facebook.optimal} hashtags (max ${HASHTAG_LIMITS.facebook.max}). Instagram posts get EXACTLY ${HASHTAG_LIMITS.instagram.optimal} hashtags (max ${HASHTAG_LIMITS.instagram.max}). DO NOT exceed these limits. Vary per post.
 7. imagePrompt: HARD RULE — NO PEOPLE, HANDS, OR FACES IN ANY SCENE. Every imagePrompt depicts physical OBJECTS, surfaces, venues, tools, or landscapes only. NEVER write "families enjoying", "customers waiting", "happy diners", "queue of people", "chef cooking", "team meeting", "owner standing", "couple dining", "smiling staff", "hands kneading", "person holding". The downstream post-prompt scrubber strips every people-word and what remains renders garbage — substitute the OBJECT or PLACE that represents the post topic without anyone in it. Concrete rewrites: "families enjoying brisket" → "sliced brisket fanned on butcher paper, golden hour light"; "queue of customers waiting" → "food truck exterior at dusk with empty queue area"; "chef cooking" → "smoker opened showing meat in atmospheric smoke"; "team meeting" → "open notebook with handwritten brainstorm clusters beside two coffee mugs"; "customer holding the product" → "the product on a clean linen surface, soft daylight".
-7a. CAMPAIGN VISUAL SUBJECT RULE — when an active campaign mentions a website, URL, launch page, online ticket sales, bookings, or "push ticket sales", treat that website as the SALES CHANNEL, not the image subject. For non-tech businesses, NEVER depict a laptop, website screen, browser, desk, office planner, corkboard, notebook, content calendar, or generic workspace for those campaign posts. Depict the real-world thing being sold or promoted instead: the venue, entrance gate, ticket wristbands, festival signage, BBQ smoker, brisket/ribs on butcher paper, food truck row, trophies, market stall setup, or other on-archetype physical scene.
+7a. CAMPAIGN VISUAL SUBJECT RULE — when an active campaign mentions a website, URL, launch page, online ticket sales, bookings, or "push ticket sales", treat that website as the SALES CHANNEL, not the image subject. For non-tech businesses, NEVER depict a laptop, website screen, browser, desk, office planner, corkboard, notebook, content calendar, or generic workspace for those campaign posts. Depict the real-world thing being sold or promoted instead: the venue, entrance gate, plain unprinted ticket wristbands, BBQ smoker, brisket/ribs on butcher paper, food truck row, trophies, market stall setup, or other on-archetype physical scene.
+7aa. IMAGE TEXT KILL-SWITCH — NEVER ask the image model to render readable text. Do not request banners, signs, signage, posters, tickets with writing, menus, labels, logos, headlines, brand names, event names, website text, prices, or any words/letters in the image. Image models misspell text and that is a hard customer-facing failure. Use plain unprinted props instead: "festival banner saying Gladstone BBQ Festival" becomes "sliced brisket and ribs beside plain unprinted wristbands"; "ticket price poster" becomes "plain unprinted wristbands beside smoked brisket trays".
 
    Then read this post's topic and content and write a people-free scene that VISUALLY REPRESENTS what this specific post is communicating — match the post's TOPIC and EMOTIONAL MESSAGE, not just the business category. Apply this topic-to-scene mapping (every option below is people-free; do NOT add people back in):
    • Pain Points / Problem / "wasted time" posts → cluttered chaotic surface (people-free): overflowing notebook, desk covered in sticky notes, alarm clock on a crammed schedule planner

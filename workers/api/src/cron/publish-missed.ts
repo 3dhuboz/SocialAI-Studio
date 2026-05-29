@@ -32,7 +32,11 @@ import {
   buildPublishCaption,
   loadAiDisclosurePref,
 } from './_shared';
-import { createPost as postproxyCreatePost, getPost as getPostproxyPost } from '../lib/postproxy';
+import {
+  createPost as postproxyCreatePost,
+  deletePostOnPlatform as postproxyDeletePostOnPlatform,
+  getPost as getPostproxyPost,
+} from '../lib/postproxy';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
@@ -74,7 +78,7 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
   const rows = await env.DB.prepare(
     `SELECT id, user_id, client_id, platform, postproxy_post_id
      FROM posts
-     WHERE status = 'Publishing'
+     WHERE status IN ('Publishing', 'Deleting')
        AND postproxy_status = 'pending'
        AND postproxy_post_id IS NOT NULL
      ORDER BY postproxy_sent_at ASC
@@ -106,6 +110,18 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
           'Published via Postproxy status poll.',
           row.id,
         ).run();
+        processed++;
+      } else if (['deleted'].includes(state)) {
+        await env.DB.prepare(
+          `UPDATE posts
+           SET status = 'Deleted',
+               postproxy_status = 'deleted',
+               postproxy_finished_at = ?,
+               reasoning = ?,
+               claim_id = NULL,
+               claim_at = NULL
+           WHERE id = ?`
+        ).bind(new Date().toISOString(), 'Deleted from Facebook via Postproxy after image QA failure.', row.id).run();
         processed++;
       } else if (['failed', 'error', 'rejected'].includes(state)) {
         const reason = platform?.error || `Postproxy publish failed with status "${state || 'unknown'}"`;
@@ -140,6 +156,63 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
         row.id,
       ).run();
       console.warn(`[CRON] Postproxy status poll failed for ${row.id}/${row.postproxy_post_id}: ${e?.message || e}`);
+    }
+  }
+  return processed;
+}
+
+async function processPostproxyDeleteRequests(env: Env): Promise<number> {
+  if (!env.POSTPROXY_API_KEY) return 0;
+  const rows = await env.DB.prepare(
+    `SELECT id, user_id, client_id, platform, postproxy_post_id
+     FROM posts
+     WHERE status = 'Posted'
+       AND postproxy_post_id IS NOT NULL
+       AND qa_feedback_target = 'image'
+       AND qa_feedback_reason = 'bad_image'
+       AND qa_feedback_note LIKE 'DELETE_PLATFORM:%'
+     ORDER BY postproxy_finished_at DESC
+     LIMIT 5`
+  ).all<{ id: string; user_id: string | null; client_id: string | null; platform: string | null; postproxy_post_id: string }>();
+  const mappingMap = await loadPostproxyMappingForPosts(
+    env,
+    (rows.results || []) as { user_id?: string | null; client_id?: string | null }[],
+  );
+  let processed = 0;
+  for (const row of rows.results || []) {
+    try {
+      const postPlatform = normalizePostPlatform(row.platform);
+      const mapping = lookupPostproxyMapping(mappingMap, row, postPlatform);
+      await postproxyDeletePostOnPlatform(env, row.postproxy_post_id, {
+        groupId: mapping?.postproxy_group_id,
+        network: postPlatform,
+        profileId: mapping?.postproxy_profile_id,
+      });
+      await env.DB.prepare(
+        `UPDATE posts
+         SET status = 'Deleting',
+             postproxy_status = 'pending',
+             reasoning = ?,
+             qa_feedback_note = ?
+         WHERE id = ?`
+      ).bind(
+        'Deletion requested from Facebook via Postproxy after image QA failure.',
+        `DELETE_PLATFORM_REQUESTED:${new Date().toISOString()}`,
+        row.id,
+      ).run();
+      processed++;
+    } catch (e: any) {
+      await env.DB.prepare(
+        `UPDATE posts
+         SET reasoning = ?,
+             qa_feedback_note = ?
+         WHERE id = ?`
+      ).bind(
+        `Postproxy delete request failed (${new Date().toISOString()}): ${String(e?.message || e).slice(0, 320)}`,
+        `DELETE_PLATFORM_FAILED:${new Date().toISOString()}`,
+        row.id,
+      ).run();
+      console.warn(`[CRON] Postproxy delete request failed for ${row.id}/${row.postproxy_post_id}: ${e?.message || e}`);
     }
   }
   return processed;
@@ -250,6 +323,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
   const postproxyPollProcessed = await pollPostproxyPendingPosts(env);
+  const postproxyDeleteProcessed = await processPostproxyDeleteRequests(env);
 
   // ── Early bail-out ──────────────────────────────────────────────────────
   // Audit P0 (2026-05): the publish cron used to do an unconditional zombie
@@ -264,7 +338,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
        AND ${NON_SHOP_OWNER_FILTER}`
   ).bind(nowAEST).first<{ c: number }>();
   if (!dueCheck || dueCheck.c === 0) {
-    return { posts_processed: postproxyPollProcessed };
+    return { posts_processed: postproxyPollProcessed + postproxyDeleteProcessed };
   }
 
   // Clean up zombie Publishing posts — only if they've been stuck for >10 min
@@ -397,7 +471,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
      LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
-  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: postproxyPollProcessed }; }
+  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: postproxyPollProcessed + postproxyDeleteProcessed }; }
   console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
   // Preload social_tokens for every workspace in this batch in two queries
@@ -938,5 +1012,5 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       }
     }
   }
-  return { posts_processed: posts.length + postproxyPollProcessed };
+  return { posts_processed: posts.length + postproxyPollProcessed + postproxyDeleteProcessed };
 }

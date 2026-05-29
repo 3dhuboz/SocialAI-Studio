@@ -20,7 +20,7 @@
 // the negated subject INTO the image because the noun becomes a strong
 // contextual cue. fal.ai/flux/dev accepts top-level `negative_prompt` and
 // respects it properly when guidance_scale ≥ 5.)
-export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene, blurry, out of focus, motion blur, soft focus, low resolution, pixelated, grainy';
+export const FLUX_NEGATIVE_PROMPT = 'people, faces, hands, fingers, person, portrait, smiling, posing, staff, customer, chef, owner, team, hand-held, holding, text, readable text, letters, words, misspelled words, typography, signage, sign, banner, poster, label, menu board, ticket text, watermark, signature, UI, app screen, dashboard, chart, graph, table, infographic, diagram, pricing tier, comparison grid, landing page, marketing graphic, logo, illustration, drawing, cartoon, 3D render, studio lighting, glossy plastic, excessive steam, dark, underexposed, low-light, dim, shadowed, gloomy, harsh shadows, blown-out highlights, monotone scene, blurry, out of focus, motion blur, soft focus, low resolution, pixelated, grainy';
 
 // Positive-prompt style suffix — appended to every safe-built prompt. The
 // "candid iPhone" token is a worker tripwire (proxies.ts logs a warn when
@@ -91,6 +91,20 @@ export function needsSafeFallback(prompt: string): boolean {
   if (/\b(produce|items|products|goods|things|stuff|showcase|journey|tips|stories)\b/i.test(prompt) && prompt.split(' ').length < 8) return true;
   // Abstract UI / dashboard / infographic prompts
   if (isAbstractUIPrompt(prompt)) return true;
+  if (isTextRenderingPrompt(prompt)) return true;
+  return false;
+}
+
+export function isTextRenderingPrompt(prompt: string): boolean {
+  if (!prompt) return false;
+  if (/['"`][^'"`]{2,80}['"`]/.test(prompt)) return true;
+  if (/\b(?:readable|visible|bold|large|printed|handwritten|lettered|branded)\s+(?:text|words?|letters?|type|typography|copy|name|headline|title|label|price|pricing)\b/i.test(prompt)) return true;
+  if (/\b(?:printed|handwritten|lettered|branded)\s+(?:tickets?|passes?|entry\s+passes?|menus?|labels?|posters?|flyers?|badges?|wristbands?)\b/i.test(prompt)) return true;
+  if (/\b(?:text|words?|letters?|typography|copy|headline|title|brand\s+name|business\s+name|event\s+name|festival\s+name)\s+(?:on|across|inside|over|written|printed|displayed|visible)\b/i.test(prompt)) return true;
+  if (/\b(?:signage|sign|banner|poster|flyer|placard|billboard|marquee|menu\s+board|chalkboard|label|sticker|ticket|wristband|entry\s+pass|price\s+tag|badge)\b/i.test(prompt)
+      && /\b(?:with|showing|displaying|reading|says?|named|branded|logo|text|words?|letters?|printed|visible|bold|festival|venue|business|brand|name|price|pricing)\b/i.test(prompt)) {
+    return true;
+  }
   return false;
 }
 

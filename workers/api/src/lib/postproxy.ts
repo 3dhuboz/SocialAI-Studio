@@ -323,6 +323,21 @@ export async function getPost(
   return pfFetch<PostproxyPostStatus>(env, `/posts/${encodeURIComponent(postId)}${suffix}`);
 }
 
+export async function deletePostOnPlatform(
+  env: Env,
+  postId: string,
+  opts: { groupId?: string | null; network?: string; profileId?: string | null } = {},
+): Promise<{ success?: boolean; deleting?: Array<{ post_profile_id?: string; platform?: string }> }> {
+  const body: Record<string, string> = {};
+  if (opts.groupId) body.profile_group_id = opts.groupId;
+  if (opts.network) body.network = opts.network;
+  if (opts.profileId) body.profile_id = opts.profileId;
+  return pfFetch(env, `/posts/${encodeURIComponent(postId)}/delete_on_platform`, {
+    method: 'POST',
+    body,
+  });
+}
+
 // ── Stats + comments (powers refresh-facts via Postproxy) ───────────────
 
 /** Per-platform stats snapshot for one post. Field shape varies by platform

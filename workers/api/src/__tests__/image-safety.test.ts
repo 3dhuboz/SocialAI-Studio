@@ -9,7 +9,7 @@ import {
   FLUX_STYLE_SUFFIX,
   FLUX_NEGATIVE_PROMPT,
 } from '../lib/image-safety';
-import { needsSafeFallback, rewriteAbstractUIAsPhotography } from '../../../../shared/flux-prompts';
+import { isTextRenderingPrompt, needsSafeFallback, rewriteAbstractUIAsPhotography } from '../../../../shared/flux-prompts';
 
 // ── isAbstractUIPrompt ────────────────────────────────────────────────────
 
@@ -105,6 +105,8 @@ describe('needsSafeFallback', () => {
     ['journey of tips today', 'vague terms + < 8 words'],
     ['dashboard mockup', 'abstract UI'],
     ['pricing tier comparison page', 'abstract UI'],
+    ["festival entrance gate with bold 'Gladstone BBQ Festival 2026' banner", 'readable signage request'],
+    ['ticket wristbands and printed entry passes with prices visible', 'printed ticket text request'],
   ])('returns true for: "%s" (%s)', (prompt) => {
     expect(needsSafeFallback(prompt)).toBe(true);
   });
@@ -117,6 +119,18 @@ describe('needsSafeFallback', () => {
     'rolled yoga mat, water bottle and a folded towel on a clean studio floor',
   ])('returns false for: %s', (prompt) => {
     expect(needsSafeFallback(prompt)).toBe(false);
+  });
+});
+
+describe('isTextRenderingPrompt', () => {
+  it('flags prompts that ask the image model to render brand/event text', () => {
+    expect(isTextRenderingPrompt("banner reading 'Gladstone BBQ Festival 2026'")).toBe(true);
+    expect(isTextRenderingPrompt('printed entry passes with VIP prices visible')).toBe(true);
+    expect(isTextRenderingPrompt('menu board showing BBQ prices')).toBe(true);
+  });
+
+  it('does not flag plain unprinted props', () => {
+    expect(isTextRenderingPrompt('plain unprinted wristbands beside sliced brisket on butcher paper')).toBe(false);
   });
 });
 
@@ -173,6 +187,19 @@ describe('buildSafeImagePrompt', () => {
     expect(result!.prompt).toContain('brisket');
     expect(result!.prompt).toContain(FLUX_STYLE_SUFFIX);
     expect(result!.negativePrompt).toBe(FLUX_NEGATIVE_PROMPT);
+  });
+
+  it('rewrites readable-text prompts to a textless BBQ scene', () => {
+    const result = buildSafeImagePrompt(
+      "Festival entrance gate with bold 'Gladstone BBQ Festival 2026' banner and Tannum Seagulls signage",
+      'The website is live and tickets are ready for Gladstone BBQ Festival.',
+      'bbq-smokehouse',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.prompt).toContain('brisket');
+    expect(result!.prompt).not.toContain('Gladstone BBQ Festival');
+    expect(result!.prompt).not.toContain('banner');
+    expect(result!.negativePrompt).toContain('misspelled words');
   });
 
   it('strips people-mentions from the positive prompt', () => {
