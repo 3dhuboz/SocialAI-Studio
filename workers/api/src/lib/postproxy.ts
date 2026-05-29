@@ -53,10 +53,9 @@ export interface PostproxyCreatePostArgs {
   /** Public media URLs (R2 / fal). Order matters — first URL is the
    *  primary asset (image OR video) for the post. */
   media: string[];
-  /** Post format. FB accepts 'feed' (legacy alias for 'post' that the
-   *  Postproxy server backward-compats) or 'reel'. IG accepts 'post',
+  /** Post format. FB accepts 'post' or 'reel'. IG accepts 'post',
    *  'reel', or 'story' per docs §platform-parameters. */
-  format: 'feed' | 'post' | 'reel' | 'story';
+  format: 'post' | 'reel' | 'story';
   /** FB Page numeric ID = the placement.id from /profiles/:id/placements.
    *  IGNORED for Instagram (IG has no placements — see docs §3299). */
   pageId: string;
@@ -318,8 +317,10 @@ export async function createPost(
 export async function getPost(
   env: Env,
   postId: string,
+  groupId?: string | null,
 ): Promise<PostproxyPostStatus> {
-  return pfFetch<PostproxyPostStatus>(env, `/posts/${encodeURIComponent(postId)}`);
+  const suffix = groupId ? `?profile_group_id=${encodeURIComponent(groupId)}` : '';
+  return pfFetch<PostproxyPostStatus>(env, `/posts/${encodeURIComponent(postId)}${suffix}`);
 }
 
 // ── Stats + comments (powers refresh-facts via Postproxy) ───────────────

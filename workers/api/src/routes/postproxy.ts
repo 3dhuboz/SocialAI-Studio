@@ -28,6 +28,9 @@ import { getAuthUserId, isRateLimited } from '../auth';
 import { checkBillingGate } from '../lib/billing-gate';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { timingSafeEqualStr } from '../lib/timing-safe';
+import { buildSafeImagePrompt } from '../lib/image-safety';
+import { generateImageWithGuardrails } from '../lib/image-gen';
+import { resolveBusinessType } from '../lib/profile-guards';
 import {
   ensureProfileGroup,
   initializeConnection,
@@ -602,7 +605,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const post = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.client_id, p.content, p.hashtags, p.platform,
               p.image_url, p.video_url, p.audio_mixed_url, p.post_type,
-              p.postproxy_post_id, p.status
+              p.image_prompt, p.postproxy_post_id, p.status
        FROM posts p
        LEFT JOIN clients c ON c.id = p.client_id
        WHERE p.id = ?
@@ -612,6 +615,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       content: string; hashtags: string | null; platform: string | null;
       image_url: string | null; video_url: string | null;
       audio_mixed_url: string | null; post_type: string | null;
+      image_prompt: string | null;
       postproxy_post_id: string | null; status: string | null;
     }>();
     if (!post) return c.json({ error: 'Post not found' }, 404);
@@ -660,7 +664,30 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const hashtags = post.hashtags ? (JSON.parse(post.hashtags) as string[]) : [];
     const cleanContent = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-    const media = [post.audio_mixed_url, post.video_url, post.image_url].find((u): u is string => !!u);
+    let imageUrl = post.image_url || null;
+    if (imageUrl?.startsWith('data:')) {
+      imageUrl = null;
+    }
+    if (!imageUrl && post.image_prompt && c.env.FAL_API_KEY) {
+      const promptForGen = post.image_prompt.split('|claim:')[0].trim();
+      const businessType = await resolveBusinessType(c.env, post.user_id ?? uid, post.client_id);
+      const safe = buildSafeImagePrompt(promptForGen, cleanContent, businessType);
+      if (safe) {
+        const gen = await generateImageWithGuardrails(
+          c.env,
+          post.user_id ?? uid,
+          post.client_id,
+          safe,
+          { caption: cleanContent, seedHint: post.id },
+        );
+        if (gen.imageUrl) {
+          imageUrl = gen.imageUrl;
+          await c.env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
+            .bind(gen.imageUrl, post.id).run();
+        }
+      }
+    }
+    const media = [post.audio_mixed_url, post.video_url, imageUrl].find((u): u is string => !!u);
     if (!media) return c.json({ error: 'Post has no media (image or video) to publish' }, 400);
 
     // AI-disclosure suffix — see cron/_shared.ts and the cron path in
@@ -675,17 +702,16 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const fullText = buildPublishCaption({
       content: post.content,
       hashtags,
-      hasImage: !!post.image_url,
+      hasImage: !!imageUrl,
       aiDisclosure,
     });
 
-    // Match the cron's format-per-platform mapping: FB uses 'feed' (legacy
-    // alias), IG uses the docs-canonical 'post'. Reels are 'reel' on both.
+    // Match the cron's format-per-platform mapping. Facebook now uses
+    // 'post'; the live Postproxy API rejects the old 'feed' alias.
     const isReel = post.post_type === 'video';
-    const format: 'feed' | 'post' | 'reel' =
+    const format: 'post' | 'reel' =
       isReel ? 'reel'
-      : postPlatform === 'instagram' ? 'post'
-      : 'feed';
+      : 'post';
 
     try {
       const result = await createPost(c.env, {

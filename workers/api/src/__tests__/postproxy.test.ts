@@ -47,12 +47,12 @@ beforeEach(() => {
 });
 
 describe('buildCreatePostPayload — wire shape', () => {
-  it('feed post payload matches plan §4.3 shape', () => {
+  it('Facebook post payload matches Postproxy shape', () => {
     const payload = buildCreatePostPayload({
       profileId: 'adUxm7',
       body: 'Hello from the cron path',
       media: ['https://r2.example.com/img.jpg'],
-      format: 'feed',
+      format: 'post',
       pageId: '108234567890123',
     });
     expect(payload).toEqual({
@@ -60,7 +60,7 @@ describe('buildCreatePostPayload — wire shape', () => {
       profiles: ['adUxm7'],
       media: ['https://r2.example.com/img.jpg'],
       platforms: {
-        facebook: { format: 'feed', page_id: '108234567890123' },
+        facebook: { format: 'post', page_id: '108234567890123' },
       },
     });
   });
@@ -159,10 +159,10 @@ describe('buildCreatePostPayload — Instagram wire shape (ig-wire)', () => {
       profileId: 'ig_prof_x', body: 'a', media: [], format: 'post', pageId: '', platform: 'instagram',
     });
     const fb = buildCreatePostPayload({
-      profileId: 'fb_prof', body: 'a', media: [], format: 'feed', pageId: '123',
+      profileId: 'fb_prof', body: 'a', media: [], format: 'post', pageId: '123',
     });
     // Sanity check: defaulting platform to 'facebook' produces the original shape
-    expect((fb as any).platforms.facebook).toEqual({ format: 'feed', page_id: '123' });
+    expect((fb as any).platforms.facebook).toEqual({ format: 'post', page_id: '123' });
     expect((fb as any).platforms.instagram).toBeUndefined();
     // And IG block has no page_id key
     expect((ig as any).platforms.instagram).toEqual({ format: 'post' });
@@ -198,7 +198,7 @@ describe('createPost', () => {
       profileId: 'adUxm7',
       body: 'cron caption',
       media: ['https://r2.example.com/img.jpg'],
-      format: 'feed',
+      format: 'post',
       pageId: '108234567890123',
     });
 
@@ -215,7 +215,7 @@ describe('createPost', () => {
       profiles: ['adUxm7'],
       media: ['https://r2.example.com/img.jpg'],
       platforms: {
-        facebook: { format: 'feed', page_id: '108234567890123' },
+        facebook: { format: 'post', page_id: '108234567890123' },
       },
     });
   });
@@ -227,7 +227,7 @@ describe('createPost', () => {
         profileId: 'x',
         body: 'y',
         media: [],
-        format: 'feed',
+        format: 'post',
         pageId: 'z',
       }),
     // Error prefix is "Upstream" not "Postproxy" — we strip the third-party
@@ -436,5 +436,26 @@ describe('getPost', () => {
     const result = await getPost(env, 'pp_abc');
     expect(result.id).toBe('pp_abc');
     expect(result.platforms[0].platform).toBe('facebook');
+  });
+
+  it('passes profile_group_id when fetching a post status', async () => {
+    let capturedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      capturedUrl = url;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          id: 'pp_abc',
+          status: 'pending',
+          draft: false,
+          platforms: [],
+        }),
+      };
+    }));
+
+    await getPost(env, 'pp_abc', 'grp_123');
+
+    expect(capturedUrl).toBe('https://api.postproxy.dev/api/posts/pp_abc?profile_group_id=grp_123');
   });
 });

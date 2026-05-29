@@ -32,7 +32,7 @@ import {
   buildPublishCaption,
   loadAiDisclosurePref,
 } from './_shared';
-import { createPost as postproxyCreatePost } from '../lib/postproxy';
+import { createPost as postproxyCreatePost, getPost as getPostproxyPost } from '../lib/postproxy';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
@@ -69,9 +69,108 @@ function shouldFallbackToLegacyGraphFromPostproxy(raw: string, platform: string)
       || r.includes('not found'));
 }
 
+async function pollPostproxyPendingPosts(env: Env): Promise<number> {
+  if (!env.POSTPROXY_API_KEY) return 0;
+  const rows = await env.DB.prepare(
+    `SELECT id, user_id, client_id, platform, postproxy_post_id
+     FROM posts
+     WHERE status = 'Publishing'
+       AND postproxy_status = 'pending'
+       AND postproxy_post_id IS NOT NULL
+     ORDER BY postproxy_sent_at ASC
+     LIMIT 10`
+  ).all<{ id: string; user_id: string | null; client_id: string | null; platform: string | null; postproxy_post_id: string }>();
+  const mappingMap = await loadPostproxyMappingForPosts(
+    env,
+    (rows.results || []) as { user_id?: string | null; client_id?: string | null }[],
+  );
+  let processed = 0;
+  for (const row of rows.results || []) {
+    try {
+      const postPlatform = normalizePostPlatform(row.platform);
+      const mapping = lookupPostproxyMapping(mappingMap, row, postPlatform);
+      const status = await getPostproxyPost(env, row.postproxy_post_id, mapping?.postproxy_group_id);
+      const { state, platform } = normalizePostproxyStatus(status);
+      if (['published', 'posted', 'success', 'succeeded'].includes(state)) {
+        await env.DB.prepare(
+          `UPDATE posts
+           SET status = 'Posted',
+               postproxy_status = 'published',
+               postproxy_permalink = ?,
+               postproxy_finished_at = ?,
+               reasoning = ?
+           WHERE id = ?`
+        ).bind(
+          platform?.permalink || null,
+          new Date().toISOString(),
+          'Published via Postproxy status poll.',
+          row.id,
+        ).run();
+        processed++;
+      } else if (['failed', 'error', 'rejected'].includes(state)) {
+        const reason = platform?.error || `Postproxy publish failed with status "${state || 'unknown'}"`;
+        await env.DB.prepare(
+          `UPDATE posts
+           SET status = 'Missed',
+               postproxy_status = 'failed',
+               postproxy_finished_at = ?,
+               reasoning = ?,
+               claim_id = NULL,
+               claim_at = NULL
+           WHERE id = ?`
+        ).bind(new Date().toISOString(), reason, row.id).run();
+        processed++;
+      } else {
+        await env.DB.prepare(
+          `UPDATE posts
+           SET reasoning = ?
+           WHERE id = ?`
+        ).bind(
+          `Postproxy pending (state="${state || 'unknown'}", checked=${new Date().toISOString()}, postproxy_id=${row.postproxy_post_id})`,
+          row.id,
+        ).run();
+      }
+    } catch (e: any) {
+      await env.DB.prepare(
+        `UPDATE posts
+         SET reasoning = ?
+         WHERE id = ?`
+      ).bind(
+        `Postproxy status poll failed (${new Date().toISOString()}): ${String(e?.message || e).slice(0, 320)}`,
+        row.id,
+      ).run();
+      console.warn(`[CRON] Postproxy status poll failed for ${row.id}/${row.postproxy_post_id}: ${e?.message || e}`);
+    }
+  }
+  return processed;
+}
+
 export const __test = {
   shouldFallbackToLegacyGraphFromPostproxy,
+  normalizePostproxyStatus,
 };
+
+function normalizePostproxyStatus(raw: any): {
+  state: string;
+  platform: { status?: string; permalink?: string | null; error?: string | null } | null;
+} {
+  const root = raw?.data && typeof raw.data === 'object' ? raw.data : raw;
+  const rawPlatforms = root?.platforms;
+  let platforms: any[] = [];
+  if (Array.isArray(rawPlatforms)) {
+    platforms = rawPlatforms;
+  } else if (rawPlatforms && typeof rawPlatforms === 'object') {
+    platforms = Object.entries(rawPlatforms).map(([platform, value]) => ({
+      platform,
+      ...(value && typeof value === 'object' ? value as Record<string, unknown> : {}),
+    }));
+  }
+  const platform = platforms.find((p) => String(p?.platform || '').toLowerCase() === 'facebook') ?? platforms[0] ?? null;
+  return {
+    state: String(platform?.status || root?.status || raw?.status || '').toLowerCase(),
+    platform,
+  };
+}
 
 // ── Facebook Page Reels publishing — KICK phase ─────────────────────────────
 // Audit P0 (Hono/Workers lane, 2026-05) — was previously a 4-phase blocking
@@ -150,6 +249,7 @@ const QUALITY_GUARD_THRESHOLD = 3;
 export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
+  const postproxyPollProcessed = await pollPostproxyPendingPosts(env);
 
   // ── Early bail-out ──────────────────────────────────────────────────────
   // Audit P0 (2026-05): the publish cron used to do an unconditional zombie
@@ -164,7 +264,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
        AND ${NON_SHOP_OWNER_FILTER}`
   ).bind(nowAEST).first<{ c: number }>();
   if (!dueCheck || dueCheck.c === 0) {
-    return { posts_processed: 0 };
+    return { posts_processed: postproxyPollProcessed };
   }
 
   // Clean up zombie Publishing posts — only if they've been stuck for >10 min
@@ -206,6 +306,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
            (claim_at IS NOT NULL AND claim_at <= ?)
            OR (claim_at IS NULL AND scheduled_for <= ?)
          )
+         AND NOT (postproxy_post_id IS NOT NULL AND postproxy_status = 'pending')
          AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))
          AND ${NON_SHOP_OWNER_FILTER}
          AND ${ACTIVE_CLIENT_FILTER}`
@@ -296,7 +397,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
      LIMIT 20`
   ).bind(claimId).all();
   const posts = rows.results ?? [];
-  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: 0 }; }
+  if (posts.length === 0) { console.log('[CRON] No posts to publish'); return { posts_processed: postproxyPollProcessed }; }
   console.log(`[CRON] Claimed ${posts.length} posts (claim: ${claimId.substring(0, 8)})`);
 
   // Preload social_tokens for every workspace in this batch in two queries
@@ -429,12 +530,43 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         const contentTextPp = (post as any).content as string;
         const cleanContentPp = contentTextPp.replace(/(\s+#\w+)+\s*$/, '').trim();
 
+        let imageUrlPp = ((post as any).image_url || null) as string | null;
+        if (imageUrlPp?.startsWith('data:')) {
+          console.warn(`[CRON] Post ${(post as any).id} has browser data-url image; regenerating public URL before Postproxy publish`);
+          imageUrlPp = null;
+        }
+        if (!imageUrlPp && (post as any).image_prompt && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
+          const promptForGenPp = String((post as any).image_prompt).split('|claim:')[0].trim();
+          const businessTypePp = await resolveBusinessType(
+            env,
+            (post as any).user_id,
+            (post as any).client_id || null,
+          );
+          const safePp = buildSafeImagePrompt(promptForGenPp, cleanContentPp, businessTypePp);
+          if (safePp) {
+            const gen = await generateImageWithGuardrails(
+              env,
+              (post as any).user_id,
+              (post as any).client_id || null,
+              safePp,
+              { caption: cleanContentPp, seedHint: (post as any).id },
+            );
+            if (gen.imageUrl) {
+              imageUrlPp = gen.imageUrl;
+              jitGenerated++;
+              await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
+                .bind(gen.imageUrl, (post as any).id).run();
+              console.log(`[CRON] Postproxy path generated public image for post ${(post as any).id} via ${gen.modelUsed}`);
+            }
+          }
+        }
+
         // Pick the first non-null media URL. Audio-mixed > raw video > image
         // matches the legacy path's preference order, just routed through
         // Postproxy's `media` array instead of Graph's multipart body.
         const mediaUrl = ((post as any).audio_mixed_url
           ?? (post as any).video_url
-          ?? (post as any).image_url) as string | null;
+          ?? imageUrlPp) as string | null;
 
         // AI-disclosure suffix — appended after hashtags when the post has
         // an AI-generated image and the workspace hasn't opted out. Reads
@@ -450,7 +582,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         const fullTextPp = buildPublishCaption({
           content: contentTextPp,
           hashtags: hashtagsPp,
-          hasImage: !!((post as any).image_url),
+          hasImage: !!imageUrlPp,
           aiDisclosure: aiDisclosurePp,
         });
 
@@ -466,16 +598,20 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           await notifyOwnerOnFailure(env, post as any, reason, 'post');
           continue;
         }
+        if (!mediaUrl && postTypePp !== 'text') {
+          const reason = 'Post has no public image/video URL for Postproxy publish - image generation did not return a public asset.';
+          console.warn(`[CRON] Postproxy post ${(post as any).id} missing public media - marking missed`);
+          await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+            .bind('Missed', reason, (post as any).id).run();
+          await notifyOwnerOnFailure(env, post as any, reason, 'post');
+          continue;
+        }
 
-        // Map post_type → format per platform. FB uses 'feed' (legacy alias
-        // for 'post' the Postproxy server backward-compats); IG uses the
-        // docs-canonical 'post' / 'reel'. Stories aren't a posts.post_type
-        // value today — when post-composer UI gains story support, this
-        // switch picks them up via the format union.
-        const format: 'feed' | 'post' | 'reel' =
+        // Map post_type to Postproxy's current format tokens. The live API
+        // accepts 'post'/'reel' for FB; the old 'feed' alias now 422s.
+        const format: 'post' | 'reel' =
           isReel ? 'reel'
-          : postPlatform === 'instagram' ? 'post'
-          : 'feed';
+          : 'post';
 
         let fallbackToLegacyGraph = false;
         try {
@@ -802,5 +938,5 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       }
     }
   }
-  return { posts_processed: posts.length };
+  return { posts_processed: posts.length + postproxyPollProcessed };
 }

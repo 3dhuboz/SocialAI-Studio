@@ -24,3 +24,31 @@ describe('publish-missed Postproxy fallback decision', () => {
     expect(__test.shouldFallbackToLegacyGraphFromPostproxy('rate limit exceeded', 'facebook')).toBe(false);
   });
 });
+
+describe('publish-missed Postproxy status normalization', () => {
+  it('reads the array-shaped status response', () => {
+    const result = __test.normalizePostproxyStatus({
+      id: 'pp_1',
+      status: 'pending',
+      platforms: [{ platform: 'facebook', status: 'published', permalink: 'https://fb/post/1' }],
+    });
+
+    expect(result.state).toBe('published');
+    expect(result.platform?.permalink).toBe('https://fb/post/1');
+  });
+
+  it('reads the object-shaped status response', () => {
+    const result = __test.normalizePostproxyStatus({
+      data: {
+        id: 'pp_1',
+        status: 'processed',
+        platforms: {
+          facebook: { status: 'failed', error: 'Meta rejected the post' },
+        },
+      },
+    });
+
+    expect(result.state).toBe('failed');
+    expect(result.platform?.error).toBe('Meta rejected the post');
+  });
+});
