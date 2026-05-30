@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   buildCreatePostPayload,
   createPost,
+  deletePost,
   ensureProfileGroup,
   getPost,
   getPostStats,
@@ -314,6 +315,32 @@ describe('listProfiles + listPlacements', () => {
     // Regression guard: Postproxy returns 404 without this query param.
     expect(capturedUrl).toContain('profile_group_id=grp_match');
     expect(capturedUrl).toContain('/profiles/pA/placements');
+  });
+});
+
+describe('deletePost', () => {
+  it('passes delete_on_platform and profile_group_id query params', async () => {
+    let capturedUrl = '';
+    let capturedInit: RequestInit | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      capturedUrl = url;
+      capturedInit = init;
+      return new Response(JSON.stringify({ deleted: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }));
+
+    const result = await deletePost(env, 'pp_abc', {
+      groupId: 'grp_123',
+      deleteOnPlatform: true,
+    });
+
+    expect(result.deleted).toBe(true);
+    expect(capturedInit?.method).toBe('DELETE');
+    expect(capturedUrl).toContain('/posts/pp_abc?');
+    expect(capturedUrl).toContain('delete_on_platform=true');
+    expect(capturedUrl).toContain('profile_group_id=grp_123');
   });
 });
 

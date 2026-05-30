@@ -338,6 +338,20 @@ export async function deletePostOnPlatform(
   });
 }
 
+export async function deletePost(
+  env: Env,
+  postId: string,
+  opts: { groupId?: string | null; deleteOnPlatform?: boolean } = {},
+): Promise<{ deleted?: boolean }> {
+  const params = new URLSearchParams();
+  if (opts.deleteOnPlatform) params.set('delete_on_platform', 'true');
+  if (opts.groupId) params.set('profile_group_id', opts.groupId);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return pfFetch(env, `/posts/${encodeURIComponent(postId)}${suffix}`, {
+    method: 'DELETE',
+  });
+}
+
 // ── Stats + comments (powers refresh-facts via Postproxy) ───────────────
 
 /** Per-platform stats snapshot for one post. Field shape varies by platform

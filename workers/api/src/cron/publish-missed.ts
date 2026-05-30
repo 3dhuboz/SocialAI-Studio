@@ -34,6 +34,7 @@ import {
 } from './_shared';
 import {
   createPost as postproxyCreatePost,
+  deletePost as postproxyDeletePost,
   deletePostOnPlatform as postproxyDeletePostOnPlatform,
   getPost as getPostproxyPost,
 } from '../lib/postproxy';
@@ -136,6 +137,7 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
         const fbObjectId = extractFacebookObjectId(row.postproxy_permalink);
         const tokens = lookupSocialTokens(tokensMap, row);
         const directDeleteAlreadyFailed = String(row.qa_feedback_note || '').includes('DIRECT_DELETE_FAILED:');
+        const fullPostproxyDeleteAlreadyTried = String(row.qa_feedback_note || '').includes('POSTPROXY_FULL_DELETE:');
         if (hasWaited && !directDeleteAlreadyFailed && fbObjectId && tokens?.facebookPageAccessToken) {
           const fbRes = await fetch(`https://graph.facebook.com/v21.0/${encodeURIComponent(fbObjectId)}?access_token=${encodeURIComponent(tokens.facebookPageAccessToken)}`, {
             method: 'DELETE',
@@ -173,6 +175,28 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
               row.id,
             ).run();
           }
+        } else if (hasWaited && directDeleteAlreadyFailed && !fullPostproxyDeleteAlreadyTried) {
+          const result = await postproxyDeletePost(env, row.postproxy_post_id, {
+            groupId: mapping?.postproxy_group_id,
+            deleteOnPlatform: true,
+          });
+          await env.DB.prepare(
+            `UPDATE posts
+             SET status = 'Deleted',
+                 postproxy_status = 'deleted',
+                 postproxy_finished_at = ?,
+                 reasoning = ?,
+                 qa_feedback_note = ?,
+                 claim_id = NULL,
+                 claim_at = NULL
+             WHERE id = ?`
+          ).bind(
+            new Date().toISOString(),
+            `Postproxy full delete fallback accepted after pending_deletion stalled (deleted=${result?.deleted === true ? 'true' : 'unknown'}).`,
+            `${row.qa_feedback_note || 'DELETE_PLATFORM_REQUESTED:unknown'}|POSTPROXY_FULL_DELETE:${new Date().toISOString()}`,
+            row.id,
+          ).run();
+          processed++;
         } else {
           await env.DB.prepare(
             `UPDATE posts
