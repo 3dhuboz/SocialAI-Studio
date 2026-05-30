@@ -50,7 +50,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
        AND p.scheduled_for IS NOT NULL
        AND p.scheduled_for > datetime('now', '-7 days')
        AND (p.user_id = ? OR c.user_id = ?)
-       AND (p.image_url IS NULL OR p.image_url = '')
+       AND (p.image_url IS NULL OR p.image_url = '' OR p.image_url LIKE 'data:%')
        AND p.image_prompt IS NOT NULL
        AND p.image_prompt != 'N/A'
        AND p.image_prompt != ''

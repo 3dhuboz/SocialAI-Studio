@@ -26,6 +26,7 @@ import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 const CONCURRENCY = 3;
+const PREWARM_MISSING_IMAGE_PREDICATE = `(image_url IS NULL OR image_url = '' OR image_url LIKE 'data:%')`;
 
 type PostRow = {
   id: string;
@@ -43,7 +44,7 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
     `SELECT id, user_id, client_id, image_prompt, content FROM posts
      WHERE status = 'Scheduled'
        AND scheduled_for > ? AND scheduled_for <= ?
-       AND (image_url IS NULL OR image_url = '')
+       AND ${PREWARM_MISSING_IMAGE_PREDICATE}
        AND image_prompt IS NOT NULL AND image_prompt != '' AND image_prompt != 'N/A'
        AND length(image_prompt) > 5
        AND ${ACTIVE_CLIENT_FILTER}
@@ -61,6 +62,10 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
   }
   return { posts_processed: generated };
 }
+
+export const __test = {
+  PREWARM_MISSING_IMAGE_PREDICATE,
+};
 
 async function processOne(env: Env, post: PostRow): Promise<boolean> {
   const rawPrompt = post.image_prompt;

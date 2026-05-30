@@ -129,8 +129,8 @@ describe('isTextRenderingPrompt', () => {
     expect(isTextRenderingPrompt('menu board showing BBQ prices')).toBe(true);
   });
 
-  it('does not flag plain unprinted props', () => {
-    expect(isTextRenderingPrompt('plain unprinted wristbands beside sliced brisket on butcher paper')).toBe(false);
+  it('flags wristbands even when called unprinted because models invent lettering', () => {
+    expect(isTextRenderingPrompt('plain unprinted wristbands beside sliced brisket on butcher paper')).toBe(true);
   });
 });
 
@@ -197,6 +197,7 @@ describe('buildSafeImagePrompt', () => {
     );
     expect(result).not.toBeNull();
     expect(result!.prompt).toContain('brisket');
+    expect(result!.prompt).not.toMatch(/wristbands/i);
     expect(result!.prompt).not.toContain('Gladstone BBQ Festival');
     expect(result!.prompt).not.toContain('banner');
     expect(result!.negativePrompt).toContain('misspelled words');

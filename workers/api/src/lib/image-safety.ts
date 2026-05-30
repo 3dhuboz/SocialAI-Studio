@@ -219,7 +219,7 @@ function buildTextlessFallbackScene(prompt: string, caption?: string | null): st
   const text = `${prompt || ''} ${caption || ''}`.toLowerCase();
   if (/\b(bbq|barbecue|barbeque|brisket|smoker|ribs|pitmaster|smoked|festival|tannum|seagulls)\b/i.test(text)) {
     if (/\b(ticket|vip|general admission|pre-sale|presale|entry|admission|price|pricing)\b/i.test(text)) {
-      return 'plain unprinted festival wristbands beside smoked brisket trays on butcher paper, outdoor table, bright Queensland daylight';
+      return 'smoked brisket trays and ribs on butcher paper beside BBQ tongs and sauce cups, outdoor table, bright Queensland daylight';
     }
     if (/\b(demo|demonstration|competition|judge|sanctioned|trophy|pitmaster)\b/i.test(text)) {
       return 'open offset smoker with sliced brisket and ribs on butcher paper beside a plain trophy silhouette, warm daylight';
@@ -227,7 +227,7 @@ function buildTextlessFallbackScene(prompt: string, caption?: string | null): st
     if (/\b(vendor|lineup|stall|market|food truck|style|palate)\b/i.test(text)) {
       return 'row of BBQ smoker trailers and market stall tents at an outdoor festival ground, smoke drifting in bright daylight';
     }
-    return 'sliced smoked brisket and BBQ ribs on butcher paper beside plain unprinted festival wristbands, bright natural daylight';
+    return 'sliced smoked brisket and BBQ ribs on butcher paper beside sauce cups and BBQ tongs, bright natural daylight';
   }
   return 'clean real-world product scene with plain unprinted props on a table, bright natural daylight';
 }

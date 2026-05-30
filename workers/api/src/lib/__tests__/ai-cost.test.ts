@@ -125,6 +125,9 @@ describe('AI-cost regression — manual backfill endpoint', () => {
     expect(selectCall, 'expected the rows-to-process SELECT').toBeDefined();
     // Status filter must pin to Scheduled (not Draft).
     expect(selectCall!.sql).toMatch(/p\.status\s*=\s*'Scheduled'/);
+    // Browser data URLs are not publish-ready media; backfill should replace
+    // them with provider-hosted URLs.
+    expect(selectCall!.sql).toMatch(/p\.image_url LIKE 'data:%'/);
     // Stale-row guard: 7-day cutoff (admin-facing endpoint is tighter than
     // the cron's 14-day window because the admin's intent is usually to fix
     // the *next* publish, not historical zombies).

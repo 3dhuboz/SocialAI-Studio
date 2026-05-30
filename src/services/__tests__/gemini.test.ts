@@ -191,8 +191,9 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
       imagePrompt: 'printed checklist on clipboard beside phone',
     }, 'BBQ festival and community event');
 
-    expect(repaired).toMatch(/BBQ|ticket|brisket/i);
+    expect(repaired).toMatch(/BBQ|brisket|ribs|tongs|sauce/i);
     expect(repaired).not.toMatch(/clipboard|phone|checklist/i);
+    expect(repaired).not.toMatch(/wristband/i);
   });
 
   it('rewrites BBQ signage prompts because image models misspell rendered text', () => {
@@ -202,7 +203,8 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
       imagePrompt: "Festival entrance gate with bold 'Gladstone BBQ Festival 2026' banner and Tannum Seagulls signage",
     }, 'BBQ festival and community event');
 
-    expect(repaired).toMatch(/brisket|ribs|wristbands/i);
+    expect(repaired).toMatch(/brisket|ribs|tongs|sauce/i);
+    expect(repaired).not.toMatch(/wristbands/i);
     expect(repaired).not.toMatch(/banner|signage|Gladstone BBQ Festival/i);
   });
 
@@ -213,7 +215,8 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
       'VIP $40 and general admission $20 for Gladstone BBQ Festival.',
     );
 
-    expect(guarded).toMatch(/brisket|wristbands/i);
+    expect(guarded).toMatch(/brisket|ribs|tongs|sauce/i);
+    expect(guarded).not.toMatch(/wristbands/i);
     expect(guarded).not.toMatch(/poster|VIP|general admission/i);
   });
 
