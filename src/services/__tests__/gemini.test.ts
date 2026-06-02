@@ -25,6 +25,7 @@ import {
   repairSmartScheduleImagePromptForArchetype,
   guardMarketingImagePromptForBusinessContext,
   generateMarketingImageUrl,
+  generateInsightReport,
   buildArchetypeVoiceBlock,
   setActiveArchetype,
   clearFactsCache,
@@ -40,6 +41,78 @@ import {
   CAPTION_ARCHETYPE_KEYWORDS,
 } from '../../../shared/archetype-scenes';
 import { ARCHETYPES, getArchetypeBySlug } from '../../data/archetypes';
+
+describe('generateInsightReport', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('requests enough tokens for the nested insight JSON report', async () => {
+    let requestBody: any = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body || '{}'));
+      return new Response(JSON.stringify({
+        text: JSON.stringify({
+          summary: 'SocialAI Studio has a clear opportunity to improve consistency.',
+          score: 72,
+          recommendations: [{
+            title: 'Post more consistently',
+            detail: 'A weekly content rhythm will make the account easier to follow.',
+            priority: 'high',
+            action: {
+              type: 'generate-post',
+              label: 'Generate sample post',
+              payload: { topic: 'consistent posting', angle: 'save time every week' },
+            },
+          }],
+          bestTimes: [{ platform: 'Facebook', slots: ['Tuesday 12-1pm'] }],
+          contentFocus: [{ topic: 'customer pain points', reason: 'It makes the value practical.' }],
+          quickWin: 'Schedule one practical post for tomorrow.',
+        }),
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const report = await generateInsightReport(
+      'SocialAI Studio',
+      'tech-saas-agency',
+      'Rockhampton, QLD',
+      { followers: 1200, reach: 5000, engagement: 3.4, postsLast30Days: 8 },
+      ['Before: scrambling to post something'],
+    );
+
+    expect(report?.summary).toContain('clear opportunity');
+    expect(requestBody.maxTokens).toBeGreaterThanOrEqual(4000);
+  });
+
+  it('parses AI insight JSON with literal newlines inside string values', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      text: `{
+        "summary": "SocialAI Studio is active.
+The biggest opportunity is consistency.",
+        "score": 72,
+        "recommendations": [{
+          "title": "Post more consistently",
+          "detail": "Turn repeated owner pain points into weekly posts.",
+          "priority": "high",
+          "action": { "type": "generate-post", "label": "Generate sample post", "payload": { "topic": "consistent posting", "angle": "save time every week" } }
+        }],
+        "bestTimes": [{ "platform": "Facebook", "slots": ["Tuesday 12-1pm"] }],
+        "contentFocus": [{ "topic": "customer pain points", "reason": "It makes the value practical." }],
+        "quickWin": "Schedule one practical post for tomorrow."
+      }`,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const report = await generateInsightReport(
+      'SocialAI Studio',
+      'tech-saas-agency',
+      'Rockhampton, QLD',
+      { followers: 1200, reach: 5000, engagement: 3.4, postsLast30Days: 8 },
+      ['Before: scrambling to post something'],
+    );
+
+    expect(report?.summary).toContain('biggest opportunity');
+  });
+});
 
 describe('neutralizePromptData', () => {
   it('wraps untrusted profile text as quoted data and defangs prompt-control markers', () => {
