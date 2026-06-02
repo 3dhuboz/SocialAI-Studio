@@ -18,6 +18,9 @@ function isPortalAllowedPath(req: Request): boolean {
     path === '/api/db/clients' ||
     path.startsWith('/api/db/clients/') ||
     path === '/api/db/social-tokens' ||
+    path === '/api/db/facts' ||
+    path === '/api/db/refresh-facts' ||
+    path.startsWith('/api/db/refresh-facts/') ||
     path === '/api/ai/generate' ||
     path === '/api/ai/web-fetch' ||
     path === '/api/fal-proxy' ||
