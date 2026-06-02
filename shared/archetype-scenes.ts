@@ -291,6 +291,31 @@ export const ARCHETYPE_POSITIVE_SUBJECTS: Record<string, RegExp> = {
 // Threshold: ≥2 keyword hits and a ≥1 hit margin over the runner-up.
 // Same shape as classifyArchetypeFromFingerprint's keyword layer in
 // workers/api/src/lib/archetypes.ts — keep them roughly aligned.
+// 2026-06-03: SocialAI/Penny Wise posts were doubling up on corkboard/card
+// imagery because this abstract archetype is forced through fallback scenes.
+// Keep this bank broad and concrete so scheduled batches spread across
+// visibly different content-workflow scenes.
+ARCHETYPE_IMAGE_GUARDRAILS['tech-saas-agency'].fallbackScenes = [
+  'overhead content batching workspace with seven colour-coded index card stacks, blank cards, black marker and weekly planner grid, bright natural daylight, no readable text',
+  'small business counter with closed laptop, receipt book, calculator and phone face-down beside a takeaway coffee, bright shopfront daylight, no readable text',
+  'wall calendar with coloured magnetic dots and a timer on a clean office shelf, shallow depth of field, bright afternoon daylight, no readable text',
+  'three inbox trays sorted by colour, sealed envelopes, checklist pad and brass pen on a matte desk, crisp daylight, no readable text',
+  'camera lens, blank square photo prints and a phone face-down arranged for social content review, bright studio window light, no readable text',
+  'open ring binder with blank campaign worksheets, binder clips and coloured tabs on a timber table, bright natural daylight, no readable text',
+  'desktop publishing setup with keyboard, mouse, blank sticky notes and a cup of pens around a closed laptop, clear morning daylight, no readable text',
+  'portable light box with product-photo props, colour swatches and a phone tripod folded beside it, bright workshop daylight, no readable text',
+  'whiteboard planning wall with simple coloured magnets and empty columns, cropped so no writing is visible, bright office daylight',
+  'neatly packed social media kit bag with phone tripod, charger cables, notebook and marker on a cafe table, bright window light, no readable text',
+  'printed analytics-style sheets shown as blank charts, highlighter, calculator and coffee mug on a clean desk, bright daylight, no readable text',
+  'founder planning table with leather notebook, weekly calendar pad, black pen and silent analog clock, bright afternoon light, no readable text',
+  'content approval station with two blank photo proofs, red pencil, paper clips and checklist clipboard, bright natural daylight, no readable text',
+  'small office shelf with binders, colour-coded folders, turned-away tabs and a tidy plant, soft daylight, no readable text',
+  'blank storyboard cards laid in a neat row beside a smartphone face-down and a ceramic mug, overhead daylight, no readable text',
+  'customer support desk with headset resting beside closed notebook, calendar pad and phone face-down, clean bright daylight, no readable text',
+  'digital marketing desk corner with external hard drive, cable organiser, SD cards and blank note cards, crisp daylight, no readable text',
+  'weekly posting planner laid flat with coloured stickers, timer cube, marker set and empty content cards, bright natural daylight, no readable text',
+];
+
 export const CAPTION_ARCHETYPE_KEYWORDS: Record<string, string[]> = {
   'tech-saas-agency': [
     'saas', 'software', 'platform', 'ai content', 'ai tool', 'ai-powered',

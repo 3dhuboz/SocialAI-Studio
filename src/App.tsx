@@ -2017,7 +2017,7 @@ const Dashboard: React.FC = () => {
         setIsGeneratingImage(true);
         let thumbnailBase64: string | null = null;
         try {
-          const img = await generateImage(thumbPrompt);
+          const img = await generateImage(thumbPrompt, result.content, `quick-video-thumb:${topic}:${platform}:${contentFormat}`);
           if (img) {
             thumbnailBase64 = img;
           } else {
@@ -2067,7 +2067,7 @@ const Dashboard: React.FC = () => {
     const imageDesc = aiImagePrompt || lastImagePrompt || `${profile.type}: ${topic}`;
     console.log('Image prompt:', imageDesc);
     try {
-      const img = await generateImage(imageDesc);
+      const img = await generateImage(imageDesc, generatedContent || topic, `quick-image:${topic}:${platform}:${contentFormat}`);
       if (img) setGeneratedImage(img);
       else toast('Image generation failed — check browser console for details.', 'error');
     } catch (e: any) {
@@ -2173,7 +2173,8 @@ const Dashboard: React.FC = () => {
         });
       }
       try {
-        const img = await generateImage(prompt, posts[i].content);
+        const seedHint = `smart-auto:${i}:${posts[i].scheduledFor}:${posts[i].pillar || ''}:${posts[i].topic || ''}`;
+        const img = await generateImage(prompt, posts[i].content, seedHint);
         if (img) setSmartPostImages(prev => ({ ...prev, [i]: img }));
       } catch { /* silently skip */ }
       setAutoGenSet(prev => { const s = new Set(prev); s.delete(i); return s; });
@@ -2364,7 +2365,8 @@ const Dashboard: React.FC = () => {
     }
     setAutoGenSet(prev => new Set(prev).add(idx));
     try {
-      const img = await generateImage(prompt, smartPosts[idx]?.content);
+      const seedHint = `smart-regen:${idx}:${smartPosts[idx]?.scheduledFor || ''}:${smartPosts[idx]?.pillar || ''}:${smartPosts[idx]?.topic || ''}:${Date.now()}`;
+      const img = await generateImage(prompt, smartPosts[idx]?.content, seedHint);
       if (img) setSmartPostImages(prev => ({ ...prev, [idx]: img }));
       else toast('Image generation failed — try uploading instead.', 'warning');
     } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
@@ -2379,12 +2381,12 @@ const Dashboard: React.FC = () => {
   // pricing-table mockup because the AI imagePrompt described a UI and the
   // weak preamble (Cinematic lighting, vibrant colours, ...) had no anti-UI
   // negatives. Single pipeline = single place to harden. ──
-  const generateImage = async (prompt: string, caption?: string | null): Promise<string | null> => {
+  const generateImage = async (prompt: string, caption?: string | null, seedHint?: string | null): Promise<string | null> => {
     const bizType = activeClientWorkspace?.businessType
       || profile?.type
       || CLIENT.defaultBusinessType
       || 'small business';
-    return generateMarketingImage(prompt, bizType, caption, activeClientId);
+    return generateMarketingImage(prompt, bizType, caption, activeClientId, seedHint);
   };
 
   const getSmartImageBusinessType = (): string => (
@@ -2423,7 +2425,7 @@ const Dashboard: React.FC = () => {
         calendarAutoGenRanRef.current.add(post.id);
         setCalendarGenSet(prev => new Set(prev).add(post.id));
         try {
-          const img = await generateImage(post.imagePrompt!, post.content);
+          const img = await generateImage(post.imagePrompt!, post.content, `calendar-auto:${post.id}:${post.scheduledFor || ''}`);
           if (img) {
             // CRITICAL: persist to DB. Without this the cron sees image_url=NULL
             // when scheduled_for arrives and publishes the post text-only.
@@ -2450,7 +2452,7 @@ const Dashboard: React.FC = () => {
     setCalendarGenSet(prev => new Set(prev).add(postId));
     try {
       const caption = posts.find(p => p.id === postId)?.content ?? null;
-      const img = await generateImage(prompt, caption);
+      const img = await generateImage(prompt, caption, `calendar-regen:${postId}:${Date.now()}`);
       if (img) {
         // Persist to DB so cron uses the image at publish time
         try { await db.updatePost(postId, { imageUrl: img } as Record<string, unknown>); }
@@ -2550,14 +2552,16 @@ const Dashboard: React.FC = () => {
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
-              const url = await generateMarketingImageUrl(guardedImagePrompt || sp.topic, getSmartImageBusinessType(), sp.content, activeClientId);
+              const seedHint = `smart-accept:${i}:${sp.scheduledFor}:${sp.pillar || ''}:${sp.topic || ''}`;
+              const url = await generateMarketingImageUrl(guardedImagePrompt || sp.topic, getSmartImageBusinessType(), sp.content, activeClientId, seedHint);
               if (url) postImage = url;
               else if (wantsImage) imageGenFailures++;
             } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
           } else if (!postImage && wantsImage) {
             // No image — generate with full smart logic (returns public URL)
             try {
-              const url = await generateMarketingImageUrl(guardedImagePrompt, getSmartImageBusinessType(), sp.content, activeClientId);
+              const seedHint = `smart-accept:${i}:${sp.scheduledFor}:${sp.pillar || ''}:${sp.topic || ''}`;
+              const url = await generateMarketingImageUrl(guardedImagePrompt, getSmartImageBusinessType(), sp.content, activeClientId, seedHint);
               if (url) postImage = url;
               else imageGenFailures++;
             } catch { imageGenFailures++; /* post goes without image */ }

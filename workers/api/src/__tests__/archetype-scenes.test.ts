@@ -107,6 +107,14 @@ describe('ARCHETYPE_IMAGE_GUARDRAILS content guards', () => {
     expect(joined).not.toMatch(/\b(car dashboard|highway|main street|golden hour|sunrise|sunset|road)\b/);
     expect(joined).toMatch(/\b(calendar|planner|sticky|checklist|timer|content|cards)\b/);
   });
+
+  it('tech-saas-agency fallback scenes cover distinct workflow visuals, not one repeated corkboard trope', () => {
+    const joined = ARCHETYPE_IMAGE_GUARDRAILS['tech-saas-agency'].fallbackScenes.join(' ').toLowerCase();
+    for (const cue of ['inbox trays', 'camera lens', 'light box', 'approval station', 'support desk', 'cable organiser']) {
+      expect(joined).toContain(cue);
+    }
+    expect(joined).not.toMatch(/\bcorkboard\b/);
+  });
 });
 
 describe('CAPTION_ARCHETYPE_KEYWORDS content guards', () => {

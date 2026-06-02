@@ -321,10 +321,12 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
         'BBQ festival and community event',
         'Gladstone BBQ Festival tickets are live for Saturday 5 September.',
         'gladstonebbq-001',
+        'smart-accept:2:2026-06-05T09:00:00.000Z:programme:brisket-demo',
       );
 
       expect(url).toBe('https://cdn.example.test/bbq.jpg');
       expect(requestBody.clientId).toBe('gladstonebbq-001');
+      expect(requestBody.seedHint).toBe('smart-accept:2:2026-06-05T09:00:00.000Z:programme:brisket-demo');
       expect(requestBody.caption).toMatch(/Gladstone BBQ Festival/i);
       expect(requestBody.prompt).toMatch(/brisket|smoker|ribs/i);
     } finally {
