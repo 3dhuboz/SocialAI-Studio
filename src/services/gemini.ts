@@ -1908,7 +1908,10 @@ export interface InsightReport {
 const parseInsightJson = (raw: string): InsightReport => {
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
   const match = trimmed.match(/\{[\s\S]*\}/);
-  const parsed = JSON.parse(sanitizeJson(match ? match[0] : trimmed)) as InsightReport;
+  const parsed = parseAiJson(match ? match[0] : trimmed) as InsightReport | null;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('AI returned malformed insight JSON');
+  }
   parsed.generatedAt = new Date().toISOString();
   return parsed;
 };
@@ -1971,7 +1974,7 @@ ACTION SCHEMA (every recommendation MUST include an "action" object — pick the
 
 Pick the action type that ACTUALLY MAKES THE REC ACTIONABLE — don't default to checklists. If the rec is "write more pain-point posts", use generate-post with a concrete topic/angle; don't use a checklist that says "think about pain points".`;
 
-    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 2000, responseFormat: 'json' });
+    const text = await callAI(prompt, { temperature: 0.4, maxTokens: 4000, responseFormat: 'json' });
     return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
@@ -2059,7 +2062,7 @@ ACTION SCHEMA (every recommendation MUST include an "action" object — pick the
 
 Pick the type that ACTUALLY MAKES THE REC ACTIONABLE. If the rec is "write more pain-point posts", use generate-post with a concrete topic/angle; don't use a checklist.`;
 
-    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 2000, responseFormat: 'json' });
+    const text = await callAI(prompt, { temperature: 0.3, maxTokens: 4000, responseFormat: 'json' });
     return parseInsightJson(text);
   } catch (e: any) {
     const msg = e?.message || String(e);
