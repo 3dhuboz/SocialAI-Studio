@@ -19,6 +19,9 @@ function makePortalDb(): D1Database {
 describe('portal token scope', () => {
   it.each([
     '/api/db/social-tokens?clientId=hughesq-001',
+    '/api/ai/generate',
+    '/api/ai/web-fetch',
+    '/api/fal-proxy?action=generate-image',
     '/api/postproxy/init-connection',
     '/api/postproxy/placements?clientId=hughesq-001&platform=facebook',
     '/api/postproxy/save-placement',
@@ -36,9 +39,9 @@ describe('portal token scope', () => {
     expect(uid).toBe('owner_admin');
   });
 
-  it('does not authenticate portal tokens on paid provider proxy routes', async () => {
+  it('does not authenticate portal tokens on unscoped provider passthrough routes', async () => {
     const uid = await getAuthUserId(
-      new Request('https://worker.example/api/fal-proxy?action=generate-image', {
+      new Request('https://worker.example/api/fal-proxy/fal-ai/flux/dev', {
         headers: { Authorization: 'Portal leaked-token' },
       }),
       'sk_test',
