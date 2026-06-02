@@ -77,6 +77,7 @@ app.use(
         // Additional whitelabel portal origins
         'https://social.gladstonebbq.com.au', 'https://social.blackcat.com.au',
         'https://social.jonesysgarage.com.au', 'https://social.jenniannesjewels.com.au',
+        'https://social.re-loaded.com.au',
         'https://littlestomp.com.au', 'https://www.littlestomp.com.au',
         'https://streetmeatzbbq.com.au', 'https://www.streetmeatzbbq.com.au',
       ];
