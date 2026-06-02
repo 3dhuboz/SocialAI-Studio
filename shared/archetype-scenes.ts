@@ -134,11 +134,12 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
   },
   'bbq-smokehouse': {
     forbidden: /\b(?:dashboard|laptop|spreadsheet|app\s+screen|gym|treadmill|salon|spa)\b/i,
-    extraNegatives: 'dashboard, laptop, UI, office, gym, salon',
+    extraNegatives: 'dashboard, laptop, UI, office, gym, salon, generic roast, bolar blade, chuck roast, top round, rump roast, pot roast, steak, raw meat, butcher-shop slab, incorrect beef cut, misleading meat cut',
     fallbackScenes: [
-      'close-up of slow-smoked brisket bark on a butcher board, smoke trail behind, warm afternoon light',
-      'pulled pork mound on butcher paper with house-made slaw and pickles, candid backyard cookout style',
+      'offset smoker with firebox and thin blue smoke, stacks of split hardwood beside it, no identifiable meat cuts visible, bright Queensland afternoon light',
+      'close-up of split hardwood, firebox glow and clean smoke rolling from a BBQ pit smoker, no meat visible, bright natural daylight',
       'offset smoker outside a brick smokehouse with thin blue smoke against a clear sky, late afternoon',
+      'BBQ serving tray with sauce cups, pickles, slaw, tongs and plain butcher paper, smokehouse prep scene, no identifiable meat cuts visible, no text, bright natural daylight',
     ],
   },
   'butcher-meat': {

@@ -24,6 +24,7 @@ import {
   isGenericBusinessType,
   isAbstractServiceProduct,
   ABSTRACT_SERVICE_FALLBACK_PROMPT,
+  refineBbqPromptForCutAccuracy,
 } from './image-safety';
 
 describe('isGenericBusinessType', () => {
@@ -240,5 +241,33 @@ describe('isAbstractServiceProduct', () => {
     expect(ABSTRACT_SERVICE_FALLBACK_PROMPT.length).toBeGreaterThan(50);
     expect(ABSTRACT_SERVICE_FALLBACK_PROMPT).toMatch(/workspace|desk|laptop|notebook/i);
     expect(ABSTRACT_SERVICE_FALLBACK_PROMPT).not.toMatch(/\bphotograph of\b/i);
+  });
+});
+
+describe('refineBbqPromptForCutAccuracy', () => {
+  it('rewrites brisket prompts into cut-aware sliced-brisket anatomy', () => {
+    const result = refineBbqPromptForCutAccuracy({
+      prompt: 'close-up of slow-smoked brisket bark on a butcher board, smoke trail behind',
+      negativePrompt: 'people',
+    }, 'Low and slow brisket gets 12+ hours in the pit.');
+
+    expect(result.refined).toBe(true);
+    expect(result.prompt.toLowerCase()).toContain('flat-and-point');
+    expect(result.prompt.toLowerCase()).toContain('smoke ring');
+    expect(result.prompt.toLowerCase()).toContain('fat cap');
+    expect(result.prompt.toLowerCase()).toContain('brisket grain');
+    expect(result.negativePrompt.toLowerCase()).toContain('bolar blade');
+    expect(result.negativePrompt.toLowerCase()).toContain('chuck roast');
+  });
+
+  it('leaves generic smoker prompts broader while still adding meat-cut negatives', () => {
+    const result = refineBbqPromptForCutAccuracy({
+      prompt: 'offset smoker with thin blue smoke beside split hardwood',
+      negativePrompt: 'people',
+    }, 'The firebox is running clean today.');
+
+    expect(result.refined).toBe(false);
+    expect(result.prompt).toContain('offset smoker');
+    expect(result.negativePrompt.toLowerCase()).toContain('incorrect beef cut');
   });
 });

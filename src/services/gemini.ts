@@ -236,19 +236,22 @@ export function repairSmartScheduleImagePromptForArchetype(
   if (hasRequiredSubject && !isOfficeScene && !isUnsafeTextScene) return original;
 
   if (/\b(ticket|vip|general admission|pre-sale|presale|entry|admission)\b/i.test(text)) {
-    return 'smoked brisket trays and ribs on butcher paper beside BBQ tongs and sauce cups, outdoor table, bright Queensland daylight, no people';
+    return 'BBQ serving tray with sauce cups, pickles, slaw, tongs and plain butcher paper on an outdoor table, no identifiable meat cuts, bright Queensland daylight, no people, no text';
   }
   if (/\b(demo|demonstration|brisket|12\+?\s*hours|smoke|smoker|pitmaster|competition|judge|sanctioned)\b/i.test(text)) {
-    return 'offset BBQ smoker open with slow-smoked brisket and ribs on butcher paper, thin blue smoke, competition trophy on a nearby table, warm afternoon light, no people';
+    if (/\bbrisket\b/i.test(text)) {
+      return 'authentic sliced smoked beef brisket on plain butcher paper, visible smoke ring, dark bark, rendered fat cap and clear brisket grain, BBQ tongs nearby, bright natural daylight, no people, no text';
+    }
+    return 'offset BBQ smoker open with thin blue smoke, firebox glow and split hardwood nearby, warm afternoon light, no identifiable meat cuts, no people, no text';
   }
   if (/\b(vendor|lineup|stall|market|food truck|style|palate)\b/i.test(text)) {
     return 'row of BBQ smoker trailers and market stall tents at an outdoor festival ground, smoke drifting in bright daylight, no people';
   }
   if (/\b(father|family|kids|primary school|high school|community|mental health|fundraiser)\b/i.test(text)) {
-    return 'sliced smoked brisket and BBQ ribs on butcher paper beside sauce cups and BBQ tongs, bright Queensland daylight, no people';
+    return 'BBQ smoker trailer and serving table at a community event setup, sauce cups, tongs and plain butcher paper visible, bright Queensland daylight, no people, no text';
   }
 
-  return 'sliced smoked brisket and BBQ ribs on butcher paper beside a small plain competition trophy silhouette, bright natural daylight, no people';
+  return 'offset smoker with firebox and thin blue smoke beside split hardwood, BBQ tongs and sauce cups on plain butcher paper, no identifiable meat cuts, bright natural daylight, no people, no text';
 }
 
 export function guardMarketingImagePromptForBusinessContext(
@@ -333,12 +336,12 @@ const getImagePromptExamples = (businessType: string): string => {
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('bbq', 'barbeque', 'barbecue', 'food truck', 'smokehouse')) return [
-    "'sliced smoked brisket fanned on butcher paper, golden hour light'",
-    "'pulled pork burger with coleslaw and pickles, close-up macro'",
+    "'authentic sliced smoked beef brisket on plain butcher paper, visible smoke ring, bark, fat cap and brisket grain, bright natural daylight'",
+    "'offset smoker with firebox and thin blue smoke, stacks of split hardwood, no identifiable meat cuts visible'",
     "'BBQ ribs glistening with glaze on cedar plank, smoke wisps in background'",
-    "'food truck exterior at dusk with warm window light and queue'",
-    "'overhead flatlay: brisket, slaw, beans, white bread on red checkered paper'",
-    "'pitmaster's smoker open showing meat, atmospheric smoke, late afternoon sun'",
+    "'food truck exterior at dusk with warm window light and empty queue area'",
+    "'smokehouse serving tray with sauce cups, pickles, slaw and tongs on plain butcher paper, no text'",
+    "'offset smoker open with atmospheric smoke, late afternoon sun, no person visible, no identifiable meat cuts'",
   ].map(s => `'${s.slice(1, -1)}'`).join(' OR ');
 
   if (has('bakery', 'café', 'cafe', 'coffee')) return [

@@ -30,6 +30,7 @@ import {
   sniffArchetypeFromCaption,
   extractCaptionSubjectPhrase,
   injectCaptionSubject,
+  refineBbqPromptForCutAccuracy,
 } from './image-safety';
 import { hashStringToSceneSeed, ARCHETYPE_POSITIVE_SUBJECTS } from '../../../../shared/archetype-scenes';
 import { resolveArchetypeSlug } from './archetypes';
@@ -39,6 +40,7 @@ import { logAiUsage } from './ai-usage';
 // fal.ai invoice settles each month — these are the published per-MP rates
 // for square_hd outputs at the steps/guidance defaults used here.
 const FLUX_DEV_COST_USD = 0.025;
+const NANO_BANANA_PRO_COST_USD = 0.15;
 // tech-saas-agency posts are inherently abstract (no inventory to photograph,
 // no location, no people in action) so flux-dev at default 35 steps often
 // rolls a soft/blurry render. We bump steps to 50 and guidance to 8.0 for
@@ -178,6 +180,60 @@ export async function generateImageWithGuardrails(
     guarded = applyArchetypeGuardrails(safePrompt, archetypeSlug, options.caption ?? null, options.seedHint ?? null);
     if (guarded.swappedForFallback) {
       console.log(`[image-gen] archetype=${archetypeSlug} forbidden subject in prompt — swapped for fallback scene${options.seedHint ? ' (seeded)' : ''}`);
+    }
+  }
+
+  const cutRefinement = archetypeSlug === 'bbq-smokehouse'
+    ? refineBbqPromptForCutAccuracy(guarded, options.caption ?? null)
+    : null;
+  if (cutRefinement) {
+    guarded = {
+      prompt: cutRefinement.prompt,
+      negativePrompt: cutRefinement.negativePrompt,
+      swappedForFallback: guarded.swappedForFallback,
+    };
+    if (cutRefinement.refined) {
+      console.log('[image-gen] bbq-smokehouse brisket prompt refined for cut accuracy');
+    }
+  }
+
+  if (archetypeSlug === 'bbq-smokehouse' && cutRefinement?.refined) {
+    const nanoPrompt = `${guarded.prompt}. Hard exclusions: ${guarded.negativePrompt}.`;
+    const nanoRes = await fetch('https://fal.run/fal-ai/gemini-3-pro-image-preview', {
+      method: 'POST',
+      headers: authHeader,
+      body: JSON.stringify({
+        prompt: nanoPrompt,
+        aspect_ratio: '1:1',
+        num_images: 1,
+      }),
+    });
+    const { data: nanoData, text: nanoText } = await readFalResponse(nanoRes);
+    if (nanoRes.ok) {
+      const imageUrl = nanoData?.images?.[0]?.url || null;
+      await logAiUsage(env, {
+        userId,
+        clientId,
+        provider: 'fal',
+        model: 'nano-banana-pro-bbq-cut',
+        operation: 'image-gen',
+        imagesGenerated: imageUrl ? 1 : 0,
+        estCostUsd: imageUrl ? NANO_BANANA_PRO_COST_USD : 0,
+        ok: !!imageUrl,
+      });
+      if (imageUrl) return { imageUrl, modelUsed: 'nano-banana-pro-bbq-cut', archetypeSlug };
+    } else {
+      console.warn(`[image-gen] nano-banana-pro-bbq-cut failed: ${nanoRes.status} ${falErrorMessage(nanoData, nanoText)}; falling back to flux-dev`);
+      await logAiUsage(env, {
+        userId,
+        clientId,
+        provider: 'fal',
+        model: 'nano-banana-pro-bbq-cut',
+        operation: 'image-gen',
+        imagesGenerated: 0,
+        estCostUsd: 0,
+        ok: false,
+      });
     }
   }
 

@@ -215,6 +215,40 @@ export function buildSafeImagePrompt(
   };
 }
 
+const BBQ_CUT_ACCURACY_NEGATIVES =
+  'bolar blade, blade roast, chuck roast, top round, bottom round, rump roast, pot roast, generic roast beef, raw beef slab, steak, tri-tip, sirloin, incorrect beef cut, misleading meat cut, butcher-shop cut chart, labels, readable text';
+
+/**
+ * BBQ cut names are high-risk because knowledgeable followers will call out
+ * the wrong anatomy. A prompt that merely says "brisket" can render as a
+ * generic roast-looking slab. When the caption/prompt names brisket, force a
+ * cut-aware sliced-brisket scene with visible bark, smoke ring, fat cap and
+ * grain cues. For generic BBQ posts, keep prompts broader or smoker-focused.
+ */
+export function refineBbqPromptForCutAccuracy(
+  safe: { prompt: string; negativePrompt: string },
+  caption?: string | null,
+): { prompt: string; negativePrompt: string; refined: boolean } {
+  const text = `${safe.prompt || ''}\n${caption || ''}`.toLowerCase();
+  const negativePrompt = `${safe.negativePrompt}, ${BBQ_CUT_ACCURACY_NEGATIVES}`;
+
+  if (/\bbrisket\b/.test(text)) {
+    return {
+      prompt: [
+        'Authentic sliced smoked beef brisket on plain butcher paper',
+        'long flat-and-point brisket slices, dark peppery bark, visible pink smoke ring',
+        'rendered fat cap and clear brisket grain running through the slices',
+        'BBQ tongs and small sauce cup nearby, bright natural daylight, no hands, no people, no text',
+        FLUX_STYLE_SUFFIX,
+      ].join(', '),
+      negativePrompt,
+      refined: true,
+    };
+  }
+
+  return { ...safe, negativePrompt, refined: false };
+}
+
 function buildTextlessFallbackScene(prompt: string, caption?: string | null): string {
   const text = `${prompt || ''} ${caption || ''}`.toLowerCase();
   if (/\b(bbq|barbecue|barbeque|brisket|smoker|ribs|pitmaster|smoked|festival|tannum|seagulls)\b/i.test(text)) {
