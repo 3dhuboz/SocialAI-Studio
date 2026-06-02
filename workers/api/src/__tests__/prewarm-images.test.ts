@@ -8,4 +8,8 @@ describe('prewarm-images readiness query', () => {
     expect(__test.PREWARM_MISSING_IMAGE_PREDICATE).toMatch(/image_url = ''/);
     expect(__test.PREWARM_MISSING_IMAGE_PREDICATE).toMatch(/image_url LIKE 'data:%'/);
   });
+
+  it('warms thumbnails before the video prewarm window opens', () => {
+    expect(__test.PREWARM_LOOKAHEAD_MINUTES).toBeGreaterThanOrEqual(60);
+  });
 });

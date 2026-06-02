@@ -110,7 +110,7 @@ GitHub repo
 Each file exports a brand config (name, logo, colors, domain). The active config is selected at build time via `VITE_CLIENT_ID` env var — see `vite.config.ts`.
 ```
 blackcat.ts / gladstonebbq.ts / hughesq.ts / jenniannesjewels.ts
-jonesysgarage.ts / picklenick.ts / streetmeats.ts
+jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 ```
 
 ---

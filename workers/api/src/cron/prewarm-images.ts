@@ -1,9 +1,12 @@
-// Image prewarm cron — every 5 minutes, looks 30 minutes ahead.
+// Image prewarm cron — every 5 minutes, looks 60 minutes ahead.
 //
 // Runs alongside the publish cron. By the time a post crosses scheduled_for,
 // its image_url should already be populated so the publish loop's
 // MAX_JIT_IMAGES_PER_RUN cap never bites. Posts that don't fit in this
 // tick's cap (8/tick) get caught next tick — still 25 min before publish.
+//
+// The 60-minute window intentionally opens before the video prewarm cron's
+// 45-minute window, so video posts get a durable thumbnail before Kling starts.
 //
 // Processes posts in concurrent batches of CONCURRENCY (default 3). Each
 // post = ~10-15s FLUX call + ~2-3s critique. Concurrency 3 cuts wall-clock
@@ -26,6 +29,7 @@ import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 const CONCURRENCY = 3;
+const PREWARM_LOOKAHEAD_MINUTES = 60;
 const PREWARM_MISSING_IMAGE_PREDICATE = `(image_url IS NULL OR image_url = '' OR image_url LIKE 'data:%')`;
 
 type PostRow = {
@@ -39,7 +43,7 @@ type PostRow = {
 export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }> {
   if (!env.FAL_API_KEY) return { posts_processed: 0 };
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
-  const in30AEST = new Date(Date.now() + 10 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString().replace('Z', '');
+  const inLookaheadAEST = new Date(Date.now() + 10 * 60 * 60 * 1000 + PREWARM_LOOKAHEAD_MINUTES * 60 * 1000).toISOString().replace('Z', '');
   const rows = await env.DB.prepare(
     `SELECT id, user_id, client_id, image_prompt, content FROM posts
      WHERE status = 'Scheduled'
@@ -49,7 +53,7 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
        AND length(image_prompt) > 5
        AND ${ACTIVE_CLIENT_FILTER}
      ORDER BY scheduled_for ASC LIMIT 8`,
-  ).bind(nowAEST, in30AEST).all<PostRow>();
+  ).bind(nowAEST, inLookaheadAEST).all<PostRow>();
   const posts = rows.results ?? [];
   if (posts.length === 0) return { posts_processed: 0 };
   console.log(`[CRON prewarm] ${posts.length} posts queued for image pre-warm (concurrency ${CONCURRENCY})`);
@@ -65,6 +69,7 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
 
 export const __test = {
   PREWARM_MISSING_IMAGE_PREDICATE,
+  PREWARM_LOOKAHEAD_MINUTES,
 };
 
 async function processOne(env: Env, post: PostRow): Promise<boolean> {
