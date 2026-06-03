@@ -735,6 +735,7 @@ const Dashboard: React.FC = () => {
   const [isScanningPosts, setIsScanningPosts] = useState(false);
   const [agencyBillingUrl, setAgencyBillingUrl] = useState('');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
   // Tracks which campaign id is currently being researched by the agent
   // (POST /api/db/campaigns/:id/research). UI uses it to show the spinner
   // on the right card without mutating campaigns[].briefStatus locally.
@@ -4397,22 +4398,32 @@ const Dashboard: React.FC = () => {
                 </div>
                 <button
                   onClick={async () => {
-                    const id = await db.createCampaign({
-                      clientId: activeClientId, name: 'New Campaign', type: 'custom',
-                      startDate: new Date().toISOString().split('T')[0],
-                      endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-                      rules: '', postsPerDay: 1, enabled: true,
-                    });
-                    setCampaigns(prev => [...prev, {
-                      id, name: 'New Campaign', type: 'custom' as const,
-                      startDate: new Date().toISOString().split('T')[0],
-                      endDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
-                      rules: '', imageNotes: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
-                    }]);
+                    if (isCreatingCampaign) return;
+                    setIsCreatingCampaign(true);
+                    const startDate = new Date().toISOString().split('T')[0];
+                    const endDate = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0];
+                    try {
+                      const id = await db.createCampaign({
+                        clientId: activeClientId, name: 'New Campaign', type: 'custom',
+                        startDate, endDate, rules: '', postsPerDay: 1, enabled: true,
+                      });
+                      setCampaigns(prev => [...prev, {
+                        id, name: 'New Campaign', type: 'custom' as const,
+                        startDate, endDate,
+                        rules: '', imageNotes: '', postsPerDay: 1, enabled: true, createdAt: new Date().toISOString(),
+                      }]);
+                      toast('Campaign created');
+                    } catch (e: any) {
+                      console.error('[campaigns] create failed:', e);
+                      toast(e?.message || 'Could not create campaign. Please try again.', 'error');
+                    } finally {
+                      setIsCreatingCampaign(false);
+                    }
                   }}
-                  className="flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg transition press flex-shrink-0"
+                  disabled={isCreatingCampaign}
+                  className="flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg transition press flex-shrink-0 disabled:opacity-60 disabled:cursor-wait"
                 >
-                  <Plus size={13} /> New
+                  {isCreatingCampaign ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} {isCreatingCampaign ? 'Adding...' : 'New'}
                 </button>
               </div>
 

@@ -19,6 +19,8 @@ function makePortalDb(): D1Database {
 describe('portal token scope', () => {
   it.each([
     '/api/db/social-tokens?clientId=hughesq-001',
+    '/api/db/campaigns?clientId=hughesq-001',
+    '/api/db/campaigns/campaign-123',
     '/api/db/facts?clientId=hughesq-001',
     '/api/db/refresh-facts',
     '/api/db/refresh-facts/hughesq-001',
