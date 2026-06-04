@@ -259,19 +259,6 @@ export function lookupSocialTokens(
   return undefined;
 }
 
-// ── AI disclosure suffix ────────────────────────────────────────────────
-// Customer-readiness: Meta's Synthetic & Manipulated Media policy requires
-// AI-generated images to be labelled. The customer is the publisher and
-// theoretically liable, so we auto-append a small disclosure as the
-// defensive default. The workspace can opt out via BusinessProfile.aiDisclosure
-// = false — see frontend Settings → Content & Video toggle.
-//
-// Disclosure shape: a single leading middle-dot to visually break it off
-// from the hashtag block, then the marker. Kept short + neutral so it
-// doesn't dominate the caption. Appears AFTER hashtags (i.e. at the very
-// end of the published body), so feed consumers see it last.
-export const AI_DISCLOSURE_SUFFIX = ' · 🤖 Created with AI';
-
 /**
  * Build the FB/IG publish caption for a post. Centralised here so the
  * cron publish path (cron/publish-missed.ts) and the manual publish-now
@@ -282,15 +269,8 @@ export const AI_DISCLOSURE_SUFFIX = ' · 🤖 Created with AI';
  *      inline hashtags and double-appended cases).
  *   2. Append the canonical hashtag block (newline-newline separator)
  *      iff `hashtags.length > 0`.
- *   3. Append AI_DISCLOSURE_SUFFIX iff `hasImage` AND the workspace
- *      hasn't opted out via `aiDisclosure: false`.
- *
- * The disclosure is image-only by design — text-only posts get nothing.
- * That matches Meta's policy (the AI-content label is required when the
- * image is generated; the policy says nothing about AI-assisted captions).
- *
- * Default opt-in: undefined aiDisclosure → disclosure ON. False explicitly
- * opts out. This matches the BusinessProfile interface docs.
+ *   3. Do not append any platform-facing AI attribution. If a caption needs
+ *      disclosure text, it must be part of the saved content itself.
  */
 export function buildPublishCaption(input: {
   content: string;
@@ -298,15 +278,12 @@ export function buildPublishCaption(input: {
   hasImage: boolean;
   aiDisclosure?: boolean;
 }): string {
-  const { content, hashtags, hasImage, aiDisclosure } = input;
+  const { content, hashtags } = input;
   const cleanContent = content.replace(/(\s+#\w+)+\s*$/, '').trim();
   const withHashtags = hashtags.length > 0
     ? `${cleanContent}\n\n${hashtags.join(' ')}`
     : cleanContent;
-  // Disclosure is opt-out: undefined → true. Only append when the post has
-  // an AI-generated image attached. Text-only posts never get it.
-  const wantsDisclosure = hasImage && aiDisclosure !== false;
-  return wantsDisclosure ? `${withHashtags}${AI_DISCLOSURE_SUFFIX}` : withHashtags;
+  return withHashtags;
 }
 
 /**

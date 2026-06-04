@@ -182,18 +182,8 @@ export interface BusinessProfile {
    *  the model falls back to evergreen pillar content. */
   weeklyMaterial?: string;
   /**
-   * Whether to auto-append an "AI Created" disclosure to AI-image posts
-   * before publishing. Defaults to TRUE — Meta's Synthetic & Manipulated
-   * Media policy requires labelling AI-generated images, and the publisher
-   * (the customer) is theoretically liable. We add the disclosure as a
-   * defensive default so a customer who never touches Settings still
-   * ships compliant posts.
-   *
-   * False = opt-out (the customer takes responsibility for compliance).
-   * Undefined = treat as true (back-compat with pre-disclosure profiles).
-   *
-   * The disclosure is only appended on posts that have an AI-generated
-   * image (image_url present) — text-only posts get nothing.
+   * Legacy preference retained for stored profile compatibility. The publish
+   * pipeline no longer auto-appends an AI disclosure to customer captions.
    */
   aiDisclosure?: boolean;
 }
