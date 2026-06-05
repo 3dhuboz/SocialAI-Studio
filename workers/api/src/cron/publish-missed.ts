@@ -30,7 +30,6 @@ import {
   lookupPostproxyMapping,
   normalizePostPlatform,
   buildPublishCaption,
-  loadAiDisclosurePref,
 } from './_shared';
 import {
   createPost as postproxyCreatePost,
@@ -743,22 +742,11 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           ?? (post as any).video_url
           ?? imageUrlPp) as string | null;
 
-        // AI-disclosure suffix — appended after hashtags when the post has
-        // an AI-generated image and the workspace hasn't opted out. Reads
-        // the per-workspace preference from profile JSON (client tier wins
-        // over user tier; absent = default-on). See _shared.ts for the
-        // policy rationale (Meta synthetic-media labelling, publisher
-        // liability).
-        const aiDisclosurePp = await loadAiDisclosurePref(
-          env,
-          (post as any).user_id as string,
-          (post as any).client_id as string | null,
-        );
+        // Build the final caption from saved content + canonical hashtags.
         const fullTextPp = buildPublishCaption({
           content: contentTextPp,
           hashtags: hashtagsPp,
           hasImage: !!imageUrlPp,
-          aiDisclosure: aiDisclosurePp,
         });
 
         const postTypePp = (post as any).post_type as string | null;
@@ -857,20 +845,11 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       const contentText = (post as any).content as string;
       // Strip any trailing hashtags from content (idempotent: handles inline hashtags and double-appended cases)
       const cleanContent = contentText.replace(/(\s+#\w+)+\s*$/, '').trim();
-      // AI-disclosure suffix — appended after hashtags when the post has an
-      // AI-generated image and the workspace hasn't opted out. See _shared.ts
-      // for policy rationale (Meta synthetic-media labelling). Pulled from
-      // profile JSON; client tier wins over user tier; absent = default-on.
-      const aiDisclosureLegacy = await loadAiDisclosurePref(
-        env,
-        (post as any).user_id as string,
-        (post as any).client_id as string | null,
-      );
+      // Build the final caption from saved content + canonical hashtags.
       const fullText = buildPublishCaption({
         content: contentText,
         hashtags,
         hasImage: !!((post as any).image_url),
-        aiDisclosure: aiDisclosureLegacy,
       });
 
       const base = 'https://graph.facebook.com/v21.0';

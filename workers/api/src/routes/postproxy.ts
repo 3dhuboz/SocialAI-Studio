@@ -46,7 +46,6 @@ import {
 import {
   normalizePostPlatform,
   buildPublishCaption,
-  loadAiDisclosurePref,
 } from '../cron/_shared';
 
 const uuid = () => crypto.randomUUID();
@@ -690,20 +689,11 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const media = [post.audio_mixed_url, post.video_url, imageUrl].find((u): u is string => !!u);
     if (!media) return c.json({ error: 'Post has no media (image or video) to publish' }, 400);
 
-    // AI-disclosure suffix — see cron/_shared.ts and the cron path in
-    // publish-missed.ts for the policy. Manual publish path resolves the
-    // workspace preference the same way (client tier wins; absent = default-on)
-    // so the published caption is byte-identical between cron + publish-now.
-    const aiDisclosure = await loadAiDisclosurePref(
-      c.env,
-      post.user_id ?? uid,
-      post.client_id,
-    );
+    // Build the final caption from saved content + canonical hashtags.
     const fullText = buildPublishCaption({
       content: post.content,
       hashtags,
       hasImage: !!imageUrl,
-      aiDisclosure,
     });
 
     // Match the cron's format-per-platform mapping. Facebook now uses
