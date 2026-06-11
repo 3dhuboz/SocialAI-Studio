@@ -22,6 +22,7 @@
 // merges into main. Merging order: #86 → this PR.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateImageWithGuardrails } from '../lib/image-gen';
+import { ARCHETYPE_IMAGE_GUARDRAILS } from '../lib/image-safety';
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let originalFetch: typeof globalThis.fetch;
@@ -183,8 +184,9 @@ describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth
     // even when the supplied LLM prompt looks clean. Caller's prompt is
     // discarded in favour of a deterministic pick from the bank.
     expect(body.prompt).not.toContain('co-working studio with closed laptop and morning light');
-    // Should be one of the 15 SaaS fallback scenes (all photographable).
-    expect(body.prompt.toLowerCase()).toMatch(/notebook|desk|hands|smartphone|coffee|journal|sketch|street|highway|window|chair|gradient|brass|leather|planner|sticky|calendar|content|cards|books|card file/);
+    // Should be one of the current SaaS fallback scenes (all photographable).
+    const saasFallbackScenes = ARCHETYPE_IMAGE_GUARDRAILS['tech-saas-agency'].fallbackScenes;
+    expect(saasFallbackScenes.some((scene) => body.prompt.toLowerCase().includes(scene.toLowerCase()))).toBe(true);
     // Negative prompt extended with the archetype's avoid-list.
     expect(body.negative_prompt).toMatch(/food|plated|bbq/);
   });
