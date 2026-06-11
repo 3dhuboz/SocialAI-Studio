@@ -211,7 +211,7 @@ npx wrangler deploy --config wrangler.toml   # --config flag required — avoids
 > The global `wrangler` (v4) detects the repo root `functions/` dir and thinks it's a Pages project. Always use `npx wrangler` (v3) with `--config wrangler.toml`.
 
 ### Frontend (auto via GitHub → Cloudflare Pages)
-Push to `main` → Pages auto-deploys. Check status at Cloudflare Dashboard → Pages → `socialaistudio-au`.
+Push to `main` → Pages auto-deploys. Check status at Cloudflare Dashboard → Pages → `socialai-studio`.
 
 Manual build:
 ```bash
