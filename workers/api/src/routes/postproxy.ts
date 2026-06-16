@@ -38,6 +38,7 @@ import {
   listProfiles,
   createPost,
 } from '../lib/postproxy';
+import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
 import {
   parseWebhookEvent,
   planWebhookAction,
@@ -686,8 +687,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
         }
       }
     }
-    const media = [post.audio_mixed_url, post.video_url, imageUrl].find((u): u is string => !!u);
-    if (!media) return c.json({ error: 'Post has no media (image or video) to publish' }, 400);
+    const media = [post.audio_mixed_url, post.video_url, imageUrl].find((u): u is string => !!u) ?? null;
 
     // Build the final caption from saved content + canonical hashtags.
     const fullText = buildPublishCaption({
@@ -699,6 +699,13 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // Match the cron's format-per-platform mapping. Facebook now uses
     // 'post'; the live Postproxy API rejects the old 'feed' alias.
     const isReel = post.post_type === 'video';
+    const missingMediaReason = postproxyMissingMediaReason({
+      platform: postPlatform,
+      postType: post.post_type,
+      mediaUrl: media,
+    });
+    if (missingMediaReason) return c.json({ error: missingMediaReason }, 400);
+
     const format: 'post' | 'reel' =
       isReel ? 'reel'
       : 'post';
@@ -707,7 +714,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const result = await createPost(c.env, {
         profileId: mapping.postproxy_profile_id,
         body: fullText,
-        media: [media],
+        media: postproxyMediaArray(media),
         format,
         // page_id is IG-irrelevant — buildCreatePostPayload drops it from
         // the IG payload. Pass an empty string for IG so the typed arg is

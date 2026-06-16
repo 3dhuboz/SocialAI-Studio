@@ -37,6 +37,7 @@ import {
   deletePostOnPlatform as postproxyDeletePostOnPlatform,
   getPost as getPostproxyPost,
 } from '../lib/postproxy';
+import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
 import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
@@ -751,6 +752,11 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
 
         const postTypePp = (post as any).post_type as string | null;
         const isReel = postTypePp === 'video';
+        const missingMediaReason = postproxyMissingMediaReason({
+          platform: postPlatform,
+          postType: postTypePp,
+          mediaUrl,
+        });
         // Reels need media — without it Postproxy returns a 400 we can't
         // recover from. Fall through to "Missed" rather than retry forever.
         if (isReel && !mediaUrl) {
@@ -761,8 +767,8 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           await notifyOwnerOnFailure(env, post as any, reason, 'post');
           continue;
         }
-        if (!mediaUrl && postTypePp !== 'text') {
-          const reason = 'Post has no public image/video URL for Postproxy publish - image generation did not return a public asset.';
+        if (missingMediaReason) {
+          const reason = missingMediaReason;
           console.warn(`[CRON] Postproxy post ${(post as any).id} missing public media - marking missed`);
           await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
             .bind('Missed', reason, (post as any).id).run();
@@ -781,7 +787,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           const result = await postproxyCreatePost(env, {
             profileId: mapping.postproxy_profile_id,
             body: fullTextPp,
-            media: mediaUrl ? [mediaUrl] : [],
+            media: postproxyMediaArray(mediaUrl),
             format,
             // page_id is IG-irrelevant — the lib only emits it for FB.
             // Pass an empty string for IG so the typed arg is satisfied;

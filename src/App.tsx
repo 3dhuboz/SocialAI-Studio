@@ -1034,24 +1034,9 @@ const Dashboard: React.FC = () => {
     await syncPostStatuses();
   };
 
-  // Detect overdue scheduled posts and mark them as 'Missed'
-  useEffect(() => {
-    if (!user || posts.length === 0) return;
-    const now = new Date();
-    // Give 10 minutes grace period after scheduled time
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
-    // Only mark as missed if scheduled time was more than 10 minutes ago
-    const overdue = posts.filter(p => 
-      p.status === 'Scheduled' && 
-      new Date(p.scheduledFor) < tenMinAgo
-    );
-    
-    if (overdue.length > 0) {
-      console.log(`[MISSED] Marking ${overdue.length} posts as missed (scheduled > 10 min ago)`);
-      db.bulkUpdatePostStatus(overdue.map(p => p.id), 'Missed').catch(() => {});
-      setPosts(prev => prev.map(p => overdue.find(o => o.id === p.id) ? { ...p, status: 'Missed' as const } : p));
-    }
-  }, [posts, user, activeClientId]);
+  // Missed-post detection belongs to the worker cron. The browser must never
+  // flip scheduled posts to Missed, or opening the dashboard can strand a
+  // post before the worker gets a chance to publish it.
 
   // ── Facebook token health check — detect expired/expiring tokens on load ──
   useEffect(() => {
