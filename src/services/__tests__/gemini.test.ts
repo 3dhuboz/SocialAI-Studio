@@ -600,6 +600,17 @@ describe('scrubBannedPhrases — banned-trope removal', () => {
     expect(out).not.toMatch(/there\.Goodbye/i); // no fusion of "there." and "Goodbye"
     expect(out).toMatch(/there\.\s+Goodbye/i);
   });
+
+  it('replaces stale Gladstone BBQ ticket facts with current ticket facts', () => {
+    const input = 'Gladstone BBQ Festival 2026 tickets are live. VIP $40, general admission $20, high school $10, primary school free. Grab tickets at gladstonebbqfest.au.';
+    const out = scrubBannedPhrases(input);
+
+    expect(out).toContain('Adult $30');
+    expect(out).toContain('Family Pass $80');
+    expect(out).toContain('High School $15');
+    expect(out).toContain('Kids 5-12 $5');
+    expect(out).not.toMatch(/\bVIP\b|\$20|general admission \$20|high school \$10|primary school free/i);
+  });
 });
 
 describe('scrubBannedPhrases — preservation guards', () => {

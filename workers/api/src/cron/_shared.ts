@@ -9,6 +9,7 @@
 
 import type { Env } from '../env';
 import { decryptSocialTokensJson } from '../lib/social-tokens';
+import { sanitizeKnownEventTicketFacts } from '../../../../shared/event-ticket-facts';
 
 export const ACTIVE_CLIENT_FILTER =
   `(client_id IS NULL OR client_id NOT IN (SELECT id FROM clients WHERE status = 'on_hold'))`;
@@ -279,7 +280,8 @@ export function buildPublishCaption(input: {
   aiDisclosure?: boolean;
 }): string {
   const { content, hashtags } = input;
-  const cleanContent = content.replace(/(\s+#\w+)+\s*$/, '').trim();
+  const safeContent = sanitizeKnownEventTicketFacts(content);
+  const cleanContent = safeContent.replace(/(\s+#\w+)+\s*$/, '').trim();
   const withHashtags = hashtags.length > 0
     ? `${cleanContent}\n\n${hashtags.join(' ')}`
     : cleanContent;

@@ -88,4 +88,28 @@ describe('buildPublishCaption', () => {
     expect(out).toBe('Just a quick note');
     expect(out).not.toContain('Created with AI');
   });
+
+  it('corrects stale Gladstone BBQ ticket facts before publishing', () => {
+    const out = buildPublishCaption({
+      content: 'Gladstone BBQ Festival tickets are live. VIP $40, general admission $20, high school $10, primary school free. Grab yours at gladstonebbqfest.au.',
+      hashtags: ['#GladstoneBBQ'],
+      hasImage: true,
+    });
+
+    expect(out).toContain('Adult $30');
+    expect(out).toContain('Family Pass $80');
+    expect(out).toContain('High School $15');
+    expect(out).toContain('Kids 5-12 $5');
+    expect(out).not.toMatch(/\bVIP\b|\$20|general admission \$20|high school \$10|primary school free/i);
+  });
+
+  it('does not rewrite unrelated VIP copy for other clients', () => {
+    const out = buildPublishCaption({
+      content: 'VIP $40 launch night tickets are now open for the studio.',
+      hashtags: [],
+      hasImage: true,
+    });
+
+    expect(out).toBe('VIP $40 launch night tickets are now open for the studio.');
+  });
 });

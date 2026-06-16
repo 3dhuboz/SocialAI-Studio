@@ -1,4 +1,5 @@
 import { getIndustryBenchmarks, formatBenchmarksForPrompt, HASHTAG_LIMITS } from '../data/socialMediaResearch';
+import { sanitizeKnownEventTicketFacts } from '../../shared/event-ticket-facts';
 
 // Sanitise raw AI JSON output — fixes common issues that cause JSON.parse to fail
 // IMPORTANT: Do NOT replace smart double quotes with straight quotes here — that breaks
@@ -1535,7 +1536,10 @@ export function scrubBannedPhrases(content: string): string {
     }
   }
   // Tidy double-spaces and stray punctuation left after deletions.
-  return out.replace(/\s{2,}/g, ' ').replace(/\s+([,.!?])/g, '$1').trim();
+  return sanitizeKnownEventTicketFacts(out)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?])/g, '$1')
+    .trim();
 }
 
 export const generateMarketingImage = async (prompt: string, businessType: string = 'small business', caption?: string | null, clientId?: string | null, seedHint?: string | null): Promise<string | null> => {
