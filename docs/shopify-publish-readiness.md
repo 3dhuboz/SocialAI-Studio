@@ -1,48 +1,72 @@
 # Shopify Publish Readiness
 
-Status: no-go for full shop-owned auto-publish.
+Status: go for the App Store submission slice.
 
-This is intentional. Shopify merchants can compose and preview posts, but the publish path is protected until shop-owned publishing has its own token and scheduling path.
+Supported scope is now:
 
-## Protective state
+- Shopify shop-owned scheduling to a connected Facebook Page
+- Shopify publish-now for Draft or Missed Facebook posts
+- Shopify Autopilot batch save for Facebook-ready posts
+- shop-owned token loading from `shopify_stores.social_tokens`
+- app scope drift handling through `app/scopes_update`
 
-- Shopify scheduler is disabled in `workers/api/src/routes/shopify-posts.ts`.
-  - `PATCH /api/shopify/posts/:id` rejects `status='Scheduled'` with `SHOPIFY_SCHEDULER_DISABLED`.
-  - `POST /api/shopify/posts/:id/publish-now` rejects with `SHOPIFY_SCHEDULER_DISABLED` before it can flip a row to `Scheduled`.
-- Shopify autopilot persistence is disabled in `workers/api/src/routes/shopify-autopilot.ts`.
-  - `/api/shopify/autopilot/generate-one` still allows `dryRun=true` preview generation.
-  - Non-dry-run `generate-one` and `/save-batch` reject with `SHOPIFY_SCHEDULER_DISABLED` before any `posts` insert.
-- Generic `publish-missed` excludes shop-owned rows through `NON_SHOP_OWNER_FILTER`.
-  - The count gate, zombie sweep, quality guard, and claim query all exclude `owner_kind='shop'`.
-  - Existing `owner_kind='shop'` rows should not be claimed, marked missed by the generic zombie sweep, or quality-blocked by the generic publisher.
+Intentionally out of scope for this submission:
 
-## Why full publish is not feasible yet
+- Instagram-only publishing from the Shopify embedded app
+- combined Facebook + Instagram fan-out from a single shop-owned post row
 
-The SocialAI publisher still assumes a Clerk user or agency client. Shop-owned rows use `owner_kind='shop'` / `owner_id=<shopDomain>` and need a different loader contract.
+## What changed
 
-Remaining implementation:
+### Worker routes
 
-1. Add a Shopify social-token loader.
-   - Read `shopify_stores.social_tokens` by `posts.owner_id`.
-   - Validate `facebookPageId` and `facebookPageAccessToken`.
-   - Validate `instagramBusinessAccountId` before allowing Instagram publish.
-   - Decide whether this JSON should be parsed directly like current Shopify fact routes or migrated onto the encrypted `social_tokens` helper format.
-2. Add Shopify platform mapping.
-   - Current generic mapping resolves `posts.platform` to one Postproxy/Graph destination for user/client workspaces.
-   - Shopify rows can store `facebook`, `instagram`, or `both`.
-   - `both` needs deterministic fan-out or two stored publish attempts, not the generic fallback that treats unknown values as Facebook.
-3. Canonicalize Shopify scheduled times before enabling writes.
-   - Generic posts normalize `scheduled_for` to the cron's naive AEST format with `normalizeScheduledFor`.
-   - Shopify autopilot currently canonicalizes to UTC ISO (`toISOString()`), and publish-now uses UTC ISO.
-   - Before removing the disabled guard, choose one canonical format for shop rows and make the Shopify cron comparison use that same format.
-4. Add the shop-owned publisher path.
-   - Either extend `publish-missed` with a separate shop branch after the current non-shop claim path, or create a Shopify-specific cron.
-   - Keep row claiming atomic.
-   - Preserve existing terminal states: `Posted` on success, `Missed` with readable `reasoning` on final failure, retry on transient failures.
-   - Keep existing denylist, fabrication, quality, image/video prewarm, and AI-disclosure behavior intentionally in or intentionally out, with tests for whichever choice is made.
+- `workers/api/src/routes/shopify-posts.ts`
+  - accepts Facebook as the supported shop platform
+  - blocks unsupported platform requests with `UNSUPPORTED_PLATFORM`
+  - requires a connected Facebook Page before scheduling or publish-now
+- `workers/api/src/routes/shopify-autopilot.ts`
+  - keeps `dryRun=true` preview generation
+  - saves approved batches as real Scheduled rows when Facebook is connected
+- `workers/api/src/routes/shopify-oauth.ts`
+  - now handles `POST /api/shopify/webhooks/app/scopes_update`
 
-## Test coverage
+### Cron path
 
-`workers/api/src/__tests__/publish-missed-shop-guard.test.ts` proves the generic cron does not claim or mutate shop-owned scheduled rows.
+- `workers/api/src/cron/_shared.ts`
+  - loads shop-owned social tokens from `shopify_stores`
+- `workers/api/src/cron/publish-missed.ts`
+  - claims Facebook shop rows
+  - loads shop denylist data with `loadForbiddenSubjectsForShop`
+  - marks unsupported non-Facebook shop rows `Missed` with an actionable reason
+- `workers/api/src/cron/poll-pending-reels.ts`
+  - resolves shop-owned token lookups for reel polling
 
-`workers/api/src/__tests__/shopify-publish-readiness.test.ts` locks the protective state: Shopify scheduling remains disabled before scheduling writes, autopilot persistence remains disabled before `posts` inserts, and generic token loading still does not read from `shopify_stores`.
+### Embedded app
+
+- Compose, Autopilot, Calendar, Insights, Settings, and app shell copy now present a Facebook Page-only scheduling story.
+- Dragging an unscheduled Draft onto a day in Calendar now schedules it directly.
+
+## Known limits
+
+These are deliberate for the current review package:
+
+1. Instagram publishing is not exposed in the embedded app.
+2. Legacy shop rows that already contain `platform='instagram'` or `platform='both'` are treated as unsupported and should not be recreated from the current UI.
+3. Reviewer flows that need real scheduling still require a real connected Facebook Page admin account.
+
+## Verification
+
+Local verification completed on June 17, 2026:
+
+- `cd workers/api && npm test`
+- `cd workers/api && npm run typecheck`
+- `cd shopify-app && VITE_SHOPIFY_API_KEY=test-shopify-key npm run build`
+
+Focused coverage now includes:
+
+- `workers/api/src/__tests__/shopify-publish-readiness.test.ts`
+- `workers/api/src/__tests__/cron-shared.test.ts`
+- `workers/api/src/__tests__/connection-check.test.ts`
+
+## Live reviewer data
+
+The live dev-shop install in D1 was cleaned back to zero shop-owned post rows on June 17, 2026 so reviewers do not land in stale Draft, Missed, or legacy `both` posts.

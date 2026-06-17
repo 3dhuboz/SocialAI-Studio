@@ -27,7 +27,10 @@ import {
   type PostproxyMappingRow,
 } from '../cron/_shared';
 
-function makeDb(rows: { table: 'clients' | 'users'; id: string; social_tokens: string | null }[]) {
+function makeDb(rows: Array<
+  | { table: 'clients' | 'users'; id: string; social_tokens: string | null }
+  | { table: 'shopify_stores'; shop_domain: string; social_tokens: string | null }
+>) {
   const calls: { sql: string; binds: unknown[] }[] = [];
   const prepare = vi.fn().mockImplementation((sql: string) => ({
     bind: (...binds: unknown[]) => {
@@ -35,11 +38,24 @@ function makeDb(rows: { table: 'clients' | 'users'; id: string; social_tokens: s
       return {
         all: () => {
           const lower = sql.toLowerCase();
-          const want = lower.includes('from clients') ? 'clients' : 'users';
           const ids = new Set(binds.map(String));
-          const results = rows
-            .filter((r) => r.table === want && ids.has(r.id))
-            .map((r) => ({ id: r.id, social_tokens: r.social_tokens }));
+          const results = lower.includes('from clients')
+            ? rows
+                .filter((r): r is { table: 'clients'; id: string; social_tokens: string | null } =>
+                  r.table === 'clients' && ids.has(r.id),
+                )
+                .map((r) => ({ id: r.id, social_tokens: r.social_tokens }))
+            : lower.includes('from users')
+              ? rows
+                  .filter((r): r is { table: 'users'; id: string; social_tokens: string | null } =>
+                    r.table === 'users' && ids.has(r.id),
+                  )
+                  .map((r) => ({ id: r.id, social_tokens: r.social_tokens }))
+              : rows
+                  .filter((r): r is { table: 'shopify_stores'; shop_domain: string; social_tokens: string | null } =>
+                    r.table === 'shopify_stores' && ids.has(r.shop_domain),
+                  )
+                  .map((r) => ({ shop_domain: r.shop_domain, social_tokens: r.social_tokens }));
           return Promise.resolve({ results });
         },
       };
@@ -104,6 +120,27 @@ describe('loadSocialTokensForPosts', () => {
     expect(map.get('u:u1')?.facebookPageId).toBe('p-u1');
   });
 
+  it('loads shop-owned rows from shopify_stores when owner_kind=shop', async () => {
+    const { env, calls } = makeDb([
+      {
+        table: 'shopify_stores',
+        shop_domain: 'acme.myshopify.com',
+        social_tokens: JSON.stringify({
+          facebookPageId: 'pg_1',
+          facebookPageAccessToken: 'tok_pg_1',
+          instagramBusinessAccountId: 'ig_1',
+        }),
+      },
+    ]);
+    const map = await loadSocialTokensForPosts(env, [
+      { owner_kind: 'shop', owner_id: 'acme.myshopify.com', user_id: 'acme.myshopify.com', client_id: null },
+    ]);
+    expect(calls.length).toBe(1);
+    expect(calls[0].sql.toLowerCase()).toContain('from shopify_stores');
+    expect(map.get('s:acme.myshopify.com')?.facebookPageId).toBe('pg_1');
+    expect(map.get('s:acme.myshopify.com')?.instagramBusinessAccountId).toBe('ig_1');
+  });
+
   it('deduplicates repeated workspace ids — one placeholder per distinct id', async () => {
     const { env, calls } = makeDb([
       { table: 'clients', id: 'c1', social_tokens: fbTokens('p1') },
@@ -156,11 +193,22 @@ describe('lookupSocialTokens', () => {
   const map = new Map<string, SocialTokens>([
     ['c:c1', { facebookPageId: 'pc1', facebookPageAccessToken: 'tc1' }],
     ['u:u1', { facebookPageId: 'pu1', facebookPageAccessToken: 'tu1' }],
+    ['s:shop-a.myshopify.com', { facebookPageId: 'ps1', facebookPageAccessToken: 'ts1' }],
   ]);
 
   it('returns client tokens when post has client_id (client wins over user_id)', () => {
     const t = lookupSocialTokens(map, { user_id: 'u-ignored', client_id: 'c1' });
     expect(t?.facebookPageId).toBe('pc1');
+  });
+
+  it('returns shop tokens when owner_kind=shop', () => {
+    const t = lookupSocialTokens(map, {
+      owner_kind: 'shop',
+      owner_id: 'shop-a.myshopify.com',
+      user_id: 'shop-a.myshopify.com',
+      client_id: null,
+    });
+    expect(t?.facebookPageId).toBe('ps1');
   });
 
   it('falls back to user tokens when client_id is null', () => {

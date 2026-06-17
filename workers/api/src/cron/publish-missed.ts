@@ -20,10 +20,14 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
-import { loadForbiddenSubjects, resolveBusinessType, scanForForbidden } from '../lib/profile-guards';
+import {
+  loadForbiddenSubjects,
+  loadForbiddenSubjectsForShop,
+  resolveBusinessType,
+  scanForForbidden,
+} from '../lib/profile-guards';
 import {
   ACTIVE_CLIENT_FILTER,
-  NON_SHOP_OWNER_FILTER,
   loadSocialTokensForPosts,
   lookupSocialTokens,
   loadPostproxyMappingForPosts,
@@ -419,6 +423,8 @@ async function kickFacebookReelUpload(
 // generic regen accept threshold (CRITIQUE_ACCEPT_THRESHOLD=5) — we'd
 // rather publish a score-4 image than mark every score-4 post Missed.
 const QUALITY_GUARD_THRESHOLD = 3;
+const SHOPIFY_FACEBOOK_ONLY_FILTER =
+  `(COALESCE(owner_kind, 'user') != 'shop' OR COALESCE(platform, 'facebook') = 'facebook')`;
 
 export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
@@ -436,7 +442,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   const dueCheck = await env.DB.prepare(
     `SELECT COUNT(*) as c FROM posts
      WHERE status IN ('Scheduled', 'Publishing') AND scheduled_for <= ?
-       AND ${NON_SHOP_OWNER_FILTER}`
+       AND ${SHOPIFY_FACEBOOK_ONLY_FILTER}`
   ).bind(nowAEST).first<{ c: number }>();
   if (!dueCheck || dueCheck.c === 0) {
     return { posts_processed: postproxyPollProcessed + postproxyDeleteProcessed };
@@ -483,7 +489,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
          )
          AND NOT (postproxy_post_id IS NOT NULL AND postproxy_status = 'pending')
          AND (fb_publish_state IS NULL OR fb_publish_state NOT IN ('kicked', 'polling'))
-         AND ${NON_SHOP_OWNER_FILTER}
+         AND ${SHOPIFY_FACEBOOK_ONLY_FILTER}
          AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(tenMinAgoUtc, tenMinAgo).run();
 
@@ -505,6 +511,32 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
          AND client_id IN (SELECT id FROM clients WHERE status = 'on_hold')`
   ).bind(tenMinAgoUtc, tenMinAgo).run();
 
+  // Historical guardrail rows from the pre-enable Shopify phase may still
+  // exist with platform='instagram' or 'both'. Those combinations are not on
+  // the live shop-owned publish path yet, so surface them clearly instead of
+  // leaving them Scheduled forever.
+  const unsupportedShopRows = await env.DB.prepare(
+    `SELECT id
+       FROM posts
+      WHERE owner_kind = 'shop'
+        AND status = 'Scheduled'
+        AND scheduled_for <= ?
+        AND COALESCE(platform, 'facebook') != 'facebook'`,
+  ).bind(nowAEST).all<{ id: string }>();
+  for (const row of (unsupportedShopRows.results ?? [])) {
+    await env.DB.prepare(
+      `UPDATE posts
+          SET status = 'Missed',
+              reasoning = ?,
+              claim_id = NULL,
+              claim_at = NULL
+        WHERE id = ?`,
+    ).bind(
+      'Shopify scheduled publishing currently supports Facebook Page delivery only. Recreate this post as Facebook-only to publish it.',
+      row.id,
+    ).run();
+  }
+
   // Image-quality guard. Posts whose image scored at/below the guard threshold
   // AND whose FLUX regen budget is exhausted go straight to Missed with a
   // human-readable reason — the owner gets the same publish-failure alert
@@ -516,7 +548,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
      WHERE status = 'Scheduled' AND scheduled_for <= ?
        AND image_critique_score IS NOT NULL AND image_critique_score <= ?
        AND COALESCE(image_regen_count, 0) >= ?
-       AND ${NON_SHOP_OWNER_FILTER}
+       AND ${SHOPIFY_FACEBOOK_ONLY_FILTER}
        AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(nowAEST, QUALITY_GUARD_THRESHOLD, MAX_REGEN_ATTEMPTS).all<{
     id: string; user_id: string | null; client_id: string | null;
@@ -542,7 +574,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
     `UPDATE posts SET status = 'Publishing', claim_id = ?, claim_at = ?
      WHERE status = 'Scheduled' AND scheduled_for <= ?
        AND claim_id IS NULL
-       AND ${NON_SHOP_OWNER_FILTER}
+       AND ${SHOPIFY_FACEBOOK_ONLY_FILTER}
        AND ${ACTIVE_CLIENT_FILTER}`
   ).bind(claimId, claimAt, nowAEST).run();
 
@@ -561,7 +593,8 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // (legacy, pre-v22) → 0 = legacy Graph path.
   const rows = await env.DB.prepare(
     `SELECT p.id, p.content, p.hashtags, p.image_url, p.image_prompt, p.platform,
-            p.user_id, p.client_id, p.post_type, p.video_url, p.video_status,
+            p.user_id, p.client_id, p.owner_kind, p.owner_id,
+            p.post_type, p.video_url, p.video_status,
             p.audio_mixed_url,
             COALESCE(c.use_postproxy, u.use_postproxy, 0) AS use_postproxy
      FROM posts p
@@ -580,7 +613,12 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   // up to 20 round-trips per tick to fetch what's almost always 1-3 distinct
   // workspaces' tokens (most batches are dominated by a single owner's posts).
   // See cron/_shared.ts:loadSocialTokensForPosts for the IN-list query shape.
-  const tokensMap = await loadSocialTokensForPosts(env, posts as { user_id?: string | null; client_id?: string | null }[]);
+  const tokensMap = await loadSocialTokensForPosts(env, posts as {
+    user_id?: string | null;
+    client_id?: string | null;
+    owner_kind?: string | null;
+    owner_id?: string | null;
+  }[]);
 
   // Same batch loader for the Postproxy mapping table — populated only
   // for workspaces that have completed the Postproxy connect flow. Posts
@@ -618,11 +656,13 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // Pre-fix this only checked the user-level denylist, which is why
       // Seamus's brisket-only exclusion silently no-opped for a managed
       // client even after the system was nominally "configured" with one.
-      const denylist = await loadForbiddenSubjects(
-        env,
-        (post as any).user_id as string,
-        (post as any).client_id as string | null,
-      );
+      const denylist = (post as any).owner_kind === 'shop'
+        ? await loadForbiddenSubjectsForShop(env, (post as any).owner_id as string)
+        : await loadForbiddenSubjects(
+            env,
+            (post as any).user_id as string,
+            (post as any).client_id as string | null,
+          );
       if (denylist.length > 0) {
         const captionHit = scanForForbidden((post as any).content as string, denylist);
         const promptHit = captionHit ? null : scanForForbidden((post as any).image_prompt as string, denylist);

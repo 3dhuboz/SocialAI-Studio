@@ -18,8 +18,7 @@
 //     Body: { productId, platform, scheduledFor, tone? }
 //     1. Re-uses composeProductPost() from shopify-compose.ts (caption + image)
 //     2. Allows dryRun=true preview generation only.
-//     3. Non-dry-run persistence is intentionally blocked with
-//        SHOPIFY_SCHEDULER_DISABLED until shop-owned publishing is ready.
+//     3. Saves approved posts directly as Scheduled rows when Facebook is connected.
 //
 // Rate limit: 20/min per shop. Higher than the 10/min cap on /compose
 // because the bulk gen does naturally space things out (3 parallel × 5–20s
@@ -37,9 +36,10 @@ import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
 import { composeProductPost, ComposeError } from './shopify-compose';
 import { requireActiveShopSubscription } from '../lib/shopify-billing';
+import { isShopConnected } from '../lib/connection-check';
 
 const RATE_LIMIT_PER_MIN = 20;
-const ALLOWED_PLATFORMS = new Set(['facebook', 'instagram', 'both']);
+const SUPPORTED_SHOP_PLATFORM = 'facebook';
 const ALLOWED_TONES = new Set(['friendly', 'professional', 'playful']);
 const ALLOWED_POST_TYPES = new Set(['image', 'video']);
 
@@ -49,12 +49,26 @@ const ALLOWED_POST_TYPES = new Set(['image', 'video']);
  *  generic "cinematic, smooth motion" fallback if this is omitted. */
 const DEFAULT_MOTION_PROMPT =
   'cinematic product showcase, slow camera dolly forward, soft natural light, gentle subject rotation, premium tabletop staging';
-const SHOPIFY_SCHEDULER_DISABLED = {
-  error: 'Shopify scheduling is temporarily disabled while shop-owned publishing is being finalized.',
-  code: 'SHOPIFY_SCHEDULER_DISABLED',
-};
-function isShopifySchedulerDisabled(): boolean {
-  return true;
+function unsupportedPlatformResponse(c: any) {
+  return c.json({
+    error: 'Shopify scheduled publishing currently supports Facebook Page delivery only.',
+    code: 'UNSUPPORTED_PLATFORM',
+    supported_platform: SUPPORTED_SHOP_PLATFORM,
+  }, 409);
+}
+
+function isSupportedShopPlatform(platform: string | null | undefined): boolean {
+  return (platform || '').toLowerCase() === SUPPORTED_SHOP_PLATFORM;
+}
+
+async function requireConnectedFacebook(c: any, shop: string): Promise<Response | null> {
+  const connected = await isShopConnected(c.env, shop, 'facebook');
+  if (connected) return null;
+  return c.json({
+    error: 'Facebook not connected for this shop. Connect your Facebook Page in Settings before scheduling Autopilot posts.',
+    code: 'NOT_CONNECTED',
+    platform: 'facebook',
+  }, 409);
 }
 
 function requireShopifyConfig(env: Env): { key: string; secret: string } | null {
@@ -147,16 +161,17 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     if (!body) return c.json({ error: 'Invalid JSON body' }, 400);
 
     const dryRun = body.dryRun === true;
-    if (!dryRun && isShopifySchedulerDisabled()) {
-      return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
-    }
 
     const productId = typeof body.productId === 'string' ? body.productId.trim() : '';
     if (!productId) return c.json({ error: 'productId is required' }, 400);
 
-    const platform = body.platform || 'both';
-    if (!ALLOWED_PLATFORMS.has(platform)) {
-      return c.json({ error: `platform must be one of: ${[...ALLOWED_PLATFORMS].join(', ')}` }, 400);
+    const platform = body.platform || 'facebook';
+    if (!isSupportedShopPlatform(platform)) {
+      return unsupportedPlatformResponse(c);
+    }
+    if (!dryRun) {
+      const connectedResp = await requireConnectedFacebook(c, shop);
+      if (connectedResp) return connectedResp;
     }
 
     const tone = body.tone || 'friendly';
@@ -193,7 +208,7 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
     try {
       composed = await composeProductPost(
         c.env, shop, productId,
-        platform as 'facebook' | 'instagram' | 'both',
+        platform as 'facebook',
         tone as 'friendly' | 'professional' | 'playful',
         campaignContext || undefined,
       );
@@ -206,17 +221,15 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
       return c.json({ error: String(err?.message ?? err).slice(0, 300) }, 500);
     }
 
-    // Persistence is disabled while Shopify publish readiness is no-go. When
-    // re-enabled, this insert must mirror shopify-posts.ts contract: write BOTH
-    // legacy (user_id, client_id) AND tenant-abstracted (owner_kind, owner_id)
-    // columns. user_id is the shop sentinel because the column is NOT NULL.
+    // Persist directly as shop-owned Scheduled rows using the same tenant
+    // contract as shopify-posts.ts: write BOTH legacy (user_id, client_id)
+    // AND tenant-abstracted (owner_kind, owner_id) columns. user_id is the
+    // shop sentinel because the column is NOT NULL.
     //
     // For postType='video' we also set:
     //   post_type='video', video_status='pending', video_script=<motion>
     // which the prewarm-videos cron (runs every 5 min) picks up to fire
-    // off Kling i2v generation against image_url as the thumbnail. Before
-    // Shopify persistence is re-enabled, the downstream publish path must be
-    // explicitly wired for shop-owned rows.
+    // off Kling i2v generation against image_url as the thumbnail.
     const id = crypto.randomUUID();
     const nowIso = new Date().toISOString();
     const scheduledIso = new Date(scheduleMs).toISOString();
@@ -313,7 +326,7 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
   //   { posts: Array<{
   //       caption: string,
   //       imageUrl: string,
-  //       platform: 'facebook' | 'instagram' | 'both',
+  //       platform: 'facebook',
   //       scheduledFor: string  // ISO
   //       postType?: 'image' | 'video',
   //       motionPrompt?: string,
@@ -363,9 +376,8 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
         return c.json({ error: 'Batch capped at 50 posts' }, 400);
       }
 
-      if (isShopifySchedulerDisabled()) {
-        return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
-      }
+      const connectedResp = await requireConnectedFacebook(c, shop);
+      if (connectedResp) return connectedResp;
 
       const saved: string[] = [];
       const failed: Array<{ idx: number; error: string }> = [];
@@ -385,7 +397,7 @@ export function registerShopifyAutopilotRoutes(app: Hono<{ Bindings: Env }>): vo
 
           if (!caption.trim()) { failed.push({ idx: i, error: 'empty caption' }); continue; }
           if (!imageUrl)       { failed.push({ idx: i, error: 'missing imageUrl' }); continue; }
-          if (!ALLOWED_PLATFORMS.has(platform)) { failed.push({ idx: i, error: 'bad platform' }); continue; }
+          if (!isSupportedShopPlatform(platform)) { failed.push({ idx: i, error: 'unsupported platform' }); continue; }
           const ms = Date.parse(scheduledFor);
           if (!ms || Number.isNaN(ms))    { failed.push({ idx: i, error: 'bad scheduledFor' }); continue; }
           if (ms < Date.now() - 60_000)   { failed.push({ idx: i, error: 'scheduledFor in past' }); continue; }

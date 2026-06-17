@@ -35,6 +35,7 @@ export const NON_SHOP_OWNER_FILTER =
 export type SocialTokens = {
   facebookPageId?: string;
   facebookPageAccessToken?: string;
+  instagramBusinessAccountId?: string;
   /** Postproxy profile.id once OAuth completes; NULL pre-connect. */
   postproxyProfileId?: string;
   /** FB Page numeric id chosen via the placement-picker. */
@@ -199,20 +200,31 @@ export function lookupPostproxyMapping(
 // "SyntaxError: Unexpected token..." the inline JSON.parse would emit
 // before being caught by the per-post try/catch.
 export async function loadSocialTokensForPosts<
-  P extends { user_id?: string | null; client_id?: string | null }
+  P extends {
+    user_id?: string | null;
+    client_id?: string | null;
+    owner_kind?: string | null;
+    owner_id?: string | null;
+  }
 >(env: Env, posts: P[]): Promise<Map<string, SocialTokens>> {
   const clientIds = new Set<string>();
   const userIds = new Set<string>();
+  const shopIds = new Set<string>();
   for (const p of posts) {
-    if (p.client_id) clientIds.add(p.client_id);
-    else if (p.user_id) userIds.add(p.user_id);
+    if (p.owner_kind === 'shop' && p.owner_id) {
+      shopIds.add(p.owner_id);
+    } else if (p.client_id) {
+      clientIds.add(p.client_id);
+    } else if (p.user_id) {
+      userIds.add(p.user_id);
+    }
   }
 
   const map = new Map<string, SocialTokens>();
 
   // D1 supports parameterised IN lists via splat-bound placeholders. Run both
   // queries in parallel — they're against different tables, no contention.
-  const [clientRows, userRows] = await Promise.all([
+  const [clientRows, userRows, shopRows] = await Promise.all([
     clientIds.size > 0
       ? env.DB.prepare(
           `SELECT id, social_tokens FROM clients WHERE id IN (${Array.from(clientIds, () => '?').join(',')})`,
@@ -223,6 +235,14 @@ export async function loadSocialTokensForPosts<
           `SELECT id, social_tokens FROM users WHERE id IN (${Array.from(userIds, () => '?').join(',')})`,
         ).bind(...userIds).all<{ id: string; social_tokens: string | null }>()
       : Promise.resolve({ results: [] as { id: string; social_tokens: string | null }[] }),
+    shopIds.size > 0
+      ? env.DB.prepare(
+          `SELECT shop_domain, social_tokens
+             FROM shopify_stores
+            WHERE shop_domain IN (${Array.from(shopIds, () => '?').join(',')})
+              AND uninstalled_at IS NULL`,
+        ).bind(...shopIds).all<{ shop_domain: string; social_tokens: string | null }>()
+      : Promise.resolve({ results: [] as { shop_domain: string; social_tokens: string | null }[] }),
   ]);
 
   // decryptSocialTokensJson handles both legacy plaintext and the v1
@@ -243,6 +263,18 @@ export async function loadSocialTokensForPosts<
       if (t) map.set(`u:${r.id}`, t);
     })());
   }
+  for (const r of shopRows.results ?? []) {
+    decrypts.push((async () => {
+      if (!r.social_tokens) return;
+      try {
+        const parsed = JSON.parse(r.social_tokens) as SocialTokens;
+        map.set(`s:${r.shop_domain}`, parsed);
+      } catch {
+        // Malformed shop JSON should isolate to the single shop, just like
+        // decryptSocialTokensJson does for users/clients.
+      }
+    })());
+  }
   await Promise.all(decrypts);
 
   return map;
@@ -253,8 +285,14 @@ export async function loadSocialTokensForPosts<
 // malformed — callers should treat the same as "no FB connected".
 export function lookupSocialTokens(
   map: Map<string, SocialTokens>,
-  post: { user_id?: string | null; client_id?: string | null },
+  post: {
+    user_id?: string | null;
+    client_id?: string | null;
+    owner_kind?: string | null;
+    owner_id?: string | null;
+  },
 ): SocialTokens | undefined {
+  if (post.owner_kind === 'shop' && post.owner_id) return map.get(`s:${post.owner_id}`);
   if (post.client_id) return map.get(`c:${post.client_id}`);
   if (post.user_id) return map.get(`u:${post.user_id}`);
   return undefined;

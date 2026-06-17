@@ -9,7 +9,7 @@
 //   GET    /api/shopify/posts             — list shop's posts (optional ?status)
 //   PATCH  /api/shopify/posts/:id         — edit a Draft (content/image/schedule/status)
 //   DELETE /api/shopify/posts/:id         — delete (Draft or Scheduled only; not Posted)
-//   POST   /api/shopify/posts/:id/publish-now — currently returns 503 until shop-owned publishing is wired
+//   POST   /api/shopify/posts/:id/publish-now — force a Draft or Missed post into the queue immediately
 //
 // ── Tenant isolation ──────────────────────────────────────────────────────
 // Every query scopes by `owner_kind='shop' AND owner_id=?` (the verified
@@ -33,20 +33,21 @@
 // composer needs to remember which product a post came from, add a
 // posts.metadata or shopify_post_products column in schema_v23.
 //
-// ── ⚠ PUBLISH READINESS — READ BEFORE LANDING ─────────────────────────────
-// Shopify scheduling and publish-now are deliberately hard-disabled with
-// SHOPIFY_SCHEDULER_DISABLED until shop-owned publishing has its own safe
-// token and scheduling path. Before enabling this endpoint, publish-missed
-// must be extended to also handle `owner_kind='shop'` rows by:
-//   1. SELECTing posts WHERE owner_kind='shop' AND status='Scheduled' AND
-//      scheduled_for <= now, *in addition to* the existing user-scoped query.
-//   2. Resolving the shop's FB Page + IG Business Account tokens from
-//      `shopify_stores.social_tokens` (the JSON column added in schema_v22)
-//      instead of the per-user/per-client social_tokens path it uses today.
-//   3. On success: mark status='Posted'. On failure: status='Missed' +
-//      preserve any per-post error/late_post_id fields you already use.
-// Until those changes land, this route must keep returning 503 before it can
-// flip any row to status='Scheduled'. See docs/shopify-publish-readiness.md.
+// ── Shopify publish scope ──────────────────────────────────────────────────
+// Shop-owned scheduling now flows through the shared publish cron using
+// `owner_kind='shop'` rows plus `shopify_stores.social_tokens`.
+//
+// Current supported surface:
+//   - Facebook Page scheduling and publish-now
+//   - shop-owned token loading through shopify_stores
+//   - denylist checks through loadForbiddenSubjectsForShop
+//
+// Deliberately unsupported for the App Store slice:
+//   - Instagram-only publishing
+//   - combined Facebook + Instagram fan-out from a single shop-owned row
+//
+// Unsupported platform requests are rejected here and non-Facebook shop rows
+// are marked Missed by the publish cron with an actionable reason.
 //
 // ── Rate limiting ─────────────────────────────────────────────────────────
 // 60 req/min per shop on every endpoint. Key: `shopify-posts:<shop>`.
@@ -57,29 +58,40 @@ import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
 import { requireActiveShopSubscription } from '../lib/shopify-billing';
+import { isShopConnected } from '../lib/connection-check';
 
 // Match the OAuth route — keep both files in sync if the limit changes.
 const RATE_LIMIT_PER_MIN = 60;
 
-// Allowed platform values on the wire. We never trust the raw body.
-const ALLOWED_PLATFORMS = new Set(['facebook', 'instagram', 'both']);
+// Shopify scheduled publishing is currently constrained to Facebook Page
+// delivery for shop-owned posts. We still validate the incoming platform
+// explicitly instead of trusting raw body values.
+const SUPPORTED_SHOP_PLATFORM = 'facebook';
 
 // Status transitions allowed on PATCH. Anything else is rejected with 400.
 const ALLOWED_PATCH_STATUSES = new Set(['Draft', 'Scheduled']);
-const SHOPIFY_SCHEDULER_DISABLED = {
-  error: 'Shopify scheduling is temporarily disabled while shop-owned publishing is being finalized.',
-  code: 'SHOPIFY_SCHEDULER_DISABLED',
-};
-function isShopifySchedulerDisabled(): boolean {
-  return true;
+
+function unsupportedPlatformResponse(c: any) {
+  return c.json({
+    error: 'Shopify scheduled publishing currently supports Facebook Page delivery only.',
+    code: 'UNSUPPORTED_PLATFORM',
+    supported_platform: SUPPORTED_SHOP_PLATFORM,
+  }, 409);
 }
 
-// Editable status — only Draft posts are editable via PATCH or deletable
-// from-anywhere via DELETE. The DELETE handler ALSO allows 'Scheduled' (a
-// merchant should be able to cancel a scheduled post); PATCH does not (to
-// avoid race conditions where the publish-missed cron is mid-flight on a
-// row the merchant is editing). The Posted state is terminal.
-const EDITABLE_VIA_PATCH = 'Draft';
+function isSupportedShopPlatform(platform: string | null | undefined): boolean {
+  return (platform || '').toLowerCase() === SUPPORTED_SHOP_PLATFORM;
+}
+
+async function requireConnectedFacebook(c: any, shop: string): Promise<Response | null> {
+  const connected = await isShopConnected(c.env, shop, 'facebook');
+  if (connected) return null;
+  return c.json({
+    error: 'Facebook not connected for this shop. Connect your Facebook Page in Settings before scheduling posts.',
+    code: 'NOT_CONNECTED',
+    platform: 'facebook',
+  }, 409);
+}
 
 // requireSession — mirrors the pattern in routes/shopify-oauth.ts. Returns
 // either a VerifiedSession (auth passed) or a Response (already-built error).
@@ -143,7 +155,7 @@ interface ShopPostRow {
 export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── POST /api/shopify/posts ──────────────────────────────────────────
   // Create a Draft post for the current shop.
-  // Body: { content, image_url?, platform: 'facebook' | 'instagram' | 'both',
+    // Body: { content, image_url?, platform: 'facebook',
   //         product_id? (currently dropped — no column for it yet) }
   // Always status='Draft', scheduled_for=NULL on create. To schedule, the
   // merchant PATCHes the row.
@@ -163,8 +175,8 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const imageUrl = typeof body.image_url === 'string' && body.image_url ? body.image_url : null;
     const platform = typeof body.platform === 'string' ? body.platform : '';
-    if (!ALLOWED_PLATFORMS.has(platform)) {
-      return c.json({ error: "platform must be one of: 'facebook', 'instagram', 'both'" }, 400);
+    if (!isSupportedShopPlatform(platform)) {
+      return unsupportedPlatformResponse(c);
     }
 
     const id = crypto.randomUUID();
@@ -260,11 +272,28 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     // leak the existence of another shop's row via a generic "no rows
     // updated" response).
     const current = await c.env.DB.prepare(
-      `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
-    ).bind(postId, shop).first<{ status: string | null }>();
+      `SELECT status, scheduled_for, platform
+         FROM posts
+        WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(postId, shop).first<{
+      status: string | null;
+      scheduled_for: string | null;
+      platform: string | null;
+    }>();
     if (!current) return c.json({ error: 'Post not found' }, 404);
-    if (current.status !== EDITABLE_VIA_PATCH) {
-      return c.json({ error: `Only Draft posts can be edited (current status: ${current.status})` }, 409);
+    if (current.status !== 'Draft' && current.status !== 'Scheduled') {
+      return c.json({ error: `Only Draft or Scheduled posts can be edited (current status: ${current.status})` }, 409);
+    }
+    if (!isSupportedShopPlatform(current.platform)) {
+      return unsupportedPlatformResponse(c);
+    }
+    if (current.status === 'Scheduled') {
+      const allowedScheduledKeys = new Set(['scheduled_for', 'status']);
+      if (Object.keys(body).some((key) => !allowedScheduledKeys.has(key))) {
+        return c.json({
+          error: 'Scheduled posts can only be rescheduled or moved back to Draft.',
+        }, 409);
+      }
     }
 
     // Build the UPDATE dynamically — only set fields the caller actually sent.
@@ -293,8 +322,16 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       if (typeof v !== 'string' || !ALLOWED_PATCH_STATUSES.has(v)) {
         return c.json({ error: "status must be 'Draft' or 'Scheduled'" }, 400);
       }
-      if (v === 'Scheduled' && isShopifySchedulerDisabled()) {
-        return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
+      if (v === 'Scheduled') {
+        const finalScheduledFor =
+          typeof body.scheduled_for === 'string'
+            ? body.scheduled_for
+            : current.scheduled_for;
+        if (!finalScheduledFor) {
+          return c.json({ error: 'scheduled_for is required when scheduling a post' }, 400);
+        }
+        const connectedResp = await requireConnectedFacebook(c, shop);
+        if (connectedResp) return connectedResp;
       }
       sets.push('status = ?');
       vals.push(v);
@@ -341,12 +378,7 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   // ── POST /api/shopify/posts/:id/publish-now ──────────────────────────
-  // Force a Draft into the publish queue immediately.
-  //
-  // Disabled by design: this must return SHOPIFY_SCHEDULER_DISABLED until
-  // shop-owned publishing has a tested token loader, platform fan-out, and
-  // cron claim path. The write below is intentionally unreachable while the
-  // guard remains enabled.
+  // Force a Draft or Missed post into the publish queue immediately.
   app.post('/api/shopify/posts/:id/publish-now', async (c) => {
     const shopOrResp = await gate(c);
     if (shopOrResp instanceof Response) return shopOrResp;
@@ -357,11 +389,13 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     const postId = c.req.param('id');
 
     const current = await c.env.DB.prepare(
-      `SELECT status FROM posts WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
-    ).bind(postId, shop).first<{ status: string | null }>();
+      `SELECT status, platform
+         FROM posts
+        WHERE id = ? AND owner_kind = 'shop' AND owner_id = ?`,
+    ).bind(postId, shop).first<{ status: string | null; platform: string | null }>();
     if (!current) return c.json({ error: 'Post not found' }, 404);
-    if (isShopifySchedulerDisabled()) {
-      return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);
+    if (!isSupportedShopPlatform(current.platform)) {
+      return unsupportedPlatformResponse(c);
     }
     // Allow publish-now from:
     //   - Draft    — normal "skip the schedule, publish right now" path
@@ -377,6 +411,8 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
     if (current.status !== 'Draft' && current.status !== 'Missed') {
       return c.json({ error: `Only Draft or Missed posts can be force-published (current: ${current.status})` }, 409);
     }
+    const connectedResp = await requireConnectedFacebook(c, shop);
+    if (connectedResp) return connectedResp;
 
     // now - 1ms in ISO form. The -1ms ensures we're strictly < now() at
     // cron-comparison time even if the cron runs in the same millisecond.

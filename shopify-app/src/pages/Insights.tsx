@@ -282,9 +282,14 @@ export default function Insights() {
               <Divider />
               <Text as="span" variant="bodySm" tone="subdued">Platform split</Text>
               <BlockStack gap="100">
-                <PlatformRow label="Facebook"  count={posts.byPlatform.facebook}  total={posts.total} />
-                <PlatformRow label="Instagram" count={posts.byPlatform.instagram} total={posts.total} />
-                <PlatformRow label="Both"      count={posts.byPlatform.both}      total={posts.total} />
+                <PlatformRow label="Facebook" count={posts.byPlatform.facebook} total={posts.total} />
+                {(posts.byPlatform.instagram + posts.byPlatform.both) > 0 && (
+                  <PlatformRow
+                    label="Other / legacy"
+                    count={posts.byPlatform.instagram + posts.byPlatform.both}
+                    total={posts.total}
+                  />
+                )}
               </BlockStack>
             </BlockStack>
           )}

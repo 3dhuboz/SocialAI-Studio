@@ -97,6 +97,54 @@ export async function isWorkspaceConnected(
   }
 }
 
+/**
+ * Shopify-shop variant of isWorkspaceConnected. Reads directly from
+ * shopify_stores.social_tokens because shop-owned posts don't belong to a
+ * Clerk user/client workspace.
+ *
+ * Current supported readiness:
+ *   - facebook  => facebookPageId + facebookPageAccessToken
+ *   - instagram => instagramBusinessAccountId + facebookPageAccessToken
+ *
+ * Never throws. DB or JSON errors are treated as "not connected" so the
+ * scheduling routes fail closed with a real CTA instead of queueing ghost
+ * Scheduled posts that later age into Missed.
+ */
+export async function isShopConnected(
+  env: Env,
+  shopDomain: string,
+  platform: Platform,
+): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT social_tokens
+         FROM shopify_stores
+        WHERE shop_domain = ?
+          AND uninstalled_at IS NULL`,
+    ).bind(shopDomain).first<{ social_tokens: string | null }>();
+    if (!row?.social_tokens) return false;
+
+    let tokens: {
+      facebookPageId?: string;
+      facebookPageAccessToken?: string;
+      instagramBusinessAccountId?: string;
+    } | null = null;
+    try {
+      tokens = JSON.parse(row.social_tokens);
+    } catch {
+      return false;
+    }
+
+    if (platform === 'instagram') {
+      return !!(tokens?.instagramBusinessAccountId && tokens?.facebookPageAccessToken);
+    }
+    return !!(tokens?.facebookPageId && tokens?.facebookPageAccessToken);
+  } catch (e: any) {
+    console.warn(`[connection-check] shop DB error for ${shopDomain}/${platform}: ${e?.message || e}`);
+    return false;
+  }
+}
+
 /** Normalise a posts.platform string ('Facebook', 'Instagram', 'instagram',
  *  undefined) to the lowercase token the rest of the worker uses. */
 export function normalizePlatform(raw: string | null | undefined): Platform {

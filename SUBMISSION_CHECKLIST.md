@@ -1,137 +1,74 @@
-# App Store Submission Checklist — SocialAI Studio for Shopify
+# App Store Submission Checklist - SocialAI Studio for Shopify
 
-The state of every requirement Shopify checks during review, with file links to anything that's drop-in ready.
+Current state as of June 17, 2026.
 
 ---
 
-## ✅ Code & compliance (done — verified)
+## What is now aligned
+
+| Area | Status | Notes |
+|---|---|---|
+| Embedded app auth | Ready | Session-token auth and token exchange are already in place |
+| Billing flow | Ready | Shopify subscription flow remains active for the dev store |
+| Shopify shop-owned Facebook scheduling | Ready in code | Posts route, Autopilot, and publish cron now support Facebook Page delivery for `owner_kind='shop'` rows |
+| `publish-now` for Shopify posts | Ready in code | Draft and Missed Facebook shop posts can be forced into the queue |
+| Shopify Autopilot save path | Ready in code | Preview flow now saves approved Facebook batches to Calendar |
+| `app/scopes_update` webhook | Ready in code | Added and wired in `workers/api/src/routes/shopify-oauth.ts` |
+| Reviewer-facing Shopify UI copy | Ready | Compose, Autopilot, Calendar, Insights, Settings, and shell copy now advertise Facebook-only scheduling |
+| Reviewer listing copy | Ready | `LISTING_COPY.md` now matches the current supported scope |
+| Publish-readiness documentation | Ready | `docs/shopify-publish-readiness.md` rewritten for the Facebook-only App Store slice |
+
+## Verification completed
+
+| Check | Result |
+|---|---|
+| `cd workers/api && npm test` | Passed - 50 files, 746 tests |
+| `cd workers/api && npm run typecheck` | Passed |
+| `cd shopify-app && VITE_SHOPIFY_API_KEY=test-shopify-key npm run build` | Passed |
+
+## Live dev-shop state
 
 | Item | Status | Notes |
 |---|---|---|
-| Embedded app loads inside Shopify Admin via App Bridge v4 | ✅ | `useAppBridge()` hook in [App.tsx](shopify-app/src/App.tsx); CDN-loaded `app-bridge.js` |
-| `<ui-nav-menu>` web component present | ✅ | Required by reviewers — present in [App.tsx](shopify-app/src/App.tsx) |
-| Polaris-native UI | ✅ | All UI uses `@shopify/polaris` v13; no rogue inline styles |
-| Token Exchange + `expiring=1` | ✅ | Modern auth pattern — [shopify-token-exchange.ts](workers/api/src/lib/shopify-token-exchange.ts) |
-| OAuth code-grant kept as fallback | ✅ | [shopify-oauth.ts](workers/api/src/routes/shopify-oauth.ts) `/auth` + `/auth/callback` |
-| Mandatory `app/uninstalled` webhook | ✅ | HMAC-verified, marks shop uninstalled, audited |
-| GDPR webhook 1: `customers/data_request` | ✅ | Acknowledges 200; no customer data stored |
-| GDPR webhook 2: `customers/redact` | ✅ | LIKE-purges past PII rows from webhook log; logs sentinel only |
-| GDPR webhook 3: `shop/redact` | ✅ | Deletes shop row + products + webhook log + billing events + oauth state |
-| Webhook HMAC verification before parse | ✅ | All 6 webhooks verify against raw body before any JSON parse |
-| Webhook idempotency via `X-Shopify-Webhook-Id` | ✅ | `isDuplicateWebhook()` check before side effects |
-| Webhook responses < 5s (Shopify timeout) | ✅ | `ctx.waitUntil()` on non-critical audit writes |
-| Shopify Billing API integration | ✅ | $29 USD/mo, 7-day trial, dev-store `test: true` |
-| `app_subscriptions/update` webhook | ✅ | Reconciles state changes into D1 |
-| Billing reconciliation cron (`*/15 * * * *`) | ✅ | Recovers from missed webhooks — [reconcile-subscriptions.ts](workers/api/src/cron/reconcile-subscriptions.ts) |
-| OAuth state CSRF protection | ✅ | One-shot nonces, atomic `DELETE … RETURNING` |
-| Shop domain sanitizer | ✅ | Regex-strict, 60-char subdomain cap, IDN-safe |
-| Session token JWT validation | ✅ | HS256, alg-confusion guard, https-only iss/dest, 5s clock skew |
-| Access tokens AES-256 encrypted at rest | ✅ | `v1:iv:ct` format via Web Crypto. `access_token_format: 'v1'` verified live |
-| CSP `frame-ancestors` for Shopify admin | ✅ | [shopify-app/public/_headers](shopify-app/public/_headers) |
-| HSTS + nosniff + Referrer-Policy + Permissions-Policy | ✅ | All in `_headers` |
-| Admin endpoints `requireAdmin` gated | ✅ | All `/api/admin/shopify-stores/*` paths |
-| Admin audit log | ✅ | `shopify_admin_audit` table |
-| Rate limiting on token-exchange + setup-subscription | ✅ | 10/min per shop |
-| AbortSignal timeouts on Shopify API fetches | ✅ | 15s — prevents hung webhooks |
-| Test suite | ✅ | 90 tests across 5 files — `cd workers/api && npm test` |
-| Worker observability enabled | ✅ | `[observability] enabled = true` in wrangler.toml |
-| `.gitignore` covers wrangler logs + .env | ✅ | Verified — no token leakage |
+| Dev-shop install row | Present | `socialai-dev-store.myshopify.com` |
+| Subscription status | Active | `subscription_status='ACTIVE'` |
+| Shopify scopes | Good | `read_products` |
+| Facebook connection | Present | `shopify_stores.social_tokens` exists |
+| Reviewer post history | Cleaned | All shop-owned post rows were cleared on June 17, 2026 |
+
+## Still intentionally out of scope
+
+These are not bugs for this submission:
+
+1. Instagram-only publishing from the Shopify embedded app
+2. Combined Facebook + Instagram fan-out from a single Shopify post row
+3. Reviewer-side live scheduling without a real Facebook Page admin login
+
+## Operational steps still to run
+
+These are the final ship steps after code review is done:
+
+1. Deploy the updated worker from `workers/api` with `npx wrangler deploy --config wrangler.toml`
+2. Push the updated repo so the Shopify Pages frontend can redeploy from GitHub
+3. Verify live app pages after deploy:
+   - `https://app.socialaistudio.au/privacy`
+   - `https://app.socialaistudio.au/support`
+   - Shopify embedded frontend at `https://app.socialaistudio.au`
+4. Paste the updated copy from `LISTING_COPY.md` into the Partners listing form
+5. Upload screenshots and icon assets
+6. Submit for Shopify review
+
+## Suggested reviewer story
+
+Use this exact supported flow when describing the app:
+
+1. Install and approve billing in a dev store
+2. Sync products
+3. Compose and save a Draft
+4. Connect a Facebook Page
+5. Schedule from Compose, Calendar, or Autopilot
+6. Review queue state and Facebook metrics in Insights
 
 ---
 
-## ✅ Listing assets (done — copy ready, files staged)
-
-| Asset | Status | File |
-|---|---|---|
-| App name + tagline + descriptions | ✅ Drafted | [LISTING_COPY.md](LISTING_COPY.md) |
-| Privacy policy text | ✅ Drafted | [PRIVACY_POLICY.md](PRIVACY_POLICY.md) |
-| Pricing structure | ✅ Drafted | In LISTING_COPY.md |
-| Categories | ✅ Drafted | Marketing → Content marketing |
-| Support email | ✅ | steve@pennywiseit.com.au |
-| Demo store URL | ✅ | `socialai-dev-store.myshopify.com` (live with app installed) |
-| Installation instructions for reviewer | ✅ Drafted | In LISTING_COPY.md |
-| Screenshot 1: install consent screen | ✅ Captured | `~/Downloads/` (Chrome auto-saved during this session) |
-| Screenshot 2: embedded app + shop info card | ✅ Captured | Same |
-
----
-
-## ✅ Listing assets — final pass
-
-| Asset | Status | Where |
-|---|---|---|
-| **App icon (1200×1200 PNG)** | ✅ Generated | [shopify-app/assets/app-icon.png](shopify-app/assets/app-icon.png) — 391 KB. Dark slate background, amber speech bubble with AI sparkles + typing dots, rounded square. Source SVG at [shopify-app/public/app-icon.svg](shopify-app/public/app-icon.svg). Rendered via headless Chrome from the SVG. |
-| **Privacy policy page (HTML)** | ✅ Drafted + built | [shopify-app/public/privacy.html](shopify-app/public/privacy.html) → goes live at `https://app.socialaistudio.au/privacy` |
-| **Support page (HTML)** | ✅ Drafted + built | [shopify-app/public/support.html](shopify-app/public/support.html) → goes live at `https://app.socialaistudio.au/support` |
-| **Screenshots** | ✅ 2 captured (auto-saved to `~/Downloads/`) | Install consent screen + embedded-app loaded state. Both functional; reviewers accept 1280×720 minimum so these meet spec. |
-
-## ⏳ One blocker, then ship
-
-The Pages deploy is **fully built and staged in `shopify-app/dist/`** (12 files: index.html, privacy.html, support.html, app-icon.svg, _headers, and the 7 JS/CSS bundle chunks). The Cloudflare API has globally rate-limited this account's OAuth token after a series of mid-session auth failures, so the deploy itself can't go through automatically right now. Even `wrangler whoami` returns `Max auth failures reached [code: 9109]`.
-
-**Two ways to ship the deploy (pick one):**
-
-**Option A — Fresh wrangler login (fastest, ~30 seconds):**
-```bash
-cd shopify-app
-VITE_SHOPIFY_API_KEY=f191b1dcbd73ce52f9c4b0d27591545e npm run build   # REQUIRED env var or build fails fast
-npx wrangler logout
-npx wrangler login              # opens browser, click Allow once
-npx wrangler pages deploy dist --project-name socialai-shopify --branch main --commit-dirty=true
-```
-
-> **Why the inline env var?** Without `VITE_SHOPIFY_API_KEY` the built HTML
-> ships with the literal `%VITE_SHOPIFY_API_KEY%` placeholder and App Bridge
-> hangs at boot (the 2026-05-21 outage). The build now fails fast if it's
-> missing — but the inline form here makes the dependency obvious to anyone
-> reading the runbook.
-
-**Option B — Direct upload via dashboard (no CLI needed):**
-1. Open https://dash.cloudflare.com/?to=/:account/pages/view/socialai-shopify/deployments/new
-2. Drag the `shopify-app/dist/` folder onto the drop zone (the dashboard's `webkitdirectory` input blocks programmatic upload but accepts real drag-and-drop)
-3. Click **Save and deploy**
-
-**Option C — Wait it out (~30-60 min):**
-The rate limit eventually clears. Try `npx wrangler whoami` periodically; once that returns your account info, the existing OAuth still works for ~17 more minutes (token expires 07:22 UTC) and the deploy command above will succeed.
-
-Once any option succeeds, verify:
-
-```bash
-curl -I https://app.socialaistudio.au/privacy   # → 200 OK + CSP headers
-curl -I https://app.socialaistudio.au/support   # → 200 OK + CSP headers
-```
-
-## What's still optional
-
-| Item | Recommendation |
-|---|---|
-| **More polished screenshots (3-8 annotated)** | The 2 captured today work for first submission. Adding annotated arrows in Figma is a polish-pass that can happen post-listing-live. |
-| **Demo video (Loom, 30-60s)** | Not required by Shopify. Adds conversion lift on the listing page but won't gate review. Skip for now. |
-
----
-
-## 🚀 To submit
-
-Once the 5 manual items are done:
-
-1. In Partners → SocialAI Studio → **Distribution** → click **Manage Shopify App Store listing**
-2. Paste copy from [LISTING_COPY.md](LISTING_COPY.md) into each form field
-3. Upload the icon + 3-8 screenshots
-4. Paste the public privacy + support URLs
-5. **Submit for review**
-6. Expect 2-3 weeks of reviewer ping-pong. Typical first-round asks: a clarifying question about how AI generation works with merchant data, and a request to confirm webhook handlers respond correctly (Shopify auto-tests these — we're already covered).
-
-If reviewers ask about anything in the "Code & compliance" table above, point them at the specific file in this checklist — every item has a citation.
-
----
-
-## What you don't need to do
-
-- ❌ Worry about webhook delivery — we have idempotency + reconciliation cron
-- ❌ Worry about token expiry — Token Exchange re-runs on every embedded-app mount
-- ❌ Worry about dev-store billing — `test: true` is auto-set for `partner_test` plans
-- ❌ Worry about token storage security — AES-256 envelope encryption is live and verified
-- ❌ Set up a separate billing system — Shopify Billing API handles everything; revenue lands in your Partners payout
-
----
-
-_Last updated: 22 May 2026. State of the world: Pages deployment at `app.socialaistudio.au` (CNAME → `socialai-shopify.pages.dev`), schema_v21 applied, 90/90 tests passing, 1 dev-store install live with encrypted token. Domain swap from `socialai-shopify.pages.dev` made for Shopify Partners hostname compliance (Partners blocks any URL containing "shopify")._
+Do not describe Instagram scheduling, combined FB+IG publishing, or preview-only Autopilot in the submission package anymore.

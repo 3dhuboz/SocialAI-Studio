@@ -219,21 +219,34 @@ export default function Calendar() {
    *  on success so the cache catches any server-side normalisation. */
   const handleReschedule = useCallback(async (postId: string, newDay: Date) => {
     const post = posts.find((p) => p.id === postId);
-    if (!post || !post.scheduled_for) return;
+    if (!post || (post.status !== 'Draft' && post.status !== 'Scheduled')) return;
 
-    const current = new Date(post.scheduled_for);
-    if (sameDay(current, newDay)) return; // no-op drag onto same cell
+    const current = post.scheduled_for ? new Date(post.scheduled_for) : null;
+    if (current && sameDay(current, newDay)) return; // no-op drag onto same cell
 
     // Build the new datetime: new day, same time-of-day.
     const next = new Date(newDay);
-    next.setHours(current.getHours(), current.getMinutes(), 0, 0);
+    if (current) {
+      next.setHours(current.getHours(), current.getMinutes(), 0, 0);
+    } else {
+      // Drafts from the unscheduled tray don't have a time yet. Land them at
+      // a predictable business-hours default so the merchant can fine-tune later.
+      next.setHours(9, 0, 0, 0);
+    }
     const iso = next.toISOString();
+    const patch = post.status === 'Draft'
+      ? { scheduled_for: iso, status: 'Scheduled' as const }
+      : { scheduled_for: iso };
 
     // Optimistic update so the chip moves immediately.
-    setPosts((prev) => prev.map((p) => p.id === postId ? { ...p, scheduled_for: iso } : p));
+    setPosts((prev) => prev.map((p) => (
+      p.id === postId
+        ? { ...p, scheduled_for: iso, status: p.status === 'Draft' ? 'Scheduled' : p.status }
+        : p
+    )));
     setBusyId(postId);
     try {
-      await updatePost(postId, { scheduled_for: iso });
+      await updatePost(postId, patch);
       await load();
     } catch (e: unknown) {
       const msg = e instanceof ApiError ? e.message : String(e);
@@ -480,8 +493,8 @@ export default function Calendar() {
         <Modal.Section>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">
-              This will skip the schedule and push the post to Facebook and
-              Instagram immediately. You can't undo a live publish.
+              This will skip the schedule and push the post to Facebook
+              immediately. You can't undo a live publish.
             </Text>
             {confirmedPost && (
               <Text as="p" variant="bodySm" tone="subdued">
@@ -709,9 +722,7 @@ function PostChip({ post, busy, onClick, draggable }: PostChipProps) {
     ? new Date(post.scheduled_for).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
 
-  const platformChar = post.platform === 'facebook' ? 'f'
-    : post.platform === 'instagram' ? 'ig'
-    : 'fb·ig';
+  const platformChar = post.platform === 'facebook' ? 'fb' : 'legacy';
 
   // Reel indicator — the autopilot can schedule video Reels; without this
   // chip merchants can't tell at a glance which posts will publish as video
@@ -889,7 +900,7 @@ function PostRow({ post, busy, onPublishNow, onEdit, onDelete }: PostRowProps) {
 }
 
 function PlatformBadge({ platform }: { platform: Post['platform'] }) {
-  const label = platform === 'both' ? 'Facebook + Instagram' : platform === 'facebook' ? 'Facebook' : 'Instagram';
+  const label = platform === 'facebook' ? 'Facebook' : 'Legacy post';
   return <Badge>{label}</Badge>;
 }
 

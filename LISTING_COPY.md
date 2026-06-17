@@ -1,6 +1,6 @@
-# SocialAI Studio for Shopify — App Store Listing Copy
+# SocialAI Studio for Shopify - App Store Listing Copy
 
-This document holds every piece of copy that goes into the Shopify App Store listing form. Drop-in ready, but please review tone + adjust to your voice before submitting.
+This is the current reviewer-aligned copy set for the Shopify App Store listing.
 
 ---
 
@@ -8,91 +8,77 @@ This document holds every piece of copy that goes into the Shopify App Store lis
 
 > **SocialAI Studio**
 
-(15 / 30 chars used)
-
 ## Tagline (max 70 chars)
 
-> **AI social posts for your products. Scheduled to FB & Instagram.**
+> **AI product posts for Shopify. Schedule to your Facebook Page.**
 
-(63 / 70 chars used)
+## Short description (max 100 chars)
 
-## Short description (max 100 chars — shown in App Store grid)
+> **Generate on-brand product posts from your catalog and schedule them to Facebook from Shopify.**
 
-> **Generate on-brand social posts featuring your real products. Auto-schedule to Facebook & Instagram.**
+## Full description
 
-(99 / 100 chars used)
-
-## Full description (Markdown, ~500-2000 words)
-
-> ### Stop staring at a blank social calendar
+> ### Turn your Shopify catalog into scheduled social content
 >
-> Most Shopify merchants know they should be posting to Facebook and Instagram every day. Almost none of them do — because writing posts that actually feature your products, capturing on-brand visuals, and remembering to schedule them is more work than running the store.
+> SocialAI Studio helps Shopify merchants turn real products into real social posts without leaving Shopify Admin.
 >
-> SocialAI Studio for Shopify closes that gap inside your admin panel.
+> Sync your catalog, pick a product, generate a caption and image, review the result, and schedule it to your connected Facebook Page.
 >
 > ### What it does
 >
-> - **Pulls your product catalog** the moment you install. No upload, no copy-paste.
-> - **Generates social media post drafts** that talk about real products from your store — not generic e-commerce filler. Each post mentions specific items, real prices, and your brand voice.
-> - **Builds the visuals** using AI image generation, optionally referencing your product photography for on-brand consistency.
-> - **Schedules to Facebook and Instagram** once you connect your business pages. Posts go live at the times your audience is actually online.
-> - **Critiques every post** for fabricated stats, generic AI tropes, and tone before it ships. You stay in control.
+> - **Syncs your Shopify products** into the embedded app so AI works from your real catalog.
+> - **Generates product-specific captions** instead of generic social filler.
+> - **Creates matching visuals** for each post and lets you regenerate when the image is not good enough.
+> - **Schedules posts to your Facebook Page** once the shop connects Facebook in Settings.
+> - **Keeps a calendar of Draft, Scheduled, Posted, and Missed posts** so merchants can edit, retry, or delete.
+> - **Includes Autopilot batching** to build a week of Facebook-ready posts in one flow.
 >
-> ### How merchants use it
+> ### What merchants control
 >
-> - **Daily promo posts** featuring this week's bestsellers
-> - **Product launch announcements** generated from a single product handle
-> - **Seasonal campaigns** scheduled weeks in advance
-> - **Re-engagement posts** when a product drops in price or comes back in stock
+> Every post is editable before it is scheduled. Merchants control the final caption, image, schedule, and whether a batch is accepted into the calendar.
 >
-> ### What you control
+> ### Privacy and permissions
 >
-> Every generated post is editable before publishing. You set the schedule, the platform mix, the tone, and the brand keywords. The AI proposes; you approve.
+> Shopify app scope is **read_products** only. SocialAI Studio does not request customer, order, or storefront data from Shopify.
+>
+> If a merchant chooses to connect Facebook, the app stores the Page connection needed for publishing. That connection is optional for draft generation, but required for scheduling and publish-now actions.
 >
 > ### Pricing
 >
-> $29 USD / month after a 7-day free trial. No setup fees, no per-post costs, no extra charges for AI generation. Cancel anytime from Shopify Admin → Settings → Billing.
->
-> ### Privacy & security
->
-> We request `read_products` only. We don't see your customers, orders, or storefront visitors. OAuth access tokens are AES-256 encrypted at rest. Full privacy policy: https://app.socialaistudio.au/privacy
->
-> ### Built for Shopify merchants
->
-> Embedded directly in your admin, designed in Polaris, works on every Shopify plan including Basic. No external dashboards to log into. No surprises on your phone bill.
+> $29 USD per month after a 7-day free trial. Cancel anytime through Shopify billing.
 
-## Key benefits (3-5 bullets, max 100 chars each)
+## Key benefits
 
-1. **Generate product-specific social posts in seconds, not hours**
-2. **Auto-schedule to Facebook & Instagram without leaving Shopify admin**
-3. **AI visuals trained on your brand, not stock photo libraries**
-4. **7-day free trial, $29/mo after. Cancel anytime.**
-5. **Read-only access — we never see your customers or orders**
+1. **Generate product-specific social posts in seconds**
+2. **Schedule directly to your Facebook Page from Shopify Admin**
+3. **Review captions, visuals, and calendar timing before anything goes live**
+4. **Batch a week of Facebook-ready posts with Autopilot**
+5. **Uses only Shopify product data - not customer or order data**
 
 ## Categories
 
-Primary: **Marketing → Content marketing**
-Secondary: **Sales channels → Social media**
+Primary: **Marketing -> Content marketing**
+Secondary: **Sales channels -> Social media**
 
-## Pricing structure (Shopify form)
+## Pricing structure
 
 - **Plan name**: SocialAI Studio Monthly
 - **Price**: $29.00 USD
 - **Billing interval**: Every 30 days
-- **Trial**: 7 days, free
+- **Trial**: 7 days free
 - **Available on**: All Shopify plans
 
-## Search keywords (max 10, 30 chars each)
+## Search keywords
 
 1. AI social media
 2. Facebook scheduler
-3. Instagram automation
-4. Product social posts
-5. AI content generation
+3. Shopify social posts
+4. Product marketing
+5. AI captions
 6. Social media calendar
-7. Auto-post Shopify
-8. AI captions
-9. Product marketing
+7. Facebook page posts
+8. Catalog marketing
+9. Shopify content
 10. Social automation
 
 ## Support details
@@ -102,28 +88,26 @@ Secondary: **Sales channels → Social media**
 - **Privacy policy URL**: https://app.socialaistudio.au/privacy
 - **Developer name**: Penny Wise I.T
 
-## Demo store URL (if applicable)
+## Demo store URL
 
-_(TODO: spin up a dev store with seeded products + the app pre-installed, so reviewers can click-through. Use `socialai-dev-store.myshopify.com` if it's still around with the app installed.)_
+`socialai-dev-store.myshopify.com`
 
 ## Installation instructions for reviewer
 
-> 1. **Install** the app from this listing. The Token Exchange / Managed Install flow lands you straight in the embedded admin — no OAuth popup.
-> 2. **Activate billing**: from the Home page, click "Start free trial" in the info banner. On a development store this uses Shopify's test-mode billing — no real charge.
-> 3. **Sync your products** (Products tab in the embedded nav): click "Sync now" to pull your Shopify catalog into the app. Up to 500 products are cached, newest-first.
-> 4. **(Optional) Connect Facebook** (Settings tab): a real Facebook Business Page is required to actually publish. If you don't want to connect a Page, skip this step — Compose / Calendar / Autopilot all work fine for the review without it; posts just stay as Drafts.
-> 5. **Compose your first post** (Products tab → pick a product → "Compose post"): AI generates a caption + image. Edit if you like. Click "Save as Draft" or "Schedule" — both work without Facebook connected.
-> 6. **Calendar** (Calendar tab): view scheduled and draft posts on a month grid. Drag posts between days to reschedule, or use the list view for full controls.
-> 7. **(Optional) Autopilot** (Autopilot tab): bulk-generate up to 14 days of posts at once. Preview-then-accept flow — no posts are saved until you click "Accept all".
-> 8. **Insights** (Insights tab): shows your post queue + (if FB connected) Page reach, engagement, and follower stats.
+> 1. **Install the app** from the listing into a development store.
+> 2. **Activate billing** from the Home page using the Shopify test flow on a dev store.
+> 3. **Sync products** from the Products page.
+> 4. **Compose a post** from any synced product. This works without Facebook connected and saves cleanly as a Draft.
+> 5. **Connect Facebook** in Settings if you want to test real scheduling or publish-now.
+> 6. **Schedule a Draft** from Compose or by dragging an unscheduled Draft onto a date in Calendar.
+> 7. **Run Autopilot** to generate and review a batch of Facebook-ready posts, then add them to Calendar.
+> 8. **Review Insights** for queue counts and Facebook engagement data when connected.
 
-## Test credentials for reviewer (if anything beyond install)
+## Test credentials for reviewer
 
-> **No credentials required for the core flow** — Token Exchange + Managed Install means the reviewer just clicks Install and is signed in via Shopify session.
+> **No extra credentials are required** for install, billing, product sync, draft generation, calendar view, and general embedded-app navigation.
 >
-> **Facebook step is optional**: it requires a real Facebook Business Page admin account. If you don't have one handy, skip step 4 above — every other feature is testable end-to-end without it. Compose-and-save flows produce Draft posts which the Calendar surfaces; cron-based publishing is the only branch that requires a connected Page.
->
-> **Test billing**: development stores automatically get `test: true` on the Shopify Billing API call — Shopify simulates the entire approval flow with no money moving. You'll see the trial activate and the embedded app become fully functional.
+> **A real Facebook Page admin login is required only for Facebook scheduling and publish-now**, because those actions publish through the merchant's own connected Page.
 
 ---
 
@@ -131,37 +115,13 @@ _(TODO: spin up a dev store with seeded products + the app pre-installed, so rev
 
 | Asset | Required | Where it lives |
 |---|---|---|
-| App icon — 1200×1200 PNG, ≤1 MB, with safe area | Required | `shopify-app/assets/app-icon.png` |
-| 3-8 screenshots — 1600×900 or 1280×800, JPEG/PNG | Required | `C:\Users\Steve\Desktop\app-store-screenshots\01-autopilot.png` … `06-products.png` — see Screenshot list below |
-| Demo video — 30-60s MP4 (recommended) | Recommended | TODO — optional, can submit without |
+| App icon - 1200x1200 PNG | Required | `shopify-app/assets/app-icon.png` |
+| 3-8 screenshots | Required | `C:\Users\Steve\Desktop\app-store-screenshots\` |
+| Demo video | Optional | Not required for submission |
 | Privacy policy URL | Required | https://app.socialaistudio.au/privacy |
 | Support URL | Required | https://app.socialaistudio.au/support |
-| Pricing structure | Required (above) | Done — see "Pricing structure" |
-| Developer name + business address | Required | Penny Wise I.T, Australia |
-| App store description copy | Required | Done — see above |
-| Categories | Required | Marketing → Content marketing |
 
----
+## Submission notes
 
-## Screenshot list (upload in this order)
-
-All files live in `C:\Users\Steve\Desktop\app-store-screenshots\`. Captured at ~1900×1075 (above the 1600×900 minimum, 16:9). Upload via Partners → Apps → SocialAI Studio → App Store listing → Screenshots.
-
-| # | File | Caption (suggested) | What it shows |
-|---|---|---|---|
-| 1 | `01-autopilot.png` | **Autopilot — 7 days of posts ready in one click** | Autopilot landing with "7 posts ready to publish" banner + first post (Laptop Screen Replacement) showing AI caption and product image |
-| 2 | `02-compose.png` | **Compose — AI captions + Live Preview before you publish** | Compose page lower section: caption editor, generated image, Publish dropdown (Now / Schedule / Draft), and Live Preview rendering an FB-style post card |
-| 3 | `03-calendar.png` | **Month-grid calendar — drag posts between days** | Calendar month view with 6 scheduled posts across May 20-27, today highlighted, drag-to-reschedule UX |
-| 4 | `04-insights.png` | **Insights — engagement metrics from connected pages** | KPI tiles (63 followers, 44 interactions, 69.8% engagement) plus post queue list and FB/Instagram platform split |
-| 5 | `05-home.png` | **Home — greeting, KPIs, and quick actions** | Greeting + 7-day trial badge, four KPI cards (posts this week / drafts / scheduled / engagement), three quick-action cards (Sync products / Compose / Connect FB) |
-| 6 | `06-products.png` | **Products — Shopify catalog synced, one-click compose** | Six synced products with prices and ACTIVE badges; each row has a "Compose post" CTA that jumps straight into the AI editor |
-
-### Submission notes
-
-- Captions are **suggested** — Shopify allows a short title per screenshot; tighten or rewrite to your voice before uploading.
-- File `02-compose.png` shows a 2/10 critique score on the generated image. **Keep it** — it demonstrates the honest AI-feedback loop, which is a selling point, not a bug. The Live Preview panel below shows a polished social card.
-- The placeholder thumbnails on `06-products.png` are because the dev store products were imported via CSV without images. Real merchants will see their own product photography here. Acceptable for v1 submission.
-
----
-
-_Drop the values from this doc into the corresponding fields in Partners → Apps → SocialAI Studio → App Store listing._
+- Reviewer-facing copy now matches the supported product scope: **Facebook Page scheduling only** for the embedded Shopify app.
+- Do not describe Instagram publishing or combined FB+IG scheduling in the listing until that path is truly shipped and verified.

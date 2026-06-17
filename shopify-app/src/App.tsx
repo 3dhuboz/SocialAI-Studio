@@ -79,7 +79,7 @@ const ROUTE_META: Record<string, { title: string; subtitle?: string }> = {
   '/calendar':   { title: 'Calendar',  subtitle: 'Scheduled & published posts'        },
   '/insights':   { title: 'Insights',  subtitle: 'Facebook engagement + queue'        },
   '/posters':    { title: 'Posters',   subtitle: 'AI-generated standalone graphics'   },
-  '/settings':   { title: 'Settings',  subtitle: 'Facebook / Instagram connection'    },
+  '/settings':   { title: 'Settings',  subtitle: 'Facebook Page connection'            },
 };
 
 function RoutedShell() {

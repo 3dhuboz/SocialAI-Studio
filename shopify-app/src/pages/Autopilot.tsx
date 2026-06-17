@@ -18,8 +18,6 @@ import {
   type Product, type AutopilotGeneratedPost, type ShopifyCampaign, type FactsStatus,
 } from '../api';
 
-const SHOPIFY_AUTOPILOT_PREVIEW_ONLY = true;
-
 /**
  * AI Autopilot — bulk content calendar generator with preview-then-accept flow.
  *
@@ -50,7 +48,7 @@ const SHOPIFY_AUTOPILOT_PREVIEW_ONLY = true;
  */
 
 type Vibe = 'smart' | 'burst' | 'highlights' | 'saturation';
-type Platform = 'facebook' | 'instagram' | 'both';
+type Platform = 'facebook';
 /**
  * Phase progression mirrors the main SocialAI Studio Smart Schedule:
  *   idle → generating → reviewing → saving → done
@@ -237,7 +235,7 @@ export default function Autopilot() {
   const [refreshingFacts, setRefreshingFacts] = useState(false);
 
   const [vibe, setVibe] = useState<Vibe>('smart');
-  const [platform, setPlatform] = useState<Platform>('both');
+  const [platform, setPlatform] = useState<Platform>('facebook');
   const [postCount, setPostCount] = useState(7);
   const [includeReels, setIncludeReels] = useState(false);
 
@@ -375,10 +373,6 @@ export default function Autopilot() {
   const survivors = progress.succeeded.filter((p) => !removedIds.has(p.id));
 
   const handleAcceptAll = async () => {
-    if (SHOPIFY_AUTOPILOT_PREVIEW_ONLY) {
-      setError('Shopify Autopilot is preview-only while scheduled publishing is being upgraded. Review these drafts here, but they will not be added to the calendar yet.');
-      return;
-    }
     if (survivors.length === 0) {
       setError('Nothing left to save — every post was removed.');
       return;
@@ -445,7 +439,7 @@ export default function Autopilot() {
             <BlockStack gap="100">
               <Text as="h1" variant="headingXl">AI Autopilot</Text>
               <Text as="p" variant="bodyMd" tone="subdued">
-                Generate a week of social-ready posts in one click. Pick a vibe,
+                Generate a week of Facebook-ready posts in one click. Pick a vibe,
                 review the previews, then ship them to your calendar.
               </Text>
             </BlockStack>
@@ -556,16 +550,14 @@ export default function Autopilot() {
               <BlockStack gap="100">
                 <Text as="h3" variant="headingMd">2. Tune the schedule</Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Where to post, how many, and whether to mix in video Reels.
+                  How many Facebook posts to generate, and whether to mix in video Reels.
                 </Text>
               </BlockStack>
 
               <ChoiceList
                 title="Post to"
                 choices={[
-                  { label: 'Facebook + Instagram', value: 'both' },
-                  { label: 'Facebook only', value: 'facebook' },
-                  { label: 'Instagram only', value: 'instagram' },
+                  { label: 'Facebook Page', value: 'facebook' },
                 ]}
                 selected={[platform]}
                 onChange={(v) => setPlatform(v[0] as Platform)}
@@ -678,7 +670,7 @@ export default function Autopilot() {
                                 : 'No posts to preview'}
                             </Text>
                             <Text as="p" variant="bodySm" tone="subdued">
-                              Review the previews below. Shopify scheduling is paused until shop-owned publishing is enabled.
+                              Review the previews below, then add the Facebook-ready batch to your calendar.
                             </Text>
                           </BlockStack>
                         </InlineStack>
@@ -690,19 +682,13 @@ export default function Autopilot() {
                             variant="primary"
                             size="large"
                             icon={CheckCircleIcon}
-                            disabled={survivors.length === 0 || SHOPIFY_AUTOPILOT_PREVIEW_ONLY}
+                            disabled={survivors.length === 0}
                             onClick={handleAcceptAll}
                           >
-                            {SHOPIFY_AUTOPILOT_PREVIEW_ONLY ? 'Preview only' : `Accept all ${survivors.length} & schedule`}
+                            {`Accept all ${survivors.length} & schedule`}
                           </Button>
                         </InlineStack>
                       </InlineStack>
-
-                      {SHOPIFY_AUTOPILOT_PREVIEW_ONLY && (
-                        <Banner tone="info" title="Preview-only while publishing is upgraded">
-                          <p>Generated Shopify posts are not saved or auto-published from this screen yet.</p>
-                        </Banner>
-                      )}
 
                       <InlineStack gap="200">
                         <Badge tone="success">{`${progress.succeeded.length} generated`}</Badge>
@@ -784,8 +770,7 @@ export default function Autopilot() {
                       Your batch is on the calendar!
                     </Text>
                     <Text as="p" variant="bodyMd" tone="subdued" alignment="center">
-                      {saveProgress.saved} of {saveProgress.total} {saveProgress.total === 1 ? 'post' : 'posts'} scheduled.
-                      Shopify auto-publishing is paused until shop-owned scheduling is enabled.
+                      {saveProgress.saved} of {saveProgress.total} {saveProgress.total === 1 ? 'post' : 'posts'} scheduled to your Facebook Page.
                     </Text>
                   </BlockStack>
 
@@ -891,7 +876,7 @@ function PreviewCard({
               </InlineStack>
 
               <InlineStack gap="200" wrap>
-                <Badge>{post.platform === 'both' ? 'FB + IG' : post.platform === 'facebook' ? 'Facebook' : 'Instagram'}</Badge>
+                <Badge>Facebook</Badge>
                 <Badge tone={isVideo ? 'magic' : undefined}>{isVideo ? 'Video Reel' : 'Image post'}</Badge>
                 {post.campaign_used && (
                   <Badge tone="attention">Campaign-aware</Badge>

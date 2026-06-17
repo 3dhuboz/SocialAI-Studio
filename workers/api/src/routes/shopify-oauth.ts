@@ -902,6 +902,65 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     return c.body(null, 200);
   });
 
+  // ── Webhook: app/scopes_update ─────────────────────────────────────────
+  // Fires when the granted access scopes for an installed app change. We
+  // mirror the current scope set into shopify_stores.scopes so support and
+  // review tooling can trust D1 instead of guessing from older install data.
+  app.post('/api/shopify/webhooks/app/scopes_update', async (c) => {
+    const cfg = requireShopifyConfig(c.env);
+    if (!cfg) return c.json({ error: 'Shopify app not configured' }, 500);
+
+    const raw = await readRawBody(c.req.raw);
+    const hmac = c.req.header('X-Shopify-Hmac-Sha256');
+    if (!(await verifyWebhookHmac(raw, hmac ?? null, cfg.secret))) {
+      return c.json({ error: 'Invalid HMAC' }, 401);
+    }
+
+    const shop = sanitizeShopDomain(c.req.header('X-Shopify-Shop-Domain'));
+    if (!shop) return c.json({ error: 'Missing shop header' }, 400);
+
+    const webhookId: string | undefined = c.req.header('X-Shopify-Webhook-Id');
+    const claim = await claimWebhook(c.env, shop, 'app/scopes_update', webhookId, raw);
+    if (!claim.isNew) return c.json({ ok: true, dedup: true }, 200);
+
+    let payload: any;
+    try { payload = JSON.parse(raw); } catch {
+      console.warn('[shopify] app/scopes_update: invalid JSON');
+      return c.json({ error: 'Invalid JSON payload' }, 400);
+    }
+
+    const previous = Array.isArray(payload?.previous) ? payload.previous.map(String) : [];
+    const current = Array.isArray(payload?.current) ? payload.current.map(String) : null;
+    if (!current) {
+      console.warn('[shopify] app/scopes_update: missing current scopes', payload);
+      return c.json({ error: 'Missing current scopes' }, 400);
+    }
+
+    await c.env.DB.prepare(
+      `UPDATE shopify_stores
+          SET scopes = ?,
+              uninstalled_at = NULL
+        WHERE shop_domain = ?`,
+    ).bind(current.join(','), shop).run();
+
+    const auditAt = payload?.updated_at || new Date().toISOString();
+    c.executionCtx.waitUntil(
+      c.env.DB.prepare(
+        `INSERT INTO shopify_billing_events
+           (shop_domain, event_type, payload, created_at)
+         VALUES (?, 'webhook_app_scopes_update', ?, ?)`,
+      ).bind(
+        shop,
+        JSON.stringify({ previous, current }).slice(0, 65536),
+        auditAt,
+      ).run().catch((e) => {
+        console.error('[shopify] scopes-update audit write failed:', String(e));
+      }),
+    );
+
+    return c.body(null, 200);
+  });
+
   // ── Webhook: app_subscriptions/update (Billing API) ───────────────────
   // Fires every time the merchant's subscription status changes — approval,
   // decline, trial-to-paid conversion, cancellation, payment failure

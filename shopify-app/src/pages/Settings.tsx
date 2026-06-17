@@ -274,7 +274,7 @@ function SettingsHero({ status }: { status: SocialStatus }) {
           <BlockStack gap="100">
             <InlineStack gap="200" blockAlign="center">
               <Text as="h1" variant="headingXl">
-                {connected ? 'Facebook connected' : 'Connect Facebook & Instagram'}
+                {connected ? 'Facebook connected' : 'Connect Facebook Page'}
               </Text>
               {connected && (
                 <Badge tone="success">Live</Badge>
@@ -285,7 +285,7 @@ function SettingsHero({ status }: { status: SocialStatus }) {
             </InlineStack>
             <Text as="p" variant="bodyMd" tone="subdued">
               {connected
-                ? `Publishing through ${status.facebookPageName ?? 'your Page'}${status.instagramConnected ? ' + Instagram' : ''}.`
+                ? `Publishing through ${status.facebookPageName ?? 'your Page'}.`
                 : 'Link a Facebook Page so SocialAI can publish posts and pull engagement stats.'}
             </Text>
           </BlockStack>
@@ -310,7 +310,7 @@ function ConnectCard({ step, error, onConnect, onResetError }: ConnectCardProps)
     step === 'logging_in'  ? 'Opening Facebook…'
     : step === 'exchanging' ? 'Fetching your Pages…'
     : step === 'connecting' ? 'Connecting…'
-    : 'Connect Facebook';
+    : 'Connect Facebook Page';
 
   return (
     <Card>
@@ -321,8 +321,8 @@ function ConnectCard({ step, error, onConnect, onResetError }: ConnectCardProps)
             <Text as="h2" variant="headingLg">Link your Page</Text>
           </InlineStack>
           <Text as="p" variant="bodyMd" tone="subdued">
-            Connect your Facebook Page (and Instagram Business account, if linked)
-            so SocialAI can publish drafts directly from this app.
+            Connect your Facebook Page so SocialAI can publish scheduled posts directly from this app.
+            If that Page already has an Instagram Business account linked, we'll detect it during setup.
           </Text>
         </BlockStack>
 
@@ -507,8 +507,8 @@ function ConnectedCard({ status, disconnecting, onDisconnect, onSwitchPage, swit
           <BlockStack gap="100">
             <p>
               {status.instagramConnected
-                ? 'Instagram is linked through this Page. Posts will publish to both.'
-                : 'Instagram is not linked to this Page yet — Facebook-only for now. Link an Instagram Business account on facebook.com, then click "Switch Page" below to refresh.'}
+                ? 'Instagram is linked through this Page and has been detected, but Shopify scheduled publishing in this release still sends posts to Facebook only.'
+                : 'Instagram is not linked to this Page yet. Facebook Page delivery works fine without it.'}
             </p>
             {status.connectedAt && (
               <Text as="span" variant="bodySm" tone="subdued">
@@ -524,8 +524,8 @@ function ConnectedCard({ status, disconnecting, onDisconnect, onSwitchPage, swit
           <BlockStack gap="100">
             <Text as="h3" variant="headingMd">Switch Page</Text>
             <Text as="p" variant="bodySm" tone="subdued">
-              Connect a different Facebook Page (or refresh after linking an
-              Instagram Business account). Replaces the existing connection.
+              Connect a different Facebook Page. If you later link an
+              Instagram Business account on facebook.com, switching here will refresh the stored page details.
             </Text>
           </BlockStack>
           <Button onClick={onSwitchPage} loading={switching} disabled={switching || disconnecting}>
@@ -579,7 +579,7 @@ function WhatWePublishCard() {
     {
       icon: SocialAdIcon,
       title: 'Target platforms',
-      desc: 'Facebook only, Instagram only, or both — your call per post.',
+      desc: 'Facebook Page delivery for Shopify scheduled posts in this release.',
     },
   ];
   return (

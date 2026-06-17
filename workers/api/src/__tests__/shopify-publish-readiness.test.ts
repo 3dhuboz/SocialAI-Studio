@@ -10,65 +10,48 @@ function source(pathFromSrc: string): string {
   return readFileSync(resolve(srcRoot, pathFromSrc), 'utf8');
 }
 
-function expectInOrder(sourceText: string, earlier: string, later: string): void {
-  const earlierIdx = sourceText.indexOf(earlier);
-  const laterIdx = sourceText.indexOf(later);
-  expect(earlierIdx).toBeGreaterThanOrEqual(0);
-  expect(laterIdx).toBeGreaterThanOrEqual(0);
-  expect(earlierIdx).toBeLessThan(laterIdx);
-}
-
-describe('Shopify publish readiness guardrails', () => {
-  it('keeps manual Shopify scheduling and publish-now disabled', () => {
+describe('Shopify publish readiness', () => {
+  it('enables the shop-owned posts route for Facebook scheduling + publish-now', () => {
     const posts = source('routes/shopify-posts.ts');
 
-    expect(posts).toContain('SHOPIFY_SCHEDULER_DISABLED');
-    expect(posts).toMatch(/function isShopifySchedulerDisabled\(\): boolean \{\s*return true;\s*\}/);
-    expect(posts).toMatch(/if \(v === 'Scheduled' && isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
-    expect(posts).toMatch(/if \(isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
-    expectInOrder(
-      posts,
-      "return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);",
-      "UPDATE posts SET status = 'Scheduled', scheduled_for = ?",
-    );
+    expect(posts).toContain("const SUPPORTED_SHOP_PLATFORM = 'facebook';");
+    expect(posts).toContain("code: 'UNSUPPORTED_PLATFORM'");
+    expect(posts).toContain('requireConnectedFacebook');
+    expect(posts).toContain('scheduled_for is required when scheduling a post');
+    expect(posts).toContain("UPDATE posts SET status = 'Scheduled', scheduled_for = ?");
+    expect(posts).not.toContain('return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);');
   });
 
-  it('keeps Shopify autopilot persistence disabled while allowing dry-run preview generation', () => {
+  it('keeps Shopify Autopilot preview flow while allowing Facebook batch save when connected', () => {
     const autopilot = source('routes/shopify-autopilot.ts');
 
-    expect(autopilot).toContain('SHOPIFY_SCHEDULER_DISABLED');
-    expect(autopilot).toMatch(/function isShopifySchedulerDisabled\(\): boolean \{\s*return true;\s*\}/);
-    expect(autopilot).toMatch(/if \(!dryRun && isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
-    expect(autopilot).toMatch(/if \(dryRun\) \{[\s\S]*status: 'Preview'[\s\S]*\}, 200\);[\s\S]*\}/);
-    expect(autopilot).toMatch(/if \(isShopifySchedulerDisabled\(\)\) \{\s*return c\.json\(SHOPIFY_SCHEDULER_DISABLED, 503\);/);
-    expectInOrder(
-      autopilot,
-      "if (!dryRun && isShopifySchedulerDisabled())",
-      "INSERT INTO posts",
-    );
-    expectInOrder(
-      autopilot,
-      "if (isShopifySchedulerDisabled())",
-      "const saved: string[] = [];",
-    );
+    expect(autopilot).toContain("const SUPPORTED_SHOP_PLATFORM = 'facebook';");
+    expect(autopilot).toContain('const dryRun = body.dryRun === true;');
+    expect(autopilot).toContain("status: 'Preview'");
+    expect(autopilot).toContain('requireConnectedFacebook');
+    expect(autopilot).not.toContain('return c.json(SHOPIFY_SCHEDULER_DISABLED, 503);');
   });
 
-  it('keeps the generic publish cron scoped away from shop-owned posts', () => {
+  it('wires the publish cron + reel poller to shop-owned token loading', () => {
     const shared = source('cron/_shared.ts');
     const publishMissed = source('cron/publish-missed.ts');
+    const pollPendingReels = source('cron/poll-pending-reels.ts');
 
-    expect(shared).toMatch(/export const NON_SHOP_OWNER_FILTER =\s*`\(COALESCE\(owner_kind, 'user'\) != 'shop'\)`;/);
-    expect(publishMissed).toContain('NON_SHOP_OWNER_FILTER');
-    expect(publishMissed.match(/\$\{NON_SHOP_OWNER_FILTER\}/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(shared).toContain('FROM shopify_stores');
+    expect(shared).toContain("map.set(`s:${r.shop_domain}`, parsed);");
+    expect(shared).toContain("if (post.owner_kind === 'shop' && post.owner_id) return map.get(`s:${post.owner_id}`);");
+    expect(publishMissed).toContain('SHOPIFY_FACEBOOK_ONLY_FILTER');
+    expect(publishMissed).toContain('loadForbiddenSubjectsForShop');
+    expect(publishMissed).toContain('owner_kind, p.owner_id');
+    expect(pollPendingReels).toContain('owner_kind, owner_id');
   });
 
-  it('documents why shop-owned publish is still not wired into the generic token loaders', () => {
-    const shared = source('cron/_shared.ts');
-    const publishMissed = source('cron/publish-missed.ts');
+  it('adds an app/scopes_update webhook handler alongside the existing Shopify webhooks', () => {
+    const oauth = source('routes/shopify-oauth.ts');
 
-    expect(shared).toContain('Shop-owned rows need shopify_stores.social_tokens');
-    expect(shared).toContain('SELECT id, social_tokens FROM clients');
-    expect(shared).toContain('SELECT id, social_tokens FROM users');
-    expect(publishMissed).not.toMatch(/FROM\s+shopify_stores/i);
+    expect(oauth).toContain('/api/shopify/webhooks/app/scopes_update');
+    expect(oauth).toContain("claimWebhook(c.env, shop, 'app/scopes_update'");
+    expect(oauth).toContain('previous');
+    expect(oauth).toContain('current');
   });
 });

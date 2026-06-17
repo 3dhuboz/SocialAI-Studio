@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Card, BlockStack, InlineStack, Text, Banner, Button, ButtonGroup,
   TextField, Select, Spinner, Thumbnail, Link as PolarisLink,
-  Badge, InlineGrid, Box, Tooltip, ProgressBar, ButtonGroup as PolarisButtonGroup,
+  Badge, InlineGrid, Box, Tooltip, ProgressBar,
   Icon,
 } from '@shopify/polaris';
 import {
@@ -14,7 +14,7 @@ import {
   composePost, createPost, publishPostNow, critiqueImageCaption, fetchMe,
   ApiError, type ComposeResponse, type CritiqueResponse, type ShopInfo,
 } from '../api';
-import { LivePostPreview, type PreviewPlatform } from '../components/LivePostPreview';
+import { LivePostPreview } from '../components/LivePostPreview';
 import './compose.css';
 
 /**
@@ -28,7 +28,7 @@ import './compose.css';
  *     We don't block the editor on the critique — the merchant can edit
  *     and save before it lands.
  *  4. Live preview pane on the right renders the post the same way it'll
- *     appear on Facebook or Instagram, switching by the platform selector.
+ *     appear on Facebook, matching the current Shopify publish path.
  *  5. Save Draft / Publish Now route through createPost + publishPostNow.
  *
  * Phase machine:
@@ -40,7 +40,7 @@ import './compose.css';
  */
 
 type Phase = 'missing-product' | 'generating' | 'ready' | 'saving' | 'error';
-type Platform = 'facebook' | 'instagram' | 'both';
+type Platform = 'facebook';
 
 export default function Compose() {
   const [searchParams] = useSearchParams();
@@ -55,7 +55,7 @@ export default function Compose() {
   // Editable form state — initialised from `result` when generation lands.
   const [caption, setCaption] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  const [platform, setPlatform] = useState<Platform>('both');
+  const [platform, setPlatform] = useState<Platform>('facebook');
   const [regenerating, setRegenerating] = useState(false);
   const [successNote, setSuccessNote] = useState<string | null>(null);
 
@@ -65,11 +65,6 @@ export default function Compose() {
   const [critique, setCritique] = useState<CritiqueResponse | null>(null);
   const [critiquing, setCritiquing] = useState(false);
   const [critiqueError, setCritiqueError] = useState<string | null>(null);
-
-  // Preview tab (Facebook vs Instagram). Independent of the publish
-  // platform selector — the merchant can preview FB while publishing
-  // to both, or flip back and forth without losing form state.
-  const [previewPlatform, setPreviewPlatform] = useState<PreviewPlatform>('facebook');
 
   // Fire a fresh critique whenever the {imageUrl, caption} pair changes
   // and is non-empty. We debounce slightly so typing doesn't burn API
@@ -111,7 +106,7 @@ export default function Compose() {
         const [me, res] = await Promise.all([
           fetchMe(controller.signal).catch(() => null),
           composePost(
-            { product_id: productId, platform: 'both', tone: 'friendly' },
+            { product_id: productId, platform: 'facebook', tone: 'friendly' },
             controller.signal,
           ),
         ]);
@@ -161,7 +156,7 @@ export default function Compose() {
     setCritiqueError(null);
     try {
       const res = await composePost(
-        { product_id: productId, platform: 'both', tone: 'friendly' },
+        { product_id: productId, platform: 'facebook', tone: 'friendly' },
       );
       setResult(res);
       setCaption(res.caption);
@@ -267,9 +262,7 @@ export default function Compose() {
   }
 
   const platformOptions = [
-    { label: 'Both Facebook + Instagram', value: 'both' },
-    { label: 'Facebook only', value: 'facebook' },
-    { label: 'Instagram only', value: 'instagram' },
+    { label: 'Facebook Page', value: 'facebook' },
   ];
 
   // Critique → Badge mapping. 8–10 = great, 5–7 = OK, 0–4 = regenerate.
@@ -440,8 +433,8 @@ export default function Compose() {
           <BlockStack gap="400">
             <InlineStack gap="200" blockAlign="center">
               <Icon source={SocialAdIcon} tone="info" />
-              <Text as="h3" variant="headingMd">Publish to</Text>
-            </InlineStack>
+                <Text as="h3" variant="headingMd">Publish to</Text>
+              </InlineStack>
             <Select
               label="Platform"
               labelHidden
@@ -481,25 +474,12 @@ export default function Compose() {
                 <Icon source={ViewIcon} tone="info" />
                 <Text as="h3" variant="headingMd">Live preview</Text>
               </InlineStack>
-              <PolarisButtonGroup variant="segmented">
-                <Button
-                  pressed={previewPlatform === 'facebook'}
-                  onClick={() => setPreviewPlatform('facebook')}
-                >
-                  Facebook
-                </Button>
-                <Button
-                  pressed={previewPlatform === 'instagram'}
-                  onClick={() => setPreviewPlatform('instagram')}
-                >
-                  Instagram
-                </Button>
-              </PolarisButtonGroup>
+              <Badge tone="info">Facebook Page</Badge>
             </InlineStack>
 
             <Box>
               <LivePostPreview
-                platform={previewPlatform}
+                platform="facebook"
                 caption={caption}
                 imageUrl={imageUrl || null}
                 shopName={shopDisplayName}

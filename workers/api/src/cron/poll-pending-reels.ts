@@ -82,7 +82,8 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
   // per row (status fetch + maybe finish), 10 rows ≈ 20s worst case but the
   // tick budget guard will short-circuit before we go over.
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, fb_video_id, fb_publish_state, fb_kicked_at,
+    `SELECT id, user_id, client_id, owner_kind, owner_id,
+            fb_video_id, fb_publish_state, fb_kicked_at,
             reasoning, post_type
      FROM posts
      WHERE fb_publish_state IN ('kicked', 'polling')
@@ -92,6 +93,8 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
     id: string;
     user_id: string | null;
     client_id: string | null;
+    owner_kind: string | null;
+    owner_id: string | null;
     fb_video_id: string;
     fb_publish_state: string;
     fb_kicked_at: string | null;
