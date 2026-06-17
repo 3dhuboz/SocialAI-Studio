@@ -291,7 +291,7 @@ import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 ## Known quirks
 
 - **`wrangler deploy` fails without `--config`** — the `functions/` dir at repo root makes wrangler think it's a Pages project. Always use `npx wrangler deploy --config wrangler.toml` from `workers/api/`.
-- **Same-domain `/api/*` depends on the Pages catch-all proxy** — `functions/api/[[path]].js` forwards unmatched `/api/*` requests to `https://socialai-api.steve-700.workers.dev`. Without it, `public/_redirects` (`/* /index.html 200`) swallows URLs like `/api/health` and serves the SPA HTML shell instead of JSON.
+- **Same-domain `/api/*` depends on the Pages catch-all proxy plus explicit invocation routes** — `functions/api/[[path]].js` forwards unmatched `/api/*` requests to `https://socialai-api.steve-700.workers.dev`, and `public/_routes.json` pins Pages Functions to `/api/*` + `/embed`. Without that pair, `public/_redirects` (`/* /index.html 200`) can swallow URLs like `/api/health` and serve the SPA HTML shell instead of JSON.
 - **Seamus (Hugheseys Que) is on hold** — `clients.on_hold = 1`. Cron skips automatically. Do not remove the flag without checking with Steve.
 - **Facebook `scheduled_publish_time` is banned** — creates uncancellable FB orphans. DB is the source of truth; the `publish-missed` cron publishes at the right time.
 - **CORS list in `index.ts`** — when adding a new white-label domain, add it to the `allowed` array at the top of `index.ts`.
