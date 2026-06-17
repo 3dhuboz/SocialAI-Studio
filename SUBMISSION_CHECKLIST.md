@@ -1,6 +1,6 @@
 # App Store Submission Checklist - SocialAI Studio for Shopify
 
-Current state as of June 17, 2026.
+Current state as of June 18, 2026.
 
 ---
 
@@ -14,6 +14,8 @@ Current state as of June 17, 2026.
 | `publish-now` for Shopify posts | Ready in code | Draft and Missed Facebook shop posts can be forced into the queue |
 | Shopify Autopilot save path | Ready in code | Preview flow now saves approved Facebook batches to Calendar |
 | `app/scopes_update` webhook | Ready in code | Added and wired in `workers/api/src/routes/shopify-oauth.ts` |
+| Shopify app config | Released in Partners | Active version `socialai-studio-5` / `gid://shopify/Version/1019223539713` |
+| Admin API usage | Ready | Install/token-exchange shop info now uses Admin GraphQL, not REST `shop.json` |
 | Reviewer-facing Shopify UI copy | Ready | Compose, Autopilot, Calendar, Insights, Settings, and shell copy now advertise Facebook-only scheduling |
 | Reviewer listing copy | Ready | `LISTING_COPY.md` now matches the current supported scope |
 | Publish-readiness documentation | Ready | `docs/shopify-publish-readiness.md` rewritten for the Facebook-only App Store slice |
@@ -24,7 +26,11 @@ Current state as of June 17, 2026.
 |---|---|
 | `cd workers/api && npm test` | Passed - 50 files, 746 tests |
 | `cd workers/api && npm run typecheck` | Passed |
-| `cd shopify-app && VITE_SHOPIFY_API_KEY=test-shopify-key npm run build` | Passed |
+| `cd shopify-app && VITE_SHOPIFY_API_KEY=<real client id> npm run build` | Passed |
+| `cd shopify-app && npx wrangler pages deploy dist --project-name socialai-shopify --branch main --commit-dirty=true` | Passed - live app root now serves the real Shopify API key |
+| `cd workers/api && npx wrangler deploy --config wrangler.toml` | Passed - worker version `3515c5cd-551d-4ab0-b2e1-251a9d415ec1` |
+| `npx --yes @shopify/cli@latest app deploy --client-id <client id> --allow-updates --no-build` | Passed - active Partners config release `socialai-studio-5` |
+| `npx --yes --package @playwright/cli playwright-cli ... run-code --filename scripts/capture-shopify-app-store-screenshots.js` | Passed - fresh screenshots written to `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\` |
 
 ## Live dev-shop state
 
@@ -44,19 +50,28 @@ These are not bugs for this submission:
 2. Combined Facebook + Instagram fan-out from a single Shopify post row
 3. Reviewer-side live scheduling without a real Facebook Page admin login
 
-## Operational steps still to run
+## Operational status
 
-These are the final ship steps after code review is done:
+Completed on June 18, 2026:
 
-1. Deploy the updated worker from `workers/api` with `npx wrangler deploy --config wrangler.toml`
-2. Push the updated repo so the Shopify Pages frontend can redeploy from GitHub
-3. Verify live app pages after deploy:
+1. Deployed the updated worker from `workers/api` with `npx wrangler deploy --config wrangler.toml`
+2. Rebuilt and deployed the Shopify embedded app with the real `VITE_SHOPIFY_API_KEY`
+3. Released Shopify app config/webhooks/scopes to Partners with Shopify CLI
+4. Verified live app pages after deploy:
    - `https://app.socialaistudio.au/privacy`
    - `https://app.socialaistudio.au/support`
    - Shopify embedded frontend at `https://app.socialaistudio.au`
-4. Paste the updated copy from `LISTING_COPY.md` into the Partners listing form
-5. Upload screenshots and icon assets
-6. Submit for Shopify review
+
+Remaining browser-only App Store review steps:
+
+1. Open the Shopify App Store review page for SocialAI Studio in the Partner dashboard
+2. Paste the updated copy from `LISTING_COPY.md` into the listing form
+3. Upload `shopify-app/assets/app-icon.png`
+4. Upload screenshots from `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\`
+5. Run Shopify's automated review checks
+6. Submit for Shopify review once the dashboard reports all mandatory steps complete
+
+Operational caveat: real Facebook scheduling still requires a Facebook Page admin account. If Meta app review has not been approved and the Meta app remains in Development Mode, Shopify reviewers may be unable to test live Facebook publishing unless a reviewer/test account is explicitly allowed in Meta.
 
 ## Suggested reviewer story
 

@@ -116,7 +116,7 @@ Secondary: **Sales channels -> Social media**
 | Asset | Required | Where it lives |
 |---|---|---|
 | App icon - 1200x1200 PNG | Required | `shopify-app/assets/app-icon.png` |
-| 3-8 screenshots | Required | `C:\Users\Steve\Desktop\app-store-screenshots\` |
+| 3-8 screenshots | Required | `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\` |
 | Demo video | Optional | Not required for submission |
 | Privacy policy URL | Required | https://app.socialaistudio.au/privacy |
 | Support URL | Required | https://app.socialaistudio.au/support |
@@ -125,3 +125,4 @@ Secondary: **Sales channels -> Social media**
 
 - Reviewer-facing copy now matches the supported product scope: **Facebook Page scheduling only** for the embedded Shopify app.
 - Do not describe Instagram publishing or combined FB+IG scheduling in the listing until that path is truly shipped and verified.
+- Use the fresh 2026-06-18 screenshot pack; the older May screenshots show stale pre-cleanup platform chips.

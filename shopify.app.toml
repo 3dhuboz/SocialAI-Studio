@@ -21,8 +21,6 @@ application_url = "https://app.socialaistudio.au"
 embedded = true
 
 [build]
-# Shopify CLI uses this to keep Partners in sync with the local toml on deploy.
-include_config_on_deploy = true
 # Phase 1: no automatic preinstall script; merchants land in the embedded app
 # immediately after consent.
 automatically_update_urls_on_dev = true
@@ -58,17 +56,14 @@ uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app/unins
 # the lifecycle events. They MUST be implemented even if you don't store
 # customer data (Phase 1 doesn't) — Shopify just needs proof you respond.
 [[webhooks.subscriptions]]
-topics = [ "customers/data_request" ]
 uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/customers/data_request"
 compliance_topics = [ "customers/data_request" ]
 
 [[webhooks.subscriptions]]
-topics = [ "customers/redact" ]
 uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/customers/redact"
 compliance_topics = [ "customers/redact" ]
 
 [[webhooks.subscriptions]]
-topics = [ "shop/redact" ]
 uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/shop/redact"
 compliance_topics = [ "shop/redact" ]
 
@@ -81,9 +76,8 @@ topics = [ "app_subscriptions/update" ]
 uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app_subscriptions/update"
 
 # Fires when the merchant approves a scope change (e.g. moving from
-# read_products to read_products,read_orders). The handler must persist
-# the new granted scope set against shopify_stores. TODO: implement the
-# webhook handler — out of scope for this config-hygiene pass.
+# read_products to read_products,read_orders). The handler persists the
+# current granted scope set against shopify_stores and writes an audit event.
 [[webhooks.subscriptions]]
 topics = [ "app/scopes_update" ]
 uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app/scopes_update"
@@ -91,9 +85,9 @@ uri = "https://socialai-api.steve-700.workers.dev/api/shopify/webhooks/app/scope
 [pos]
 embedded = false
 
-[app_proxy]
 # Not used in Phase 1 — placeholder commented out so a copy-paste of this
 # file doesn't accidentally register a public storefront proxy.
+# [app_proxy]
 # url = "https://socialai-api.steve-700.workers.dev/api/shopify/proxy"
 # subpath = "social-ai"
 # prefix = "apps"

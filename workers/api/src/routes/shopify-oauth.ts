@@ -42,6 +42,7 @@ import {
 import { createAppSubscription, shouldForceTestMode, PLAN_INFO } from '../lib/shopify-billing';
 import { exchangeSessionToken } from '../lib/shopify-token-exchange';
 import { encryptToken, decryptToken } from '../lib/crypto';
+import { shopifyGraphQL } from '../lib/shopify-admin-api';
 
 // At-rest encryption helper. When MASTER_ENCRYPTION_KEY is set, returns the
 // AES-GCM envelope (and the v1 format marker) for storage. When it's not set
@@ -89,7 +90,77 @@ async function readAccessToken(env: Env, stored: string): Promise<string> {
 
 const DEFAULT_SCOPES = 'read_products';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const SHOPIFY_API_VERSION = '2025-01';
+
+type ShopifyShopInfo = {
+  shopName: string | null;
+  shopEmail: string | null;
+  countryCode: string | null;
+  currency: string | null;
+  planName: string | null;
+};
+
+const EMPTY_SHOP_INFO: ShopifyShopInfo = {
+  shopName: null,
+  shopEmail: null,
+  countryCode: null,
+  currency: null,
+  planName: null,
+};
+
+const SHOP_INFO_QUERY = `#graphql
+  query SocialAiShopInfo {
+    shop {
+      name
+      email
+      billingAddress {
+        countryCodeV2
+      }
+      currencyCode
+      plan {
+        displayName
+        partnerDevelopment
+        shopifyPlus
+      }
+    }
+  }
+`;
+
+async function fetchShopInfo(shop: string, accessToken: string): Promise<ShopifyShopInfo> {
+  const result = await shopifyGraphQL<{
+    shop?: {
+      name?: string | null;
+      email?: string | null;
+      billingAddress?: { countryCodeV2?: string | null } | null;
+      currencyCode?: string | null;
+      plan?: {
+        displayName?: string | null;
+        partnerDevelopment?: boolean | null;
+        shopifyPlus?: boolean | null;
+      } | null;
+    } | null;
+  }>(shop, accessToken, SHOP_INFO_QUERY);
+
+  if (!result.ok) {
+    console.warn('[shopify] shop info GraphQL fetch failed:', result.stage, result.message);
+    return EMPTY_SHOP_INFO;
+  }
+
+  const shopData = result.data.shop;
+  const displayName = shopData?.plan?.displayName ?? null;
+  const planName = shopData?.plan?.partnerDevelopment
+    ? 'partner_test'
+    : shopData?.plan?.shopifyPlus
+      ? 'shopify_plus'
+      : displayName?.toLowerCase().replace(/\s+/g, '_') ?? null;
+
+  return {
+    shopName: shopData?.name ?? null,
+    shopEmail: shopData?.email ?? null,
+    countryCode: shopData?.billingAddress?.countryCodeV2 ?? null,
+    currency: shopData?.currencyCode ?? null,
+    planName,
+  };
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -287,27 +358,12 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     const tokenData = await tokenRes.json() as { access_token: string; scope: string };
     if (!tokenData.access_token) return c.json({ error: 'Token exchange returned no token' }, 502);
 
-    // Fetch shop info so we have a friendly name + email + locale on file.
-    let shopName: string | null = null;
-    let shopEmail: string | null = null;
-    let countryCode: string | null = null;
-    let currency: string | null = null;
-    let planName: string | null = null;
-    try {
-      const shopRes = await fetch(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
-        headers: { 'X-Shopify-Access-Token': tokenData.access_token, Accept: 'application/json' },
-      });
-      if (shopRes.ok) {
-        const shopData = await shopRes.json() as { shop: any };
-        shopName = shopData.shop?.name ?? null;
-        shopEmail = shopData.shop?.email ?? null;
-        countryCode = shopData.shop?.country_code ?? null;
-        currency = shopData.shop?.currency ?? null;
-        planName = shopData.shop?.plan_name ?? null;
-      }
-    } catch (e) {
-      console.warn('[shopify] shop.json fetch failed (non-fatal):', String(e));
-    }
+    // Fetch shop info via Admin GraphQL so public-app review doesn't flag
+    // legacy REST Admin usage in the install path.
+    const { shopName, shopEmail, countryCode, currency, planName } = await fetchShopInfo(
+      shop,
+      tokenData.access_token,
+    );
 
     // Upsert the store. On re-install (same shop, fresh consent), we replace
     // the access_token + scopes + clear uninstalled_at. The access_token is
@@ -504,29 +560,10 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     // shop appears in our DB (Managed Install installs go straight to the
     // embedded app without ever hitting our OAuth callback).
     const now = new Date().toISOString();
-    let shopName: string | null = null;
-    let shopEmail: string | null = null;
-    let countryCode: string | null = null;
-    let currency: string | null = null;
-    let planName: string | null = null;
-    try {
-      const shopRes = await fetch(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
-        headers: { 'X-Shopify-Access-Token': result.accessToken, Accept: 'application/json' },
-      });
-      if (shopRes.ok) {
-        const data = await shopRes.json() as { shop: any };
-        shopName = data.shop?.name ?? null;
-        shopEmail = data.shop?.email ?? null;
-        countryCode = data.shop?.country_code ?? null;
-        currency = data.shop?.currency ?? null;
-        planName = data.shop?.plan_name ?? null;
-      } else {
-        const errText = await shopRes.text().catch(() => '');
-        console.warn('[shopify] shop.json fetch failed:', shopRes.status, errText.slice(0, 200));
-      }
-    } catch (e) {
-      console.warn('[shopify] shop.json fetch threw:', String(e));
-    }
+    const { shopName, shopEmail, countryCode, currency, planName } = await fetchShopInfo(
+      shop,
+      result.accessToken,
+    );
 
     // Same encryption pattern as the OAuth callback upsert — encrypt when
     // the secret is set, fall back to plaintext otherwise. access_token_format
