@@ -1,6 +1,6 @@
 # App Store Submission Checklist - SocialAI Studio for Shopify
 
-Current state as of June 18, 2026.
+Current state as of June 18, 2026: submitted to Shopify App Review.
 
 ---
 
@@ -17,7 +17,10 @@ Current state as of June 18, 2026.
 | Shopify app config | Released in Partners | Active version `socialai-studio-5` / `gid://shopify/Version/1019223539713` |
 | Admin API usage | Ready | Install/token-exchange shop info now uses Admin GraphQL, not REST `shop.json` |
 | Reviewer-facing Shopify UI copy | Ready | Compose, Autopilot, Calendar, Insights, Settings, and shell copy now advertise Facebook-only scheduling |
-| Reviewer listing copy | Ready | `LISTING_COPY.md` now matches the current supported scope |
+| Reviewer listing copy | Submitted | Shopify Partners listing now matches the current supported Facebook-only scope |
+| Reviewer media | Submitted | Hosted feature media, screenshots, and screencast were added to the listing |
+| Shopify App Store review | Submitted | Partners shows `Success! We received your submission.` |
+| App Store visibility | Ready on approval | Visibility is set to appear in search and recommendations when Shopify publishes the listing |
 | Publish-readiness documentation | Ready | `docs/shopify-publish-readiness.md` rewritten for the Facebook-only App Store slice |
 
 ## Verification completed
@@ -27,10 +30,14 @@ Current state as of June 18, 2026.
 | `cd workers/api && npm test` | Passed - 50 files, 746 tests |
 | `cd workers/api && npm run typecheck` | Passed |
 | `cd shopify-app && VITE_SHOPIFY_API_KEY=<real client id> npm run build` | Passed |
-| `cd shopify-app && npx wrangler pages deploy dist --project-name socialai-shopify --branch main --commit-dirty=true` | Passed - live app root now serves the real Shopify API key |
-| `cd workers/api && npx wrangler deploy --config wrangler.toml` | Passed - worker version `3515c5cd-551d-4ab0-b2e1-251a9d415ec1` |
+| `cd shopify-app && npx wrangler pages deploy dist --project-name socialai-shopify --branch main --commit-dirty=true` | Passed - deployment alias `https://8f1f1232.socialai-shopify.pages.dev`; live app root now serves the real Shopify API key |
+| `cd workers/api && npx wrangler deploy --config wrangler.toml` | Passed - worker version `ae52224c-ecec-445e-a61d-b7c2686b2d67` |
 | `npx --yes @shopify/cli@latest app deploy --client-id <client id> --allow-updates --no-build` | Passed - active Partners config release `socialai-studio-5` |
 | `npx --yes --package @playwright/cli playwright-cli ... run-code --filename scripts/capture-shopify-app-store-screenshots.js` | Passed - fresh screenshots written to `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\` |
+| Hosted feature image | Passed - `https://app.socialaistudio.au/feature-media-1600x900.png` returns `200 image/png` |
+| Hosted reviewer screencast | Passed - `https://app.socialaistudio.au/socialai-studio-reviewer-screencast.mp4` returns `200 video/mp4` |
+| Shopify Partners automated common-error check | Passed |
+| Shopify App Store submission | Passed - review page status is `Submitted` |
 
 ## Live dev-shop state
 
@@ -62,14 +69,18 @@ Completed on June 18, 2026:
    - `https://app.socialaistudio.au/support`
    - Shopify embedded frontend at `https://app.socialaistudio.au`
 
-Remaining browser-only App Store review steps:
+Completed browser-only App Store review steps:
 
-1. Open the Shopify App Store review page for SocialAI Studio in the Partner dashboard
-2. Paste the updated copy from `LISTING_COPY.md` into the listing form
-3. Upload `shopify-app/assets/app-icon.png`
-4. Upload screenshots from `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\`
-5. Run Shopify's automated review checks
-6. Submit for Shopify review once the dashboard reports all mandatory steps complete
+1. Opened the Shopify App Store review page for SocialAI Studio in the Partner dashboard
+2. Replaced stale Instagram-facing copy with the Facebook-only listing copy
+3. Uploaded hosted feature media and desktop screenshots through Shopify's staged upload flow
+4. Saved the reviewer screencast URL: `https://app.socialaistudio.au/socialai-studio-reviewer-screencast.mp4`
+5. Passed Shopify's automated common-error check
+6. Confirmed app capability selection as `embedded`
+7. Completed the AI self-review step
+8. Acknowledged App Store requirements
+9. Submitted for Shopify App Review
+10. Set visibility so the listing appears in search and recommendations when Shopify publishes it
 
 Operational caveat: real Facebook scheduling still requires a Facebook Page admin account. If Meta app review has not been approved and the Meta app remains in Development Mode, Shopify reviewers may be unable to test live Facebook publishing unless a reviewer/test account is explicitly allowed in Meta.
 

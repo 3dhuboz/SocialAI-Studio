@@ -116,13 +116,16 @@ Secondary: **Sales channels -> Social media**
 | Asset | Required | Where it lives |
 |---|---|---|
 | App icon - 1200x1200 PNG | Required | `shopify-app/assets/app-icon.png` |
-| 3-8 screenshots | Required | `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\` |
-| Demo video | Optional | Not required for submission |
+| Feature media - 1600x900 PNG | Required | `shopify-app/public/feature-media-1600x900.png` and https://app.socialaistudio.au/feature-media-1600x900.png |
+| 3-8 screenshots | Required | `C:\Users\Steve\Desktop\app-store-screenshots\fresh-2026-06-18\` plus 1600x900 crops in that folder |
+| Demo/reviewer screencast | Provided | `shopify-app/public/socialai-studio-reviewer-screencast.mp4` and https://app.socialaistudio.au/socialai-studio-reviewer-screencast.mp4 |
 | Privacy policy URL | Required | https://app.socialaistudio.au/privacy |
 | Support URL | Required | https://app.socialaistudio.au/support |
 
 ## Submission notes
 
+- Submitted to Shopify App Review on June 18, 2026. Partners displayed: `Success! We received your submission.`
+- App Store visibility is set to appear in search and recommendations once Shopify approves and publishes the listing.
 - Reviewer-facing copy now matches the supported product scope: **Facebook Page scheduling only** for the embedded Shopify app.
 - Do not describe Instagram publishing or combined FB+IG scheduling in the listing until that path is truly shipped and verified.
 - Use the fresh 2026-06-18 screenshot pack; the older May screenshots show stale pre-cleanup platform chips.
