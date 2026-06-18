@@ -39,6 +39,7 @@ import { registerProxyRoutes } from './routes/proxies';
 import { registerPennybuildRoutes } from './routes/pennybuilder';
 import { registerPostproxyRoutes } from './routes/postproxy';
 import { registerRecommendationsRoutes } from './routes/recommendations';
+import { registerIntegrationRoutes } from './routes/integrations';
 import { registerShopifyOauthRoutes } from './routes/shopify-oauth';
 import { registerAdminShopifyRoutes } from './routes/admin-shopify';
 import { registerShopifyProductsRoutes } from './routes/shopify-products';
@@ -122,6 +123,7 @@ registerProxyRoutes(app);
 registerPennybuildRoutes(app);
 registerPostproxyRoutes(app);
 registerRecommendationsRoutes(app);
+registerIntegrationRoutes(app);
 
 // ── Shopify embedded app ──────────────────────────────────────────────────
 // All /api/shopify/* routes — install + GDPR webhooks + Phase 2 product

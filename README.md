@@ -45,6 +45,25 @@ Deploy to Cloudflare Pages with environment variables:
 - `VITE_AI_WORKER_URL`: Your Cloudflare Worker URL
 - `VITE_CLERK_PUBLISHABLE_KEY`: Clerk publishable key
 
+## Richo Road Integration
+
+The Worker exposes a server-to-server endpoint for the Richo Road Butchery ordering backend:
+
+```text
+POST /api/integrations/richo-road/events
+Authorization: Bearer <RICHO_ROAD_INGEST_API_KEY>
+```
+
+It creates or updates a SocialAI draft post and writes a verified `client_facts` context row. Configure the Worker with:
+
+```bash
+wrangler secret put RICHO_ROAD_INGEST_API_KEY --config workers/api/wrangler.toml
+wrangler secret put RICHO_ROAD_AGENT_ACCOUNT_ID --config workers/api/wrangler.toml
+wrangler secret put RICHO_ROAD_WORKSPACE_ID --config workers/api/wrangler.toml
+```
+
+The matching Richo Pages project should use the same ingest key as `SOCIALAI_STUDIO_API_KEY`, the SocialAI owner user id as `RICHO_AGENT_ACCOUNT_ID`, and the Richo client id as `SOCIALAI_STUDIO_WORKSPACE_ID`.
+
 ## License
 
 Private. Contact for licensing.

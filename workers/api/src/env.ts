@@ -85,6 +85,13 @@ export type Env = {
   // /api/admin/provision-from-pennybuilder endpoint AND to verify the
   // HMAC-signed embed token on GET /embed.
   PENNYBUILDER_PROVISION_SECRET?: string;
+  // Richo Road Butchery server-to-server ingest. The Richo ordering app sends
+  // staff-approved weekly-special/order-safe briefs here so SocialAI can create
+  // real draft posts and verified context rows without a Clerk browser session.
+  RICHO_ROAD_INGEST_API_KEY?: string;
+  SOCIALAI_STUDIO_API_KEY?: string;
+  RICHO_ROAD_AGENT_ACCOUNT_ID?: string;
+  RICHO_ROAD_WORKSPACE_ID?: string;
   // Deployment-environment marker. Unset (or 'production') in prod. Set
   // to 'dev' / 'staging' in lower envs so cost-metering and other
   // observability helpers can no-op outside prod (see lib/ai-usage.ts).
