@@ -748,6 +748,15 @@ const Dashboard: React.FC = () => {
 
   // Cache agency profile name for display
   const agencyNameRef = useRef(CLIENT.defaultBusinessName);
+  const [ownWorkspaceSummary, setOwnWorkspaceSummary] = useState({
+    name: CLIENT.defaultBusinessName,
+    type: CLIENT.defaultBusinessType,
+  });
+  const [ownWorkspaceHealth, setOwnWorkspaceHealth] = useState<{ scheduledCount: number; lastPostAt: string | null }>({
+    scheduledCount: 0,
+    lastPostAt: null,
+  });
+  const [ownWorkspaceTokens, setOwnWorkspaceTokens] = useState<SocialTokens>(DEFAULT_SOCIAL_TOKENS);
   // Track workspace switches to prevent persistence writing client data to agency doc
   const prevClientIdRef = useRef<string | null | undefined>(undefined);
   // Block profile/stats persistence until D1 initial sync + workspace loads have completed
@@ -768,6 +777,36 @@ const Dashboard: React.FC = () => {
   // trigger. The reconnect handler navigates to Settings + forces the
   // PostproxyConnectButton into Stage 1, bypassing the URL ?step= check
   // for users who haven't hit OAuth yet.
+  // Keep the agency workspace visible in the Clients tab even while a client
+  // workspace is active elsewhere in the app.
+  useEffect(() => {
+    if (authMode === 'portal' || activeClientId !== null) return;
+    const name = (profile.name || CLIENT.defaultBusinessName).trim() || CLIENT.defaultBusinessName;
+    const type = (profile.type || CLIENT.defaultBusinessType).trim() || CLIENT.defaultBusinessType;
+    agencyNameRef.current = name;
+    setOwnWorkspaceSummary(prev => (
+      prev.name === name && prev.type === type ? prev : { name, type }
+    ));
+  }, [authMode, activeClientId, profile.name, profile.type]);
+
+  useEffect(() => {
+    if (authMode === 'portal' || activeClientId !== null) return;
+    const scheduledCount = posts.filter(post => post.status !== 'Posted').length;
+    let lastPostAt: string | null = null;
+    for (const post of posts) {
+      if (!post.scheduledFor) continue;
+      if (!lastPostAt || new Date(post.scheduledFor).getTime() > new Date(lastPostAt).getTime()) {
+        lastPostAt = post.scheduledFor;
+      }
+    }
+    setOwnWorkspaceHealth(prev => (
+      prev.scheduledCount === scheduledCount && prev.lastPostAt === lastPostAt
+        ? prev
+        : { scheduledCount, lastPostAt }
+    ));
+    setOwnWorkspaceTokens(socialTokens);
+  }, [authMode, activeClientId, posts, socialTokens]);
+
   const postproxyService = useMemo(
     () => createPostproxyService(getApiToken, authMode),
     [getApiToken, authMode],
@@ -1372,6 +1411,21 @@ const Dashboard: React.FC = () => {
             console.warn(`[Profile Save Guard] Blocked save — profile type "${profile.type}" doesn't match client type "${client.businessType}"`);
             return;
           }
+        }
+      }
+      if (!activeClientId) {
+        const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const profileNorm = normName(profile.name || '');
+        const profileTypeNorm = normName(profile.type || '');
+        const matchingClient = clients.find(client => {
+          const clientNameNorm = normName(client.name || '');
+          if (!profileNorm || profileNorm !== clientNameNorm) return false;
+          const clientTypeNorm = normName(client.businessType || '');
+          return !profileTypeNorm || !clientTypeNorm || profileTypeNorm === clientTypeNorm;
+        });
+        if (matchingClient) {
+          console.warn(`[Profile Save Guard] Blocked save - own workspace profile matches client "${matchingClient.name}"`);
+          return;
         }
       }
       upsertActiveWorkspace({ profile }).catch(() => {});
@@ -5463,6 +5517,92 @@ const Dashboard: React.FC = () => {
               <div className="text-xs text-white/40 leading-relaxed space-y-1">
                 <p><span className="text-blue-300 font-semibold">Agency billing model: </span>Your single Agency plan covers all client workspaces. You bill each client directly at your own rate — they never interact with SocialAI Studio billing.</p>
                 <p>Each workspace has its own AI business profile, content calendar, social media connection, and Smart AI schedule — fully isolated.</p>
+              </div>
+            </div>
+
+            <div className={`glass-card border rounded-2xl p-5 space-y-4 transition-all ${activeClientId === null ? 'border-amber-500/35 bg-amber-500/[0.04]' : 'border-white/[0.08] hover:border-white/15'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-emerald-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0 text-sm font-black text-amber-300">
+                      {(ownWorkspaceSummary.name || CLIENT.defaultBusinessName).charAt(0).toUpperCase()}
+                    </div>
+                    <div
+                      className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0d0d1a] ${!ownWorkspaceHealth.lastPostAt ? 'bg-red-500' : Math.floor((Date.now() - new Date(ownWorkspaceHealth.lastPostAt).getTime()) / 86400000) <= 7 ? 'bg-emerald-500' : Math.floor((Date.now() - new Date(ownWorkspaceHealth.lastPostAt).getTime()) / 86400000) <= 30 ? 'bg-amber-500' : 'bg-red-500'}`}
+                      title={!ownWorkspaceHealth.lastPostAt ? 'No posts yet' : `Last post ${Math.floor((Date.now() - new Date(ownWorkspaceHealth.lastPostAt).getTime()) / 86400000)}d ago`}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-white truncate">{ownWorkspaceSummary.name || CLIENT.defaultBusinessName}</p>
+                    <p className="text-xs text-white/30 truncate">{ownWorkspaceSummary.type || CLIENT.defaultBusinessType}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/25 px-2 py-0.5 rounded-full whitespace-nowrap">Your workspace</span>
+                  {activeClientId === null && (
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/25 px-2 py-0.5 rounded-full whitespace-nowrap">Active</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                {(ownWorkspaceTokens.facebookConnected || ownWorkspaceTokens.instagramConnected || !!ownWorkspaceTokens.postproxyProfileId || !!ownWorkspaceTokens.postproxyInstagramProfileId) ? (
+                  <div className="flex items-center gap-2 text-xs text-emerald-400">
+                    <Link2 size={12} />
+                    <span className="font-semibold">Social connected</span>
+                    <span className="text-emerald-400/50">
+                      - {[
+                        (ownWorkspaceTokens.facebookConnected || ownWorkspaceTokens.postproxyProfileId) ? 'Facebook' : null,
+                        (ownWorkspaceTokens.instagramConnected || ownWorkspaceTokens.postproxyInstagramProfileId) ? 'Instagram' : null,
+                      ].filter(Boolean).join(', ')}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-white/30">
+                    <Link2Off size={12} />
+                    <span>Social not connected</span>
+                  </div>
+                )}
+                {(() => {
+                  const daysSincePost = ownWorkspaceHealth.lastPostAt
+                    ? Math.floor((Date.now() - new Date(ownWorkspaceHealth.lastPostAt).getTime()) / 86400000)
+                    : null;
+                  const healthColor = daysSincePost === null ? 'text-red-400' : daysSincePost <= 7 ? 'text-emerald-400' : daysSincePost <= 30 ? 'text-amber-400' : 'text-red-400';
+                  return (
+                    <div className={`flex items-center gap-3 text-xs ${healthColor}`}>
+                      <Activity size={11} />
+                      <span>{daysSincePost === null ? 'No posts yet' : daysSincePost === 0 ? 'Posted today' : `Last post ${daysSincePost}d ago`}</span>
+                      {ownWorkspaceHealth.scheduledCount > 0 && (
+                        <span className="text-white/30">- {ownWorkspaceHealth.scheduledCount} scheduled</span>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-[11px] text-white/35">Owner workspace for your agency. This does not use a client slot.</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setActiveClientId(null); setActiveTab('smart'); setSmartSubMode('quickpost'); }}
+                    className="flex items-center justify-center gap-1.5 text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/25 text-emerald-300 py-2 px-3 rounded-xl transition"
+                  >
+                    <Wand2 size={12} /> Create Post
+                  </button>
+                  <button
+                    onClick={() => { setActiveClientId(null); setActiveTab('smart'); }}
+                    className="flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white py-2 px-3 rounded-xl transition"
+                  >
+                    <Brain size={12} /> Smart AI
+                  </button>
+                  <button
+                    onClick={() => { setActiveClientId(null); setActiveTab('settings'); }}
+                    className="flex items-center justify-center gap-1.5 text-xs font-semibold bg-white/5 hover:bg-white/10 border border-white/10 text-white/40 hover:text-white py-2 px-3 rounded-xl transition"
+                    title="Workspace settings"
+                  >
+                    <Settings size={12} />
+                  </button>
+                </div>
               </div>
             </div>
 
