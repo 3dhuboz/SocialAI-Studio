@@ -65,6 +65,37 @@ const Terms = lazy(() => import('./pages/Terms'));
 const Refunds = lazy(() => import('./pages/Refunds'));
 const Cookies = lazy(() => import('./pages/Cookies'));
 
+// Some embedded mobile webviews expose `window.localStorage` but throw a
+// SecurityError the moment it's touched. Shadow the global with a safe wrapper
+// inside this module so draft/onboarding/admin cache reads don't crash the
+// whole app during first render.
+const localStorage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key'> & { readonly length: number } = (() => {
+  const resolve = (): Storage | null => {
+    if (typeof window === 'undefined') return null;
+    try { return window.localStorage; } catch { return null; }
+  };
+  return {
+    getItem(key: string) {
+      return resolve()?.getItem(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      try { resolve()?.setItem(key, value); } catch {}
+    },
+    removeItem(key: string) {
+      try { resolve()?.removeItem(key); } catch {}
+    },
+    key(index: number) {
+      return resolve()?.key(index) ?? null;
+    },
+    get length() {
+      return resolve()?.length ?? 0;
+    },
+  };
+})();
+
+// Keep in sync with workers/api/src/lib/pricing.ts PLAN_INCLUDES_POSTERS.
+const PLAN_TIERS_WITH_POSTERS: ReadonlySet<PlanTier> = new Set(['starter', 'growth', 'pro', 'agency']);
+
 /**
  * RecommendationActionButton — renders the contextual 1-click action for
  * an Insights recommendation. The AI proposes the action type + payload
@@ -5404,7 +5435,7 @@ const Dashboard: React.FC = () => {
           //      had no posters, the gifted credits should let them in).
           const overrideGrant = userAddonFeatures.posters === true;
           const overrideRevoke = userAddonFeatures.posters === false;
-          const planDefault = !!CLIENT.plans.find(p => p.id === activePlan)?.includes?.posters;
+          const planDefault = !!effectivePlan && PLAN_TIERS_WITH_POSTERS.has(effectivePlan);
           const hasAccess = (overrideGrant || (planDefault && !overrideRevoke) || userPosterCredits > 0 || isAdminMode);
           if (hasAccess) {
             return (
@@ -5422,7 +5453,7 @@ const Dashboard: React.FC = () => {
           // pre-select it for the upgrade CTA so a click goes straight to the
           // right plan card in the pricing modal. Same setPricingDefaultPlan
           // pattern the trial-paywall uses.
-          const upsellTarget = CLIENT.plans.find(p => p.includes?.posters)?.id ?? null;
+          const upsellTarget = CLIENT.plans.find(p => PLAN_TIERS_WITH_POSTERS.has(p.id as PlanTier))?.id ?? null;
           const targetPlanCfg = upsellTarget ? CLIENT.plans.find(p => p.id === upsellTarget) : null;
           return (
             <div className="max-w-3xl mx-auto pt-8 pb-16 space-y-8">
@@ -5442,8 +5473,8 @@ const Dashboard: React.FC = () => {
                   <div>
                     <h3 className="text-base font-bold text-white">Not included on your current plan</h3>
                     <p className="text-xs text-white/50 mt-1">
-                      {activePlan
-                        ? <>You're on <span className="text-white/80 font-semibold capitalize">{activePlan}</span>. Upgrade to {targetPlanCfg?.name ?? 'a poster-included plan'} to unlock the editor.</>
+                      {effectivePlan
+                        ? <>You're on <span className="text-white/80 font-semibold capitalize">{effectivePlan}</span>. Upgrade to {targetPlanCfg?.name ?? 'a poster-included plan'} to unlock the editor.</>
                         : <>Pick a plan to start using Poster Maker.</>}
                     </p>
                   </div>
