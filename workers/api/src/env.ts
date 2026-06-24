@@ -85,6 +85,10 @@ export type Env = {
   // /api/admin/provision-from-pennybuilder endpoint AND to verify the
   // HMAC-signed embed token on GET /embed.
   PENNYBUILDER_PROVISION_SECRET?: string;
+  // Optional dedicated HMAC secret for ISS admin iframe embeds. When set,
+  // /embed accepts ISS-minted tokens without sharing or rotating the
+  // PennyBuilder provisioning secret.
+  ISS_EMBED_SECRET?: string;
   // Richo Road Butchery server-to-server ingest. The Richo ordering app sends
   // staff-approved weekly-special/order-safe briefs here so SocialAI can create
   // real draft posts and verified context rows without a Clerk browser session.

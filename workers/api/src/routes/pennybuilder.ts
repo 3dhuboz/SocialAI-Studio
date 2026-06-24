@@ -46,10 +46,53 @@ import type { Env } from '../env';
 // HMAC-SHA256 embed token helpers — extracted into a shared lib so the
 // verifier can be unit-tested against its own minter and so PennyBuilder's
 // signing side can later import the same canonical shape.
-import { verifyEmbedToken } from '../lib/embed-token';
+import { verifyEmbedToken, type EmbedClaims } from '../lib/embed-token';
 import { timingSafeEqualStr } from '../lib/timing-safe';
 
 // ── Auth helper — Bearer token timing-safe compare ───────────────────────────
+async function resolveEmbedUserId(c: Context<{ Bindings: Env }>, claims: EmbedClaims): Promise<string | null> {
+  const email = claims.email?.trim().toLowerCase();
+  if (!email) return claims.sub;
+
+  try {
+    const lookup = await fetch(
+      `https://api.clerk.com/v1/users?email_address=${encodeURIComponent(email)}`,
+      { headers: { Authorization: `Bearer ${c.env.CLERK_SECRET_KEY}` } },
+    );
+    if (!lookup.ok) return claims.sub;
+    const existing = (await lookup.json()) as Array<{ id: string }>;
+    if (existing[0]?.id) return existing[0].id;
+
+    const nameParts = (claims.name ?? '').trim().split(/\s+/).filter(Boolean);
+    const create = await fetch('https://api.clerk.com/v1/users', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${c.env.CLERK_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email_address: [email],
+        first_name: nameParts[0] || null,
+        last_name: nameParts.slice(1).join(' ') || null,
+        skip_password_requirement: true,
+        skip_password_checks: true,
+        public_metadata: { source: 'iss-admin-embed' },
+      }),
+    });
+    if (!create.ok) return null;
+    const created = (await create.json()) as { id: string };
+
+    await c.env.DB.prepare(
+      `INSERT INTO users (id, email, plan, billing_cycle)
+       VALUES (?, ?, 'starter', 'monthly')
+       ON CONFLICT(id) DO UPDATE SET email = excluded.email`,
+    ).bind(created.id, email).run();
+
+    return created.id;
+  } catch {
+    return null;
+  }
+}
 function authPennybuilder(c: Context<{ Bindings: Env }>): Response | null {
   const expected = c.env.PENNYBUILDER_PROVISION_SECRET;
   if (!expected) return c.json({ error: 'PennyBuilder bridge not configured' }, 503);
@@ -292,7 +335,7 @@ export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
    * PennyBuilder iframe signs the user in transparently.
    */
   app.get('/embed', async (c) => {
-    const secret = c.env.PENNYBUILDER_PROVISION_SECRET;
+    const secret = c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET;
     if (!secret) return c.text('embed not configured', 503);
 
     const token = c.req.query('token');
@@ -300,6 +343,9 @@ export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const claims = await verifyEmbedToken(secret, token);
     if (!claims) return c.text('invalid or expired token', 401);
+
+    const embedUserId = await resolveEmbedUserId(c, claims);
+    if (!embedUserId) return c.text('embed user could not be resolved', 502);
 
     let ticket: string;
     try {
@@ -309,7 +355,7 @@ export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
           Authorization: `Bearer ${c.env.CLERK_SECRET_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ user_id: claims.sub, expires_in_seconds: 60 }),
+        body: JSON.stringify({ user_id: embedUserId, expires_in_seconds: 60 }),
       });
       if (!tokRes.ok) return c.text('clerk ticket failed', 502);
       const tok = (await tokRes.json()) as { token: string };
@@ -333,7 +379,7 @@ export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
       headers: {
         Location: target,
         'Content-Security-Policy':
-          "frame-ancestors 'self' https://builder.pennywiseit.com.au https://*.pennywiseit.com.au https://pennybuilder.steve-700.workers.dev",
+          "frame-ancestors 'self' https://builder.pennywiseit.com.au https://*.pennywiseit.com.au https://pennybuilder.steve-700.workers.dev https://issolutions.com.au https://www.issolutions.com.au",
         'Referrer-Policy': 'no-referrer',
         'X-Robots-Tag': 'noindex',
       },
