@@ -880,18 +880,29 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
 type GeminiAuthMode = 'clerk' | 'portal';
 let _getAiToken: (() => Promise<string | null>) | null = null;
 let _aiAuthMode: GeminiAuthMode = 'clerk';
+const AI_AUTH_MISSING_MESSAGE = 'Session expired. Please refresh and sign in again.';
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 export function setGeminiAuth(getToken: () => Promise<string | null>, mode: GeminiAuthMode = 'clerk') {
   _getAiToken = getToken;
   _aiAuthMode = mode;
+}
+async function resolveAiToken(retry = true): Promise<string> {
+  if (!_getAiToken) throw new Error(AI_AUTH_MISSING_MESSAGE);
+  let tok = await _getAiToken();
+  if (tok) return tok;
+  if (retry) {
+    await sleep(120);
+    tok = await _getAiToken();
+    if (tok) return tok;
+  }
+  throw new Error(AI_AUTH_MISSING_MESSAGE);
 }
 // Shared header builder — used by both /api/ai/generate and /api/fal-proxy callers.
 // Both endpoints require auth (Clerk JWT or Portal token) since rate limiting was added.
 export async function aiAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(extra || {}) };
-  if (_getAiToken) {
-    const tok = await _getAiToken();
-    if (tok) headers['Authorization'] = _aiAuthMode === 'portal' ? `Portal ${tok}` : `Bearer ${tok}`;
-  }
+  const tok = await resolveAiToken();
+  headers['Authorization'] = _aiAuthMode === 'portal' ? `Portal ${tok}` : `Bearer ${tok}`;
   return headers;
 }
 
@@ -909,21 +920,32 @@ const callAI = async (
     model?: string;
   }
 ): Promise<string> => {
-  const headers = await aiAuthHeaders();
-  const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      prompt,
-      cachedPrefix: options?.cachedPrefix,
-      model: options?.model,
-      temperature: options?.temperature ?? 0.8,
-      maxTokens: options?.maxTokens ?? 2048,
-      responseFormat: options?.responseFormat ?? 'text',
-    }),
+  const body = JSON.stringify({
+    prompt,
+    cachedPrefix: options?.cachedPrefix,
+    model: options?.model,
+    temperature: options?.temperature ?? 0.8,
+    maxTokens: options?.maxTokens ?? 2048,
+    responseFormat: options?.responseFormat ?? 'text',
   });
-  const data = await res.json() as { text?: string; error?: string };
-  if (!res.ok || data.error) throw new Error(data.error || `AI request failed (${res.status})`);
+  const requestOnce = async () => {
+    const headers = await aiAuthHeaders();
+    const res = await fetch(`${AI_WORKER}/api/ai/generate`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    return { res, data };
+  };
+  let { res, data } = await requestOnce();
+  if (res.status === 401) {
+    ({ res, data } = await requestOnce());
+  }
+  if (!res.ok || data.error) {
+    if (res.status === 401) throw new Error(AI_AUTH_MISSING_MESSAGE);
+    throw new Error(data.error || `AI request failed (${res.status})`);
+  }
   return data.text || '';
 };
 

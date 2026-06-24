@@ -1494,12 +1494,19 @@ const Dashboard: React.FC = () => {
       const headers = await aiAuthHeaders();
       const qs = activeClientId ? `?clientId=${encodeURIComponent(activeClientId)}` : '';
       const res = await fetch(`${(import.meta.env as any).VITE_AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev'}/api/db/facts${qs}`, { headers });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setFactCount(null);
+        setFactsLastUpdate(null);
+        return;
+      }
       const data = await res.json();
       const facts = data.facts || [];
       setFactCount(facts.length);
       setFactsLastUpdate(facts[0]?.verified_at || null);
-    } catch { /* ignore */ }
+    } catch {
+      setFactCount(null);
+      setFactsLastUpdate(null);
+    }
   };
 
   const refreshFactsFromFacebook = async () => {

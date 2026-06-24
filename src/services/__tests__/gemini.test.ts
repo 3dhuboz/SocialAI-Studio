@@ -28,6 +28,7 @@ import {
   generateInsightReport,
   buildArchetypeVoiceBlock,
   setActiveArchetype,
+  setGeminiAuth,
   clearFactsCache,
   generateSmartSchedule,
   SAFE_FALLBACK_SCENES as SAFE_FALLBACK_SCENES_FRONTEND,
@@ -41,6 +42,10 @@ import {
   CAPTION_ARCHETYPE_KEYWORDS,
 } from '../../../shared/archetype-scenes';
 import { ARCHETYPES, getArchetypeBySlug } from '../../data/archetypes';
+
+beforeEach(() => {
+  setGeminiAuth(async () => 'test-ai-token');
+});
 
 describe('generateInsightReport', () => {
   beforeEach(() => {
@@ -111,6 +116,41 @@ The biggest opportunity is consistency.",
     );
 
     expect(report?.summary).toContain('biggest opportunity');
+  });
+
+  it('retries once when the AI worker returns 401 before succeeding', async () => {
+    let aiCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      aiCalls += 1;
+      if (aiCalls === 1) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe('Bearer test-ai-token');
+      return new Response(JSON.stringify({
+        text: JSON.stringify({
+          summary: 'Recovered after token refresh.',
+          score: 80,
+          recommendations: [],
+          bestTimes: [],
+          contentFocus: [],
+          quickWin: 'Refresh the token once and continue.',
+        }),
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const report = await generateInsightReport(
+      'SocialAI Studio',
+      'tech-saas-agency',
+      'Rockhampton, QLD',
+      { followers: 1200, reach: 5000, engagement: 3.4, postsLast30Days: 8 },
+      ['Before: scrambling to post something'],
+    );
+
+    expect(aiCalls).toBe(2);
+    expect(report?.summary).toContain('Recovered after token refresh.');
   });
 });
 
