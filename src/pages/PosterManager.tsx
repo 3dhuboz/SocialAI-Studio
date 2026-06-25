@@ -61,7 +61,7 @@ interface PosterManagerProps {
   /** Active workspace id (null = agency owner's own workspace). Comes from App.tsx. */
   activeClientId: string | null;
   /** 'clerk' for the main site; 'portal' for white-label client portals. */
-  authMode?: 'clerk' | 'portal';
+  authMode?: 'clerk' | 'portal' | 'embed';
   /** Called when the user clicks "Use in Post" on a gallery card. App.tsx
    *  handles this by pre-seeding the Quick Post form with the image URL and
    *  switching to the Create tab. */

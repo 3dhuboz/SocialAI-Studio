@@ -8,6 +8,7 @@
 import type { Context } from 'hono';
 import { verifyToken } from '@clerk/backend';
 import type { Env } from './env';
+import { verifyEmbedToken } from './lib/embed-token';
 
 function isPortalAllowedPath(req: Request): boolean {
   const path = new URL(req.url).pathname;
@@ -21,6 +22,8 @@ function isPortalAllowedPath(req: Request): boolean {
     path === '/api/db/poster-brand-kit' ||
     path === '/api/db/clients' ||
     path.startsWith('/api/db/clients/') ||
+    path === '/api/db/cancellations' ||
+    path.startsWith('/api/db/cancellations/') ||
     path === '/api/db/campaigns' ||
     path.startsWith('/api/db/campaigns/') ||
     path === '/api/db/social-tokens' ||
@@ -52,10 +55,24 @@ export async function getAuthUserId(
   secretKey: string,
   jwtKey?: string,
   db?: D1Database,
+  embedSecret?: string,
 ): Promise<string | null> {
   const auth = req.headers.get('Authorization');
   if (!auth) return null;
 
+  // Signed iframe embed auth - used by partner admin panels such as ISS.
+  // Keep it on the portal-safe route allowlist so embeds cannot reach owner
+  // or admin-only APIs.
+  if (auth.startsWith('Embed ')) {
+    if (!embedSecret) return null;
+    if (!isPortalAllowedPath(req)) {
+      console.warn('[auth] embed token rejected: route not portal-scoped');
+      return null;
+    }
+    const claims = await verifyEmbedToken(embedSecret, auth.slice(6));
+    if (!claims || claims.aud !== 'socialai-studio') return null;
+    return claims.sub || null;
+  }
   // Portal token auth — used by white-label client portals (no Clerk needed)
   if (auth.startsWith('Portal ') && db) {
     if (!isPortalAllowedPath(req)) {
@@ -134,7 +151,7 @@ export async function requireAdmin(
 ): Promise<{ uid: string; email: string | null } | Response> {
   const auth = c.req.raw.headers.get('Authorization') || '';
   if (!auth.startsWith('Bearer ')) return c.json({ error: 'Unauthorized' }, 401);
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
   const row = await c.env.DB.prepare(
     'SELECT email, is_admin FROM users WHERE id = ?'

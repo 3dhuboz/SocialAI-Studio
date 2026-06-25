@@ -4,6 +4,7 @@ import App from './App';
 import { ClerkProvider } from '@clerk/react';
 import { AuthProvider } from './contexts/AuthContext';
 import { PortalAuthProvider } from './contexts/PortalAuthContext';
+import { EmbeddedAuthProvider } from './contexts/EmbeddedAuthContext';
 import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { CLIENT } from './client.config';
 import './index.css';
@@ -79,6 +80,9 @@ document.documentElement.style.setProperty('--accent-light-rgb', `${accentLight.
 // pk_live_ is a publishable key — safe to commit (it's designed to be public)
 const clerkPubKey = (import.meta.env as Record<string, string>).VITE_CLERK_PUBLISHABLE_KEY
   || 'pk_live_Y2xlcmsuc29jaWFsYWlzdHVkaW8uYXUk';
+const isEmbeddedAdmin = typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).get('embedded') === '1'
+  && new URLSearchParams(window.location.search).has('embed_token');
 
 // PWA service worker — register only in production builds. Dev-mode
 // service workers cause hot-reload thrash and stale cache headaches.
@@ -98,7 +102,11 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <RootErrorBoundary>
-      {CLIENT.clientMode ? (
+      {isEmbeddedAdmin ? (
+        <EmbeddedAuthProvider>
+          <App />
+        </EmbeddedAuthProvider>
+      ) : CLIENT.clientMode ? (
         <PortalAuthProvider>
           <App />
         </PortalAuthProvider>

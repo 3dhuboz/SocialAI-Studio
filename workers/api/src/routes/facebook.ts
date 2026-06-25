@@ -76,7 +76,7 @@ export function registerFacebookRoutes(app: Hono<{ Bindings: Env }>): void {
   // safety net. Aligns with the user's #1 priority (reliability) — surface the
   // failure at config time, not at publish time.
   app.post('/api/test-reel-publish', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const body = await c.req.json<{ clientId?: string | null }>().catch(() => null);

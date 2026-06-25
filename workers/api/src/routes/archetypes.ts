@@ -28,7 +28,7 @@ import {
 
 export function registerArchetypeRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/business-archetype', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const userRow = await c.env.DB.prepare(
@@ -75,7 +75,7 @@ export function registerArchetypeRoutes(app: Hono<{ Bindings: Env }>): void {
    *  force=true bypasses the cache and re-classifies even if archetype_slug is set.
    */
   app.post('/api/classify-business', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `classify:${uid}`, 10)) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);
@@ -158,7 +158,7 @@ export function registerArchetypeRoutes(app: Hono<{ Bindings: Env }>): void {
    *  guarantees name + business_type). force=true bypasses the cache.
    */
   app.post('/api/clients/:id/classify-business', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `classify:${uid}`, 10)) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);

@@ -640,7 +640,7 @@ function isInsideCandidate(d: Date): boolean {
 
 export function registerRecommendationsRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/recommendations/auto-fix-checklist', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `autofix:${uid}`, 10)) {
       return c.json({ error: 'Rate limit exceeded — 10 auto-fix runs per minute' }, 429);

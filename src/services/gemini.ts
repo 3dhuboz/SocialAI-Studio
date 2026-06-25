@@ -877,7 +877,7 @@ export function buildGroundTruthBlock(facts: ClientFact[]): string {
 // Auth wiring — /api/ai/generate now requires Clerk JWT or Portal token.
 // Each auth context calls setGeminiAuth() at startup so callAI can attach
 // the right Authorization header.
-type GeminiAuthMode = 'clerk' | 'portal';
+type GeminiAuthMode = 'clerk' | 'portal' | 'embed';
 let _getAiToken: (() => Promise<string | null>) | null = null;
 let _aiAuthMode: GeminiAuthMode = 'clerk';
 const AI_AUTH_MISSING_MESSAGE = 'Session expired. Please refresh and sign in again.';
@@ -902,7 +902,7 @@ async function resolveAiToken(retry = true): Promise<string> {
 export async function aiAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(extra || {}) };
   const tok = await resolveAiToken();
-  headers['Authorization'] = _aiAuthMode === 'portal' ? `Portal ${tok}` : `Bearer ${tok}`;
+  headers['Authorization'] = _aiAuthMode === 'portal' ? `Portal ${tok}` : _aiAuthMode === 'embed' ? `Embed ${tok}` : `Bearer ${tok}`;
   return headers;
 }
 

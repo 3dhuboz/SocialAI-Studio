@@ -174,7 +174,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // 4. Ask Postproxy for a hosted-OAuth URL with our redirect_url
   // 5. Return { authUrl, oauthState }
   app.post('/api/postproxy/init-connection', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `pp-init:${uid}`, 10)) {
       return c.json({ error: 'Rate limit exceeded — 10 connect attempts per minute' }, 429);
@@ -404,7 +404,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // entirely. The IG auto-flip in oauth-callback means the user is already
   // fully connected by the time they'd hit this endpoint.
   app.get('/api/postproxy/placements', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') ?? null;
     const platform = parsePlatform(c.req.query('platform'));
@@ -435,7 +435,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // users.use_postproxy (or clients.use_postproxy) to 1 so the publish
   // cron starts routing this workspace through Postproxy on its next tick.
   app.post('/api/postproxy/save-placement', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json<{ clientId?: string | null; placementId?: string; pageName?: string; platform?: string }>().catch(() => null);
     if (!body) return c.json({ error: 'JSON body required' }, 400);
@@ -582,7 +582,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // creates a Postproxy post + flips status to Publishing — but invoked
   // synchronously so the user gets immediate feedback.
   app.post('/api/postproxy/publish-now', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // RATE LIMIT + BILLING GATE — Postproxy /api/posts is paid (per-post
     // Postproxy fees + per-platform Meta delivery). Block past_due

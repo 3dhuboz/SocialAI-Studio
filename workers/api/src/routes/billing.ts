@@ -18,7 +18,7 @@ import { PLAN_PRICE_AUD } from '../lib/pricing';
 
 export function registerBillingRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/billing', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const user = await c.env.DB.prepare(

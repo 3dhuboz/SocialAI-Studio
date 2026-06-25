@@ -268,7 +268,8 @@ export const CLIENT = {
    * and setup banners — shows only the core Create/Calendar/Insights/Settings tabs.
    * Set VITE_CLIENT_MODE=true in CF Pages env vars to enable for a specific deployment.
    */
-  clientMode: (import.meta as any).env?.VITE_CLIENT_MODE === 'true',
+  clientMode: (import.meta as any).env?.VITE_CLIENT_MODE === 'true'
+    || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('embedded') === '1'),
 
   /**
    * Auto-login credentials for clientMode deployments (leave empty on main agency site).

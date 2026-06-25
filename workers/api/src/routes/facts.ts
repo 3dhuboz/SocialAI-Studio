@@ -17,14 +17,14 @@ import { refreshFactsForWorkspace } from '../lib/facebook-facts';
 
 export function registerFactsRoutes(app: Hono<{ Bindings: Env }>): void {
   app.post('/api/db/refresh-facts', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const result = await refreshFactsForWorkspace(c.env, uid, null);
     return c.json(result);
   });
 
   app.post('/api/db/refresh-facts/:clientId', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.param('clientId');
     const result = await refreshFactsForWorkspace(c.env, uid, clientId);
@@ -33,7 +33,7 @@ export function registerFactsRoutes(app: Hono<{ Bindings: Env }>): void {
 
   // Read facts back — used by the frontend to inject into AI prompts.
   app.get('/api/db/facts', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') || null;
     const rows = await c.env.DB.prepare(

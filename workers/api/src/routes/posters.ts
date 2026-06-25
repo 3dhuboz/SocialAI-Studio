@@ -151,7 +151,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // GET /api/db/posters?clientId=<id?>
   // List the current workspace's gallery, newest-first.
   app.get('/api/db/posters', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const clientId = normalizeClientId(c.req.query('clientId'));
@@ -181,7 +181,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // shows this as the "X of Y this month" counter on the Poster Maker UI +
   // surfaces an upgrade CTA when remaining hits zero.
   app.get('/api/db/posters-usage', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const usage = await getPosterUsage(c.env.DB, uid);
     return c.json(usage);
@@ -199,7 +199,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // delete the orphan; if even that fails, it's a cheap object until the future
   // cleanup cron.
   app.post('/api/db/posters', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     // Feature gate — fails closed before we touch the form data. Resolves
@@ -346,7 +346,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // row read also makes sure the URL resolves to a real poster (not a guessable
   // R2 path).
   app.get('/api/db/posters/:id/image', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const id = c.req.param('id');
@@ -373,7 +373,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // Content inputs are immutable record-of-what-was-rendered; if the admin wants
   // different copy, they "Use as base" to clone+re-render.
   app.patch('/api/db/posters/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const id = c.req.param('id');
@@ -415,7 +415,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // R2 first; if R2 fails we still drop the D1 row so the gallery doesn't show a
   // tombstone the user can't dismiss.
   app.delete('/api/db/posters/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const id = c.req.param('id');
@@ -437,7 +437,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // Fetch the per-workspace BrandKitOverrides blob (palette, voice, presets, QR
   // defaults). Returns { overrides: {}, updatedAt: 0 } if no overrides yet.
   app.get('/api/db/poster-brand-kit', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     // poster_brand_kit stores '' (empty string) for the own-workspace case, not
@@ -466,7 +466,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
   // can't express. Matches the hughesysque-origin /api/v1/posters/brand-kit
   // route's behaviour by design.
   app.put('/api/db/poster-brand-kit', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (!await userMayUsePosters(c.env.DB, uid)) {
       return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);
@@ -518,7 +518,7 @@ export function registerPostersRoutes(app: Hono<{ Bindings: Env }>): void {
     const apiKey = c.env.OPENROUTER_API_KEY;
     if (!apiKey) return c.json({ error: 'OpenRouter API key not configured on worker.' }, 500);
 
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (!await userMayUsePosters(c.env.DB, uid)) {
       return c.json({ error: 'Poster Maker is not included in your current plan.' }, 403);

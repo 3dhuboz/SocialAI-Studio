@@ -17,7 +17,7 @@ const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
 
 type GetToken = () => Promise<string | null>;
-type AuthMode = 'clerk' | 'portal';
+type AuthMode = 'clerk' | 'portal' | 'embed';
 
 async function apiFetch(
   getToken: GetToken,
@@ -30,7 +30,7 @@ async function apiFetch(
   // Don't force Content-Type — multipart uploads need the browser to set
   // the boundary itself. Callers that want JSON should set it explicitly.
   if (token) {
-    headers.set('Authorization', authMode === 'portal' ? `Portal ${token}` : `Bearer ${token}`);
+    headers.set('Authorization', authMode === 'portal' ? `Portal ${token}` : authMode === 'embed' ? `Embed ${token}` : `Bearer ${token}`);
   }
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
   if (!res.ok) {

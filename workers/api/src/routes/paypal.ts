@@ -136,7 +136,7 @@ export function registerPaypalRoutes(app: Hono<{ Bindings: Env }>): void {
   // Idempotency: payments.paypal_capture_id is the unique key (PayPal order_id
   // for captures). Replays of the same orderID won't double-credit.
   app.post('/api/paypal-credit-pack-confirm', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     const body = await c.req.json<{ orderId?: string; packId?: string; clientId?: string | null }>().catch(() => null);

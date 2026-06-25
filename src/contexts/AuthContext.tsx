@@ -26,7 +26,7 @@ interface AuthContextType {
   resetPassword: (email: string) => Promise<void>;
   refreshUserDoc: () => Promise<void>;
   getApiToken: () => Promise<string | null>;
-  authMode: 'clerk' | 'portal';
+  authMode: 'clerk' | 'portal' | 'embed';
   portalClientId?: string | null;
 }
 

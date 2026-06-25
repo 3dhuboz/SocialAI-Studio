@@ -46,7 +46,7 @@ import type { Env } from '../env';
 // HMAC-SHA256 embed token helpers — extracted into a shared lib so the
 // verifier can be unit-tested against its own minter and so PennyBuilder's
 // signing side can later import the same canonical shape.
-import { verifyEmbedToken, type EmbedClaims } from '../lib/embed-token';
+import { mintEmbedToken, verifyEmbedToken, type EmbedClaims } from '../lib/embed-token';
 import { timingSafeEqualStr } from '../lib/timing-safe';
 
 // ── Auth helper — Bearer token timing-safe compare ───────────────────────────
@@ -347,27 +347,21 @@ export function registerPennybuildRoutes(app: Hono<{ Bindings: Env }>): void {
     const embedUserId = await resolveEmbedUserId(c, claims);
     if (!embedUserId) return c.text('embed user could not be resolved', 502);
 
-    let ticket: string;
-    try {
-      const tokRes = await fetch('https://api.clerk.com/v1/sign_in_tokens', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${c.env.CLERK_SECRET_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ user_id: embedUserId, expires_in_seconds: 60 }),
-      });
-      if (!tokRes.ok) return c.text('clerk ticket failed', 502);
-      const tok = (await tokRes.json()) as { token: string };
-      ticket = tok.token;
-    } catch {
-      return c.text('clerk ticket error', 502);
-    }
+    // The embedded ISS admin uses a verified HMAC token directly as a
+    // short-lived API bearer. Re-issue it with SocialAI's resolved user id so
+    // temporary ISS admin sessions still land in a real SocialAI workspace.
+    const now = Math.floor(Date.now() / 1000);
+    const embeddedToken = await mintEmbedToken(secret, {
+      ...claims,
+      sub: embedUserId,
+      iat: now,
+      exp: Math.min(claims.exp, now + 5 * 60),
+    });
 
     const target =
-      `https://socialaistudio.au/sign-in` +
-      `?__clerk_ticket=${encodeURIComponent(ticket)}` +
-      `&redirect_url=${encodeURIComponent('/?embedded=1')}`;
+      `https://socialaistudio.au/` +
+      `?embedded=1` +
+      `&embed_token=${encodeURIComponent(embeddedToken)}`;
 
     // Assert frame-ancestors so the parent frame on pennybuilder.* can render us.
     // - Tightened from *.workers.dev (which let ANY Cloudflare customer embed

@@ -41,7 +41,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!apiKey) return c.json({ error: 'fal.ai API key not configured' }, 401);
 
     // AUTH GATE — fal.ai is paid per-image/video; never let it run anonymous.
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // RATE LIMIT + BILLING GATE — fal.ai is the most expensive endpoint
     // ($0.025-$0.15/image). Block past_due subscribers so a declined card
@@ -236,7 +236,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── fal.ai Proxy (path-based passthrough) ───────────────────────────────
   app.all('/api/fal-proxy/*', async (c) => {
     // AUTH GATE — required to use the proxied fal.ai endpoint with our key.
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // RATE LIMIT + BILLING GATE — same rationale as the dispatcher above.
     const [isLimited, denied] = await Promise.all([
@@ -277,7 +277,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // version accepted a client-supplied Authorization header as a fallback
     // key, which made this an effectively-open proxy onto our key whenever
     // the caller omitted their own — drop that path entirely.
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // RATE LIMIT + BILLING GATE — Runway is paid per-generation; mirror the
     // fal-proxy guard so a past_due card can't keep generating videos.

@@ -5,7 +5,7 @@
 // 2-line block:
 //
 //   const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY,
-//                                   c.env.CLERK_JWT_KEY, c.env.DB);
+//                                   c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
 //   if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 //
 // Every variant of that block had to be kept in sync (parameter order,
@@ -20,7 +20,7 @@ import type { Env } from '../env';
 import { getAuthUserId } from '../auth';
 
 export async function requireAuth(c: Context<{ Bindings: Env }>, next: Next) {
-  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+  const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
   if (!uid) {
     return c.json({ error: 'unauthorized', requestId: c.get('requestId') }, 401);
   }

@@ -55,7 +55,7 @@ function rowToApi(r: any) {
 
 export function registerCampaignRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/db/campaigns', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') ?? null;
     const rows = clientId
@@ -65,7 +65,7 @@ export function registerCampaignRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.post('/api/db/campaigns', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const body = await c.req.json<{ clientId?: string; name: string; type?: string; startDate?: string; endDate?: string; rules?: string; imageNotes?: string; postsPerDay?: number; enabled?: boolean }>();
     const id = crypto.randomUUID();
@@ -77,7 +77,7 @@ export function registerCampaignRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.put('/api/db/campaigns/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const campaignId = c.req.param('id');
     const body = await c.req.json<Record<string, unknown>>();
@@ -103,7 +103,7 @@ export function registerCampaignRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.delete('/api/db/campaigns/:id', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     await c.env.DB.prepare('DELETE FROM campaigns WHERE id = ? AND user_id = ?').bind(c.req.param('id'), uid).run();
     return c.json({ ok: true });
@@ -128,7 +128,7 @@ export function registerCampaignRoutes(app: Hono<{ Bindings: Env }>): void {
    * 'failed' so the UI can show a retry CTA.
    */
   app.post('/api/db/campaigns/:id/research', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     // Rate-limit chained AI + fetch calls.

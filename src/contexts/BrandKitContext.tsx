@@ -30,7 +30,7 @@ import {
 import { createPosterApi } from '../services/posters';
 
 type GetToken = () => Promise<string | null>;
-type AuthMode = 'clerk' | 'portal';
+type AuthMode = 'clerk' | 'portal' | 'embed';
 
 interface BrandKitContextValue {
   /** Compiled defaults (CLIENT-config-derived) — useful for "reset" buttons in the editor. */

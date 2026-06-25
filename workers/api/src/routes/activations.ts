@@ -38,7 +38,7 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
   // activation/cancellation by guessing their email. We now resolve the
   // caller's email server-side from users.id = uid and ignore the param.
   app.get('/api/db/activations', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // ── Email-scope guard ───────────────────────────────────────────────
     // Pre-fix: any authenticated caller could pass ?email=victim@example.com
@@ -64,7 +64,7 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.put('/api/db/activations/:id/consume', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // ── Ownership check ─────────────────────────────────────────────────
     // Pre-fix: any authenticated caller could PUT /consume on any
@@ -122,7 +122,7 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.get('/api/db/cancellations', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();
     const callerEmail = me?.email ?? null;
@@ -135,7 +135,7 @@ export function registerActivationRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.put('/api/db/cancellations/:id/consume', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const id = c.req.param('id');
     const me = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(uid).first<{ email: string | null }>();

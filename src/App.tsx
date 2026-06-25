@@ -634,7 +634,16 @@ const Dashboard: React.FC = () => {
   // through autopay agreements. Cached for the rest of the session.
   const [billingSummary, setBillingSummary] = useState<{ subscription_id: string | null } | null>(null);
   const [profileExpanded, setProfileExpanded] = useState(false);
-  const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : !user);
+  const isEmbeddedSignInRequest = () => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    return (
+      window.location.pathname === '/sign-in'
+      || params.has('__clerk_ticket')
+      || params.get('embedded') === '1'
+    );
+  };
+  const [showLanding, setShowLanding] = useState(() => CLIENT.clientMode ? false : (!user && !isEmbeddedSignInRequest()));
   const [autoLoginPending, setAutoLoginPending] = useState(false);
 
   useEffect(() => { document.title = CLIENT.appName; }, []);
@@ -668,6 +677,13 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     if (CLIENT.clientMode) return; // portal mode bypasses landing entirely
+    if (!user && isEmbeddedSignInRequest()) {
+      setShowLanding(false);
+      if (window.location.hash !== '#sign-in') {
+        window.history.replaceState({ screen: 'auth', embedded: true }, '', `${window.location.pathname}${window.location.search}#sign-in`);
+      }
+      return;
+    }
     if (!showLanding && !user && window.location.hash !== '#sign-in') {
       window.history.pushState({ screen: 'auth' }, '', '#sign-in');
     } else if (showLanding && window.location.hash === '#sign-in') {

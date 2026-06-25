@@ -37,7 +37,7 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     // AUTH GATE — require Clerk JWT or Portal token. Stops anonymous abuse of OpenRouter credits.
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
 
     // RATE LIMIT + BILLING GATE — fire both checks concurrently since they
@@ -204,7 +204,7 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
    *             chars?, error? } — see fetchUrlText return type.
    */
   app.post('/api/ai/web-fetch', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `web-fetch:${uid}`, 20)) {
       return c.json({ error: 'Rate limit exceeded — try again in a minute.' }, 429);

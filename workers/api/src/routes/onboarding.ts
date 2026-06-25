@@ -30,7 +30,7 @@ import { decryptSocialTokensJson, scheduleSocialTokensReencrypt } from '../lib/s
 export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>): void {
   // Body: { force?: boolean — bypass cache, re-derive everything }
   app.post('/api/onboarding-magic', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `onboard-magic:${uid}`, 5)) {
       return c.json({ error: 'Rate limit exceeded — 5 magic-onboard calls per minute' }, 429);

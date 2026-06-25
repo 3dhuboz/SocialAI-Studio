@@ -29,7 +29,7 @@ import {
 
 export function registerSocialTokensRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/db/social-tokens', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') ?? null;
     const raw = clientId
@@ -49,7 +49,7 @@ export function registerSocialTokensRoutes(app: Hono<{ Bindings: Env }>): void {
   });
 
   app.put('/api/db/social-tokens', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const clientId = c.req.query('clientId') ?? null;
     const body = await c.req.json<Record<string, unknown>>();

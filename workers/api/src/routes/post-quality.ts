@@ -42,7 +42,7 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   // OpenRouter markdown-fence resilience. Persists on the post if postId is
   // provided (best-effort, scoped to the calling user).
   app.post('/api/critique-image-caption', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // RATE LIMIT + BILLING GATE — Haiku vision is paid per call; block past_due
     // users so a declined card can't keep critiquing images.
@@ -140,7 +140,7 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   // Returns: { score: 0-100, tier: 'low'|'mid'|'high'|'viral',
   //            reasoning, suggestions }
   app.post('/api/score-post', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     // RATE LIMIT + BILLING GATE — score-post calls OpenRouter; block past_due
     // users to keep declined-card customers from burning provider credit.

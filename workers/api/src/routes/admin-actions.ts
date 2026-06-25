@@ -31,7 +31,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   // Backfill images for any Scheduled post that has an image_prompt but no image_url.
   // Authenticated variant: only the calling user's posts (own + their clients').
   app.post('/api/db/backfill-images', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     return c.json(await backfillImagesForUser(c.env, uid));
   });
@@ -52,7 +52,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
    *  so a retry after partial success picks up only the still-missing ones.
    */
   app.post('/api/posts/regen-past-drafts', async (c) => {
-    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB);
+    const uid = await getAuthUserId(c.req.raw, c.env.CLERK_SECRET_KEY, c.env.CLERK_JWT_KEY, c.env.DB, c.env.ISS_EMBED_SECRET || c.env.PENNYBUILDER_PROVISION_SECRET);
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     if (await isRateLimited(c.env.DB, `pastdraft-regen:${uid}`, 3)) {
       return c.json({ error: 'Rate limit: 3 past-draft regen runs per minute' }, 429);
