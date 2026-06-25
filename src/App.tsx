@@ -1000,8 +1000,11 @@ const Dashboard: React.FC = () => {
             }
           }
         }
+        // Client portals are not billing surfaces. Skip owner-level activation
+        // / cancellation checks there so portal sessions don't hit routes that
+        // are only meaningful on the main Clerk-authenticated app.
         // Check for pending PayPal activation
-        if (!isAdmin && !row?.plan) {
+        if (authMode !== 'portal' && !isAdmin && !row?.plan) {
           const pending = await db.getActivation(user.email);
           if (pending && !pending.consumed) {
             setActivePlan(pending.plan as PlanTier);
@@ -1024,7 +1027,7 @@ const Dashboard: React.FC = () => {
           }
         }
         // Check for pending PayPal cancellation
-        if (!isAdmin) {
+        if (authMode !== 'portal' && !isAdmin) {
           const cancel = await db.getCancellation(user.email);
           if (cancel && !cancel.consumed) {
             setActivePlan(null);
@@ -1244,6 +1247,13 @@ const Dashboard: React.FC = () => {
   // setActiveArchetype docstring.
   useEffect(() => {
     if (!user) return;
+    if (authMode === 'portal') {
+      // Portal mode stays on the deterministic businessType keyword fallback
+      // for prompt tuning. That avoids background client-row archetype writes
+      // from a white-label session and keeps the portal auth scope minimal.
+      setActiveArchetype(null);
+      return;
+    }
     // Need ENOUGH signal to classify accurately. Bail only if all three
     // free-text fields are empty / too short — otherwise we trust the
     // classifier (which weighs businessType + description + productsServices
@@ -1313,7 +1323,7 @@ const Dashboard: React.FC = () => {
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [user?.uid, activeClientId, profile.type, profile.description, profile.productsServices, profile.contentTopics]);
+  }, [user?.uid, authMode, activeClientId, profile.type, profile.description, profile.productsServices, profile.contentTopics]);
 
   // Restore own workspace (profile, posts, tokens) when switching back from a client
   useEffect(() => {
@@ -1843,13 +1853,14 @@ const Dashboard: React.FC = () => {
     initialStatsAttempted.current = false;
   }, [activeClientId]);
   useEffect(() => {
+    if (authMode === 'portal') return;
     if (initialStatsAttempted.current) return;
     if (!fbConnected) return;
     if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) return;
     initialStatsAttempted.current = true;
     handlePullStats(true).catch(() => { /* silent — counter stays at dashes */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbConnected, socialTokens.facebookPageId, socialTokens.facebookPageAccessToken]);
+  }, [authMode, fbConnected, socialTokens.facebookPageId, socialTokens.facebookPageAccessToken]);
 
   const handlePublishDirect = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
     // Postproxy dual-path: a workspace is on the new path once a placement
