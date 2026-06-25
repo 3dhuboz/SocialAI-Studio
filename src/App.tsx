@@ -792,6 +792,10 @@ const Dashboard: React.FC = () => {
   const prevClientIdRef = useRef<string | null | undefined>(undefined);
   // Block profile/stats persistence until D1 initial sync + workspace loads have completed
   const isSyncingRef = useRef(true);
+  // Workspace selection must be declared before any effect/dependency array
+  // reads it, otherwise portal builds can throw a TDZ crash during render.
+  const [clients, setClients] = useState<ClientWorkspace[]>([]);
+  const [activeClientId, setActiveClientId] = useState<string | null>(null);
 
   // Social tokens — loaded from D1, NEVER cached in localStorage
   const [socialTokens, setSocialTokens] = useState<SocialTokens>(DEFAULT_SOCIAL_TOKENS);
@@ -847,10 +851,6 @@ const Dashboard: React.FC = () => {
     setForcePostproxyReconnect(true);
     setActiveTab('settings');
   };
-
-  // Agency client workspaces
-  const [clients, setClients] = useState<ClientWorkspace[]>([]);
-  const [activeClientId, setActiveClientId] = useState<string | null>(null);
 
   // In portal mode, auto-select the client workspace that belongs to this portal
   useEffect(() => {
