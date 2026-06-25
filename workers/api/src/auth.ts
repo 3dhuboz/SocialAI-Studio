@@ -15,6 +15,10 @@ function isPortalAllowedPath(req: Request): boolean {
     path === '/api/db/user' ||
     path === '/api/db/posts' ||
     path.startsWith('/api/db/posts/') ||
+    path === '/api/db/posters' ||
+    path.startsWith('/api/db/posters/') ||
+    path === '/api/db/posters-usage' ||
+    path === '/api/db/poster-brand-kit' ||
     path === '/api/db/clients' ||
     path.startsWith('/api/db/clients/') ||
     path === '/api/db/campaigns' ||
@@ -24,6 +28,7 @@ function isPortalAllowedPath(req: Request): boolean {
     path === '/api/db/refresh-facts' ||
     path.startsWith('/api/db/refresh-facts/') ||
     path === '/api/ai/generate' ||
+    path === '/api/ai/poster-image' ||
     path === '/api/ai/web-fetch' ||
     path === '/api/fal-proxy' ||
     path === '/api/postproxy/init-connection' ||
