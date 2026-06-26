@@ -110,19 +110,28 @@ export function registerShopifySocialConnectRoutes(app: Hono<{ Bindings: Env }>)
     const exchangeRes = await fetch(exchangeUrl);
     const exchangeData = await exchangeRes.json() as any;
     if (!exchangeData?.access_token) {
-      return c.json({ error: 'Failed to exchange token' }, 400);
+      const fbMessage = typeof exchangeData?.error?.message === 'string'
+        ? exchangeData.error.message
+        : 'Failed to exchange token';
+      return c.json({ error: fbMessage }, 400);
     }
 
-    // Pull manageable pages + their IG biz account IDs in a single Graph call.
-    const pagesUrl = `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture,instagram_business_account&access_token=${encodeURIComponent(exchangeData.access_token)}`;
+    // Pull manageable Facebook Pages only. The Shopify listing demonstrates
+    // Facebook Page publishing, and IG fields can fail when the reviewer
+    // account grants only the page scopes requested by the embedded app.
+    const pagesUrl = `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,picture&access_token=${encodeURIComponent(exchangeData.access_token)}`;
     const pagesRes = await fetch(pagesUrl);
     const pagesData = await pagesRes.json() as any;
+    if (pagesData?.error) {
+      const fbMessage = typeof pagesData.error.message === 'string'
+        ? pagesData.error.message
+        : 'Failed to fetch Facebook Pages';
+      return c.json({ error: fbMessage }, 400);
+    }
 
-    // Flatten instagram_business_account.id onto each page so the frontend
-    // doesn't have to dig into the nested shape (matches the existing route).
     const pages = (pagesData?.data || []).map((page: any) => ({
       ...page,
-      instagramBusinessAccountId: page.instagram_business_account?.id || null,
+      instagramBusinessAccountId: null,
     }));
 
     return c.json({

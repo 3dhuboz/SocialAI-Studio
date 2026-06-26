@@ -12,7 +12,7 @@ import {
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   composePost, createPost, publishPostNow, critiqueImageCaption, fetchMe,
-  ApiError, type ComposeResponse, type CritiqueResponse, type ShopInfo,
+  setupSubscription, topLevelRedirect, ApiError, type ComposeResponse, type CritiqueResponse, type ShopInfo,
 } from '../api';
 import { LivePostPreview } from '../components/LivePostPreview';
 import './compose.css';
@@ -41,6 +41,25 @@ import './compose.css';
 
 type Phase = 'missing-product' | 'generating' | 'ready' | 'saving' | 'error';
 type Platform = 'facebook';
+type ErrorKind = 'general' | 'billing';
+
+function isBillingRequiredError(e: unknown): boolean {
+  return e instanceof ApiError
+    && (e.status === 402 || (e.body as any)?.code === 'SHOPIFY_BILLING_REQUIRED');
+}
+
+function friendlyError(e: unknown): { kind: ErrorKind; message: string } {
+  if (isBillingRequiredError(e)) {
+    return {
+      kind: 'billing',
+      message: 'Approve the 7-day Shopify trial before generating posts. You will not be charged today.',
+    };
+  }
+  return {
+    kind: 'general',
+    message: e instanceof ApiError ? e.message : String(e),
+  };
+}
 
 export default function Compose() {
   const [searchParams] = useSearchParams();
@@ -49,6 +68,7 @@ export default function Compose() {
 
   const [phase, setPhase] = useState<Phase>(productId ? 'generating' : 'missing-product');
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<ErrorKind>('general');
   const [result, setResult] = useState<ComposeResponse | null>(null);
   const [shop, setShop] = useState<ShopInfo | null>(null);
 
@@ -57,6 +77,7 @@ export default function Compose() {
   const [imageUrl, setImageUrl] = useState('');
   const [platform, setPlatform] = useState<Platform>('facebook');
   const [regenerating, setRegenerating] = useState(false);
+  const [billingRedirecting, setBillingRedirecting] = useState(false);
   const [successNote, setSuccessNote] = useState<string | null>(null);
 
   // Critique state — populated by a background call after compose lands.
@@ -98,6 +119,7 @@ export default function Compose() {
 
     setPhase('generating');
     setError(null);
+    setErrorKind('general');
 
     (async () => {
       try {
@@ -122,8 +144,9 @@ export default function Compose() {
       } catch (e: unknown) {
         if (cancelled) return;
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        const msg = e instanceof ApiError ? e.message : String(e);
-        setError(msg);
+        const formatted = friendlyError(e);
+        setError(formatted.message);
+        setErrorKind(formatted.kind);
         setPhase('error');
       }
     })();
@@ -152,6 +175,7 @@ export default function Compose() {
     if (!productId) return;
     setRegenerating(true);
     setError(null);
+    setErrorKind('general');
     setCritique(null);
     setCritiqueError(null);
     try {
@@ -164,10 +188,33 @@ export default function Compose() {
       // Fire critique immediately on the new image.
       runCritique(res.image_url, res.caption);
     } catch (e: unknown) {
-      const msg = e instanceof ApiError ? e.message : String(e);
-      setError(msg);
+      const formatted = friendlyError(e);
+      setError(formatted.message);
+      setErrorKind(formatted.kind);
     } finally {
       setRegenerating(false);
+    }
+  };
+
+  const handleOpenBillingApproval = async () => {
+    setBillingRedirecting(true);
+    setError(null);
+    try {
+      const setup = await setupSubscription();
+      if (setup.confirmation_url) {
+        topLevelRedirect(setup.confirmation_url);
+        return;
+      }
+      if (setup.already && setup.subscription_status === 'ACTIVE') {
+        window.location.reload();
+        return;
+      }
+      throw new Error('Billing setup returned no confirmation URL.');
+    } catch (e: unknown) {
+      const formatted = friendlyError(e);
+      setError(formatted.message);
+      setErrorKind(formatted.kind);
+      setBillingRedirecting(false);
     }
   };
 
@@ -178,6 +225,7 @@ export default function Compose() {
     }
     setPhase('saving');
     setError(null);
+    setErrorKind('general');
     try {
       await createPost({
         content: caption,
@@ -188,8 +236,9 @@ export default function Compose() {
       setSuccessNote('Draft saved. Redirecting to Calendar…');
       navigate('/calendar');
     } catch (e: unknown) {
-      const msg = e instanceof ApiError ? e.message : String(e);
-      setError(msg);
+      const formatted = friendlyError(e);
+      setError(formatted.message);
+      setErrorKind(formatted.kind);
       setPhase('ready');
     }
   };
@@ -201,6 +250,7 @@ export default function Compose() {
     }
     setPhase('saving');
     setError(null);
+    setErrorKind('general');
     try {
       const created = await createPost({
         content: caption,
@@ -212,8 +262,9 @@ export default function Compose() {
       setSuccessNote('Published! Opening Calendar…');
       navigate('/calendar');
     } catch (e: unknown) {
-      const msg = e instanceof ApiError ? e.message : String(e);
-      setError(msg);
+      const formatted = friendlyError(e);
+      setError(formatted.message);
+      setErrorKind(formatted.kind);
       setPhase('ready');
     }
   };
@@ -250,12 +301,24 @@ export default function Compose() {
 
   if (phase === 'error') {
     return (
-      <Banner tone="critical" title="Couldn't generate your post">
+      <Banner
+        tone={errorKind === 'billing' ? 'warning' : 'critical'}
+        title={errorKind === 'billing' ? 'Approve billing to continue' : 'Couldn\'t generate your post'}
+      >
         <BlockStack gap="200">
           <Text as="p" variant="bodyMd">{error ?? 'Unknown error.'}</Text>
-          <Button onClick={handleRegenerate} loading={regenerating}>
-            Retry
-          </Button>
+          {errorKind === 'billing' ? (
+            <InlineStack gap="200">
+              <Button variant="primary" onClick={handleOpenBillingApproval} loading={billingRedirecting}>
+                Open billing approval
+              </Button>
+              <Button onClick={() => navigate('/')}>Go to Home</Button>
+            </InlineStack>
+          ) : (
+            <Button onClick={handleRegenerate} loading={regenerating}>
+              Retry
+            </Button>
+          )}
         </BlockStack>
       </Banner>
     );

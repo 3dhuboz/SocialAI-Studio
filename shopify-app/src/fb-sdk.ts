@@ -26,16 +26,12 @@
 const FB_APP_ID = '847198108337884';
 const SDK_VERSION = 'v21.0';
 
-// Scopes the publish pipeline needs. Mirrors the main-app FacebookService
-// classic-mode scope string in src/services/facebookService.ts so the FB
-// review state is consistent across both surfaces.
+// Shopify App Store review is for Facebook Page publishing only. Keep this
+// embedded surface to the minimum permissions needed for the listed workflow.
 const SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
   'pages_manage_posts',
-  'publish_video',          // FB Reels
-  'instagram_basic',
-  'instagram_content_publish',
 ].join(',');
 
 declare global {

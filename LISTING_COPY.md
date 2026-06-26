@@ -105,9 +105,11 @@ Secondary: **Sales channels -> Social media**
 
 ## Test credentials for reviewer
 
-> **No extra credentials are required** for install, billing, product sync, draft generation, calendar view, and general embedded-app navigation.
+> **Facebook test credentials are provided in the secure Partner Dashboard testing-instructions field.** Use that Facebook account when the app opens the Facebook OAuth popup from Settings.
 >
 > **A real Facebook Page admin login is required only for Facebook scheduling and publish-now**, because those actions publish through the merchant's own connected Page.
+>
+> Reviewer flow: install app, approve the Shopify Billing API trial, sync products, compose a Facebook post, connect the provided Facebook Page account in Settings, then save or schedule from Calendar.
 
 ---
 
@@ -125,6 +127,7 @@ Secondary: **Sales channels -> Social media**
 ## Submission notes
 
 - Submitted to Shopify App Review on June 18, 2026. Partners displayed: `Success! We received your submission.`
+- Review paused under reference `116333` pending Facebook test credentials, clearer screencast, and fixes for Facebook connect / post generation errors.
 - App Store visibility is set to appear in search and recommendations once Shopify approves and publishes the listing.
 - Reviewer-facing copy now matches the supported product scope: **Facebook Page scheduling only** for the embedded Shopify app.
 - Do not describe Instagram publishing or combined FB+IG scheduling in the listing until that path is truly shipped and verified.

@@ -612,9 +612,9 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
   //
   // We require an already-stored expiring access token (from a prior
   // /token-exchange call), which is why /token-exchange MUST run first.
-  // Idempotent: if a subscription_id is already stored and the status is
-  // still PENDING or ACTIVE, we re-return that same confirmation URL
-  // pattern (Shopify accepts re-approvals to the same charge).
+  // Idempotent for ACTIVE shops. For PENDING shops we create a fresh billing
+  // approval URL, because Shopify does not give us the original confirmation
+  // URL later and reviewers often close the first tab while testing.
   app.post('/api/shopify/setup-subscription', async (c) => {
     const cfg = requireShopifyConfig(c.env);
     if (!cfg) return c.json({ error: 'Shopify app not configured' }, 500);
@@ -642,9 +642,8 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     }>();
     if (!row?.access_token) return c.json({ error: 'Shop not connected (run token-exchange first)' }, 409);
 
-    // Already active or pending? Don't create a duplicate sub — return the
-    // status so the embedded app can render the right banner.
-    if (row.subscription_status === 'ACTIVE' || row.subscription_status === 'PENDING') {
+    // Already active? Don't create a duplicate subscription.
+    if (row.subscription_status === 'ACTIVE') {
       return c.json({
         already: true,
         subscription_id: row.subscription_id,
@@ -699,10 +698,11 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     await c.env.DB.prepare(
       `INSERT INTO shopify_billing_events
          (shop_domain, event_type, subscription_id, status_from, status_to, payload, created_at)
-       VALUES (?, 'subscription_created', ?, NULL, 'PENDING', ?, ?)`,
+       VALUES (?, 'subscription_created', ?, ?, 'PENDING', ?, ?)`,
     ).bind(
       shop,
       result.subscriptionId,
+      row.subscription_status,
       JSON.stringify({ price: PLAN_INFO.price, currency: PLAN_INFO.currency, trialDays: PLAN_INFO.trialDays, isTest }).slice(0, 65536),
       now,
     ).run();
