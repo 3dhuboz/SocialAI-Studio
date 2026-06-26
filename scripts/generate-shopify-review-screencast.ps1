@@ -90,7 +90,7 @@ try {
     $bodyPath = ($bodyFile -replace "\\", "/") -replace ":", "\:"
 
     $filters.Add(
-      "color=c=0x101820:s=1600x900:d=7[base$i];" +
+      "color=c=0x101820:s=1600x900:d=25[base$i];" +
       "[base$i]drawbox=x=0:y=0:w=1600:h=86:color=0x1f6f78@0.95:t=fill," +
       "drawbox=x=0:y=814:w=1600:h=86:color=0xf2c94c@0.95:t=fill," +
       "drawtext=fontfile='$font':textfile='$titlePath':fontcolor=white:fontsize=58:x=96:y=150:line_spacing=12," +
