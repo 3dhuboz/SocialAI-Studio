@@ -655,13 +655,13 @@ const Dashboard: React.FC = () => {
   // fetch errors, the Manage Billing link falls back to the generic URL
   // (same behaviour as pre-I4), so no user-visible failure mode.
   useEffect(() => {
-    if (activeTab !== 'settings' || billingSummary !== null || !user) return;
+    if (authMode === 'portal' || activeTab !== 'settings' || billingSummary !== null || !user) return;
     let cancelled = false;
     db.getBilling()
       .then((info) => { if (!cancelled) setBillingSummary({ subscription_id: info?.subscription_id ?? null }); })
       .catch(() => { /* silent — settings link falls back to generic URL */ });
     return () => { cancelled = true; };
-  }, [activeTab, billingSummary, db, user]);
+  }, [activeTab, authMode, billingSummary, db, user]);
 
   // ── Back-button handling ─────────────────────────────────────────────
   // Bug being fixed: clicking "Sign In" on the landing page just flipped

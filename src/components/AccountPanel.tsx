@@ -46,7 +46,7 @@ type Section = 'main' | 'billing' | 'password' | 'delete';
 export const AccountPanel: React.FC<Props> = ({
   activePlan, userEmail, onClose, onUpgrade, onSignOut, reelCredits, onBuyReelCredits,
 }) => {
-  const { user } = useAuth();
+  const { user, authMode } = useAuth();
   const { user: clerkUser } = useUser();
   const db = useDb();
   const planCfg = CLIENT.plans.find(p => p.id === activePlan);
@@ -65,12 +65,13 @@ export const AccountPanel: React.FC<Props> = ({
   //     generic URL, no user-visible error needed on the main view.
   const [billingSummary, setBillingSummary] = useState<BillingInfo | null>(null);
   useEffect(() => {
+    if (authMode === 'portal') return;
     let cancelled = false;
     db.getBilling()
       .then((info) => { if (!cancelled) setBillingSummary(info); })
       .catch(() => { /* silent — main view falls back to generic URL */ });
     return () => { cancelled = true; };
-  }, [db]);
+  }, [authMode, db]);
 
   // ── Change password ──────────────────────────────────────
   const [oldPw, setOldPw] = useState('');
@@ -235,13 +236,15 @@ export const AccountPanel: React.FC<Props> = ({
 
               {/* Account actions */}
               <div className="glass-card border border-white/[0.08] rounded-2xl divide-y divide-white/[0.05] overflow-hidden">
-                <button
-                  onClick={() => setSection('billing')}
-                  className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition"
-                >
-                  <span className="flex items-center gap-2.5"><Receipt size={14} className="text-white/40" /> Billing &amp; Payments</span>
-                  <ChevronRight size={14} className="text-white/20" />
-                </button>
+                {authMode !== 'portal' && (
+                  <button
+                    onClick={() => setSection('billing')}
+                    className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition"
+                  >
+                    <span className="flex items-center gap-2.5"><Receipt size={14} className="text-white/40" /> Billing &amp; Payments</span>
+                    <ChevronRight size={14} className="text-white/20" />
+                  </button>
+                )}
                 <button
                   onClick={() => { setSection('password'); setPwError(''); setPwSuccess(false); }}
                   className="w-full flex items-center justify-between px-4 py-3.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition"
