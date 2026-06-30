@@ -61,8 +61,8 @@ async function requireSession(c: any): Promise<VerifiedSession | Response> {
 
 // ── Request validation ─────────────────────────────────────────────────────
 
-type Platform = 'facebook' | 'instagram' | 'both';
-type Tone = 'friendly' | 'professional' | 'playful';
+export type Platform = 'facebook' | 'instagram' | 'both';
+export type Tone = 'friendly' | 'professional' | 'playful';
 
 const VALID_PLATFORMS: ReadonlySet<Platform> = new Set(['facebook', 'instagram', 'both']);
 const VALID_TONES: ReadonlySet<Tone> = new Set(['friendly', 'professional', 'playful']);
@@ -190,7 +190,7 @@ function looksLikeRefusal(caption: string): boolean {
   return REFUSAL_PATTERNS.some((r) => r.test(head));
 }
 
-interface ProductRow {
+export interface ProductRow {
   id: string;
   shop_domain: string;
   title: string;
@@ -278,6 +278,55 @@ function buildImagePrompt(product: ProductRow): string {
 // Negative prompt is shared across all product images — keeps the FLUX-dev
 // fallback from generating the same garbage anyone else's product page does.
 const IMAGE_NEGATIVE_PROMPT = 'text, watermark, logo, signature, low quality, blurry, distorted, deformed, extra limbs, cluttered background, busy patterns, harsh artificial lighting, cartoon, illustration, oversaturated';
+const SHOPIFY_COMPOSE_FALLBACK_IMAGE_URL = 'https://app.socialaistudio.au/feature-media-1600x900.png';
+
+function cleanProductText(value: string | null | undefined, maxLen = 220): string {
+  return (value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function formatPrice(product: ProductRow): string | null {
+  if (!product.price) return null;
+  const currency = product.currency ? ` ${product.currency}` : '';
+  return `${product.price}${currency}`;
+}
+
+export function buildFallbackCaption(product: ProductRow, platform: Platform, tone: Tone): string {
+  const title = cleanProductText(product.title, 100) || 'this product';
+  const type = cleanProductText(product.product_type, 80);
+  const vendor = cleanProductText(product.vendor, 80);
+  const description = cleanProductText(product.description, 180);
+  const price = formatPrice(product);
+  const opener =
+    tone === 'professional'
+      ? `A practical pick for your next order: ${title}.`
+      : tone === 'playful'
+        ? `Fresh find alert: ${title} is ready for a spot in your cart.`
+        : `Looking for something new from our store? Meet ${title}.`;
+  const facts = [
+    vendor ? `from ${vendor}` : null,
+    type ? `in our ${type} range` : null,
+    price ? `available at ${price}` : null,
+  ].filter(Boolean).join(', ');
+  const body = description
+    ? `${description}${facts ? ` It is ${facts}.` : ''}`
+    : `${facts ? `It is ${facts}.` : 'It is ready to browse now.'}`;
+  const cta = platform === 'instagram'
+    ? 'Tap through to take a closer look.'
+    : 'Take a look and see if it is the right fit for you.';
+  const hashtags = platform === 'facebook'
+    ? ''
+    : '\n\n#ShopSmall #ProductFinds #NewIn';
+  return `${opener}\n\n${body}\n\n${cta}${hashtags}`;
+}
+
+function fallbackImageUrl(product: ProductRow): string {
+  const imageUrl = product.image_url?.trim();
+  return imageUrl || SHOPIFY_COMPOSE_FALLBACK_IMAGE_URL;
+}
 
 // ── Shared compose pipeline ───────────────────────────────────────────────
 //
@@ -416,6 +465,7 @@ export async function composeProductPost(
   }
 
   let caption: string;
+  let captionModel = 'ai';
   try {
     caption = await callLLM(firstAttemptPrompt);
 
@@ -429,21 +479,22 @@ export async function composeProductPost(
       caption = await callLLM(retryPrompt);
 
       if (caption && looksLikeRefusal(caption)) {
-        console.error('[shopify-compose] refusal on retry — bailing. product=', product.id, 'first240=', caption.slice(0, 240));
-        throw new ComposeError(
-          'caption',
-          'AI refused to write a caption for this product — likely a product / shop mismatch. Try a different product, or skip this slot.',
-        );
+        console.error('[shopify-compose] refusal on retry; using fallback caption. product=', product.id, 'first240=', caption.slice(0, 240));
+        caption = buildFallbackCaption(product, platform, tone);
+        captionModel = 'fallback-caption';
       }
     }
 
     if (!caption) {
-      throw new ComposeError('caption', 'LLM returned empty caption');
+      console.warn('[shopify-compose] empty caption; using fallback caption. product=', product.id);
+      caption = buildFallbackCaption(product, platform, tone);
+      captionModel = 'fallback-caption';
     }
   } catch (err: any) {
-    if (err instanceof ComposeError) throw err;
+    if (err instanceof ComposeError && err.stage !== 'caption') throw err;
     console.error('[shopify-compose] caption generation failed:', String(err?.stack ?? err));
-    throw new ComposeError('caption', String(err?.message ?? err).slice(0, 300));
+    caption = buildFallbackCaption(product, platform, tone);
+    captionModel = 'fallback-caption';
   }
 
   // Post-gen denylist HARD-RULES check on the LLM's output. If the merchant
@@ -492,7 +543,7 @@ export async function composeProductPost(
     return {
       caption,
       imageUrl: result.imageUrl,
-      modelUsed: result.modelUsed,
+      modelUsed: captionModel === 'ai' ? result.modelUsed : `${captionModel}+${result.modelUsed}`,
       product: {
         id: product.id,
         title: product.title,
@@ -501,9 +552,18 @@ export async function composeProductPost(
       },
     };
   } catch (err: any) {
-    if (err instanceof ComposeError) throw err;
     console.error('[shopify-compose] image generation failed:', String(err?.stack ?? err));
-    throw new ComposeError('image', String(err?.message ?? err).slice(0, 300));
+    return {
+      caption,
+      imageUrl: fallbackImageUrl(product),
+      modelUsed: captionModel === 'ai' ? 'fallback-product-image' : `${captionModel}+fallback-product-image`,
+      product: {
+        id: product.id,
+        title: product.title,
+        price: product.price ?? null,
+        currency: product.currency ?? null,
+      },
+    };
   }
 }
 
