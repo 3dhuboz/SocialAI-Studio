@@ -15,6 +15,7 @@ describe('Shopify publish readiness', () => {
     const posts = source('routes/shopify-posts.ts');
 
     expect(posts).toContain("const SUPPORTED_SHOP_PLATFORM = 'facebook';");
+    expect(posts).toContain('buildCritiqueInvalidationPatch');
     expect(posts).toContain("code: 'UNSUPPORTED_PLATFORM'");
     expect(posts).toContain('requireConnectedFacebook');
     expect(posts).toContain('scheduled_for is required when scheduling a post');
@@ -41,6 +42,8 @@ describe('Shopify publish readiness', () => {
     expect(shared).toContain("map.set(`s:${r.shop_domain}`, parsed);");
     expect(shared).toContain("if (post.owner_kind === 'shop' && post.owner_id) return map.get(`s:${post.owner_id}`);");
     expect(publishMissed).toContain('SHOPIFY_FACEBOOK_ONLY_FILTER');
+    expect(publishMissed).toContain('enforceFinalImageCritiqueGate');
+    expect(publishMissed).toContain('buildCritiqueContextText');
     expect(publishMissed).toContain('loadForbiddenSubjectsForShop');
     expect(publishMissed).toContain('owner_kind, p.owner_id');
     expect(pollPendingReels).toContain('owner_kind, owner_id');

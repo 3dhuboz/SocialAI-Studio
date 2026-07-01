@@ -16,6 +16,7 @@ import { buildSafeImagePrompt } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
 import { generateImageWithGuardrails } from './image-gen';
+import { buildCritiqueContextText } from './post-critique';
 import { loadForbiddenSubjects, resolveBusinessType } from './profile-guards';
 import { callAnthropicVision } from './anthropic';
 import {
@@ -76,6 +77,10 @@ export async function backfillImagesForUser(env: Env, uid: string) {
       const postId = (post as any).id as string;
       const clientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
+      const critiqueContext = buildCritiqueContextText({
+        caption,
+        imagePrompt: String((post as any).image_prompt || ''),
+      });
       const businessType = await resolveBT(clientId);
       const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption, businessType);
       if (!safe) { failed++; continue; }
@@ -86,13 +91,13 @@ export async function backfillImagesForUser(env: Env, uid: string) {
       let finalUrl = gen.imageUrl;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
-      if (finalUrl && caption.length > 20) {
+      if (finalUrl && critiqueContext) {
         const archetypeSlug = gen.archetypeSlug;
         const forbiddenSubjects = await loadForbiddenSubjects(env, uid, clientId);
 
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
-          caption,
+          caption: critiqueContext,
           archetypeSlug,
           forbiddenSubjects,
         });
@@ -106,7 +111,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
               critiqueRetries++;
               const retryCritique = await critiqueImageInternal(env, {
                 imageUrl: retry.imageUrl,
-                caption,
+                caption: critiqueContext,
                 archetypeSlug,
                 forbiddenSubjects,
               });
@@ -220,6 +225,10 @@ export async function backfillImagesForPastDrafts(
       const postId = (post as any).id as string;
       const postClientId = (post as any).client_id as string | null;
       const caption = ((post as any).content as string | null) || '';
+      const critiqueContext = buildCritiqueContextText({
+        caption,
+        imagePrompt: String((post as any).image_prompt || ''),
+      });
       const businessType = await resolveBT(postClientId);
       const safe = buildSafeImagePrompt(String((post as any).image_prompt || ''), caption, businessType);
       if (!safe) { failed++; continue; }
@@ -228,12 +237,12 @@ export async function backfillImagesForPastDrafts(
       let finalUrl = gen.imageUrl;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
-      if (finalUrl && caption.length > 20) {
+      if (finalUrl && critiqueContext) {
         const archetypeSlug = gen.archetypeSlug;
         const forbiddenSubjects = await loadForbiddenSubjects(env, uid, postClientId);
         const critique = await critiqueImageInternal(env, {
           imageUrl: finalUrl,
-          caption,
+          caption: critiqueContext,
           archetypeSlug,
           forbiddenSubjects,
         });
@@ -246,7 +255,7 @@ export async function backfillImagesForPastDrafts(
               critiqueRetries++;
               const retryCritique = await critiqueImageInternal(env, {
                 imageUrl: retry.imageUrl,
-                caption,
+                caption: critiqueContext,
                 archetypeSlug,
                 forbiddenSubjects,
               });
@@ -330,7 +339,7 @@ export async function runBacklogCritique(
        AND image_url NOT LIKE 'data:%'
        AND image_critique_score IS NULL
        AND image_critique_at IS NULL
-       AND length(content) > 20`
+       AND (length(COALESCE(content, '')) > 0 OR length(COALESCE(image_prompt, '')) > 0)`
   ).first<{ n: number }>();
   if (!pending || pending.n === 0) return { skipped: true, found: 0, scored: 0, low_scores: 0, failed: 0 };
 
@@ -339,16 +348,16 @@ export async function runBacklogCritique(
   // worst case per tick, well under the 15-min cron limit.
   const limit = 20;
   const rows = await env.DB.prepare(
-    `SELECT id, content, client_id, user_id, image_url
+    `SELECT id, content, image_prompt, client_id, user_id, image_url
      FROM posts
      WHERE image_url IS NOT NULL AND image_url != ''
        AND image_url NOT LIKE 'data:%'
        AND image_critique_score IS NULL
        AND image_critique_at IS NULL
-       AND length(content) > 20
+       AND (length(COALESCE(content, '')) > 0 OR length(COALESCE(image_prompt, '')) > 0)
      ORDER BY scheduled_for DESC
      LIMIT ?`
-  ).bind(limit).all<{ id: string; content: string; client_id: string | null; user_id: string; image_url: string }>();
+  ).bind(limit).all<{ id: string; content: string; image_prompt: string | null; client_id: string | null; user_id: string; image_url: string }>();
 
   const posts = rows.results || [];
   let scored = 0;
@@ -377,7 +386,7 @@ export async function runBacklogCritique(
   // and the 300ms pacer that used to live at the end of the loop is gone.
   // Chunked Promise.all so we never exceed CRITIQUE_CONCURRENCY in flight.
   const CRITIQUE_CONCURRENCY = 5;
-  const processOne = async (post: { id: string; content: string; client_id: string | null; user_id: string; image_url: string }) => {
+  const processOne = async (post: { id: string; content: string; image_prompt: string | null; client_id: string | null; user_id: string; image_url: string }) => {
     let errorMsg: string | null = null;
     let critique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
@@ -385,16 +394,23 @@ export async function runBacklogCritique(
       const cacheKey = `${post.user_id}:${post.client_id || '__user__'}`;
       const archetypeSlug = archetypeCache.get(cacheKey) || null;
       const forbiddenSubjects = denylistCache.get(cacheKey) ?? [];
+      const critiqueContext = buildCritiqueContextText({
+        caption: post.content,
+        imagePrompt: post.image_prompt,
+      });
+      if (!critiqueContext) {
+        errorMsg = 'Skipped: no caption or image-prompt context available for critique';
+      }
 
       // Inline Anthropic/OpenRouter calls (vs critiqueImageInternal) so each
       // post can stamp the exact provider error string into reasoning — useful
       // for diagnosing backlog stalls via SELECT instead of wrangler tail.
       // System prompt from shared builder so HARD RULES match the user path.
       const systemPrompt = buildCritiqueSystemPrompt(archetypeSlug, forbiddenSubjects);
-      const userPrompt = `Caption that will be published with this image:\n\n"${post.content.slice(0, 800)}"\n\nDoes the image match?`;
+      const userPrompt = `Caption that will be published with this image:\n\n"${critiqueContext.slice(0, 800)}"\n\nDoes the image match?`;
 
       // Path A: Anthropic direct (only when key is set).
-      if (env.ANTHROPIC_API_KEY) {
+      if (!errorMsg && env.ANTHROPIC_API_KEY) {
         try {
           const { text } = await callAnthropicVision({
             apiKey: env.ANTHROPIC_API_KEY,
@@ -418,7 +434,7 @@ export async function runBacklogCritique(
       }
 
       // Path B: OpenRouter (used when no Anthropic key OR Anthropic failed).
-      if (!critique && env.OPENROUTER_API_KEY) {
+      if (!critique && !errorMsg && env.OPENROUTER_API_KEY) {
         try {
           const orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',

@@ -19,7 +19,9 @@
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
+import { critiqueImageInternal } from '../lib/critique';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
+import { buildCritiqueContextText } from '../lib/post-critique';
 import {
   loadForbiddenSubjects,
   loadForbiddenSubjectsForShop,
@@ -42,7 +44,7 @@ import {
   getPost as getPostproxyPost,
 } from '../lib/postproxy';
 import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
-import { MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
+import { CRITIQUE_ACCEPT_THRESHOLD, MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
 
 // Translate raw FB Graph errors into a human sentence the user can act on.
@@ -412,6 +414,150 @@ async function kickFacebookReelUpload(
   return videoId;
 }
 
+async function persistPublishCritique(
+  env: Env,
+  postId: string,
+  imageUrl: string,
+  critique: { score: number; reasoning: string },
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE posts
+       SET image_url = ?,
+           image_critique_score = ?,
+           image_critique_reasoning = ?,
+           image_critique_at = ?
+     WHERE id = ?`,
+  ).bind(imageUrl, critique.score, critique.reasoning, new Date().toISOString(), postId).run();
+}
+
+async function enforceFinalImageCritiqueGate(
+  env: Env,
+  post: Record<string, any>,
+  params: {
+    imageUrl: string | null;
+    caption: string;
+    hashtags: string[];
+    imagePrompt: string | null;
+  },
+): Promise<{ imageUrl: string | null; blockedReason: string | null }> {
+  let finalImageUrl = params.imageUrl;
+  if (!finalImageUrl || !/^https?:/i.test(finalImageUrl)) {
+    return { imageUrl: finalImageUrl, blockedReason: null };
+  }
+
+  const critiqueContext = buildCritiqueContextText({
+    caption: params.caption,
+    hashtags: params.hashtags,
+    imagePrompt: params.imagePrompt,
+  });
+  if (!critiqueContext) {
+    return {
+      imageUrl: finalImageUrl,
+      blockedReason: 'Image QA hold: no caption or image brief was available for the critic, so this post was held rather than shipped blind.',
+    };
+  }
+
+  const existingScore = typeof post.image_critique_score === 'number'
+    ? Math.max(0, Math.min(10, post.image_critique_score))
+    : null;
+  let finalCritique = existingScore == null
+    ? null
+    : {
+        score: existingScore,
+        reasoning: String(post.image_critique_reasoning || `Stored critique score ${existingScore}/10`).slice(0, 300),
+      };
+
+  const hasCritiqueProvider = !!(env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY);
+  if (!hasCritiqueProvider && !finalCritique) {
+    return {
+      imageUrl: finalImageUrl,
+      blockedReason: 'Image QA hold: no critique provider is configured, so this image post was held rather than shipped without a verdict.',
+    };
+  }
+
+  let forbiddenSubjects: string[] | null = null;
+  const loadForbidden = async (): Promise<string[]> => {
+    if (forbiddenSubjects) return forbiddenSubjects;
+    forbiddenSubjects = post.owner_kind === 'shop'
+      ? await loadForbiddenSubjectsForShop(env, String(post.owner_id || ''))
+      : await loadForbiddenSubjects(env, String(post.user_id || ''), (post.client_id as string | null) || null);
+    return forbiddenSubjects;
+  };
+
+  if (hasCritiqueProvider && (!finalCritique || finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD)) {
+    const critique = await critiqueImageInternal(env, {
+      imageUrl: finalImageUrl,
+      caption: critiqueContext,
+      archetypeSlug: null,
+      forbiddenSubjects: await loadForbidden(),
+      userId: (post.user_id as string | null) || null,
+      clientId: (post.client_id as string | null) || null,
+      postId: String(post.id),
+    });
+    if (critique) {
+      finalCritique = { score: critique.score, reasoning: critique.reasoning };
+      await persistPublishCritique(env, String(post.id), finalImageUrl, finalCritique);
+    } else if (!finalCritique) {
+      return {
+        imageUrl: finalImageUrl,
+        blockedReason: 'Image QA hold: the critic was unavailable at publish time, so this post was held rather than shipped blind.',
+      };
+    }
+  }
+
+  const canRetryLowScore = !!finalCritique
+    && finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD
+    && !!params.imagePrompt
+    && !!env.FAL_API_KEY
+    && post.owner_kind !== 'shop'
+    && Number(post.image_regen_count ?? 0) < MAX_REGEN_ATTEMPTS;
+  if (canRetryLowScore) {
+    const businessType = await resolveBusinessType(
+      env,
+      String(post.user_id || ''),
+      (post.client_id as string | null) || null,
+    );
+    const safe = buildSafeImagePrompt(params.imagePrompt || '', params.caption, businessType);
+    if (safe) {
+      await env.DB.prepare(
+        `UPDATE posts SET image_regen_count = COALESCE(image_regen_count, 0) + 1 WHERE id = ?`,
+      ).bind(String(post.id)).run();
+      const retry = await generateImageWithGuardrails(
+        env,
+        String(post.user_id || ''),
+        (post.client_id as string | null) || null,
+        safe,
+        { forceFallback: true, caption: params.caption, seedHint: String(post.id) },
+      );
+      if (retry.imageUrl) {
+        const retryCritique = await critiqueImageInternal(env, {
+          imageUrl: retry.imageUrl,
+          caption: critiqueContext,
+          archetypeSlug: retry.archetypeSlug,
+          forbiddenSubjects: await loadForbidden(),
+          userId: (post.user_id as string | null) || null,
+          clientId: (post.client_id as string | null) || null,
+          postId: String(post.id),
+        });
+        if (retryCritique) {
+          finalImageUrl = retry.imageUrl;
+          finalCritique = { score: retryCritique.score, reasoning: retryCritique.reasoning };
+          await persistPublishCritique(env, String(post.id), finalImageUrl, finalCritique);
+        }
+      }
+    }
+  }
+
+  if (finalCritique && finalCritique.score <= QUALITY_GUARD_THRESHOLD) {
+    return {
+      imageUrl: finalImageUrl,
+      blockedReason: `Image QA hold: final critique scored this image ${finalCritique.score}/10 — ${finalCritique.reasoning}. Open Calendar to upload a better image or refine the caption/prompt before re-publishing.`,
+    };
+  }
+
+  return { imageUrl: finalImageUrl, blockedReason: null };
+}
+
 // Image-quality guard threshold for publish-time blocking. Posts whose
 // vision critique scored AT OR BELOW this AND have exhausted their FLUX
 // regen budget (image_regen_count >= MAX_REGEN_ATTEMPTS in runBacklogRegen)
@@ -596,6 +742,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             p.user_id, p.client_id, p.owner_kind, p.owner_id,
             p.post_type, p.video_url, p.video_status,
             p.audio_mixed_url,
+            p.image_critique_score, p.image_critique_reasoning, p.image_regen_count,
             COALESCE(c.use_postproxy, u.use_postproxy, 0) AS use_postproxy
      FROM posts p
      LEFT JOIN users   u ON u.id = p.user_id
@@ -744,6 +891,9 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         const hashtagsPp = (post as any).hashtags ? JSON.parse((post as any).hashtags as string) : [];
         const contentTextPp = (post as any).content as string;
         const cleanContentPp = contentTextPp.replace(/(\s+#\w+)+\s*$/, '').trim();
+        const promptForCritiquePp = typeof (post as any).image_prompt === 'string'
+          ? String((post as any).image_prompt).split('|claim:')[0].trim()
+          : null;
 
         let imageUrlPp = ((post as any).image_url || null) as string | null;
         if (imageUrlPp?.startsWith('data:')) {
@@ -751,7 +901,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           imageUrlPp = null;
         }
         if (!imageUrlPp && (post as any).image_prompt && env.FAL_API_KEY && jitGenerated < MAX_JIT_IMAGES_PER_RUN) {
-          const promptForGenPp = String((post as any).image_prompt).split('|claim:')[0].trim();
+          const promptForGenPp = promptForCritiquePp || '';
           const businessTypePp = await resolveBusinessType(
             env,
             (post as any).user_id,
@@ -821,6 +971,21 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         const format: 'post' | 'reel' =
           isReel ? 'reel'
           : 'post';
+        if (format === 'post') {
+          const qaGate = await enforceFinalImageCritiqueGate(env, post as Record<string, any>, {
+            imageUrl: imageUrlPp,
+            caption: cleanContentPp,
+            hashtags: hashtagsPp,
+            imagePrompt: promptForCritiquePp,
+          });
+          imageUrlPp = qaGate.imageUrl;
+          if (qaGate.blockedReason) {
+            await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+              .bind('Missed', qaGate.blockedReason, (post as any).id).run();
+            await notifyOwnerOnFailure(env, post as any, qaGate.blockedReason, 'post');
+            continue;
+          }
+        }
 
         let fallbackToLegacyGraph = false;
         try {
@@ -1009,6 +1174,20 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             .bind(`Reel kick failed: ${(reelErr?.message || 'unknown').slice(0, 400)}`, (post as any).id).run();
           // Continue to image fallback below
         }
+      }
+
+      const qaGate = await enforceFinalImageCritiqueGate(env, post as Record<string, any>, {
+        imageUrl,
+        caption: cleanContent,
+        hashtags,
+        imagePrompt: promptForGen || null,
+      });
+      imageUrl = qaGate.imageUrl;
+      if (qaGate.blockedReason) {
+        await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
+          .bind('Missed', qaGate.blockedReason, (post as any).id).run();
+        await notifyOwnerOnFailure(env, post as any, qaGate.blockedReason, 'post');
+        continue;
       }
 
       let publishMethod = postType === 'video' ? 'video-fallback-image' : 'text-only';

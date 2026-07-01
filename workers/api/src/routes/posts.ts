@@ -23,6 +23,7 @@ import { requireAuth } from '../middleware/auth';
 import { classifyArchetypeFromFingerprint } from '../lib/archetypes';
 import { POSTS_PER_WEEK, TRIAL_POST_LIMIT } from '../lib/pricing';
 import { isWorkspaceConnected, normalizePlatform } from '../lib/connection-check';
+import { buildCritiqueInvalidationPatch } from '../lib/post-critique';
 
 const uuid = () => crypto.randomUUID();
 
@@ -299,6 +300,10 @@ export function registerPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       } catch (e: any) {
         return c.json({ error: e?.message || 'Invalid post feedback' }, 400);
       }
+    }
+    for (const [col, value] of Object.entries(buildCritiqueInvalidationPatch(body))) {
+      sets.push(`${col} = ?`);
+      vals.push(value);
     }
     const colMap: Record<string, string> = {
       content: 'content', platform: 'platform', status: 'status',

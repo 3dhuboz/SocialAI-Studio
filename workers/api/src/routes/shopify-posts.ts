@@ -59,6 +59,7 @@ import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { ensureShopSentinelUser } from '../lib/shopify-tenancy';
 import { requireActiveShopSubscription } from '../lib/shopify-billing';
 import { isShopConnected } from '../lib/connection-check';
+import { buildCritiqueInvalidationPatch } from '../lib/post-critique';
 
 // Match the OAuth route — keep both files in sync if the limit changes.
 const RATE_LIMIT_PER_MIN = 60;
@@ -335,6 +336,11 @@ export function registerShopifyPostsRoutes(app: Hono<{ Bindings: Env }>): void {
       }
       sets.push('status = ?');
       vals.push(v);
+    }
+
+    for (const [col, value] of Object.entries(buildCritiqueInvalidationPatch(body as Record<string, unknown>))) {
+      sets.push(`${col} = ?`);
+      vals.push(value);
     }
 
     if (!sets.length) return c.json({ error: 'No editable fields supplied' }, 400);

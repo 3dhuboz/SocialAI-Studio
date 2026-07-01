@@ -30,6 +30,7 @@ import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { logAiUsage } from '../lib/ai-usage';
 import { critiqueImageInternal } from '../lib/critique';
+import { buildCritiqueContextText } from '../lib/post-critique';
 import { loadForbiddenSubjects } from '../lib/profile-guards';
 import { checkFalCreditsAlert } from '../cron/check-fal-credits';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
@@ -165,6 +166,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       // backfill use. FLUX-dev at square_hd / 35 steps / guidance 7.0,
       // with archetype guardrails + caption-based archetype sniffing.
       const captionText = typeof caption === 'string' ? caption.trim() : '';
+      const critiqueContext = buildCritiqueContextText({ caption: captionText, imagePrompt: prompt });
       const resolvedClientId = clientId || null;
       const resolvedSeedHint = seedHint || `${prompt}\n${captionText}`;
 
@@ -177,12 +179,12 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       let finalModelUsed = result.modelUsed;
       let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
 
-      if (finalImageUrl && captionText.length > 20 && (c.env.ANTHROPIC_API_KEY || c.env.OPENROUTER_API_KEY)) {
+      if (finalImageUrl && critiqueContext && (c.env.ANTHROPIC_API_KEY || c.env.OPENROUTER_API_KEY)) {
         try {
           const forbiddenSubjects = await loadForbiddenSubjects(c.env, uid, resolvedClientId);
           const critique = await critiqueImageInternal(c.env, {
             imageUrl: finalImageUrl,
-            caption: captionText,
+            caption: critiqueContext,
             archetypeSlug: result.archetypeSlug,
             forbiddenSubjects,
             userId: uid,
@@ -202,7 +204,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
                 finalModelUsed = `${retry.modelUsed} (critique-retry)`;
                 const retryCritique = await critiqueImageInternal(c.env, {
                   imageUrl: retry.imageUrl,
-                  caption: captionText,
+                  caption: critiqueContext,
                   archetypeSlug: retry.archetypeSlug,
                   forbiddenSubjects,
                   userId: uid,

@@ -24,6 +24,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { critiqueImageInternal } from '../lib/critique';
+import { buildCritiqueContextText } from '../lib/post-critique';
 import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
@@ -78,6 +79,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
   if (!prompt || prompt.length < 5) return false;
   try {
     const caption = post.content || '';
+    const critiqueContext = buildCritiqueContextText({ caption, imagePrompt: prompt });
     // Resolve businessType so buildSafeImagePrompt can fail-closed for the
     // (generic workspace + abstract-UI prompt) case. Without this the cron
     // would happily ship a random flatlay for the Penny Wise I.T failure
@@ -100,9 +102,9 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
     // below doesn't need a redundant DB round-trip.
     // Run the denylist fetch in parallel with the FLUX call — the FLUX call
     // dominates wall-clock (~10s) so the DB query is essentially free.
-    // The denylist is only used when caption is long enough to critique;
+    // The denylist is only used when the critique has enough context to run;
     // we resolve to [] otherwise so the Promise.all stays uniform.
-    const denylistPromise = caption.length > 20
+    const denylistPromise = critiqueContext
       ? loadForbiddenSubjects(env, userId, clientId)
       : Promise.resolve([] as string[]);
     const gen = await generateImageWithGuardrails(env, userId, clientId, safe, { caption, seedHint: postId });
@@ -115,7 +117,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
     // We don't loop: a second failure means critique is being overly strict;
     // shipping a 6+ image is better than blocking the publish pipeline.
     // Skipped when neither critique provider key is set.
-    if (finalUrl && caption.length > 20) {
+    if (finalUrl && critiqueContext) {
       // Reuse archetypeSlug from gen (already resolved + caption-sniffed
       // inside generateImageWithGuardrails) — no second DB round-trip needed.
       const archetypeSlug = gen.archetypeSlug;
@@ -123,7 +125,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
 
       const critique = await critiqueImageInternal(env, {
         imageUrl: finalUrl,
-        caption,
+        caption: critiqueContext,
         archetypeSlug,
         forbiddenSubjects,
       });
@@ -141,7 +143,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
             // Re-critique so the persisted score reflects what actually shipped.
             const retryCritique = await critiqueImageInternal(env, {
               imageUrl: retry.imageUrl,
-              caption,
+              caption: critiqueContext,
               archetypeSlug,
               forbiddenSubjects,
             });
@@ -171,7 +173,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
           `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
            WHERE id = ?`
         ).bind(finalUrl, finalCritique.score, finalCritique.reasoning, new Date().toISOString(), postId).run();
-      } else if ((env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY) && caption.length > 20) {
+      } else if ((env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY) && critiqueContext) {
         // Critique attempted but every provider returned null. Stamp the
         // outage marker so PostModal and admin tooling surface it.
         // image_critique_at stays NULL so runBacklogCritique still picks

@@ -163,6 +163,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `facebook-facts.ts` | FB Graph API scraping → `client_facts` |
 | `campaign-research.ts` | Campaign AI research |
 | `email.ts` | Resend email helpers |
+| `post-critique.ts` | Shared critique context + stale-score invalidation rules |
 | `pricing.ts` | Plan/tier logic |
 | `provisioning.ts` | White-label workspace provisioning |
 | `prompt-safety.ts` | Prompt injection detection |
