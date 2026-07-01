@@ -335,7 +335,7 @@ export const CAPTION_ARCHETYPE_KEYWORDS: Record<string, string[]> = {
     'socialai', 'social ai studio',
   ],
   'food-restaurant': ['menu', 'dish', 'recipe', 'cuisine', 'restaurant', 'cafe', 'eatery', 'dining', 'plated', 'meal'],
-  'bbq-smokehouse': ['brisket', 'smoker', 'low and slow', 'pulled pork', 'ribs', 'bbq', 'smokehouse'],
+  'bbq-smokehouse': ['brisket', 'smoker', 'smoked', 'pit', 'low and slow', 'smoke ring', 'bark', 'butcher paper', 'pulled pork', 'ribs', 'bbq', 'smokehouse'],
   'butcher-meat': ['butcher', 'steak', 'ribeye', 'aged beef', 'cuts of meat', 'wagyu'],
   'agriculture-farming': ['paddock', 'cattle', 'livestock', 'crops', 'harvest', 'tractor', 'agronomy', 'farm-to-table'],
   'health-wellness': ['gym', 'workout', 'fitness', 'personal trainer', 'pilates', 'crossfit'],

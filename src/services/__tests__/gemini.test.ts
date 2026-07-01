@@ -333,6 +333,17 @@ describe('repairSmartScheduleImagePromptForArchetype', () => {
     expect(guarded).not.toMatch(/poster|VIP|general admission/i);
   });
 
+  it('guards risky brisket close-up prompts at the final image-generation chokepoint', () => {
+    const guarded = guardMarketingImagePromptForBusinessContext(
+      'close-up of sliced brisket with smoke ring and fat cap on a butcher board',
+      'BBQ restaurant & catering',
+      'Our smoked brisket gets 12+ hours in the pit.',
+    );
+
+    expect(guarded).toMatch(/brisket|smoker|tongs|sauce/i);
+    expect(guarded).not.toMatch(/close-up|smoke ring|fat cap|grain|cross-section/i);
+  });
+
   it('guards stale office prompts at the final image-generation chokepoint', () => {
     const guarded = guardMarketingImagePromptForBusinessContext(
       'laptop and desk beside a notebook in soft daylight',

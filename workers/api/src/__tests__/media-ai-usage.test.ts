@@ -178,9 +178,11 @@ describe('media routes ai_usage telemetry', () => {
   });
 
   it('uses caption/prompt seed and the diversified SaaS scene bank for default image generation', async () => {
-    let falBody: any = null;
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      falBody = JSON.parse(String(init?.body || '{}'));
+    const falBodies: any[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('fal.run/fal-ai/')) {
+        falBodies.push(JSON.parse(String(init?.body || '{}')));
+      }
       return new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/saas.png' }] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -200,8 +202,53 @@ describe('media routes ai_usage telemetry', () => {
     }, makeRouteEnv(usageCalls));
 
     expect(res.status).toBe(200);
-    expect(String(falBody?.prompt).toLowerCase()).not.toMatch(/\b(car dashboard|highway|main street|golden hour|sunrise|sunset|road)\b/);
-    expect(String(falBody?.prompt).toLowerCase()).toMatch(/\b(calendar|planner|sticky|checklist|timer|content|cards|notebook)\b/);
+    expect(String(falBodies[0]?.prompt).toLowerCase()).not.toMatch(/\b(car dashboard|highway|main street|golden hour|sunrise|sunset|road)\b/);
+    expect(String(falBodies[0]?.prompt).toLowerCase()).toMatch(/\b(calendar|planner|sticky|checklist|timer|content|cards|notebook)\b/);
+  });
+
+  it('retries low-scoring manual brisket images through the critique gate before returning them', async () => {
+    const falBodies: any[] = [];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: 'https://fal.cdn/bad-brisket.png' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: '{"score":2,"match":"no","reasoning":"image shows concentric-ring brisket anatomy instead of real cooked slices"}' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: 'https://fal.cdn/safe-brisket.png' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: '{"score":8,"match":"yes","reasoning":"image shows a real BBQ tray scene that matches the brisket caption"}' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('fal.run/fal-ai/')) {
+        falBodies.push(JSON.parse(String(init?.body || '{}')));
+      }
+      return fetchMock(input, init);
+    }));
+
+    const usageCalls: UsageCall[] = [];
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+
+    const res = await app.request('/api/fal-proxy?action=generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_1' },
+      body: JSON.stringify({
+        prompt: 'close-up of slow-smoked brisket bark on a butcher board, candid iPhone photo',
+        caption: 'Our smoked brisket gets 12+ hours in the pit.',
+      }),
+    }, makeRouteEnv(usageCalls));
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.imageUrl).toBe('https://fal.cdn/safe-brisket.png');
+    expect(String(data.model_used)).toContain('critique-retry');
+
+    const retryFalBody = falBodies[1];
+    expect(String(retryFalBody.prompt).toLowerCase()).toContain('overlapping slices');
+    expect(String(retryFalBody.prompt).toLowerCase()).toContain('offset smoker');
   });
 
   it('logs Kling video starts and completed task results in the fal proxy', async () => {

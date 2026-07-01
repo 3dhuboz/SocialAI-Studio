@@ -54,6 +54,14 @@ describe('buildCritiqueSystemPrompt', () => {
     expect(prompt).toContain('Score 1-2');
   });
 
+  it('hard-fails surreal brisket anatomy for bbq-smokehouse posts', () => {
+    const prompt = buildCritiqueSystemPrompt('bbq-smokehouse');
+    expect(prompt).toMatch(/citrus-like segments/i);
+    expect(prompt).toMatch(/concentric rings/i);
+    expect(prompt).toMatch(/organ-like cross-sections/i);
+    expect(prompt).toMatch(/real cooked brisket slices/i);
+  });
+
   it('always includes the TOPIC-MISMATCH RULE', () => {
     const prompt = buildCritiqueSystemPrompt(null);
     expect(prompt).toContain('TOPIC-MISMATCH RULE');

@@ -106,6 +106,12 @@ export async function generateImageWithGuardrails(
       console.log(`[image-gen] uid=${userId} archetype unset — sniffed '${archetypeSlug}' from caption`);
     }
   }
+  if (!archetypeSlug && safePrompt.prompt) {
+    archetypeSlug = sniffArchetypeFromCaption(safePrompt.prompt);
+    if (archetypeSlug) {
+      console.log(`[image-gen] uid=${userId} archetype unset — sniffed '${archetypeSlug}' from prompt`);
+    }
+  }
 
   // Archetypes whose caption space is inherently abstract — no inventory to
   // photograph, no location, no people-in-action — force the LLM-prompt path

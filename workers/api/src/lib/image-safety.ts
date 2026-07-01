@@ -216,14 +216,15 @@ export function buildSafeImagePrompt(
 }
 
 const BBQ_CUT_ACCURACY_NEGATIVES =
-  'bolar blade, blade roast, chuck roast, top round, bottom round, rump roast, pot roast, generic roast beef, raw beef slab, steak, tri-tip, sirloin, incorrect beef cut, misleading meat cut, butcher-shop cut chart, labels, readable text';
+  'bolar blade, blade roast, chuck roast, top round, bottom round, rump roast, pot roast, generic roast beef, raw beef slab, steak, tri-tip, sirloin, incorrect beef cut, misleading meat cut, butcher-shop cut chart, labels, readable text, blood orange, grapefruit, citrus slice, tree rings, concentric rings, radial pattern, circular cross-section, end-on cross section, surreal meat anatomy, organ meat, medical specimen, exposed muscle fibres, abstract meat pattern';
 
 /**
  * BBQ cut names are high-risk because knowledgeable followers will call out
  * the wrong anatomy. A prompt that merely says "brisket" can render as a
- * generic roast-looking slab. When the caption/prompt names brisket, force a
- * cut-aware sliced-brisket scene with visible bark, smoke ring, fat cap and
- * grain cues. For generic BBQ posts, keep prompts broader or smoker-focused.
+ * generic roast-looking slab or, worse, an impossible end-on cross-section.
+ * When the caption/prompt names brisket, force a safer serving-tray / smoker
+ * scene that still reads as real brisket without inviting surreal anatomy.
+ * For generic BBQ posts, keep prompts broader or smoker-focused.
  */
 export function refineBbqPromptForCutAccuracy(
   safe: { prompt: string; negativePrompt: string },
@@ -235,10 +236,10 @@ export function refineBbqPromptForCutAccuracy(
   if (/\bbrisket\b/.test(text)) {
     return {
       prompt: [
-        'Authentic sliced smoked beef brisket on plain butcher paper',
-        'long flat-and-point brisket slices, dark peppery bark, visible pink smoke ring',
-        'rendered fat cap and clear brisket grain running through the slices',
-        'BBQ tongs and small sauce cup nearby, bright natural daylight, no hands, no people, no text',
+        'Authentic smoked beef brisket served as several overlapping slices on plain butcher paper',
+        'side-angle BBQ tray scene with dark bark visible along the slice edges and rendered fat glisten',
+        'offset smoker and split hardwood softly visible in the background, BBQ tongs and a small sauce cup nearby',
+        'bright natural daylight, realistic food photography, no hands, no people, no text',
         FLUX_STYLE_SUFFIX,
       ].join(', '),
       negativePrompt,

@@ -234,14 +234,17 @@ export function repairSmartScheduleImagePromptForArchetype(
   const hasRequiredSubject = ARCHETYPE_POSITIVE_SUBJECTS['bbq-smokehouse']?.test(original) ?? true;
   const isOfficeScene = OFFICE_IMAGE_PROMPT_RE.test(original);
   const isUnsafeTextScene = isTextRenderingPrompt(original);
-  if (hasRequiredSubject && !isOfficeScene && !isUnsafeTextScene) return original;
+  const isRiskyBrisketCloseup =
+    /\bbrisket\b/i.test(original)
+    && /\b(close-up|close up|macro|smoke ring|fat cap|grain|cross-section|cross section|sliced)\b/i.test(original);
+  if (hasRequiredSubject && !isOfficeScene && !isUnsafeTextScene && !isRiskyBrisketCloseup) return original;
 
   if (/\b(ticket|vip|general admission|pre-sale|presale|entry|admission)\b/i.test(text)) {
     return 'BBQ serving tray with sauce cups, pickles, slaw, tongs and plain butcher paper on an outdoor table, no identifiable meat cuts, bright Queensland daylight, no people, no text';
   }
   if (/\b(demo|demonstration|brisket|12\+?\s*hours|smoke|smoker|pitmaster|competition|judge|sanctioned)\b/i.test(text)) {
     if (/\bbrisket\b/i.test(text)) {
-      return 'authentic sliced smoked beef brisket on plain butcher paper, visible smoke ring, dark bark, rendered fat cap and clear brisket grain, BBQ tongs nearby, bright natural daylight, no people, no text';
+      return 'authentic smoked beef brisket served as several overlapping slices on plain butcher paper, side-angle BBQ tray scene with bark visible along the slice edges, offset smoker and split hardwood softly visible behind, BBQ tongs and a small sauce cup nearby, bright natural daylight, no people, no text';
     }
     return 'offset BBQ smoker open with thin blue smoke, firebox glow and split hardwood nearby, warm afternoon light, no identifiable meat cuts, no people, no text';
   }

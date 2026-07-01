@@ -29,7 +29,10 @@ import { checkBillingGate } from '../lib/billing-gate';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { logAiUsage } from '../lib/ai-usage';
+import { critiqueImageInternal } from '../lib/critique';
+import { loadForbiddenSubjects } from '../lib/profile-guards';
 import { checkFalCreditsAlert } from '../cron/check-fal-credits';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 const NANO_BANANA_PRO_COST_USD = 0.15;
 const KLING_STANDARD_VIDEO_COST_USD = 0.30;
@@ -161,15 +164,68 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       // Single source of truth for image gen: same code path the cron +
       // backfill use. FLUX-dev at square_hd / 35 steps / guidance 7.0,
       // with archetype guardrails + caption-based archetype sniffing.
+      const captionText = typeof caption === 'string' ? caption.trim() : '';
+      const resolvedClientId = clientId || null;
+      const resolvedSeedHint = seedHint || `${prompt}\n${captionText}`;
+
       const result = await generateImageWithGuardrails(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
-        { caption: caption || null, seedHint: seedHint || `${prompt}\n${caption || ''}` },
+        { caption: captionText || null, seedHint: resolvedSeedHint },
       );
-      if (!result.imageUrl) {
+      let finalImageUrl = result.imageUrl;
+      let finalModelUsed = result.modelUsed;
+      let finalCritique: { score: number; match: 'yes' | 'partial' | 'no'; reasoning: string } | null = null;
+
+      if (finalImageUrl && captionText.length > 20 && (c.env.ANTHROPIC_API_KEY || c.env.OPENROUTER_API_KEY)) {
+        try {
+          const forbiddenSubjects = await loadForbiddenSubjects(c.env, uid, resolvedClientId);
+          const critique = await critiqueImageInternal(c.env, {
+            imageUrl: finalImageUrl,
+            caption: captionText,
+            archetypeSlug: result.archetypeSlug,
+            forbiddenSubjects,
+            userId: uid,
+            clientId: resolvedClientId,
+          });
+          if (critique) {
+            finalCritique = critique;
+            if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+              console.warn(`[fal-proxy] generate-image critique score=${critique.score} for uid=${uid} — retrying with forced archetype fallback`);
+              const retry = await generateImageWithGuardrails(
+                c.env, uid, resolvedClientId,
+                { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
+                { forceFallback: true, caption: captionText, seedHint: resolvedSeedHint },
+              );
+              if (retry.imageUrl) {
+                finalImageUrl = retry.imageUrl;
+                finalModelUsed = `${retry.modelUsed} (critique-retry)`;
+                const retryCritique = await critiqueImageInternal(c.env, {
+                  imageUrl: retry.imageUrl,
+                  caption: captionText,
+                  archetypeSlug: retry.archetypeSlug,
+                  forbiddenSubjects,
+                  userId: uid,
+                  clientId: resolvedClientId,
+                });
+                if (retryCritique) finalCritique = retryCritique;
+              }
+            }
+          }
+        } catch (e: any) {
+          console.warn(`[fal-proxy] critique/retry unavailable: ${e?.message || e}`);
+        }
+      }
+
+      if (!finalImageUrl) {
         return c.json({ error: 'Image generation failed — flux-dev returned no image' }, 502);
       }
-      return c.json({ imageUrl: result.imageUrl, model_used: result.modelUsed });
+      return c.json({
+        imageUrl: finalImageUrl,
+        model_used: finalModelUsed,
+        critique_score: finalCritique?.score ?? null,
+        critique_reasoning: finalCritique?.reasoning ?? null,
+      });
     }
     if (action === 'generate-video' && c.req.method === 'POST') {
       const { promptText, promptImage, duration = 5 } = await c.req.json() as any;

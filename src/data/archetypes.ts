@@ -81,7 +81,7 @@ export const ARCHETYPES: Archetype[] = [
     description: 'Specialty BBQ / smokehouse / grill businesses — competition pitmasters, BBQ catering, smokehouse restaurants, food trucks specialising in smoked meats. Distinct from generic restaurants because the craft (smoke, slow-cooking) IS the marketing.',
     keywords: ['bbq', 'barbeque', 'barbecue', 'smokehouse', 'pitmaster', 'smoked meats', 'low and slow', 'brisket', 'pulled pork', 'ribs'],
     imageExamples: [
-      'authentic sliced smoked beef brisket on plain butcher paper, visible smoke ring, bark, fat cap and brisket grain, bright natural daylight',
+      'authentic smoked beef brisket served as several overlapping slices on plain butcher paper, side-angle BBQ tray scene with bark visible along the slice edges, offset smoker softly visible behind, bright natural daylight',
       'offset smoker with firebox and thin blue smoke, stacks of split hardwood, no identifiable meat cuts visible',
       'BBQ ribs glistening with glaze on cedar plank, smoke wisps in background',
       'food truck exterior at dusk with warm window light and queue area (empty)',

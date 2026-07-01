@@ -40,7 +40,7 @@ function makeEnv(): any {
 }
 
 describe('BBQ cut-accuracy image generation', () => {
-  it('routes brisket posts to nano-banana-pro with cut-anatomy instructions', async () => {
+  it('routes brisket posts to nano-banana-pro with safer serving-tray instructions', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/brisket.png' }] }), { status: 200 }),
     );
@@ -58,10 +58,11 @@ describe('BBQ cut-accuracy image generation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('https://fal.run/fal-ai/gemini-3-pro-image-preview');
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.prompt.toLowerCase()).toContain('flat-and-point');
-    expect(body.prompt.toLowerCase()).toContain('smoke ring');
-    expect(body.prompt.toLowerCase()).toContain('fat cap');
+    expect(body.prompt.toLowerCase()).toContain('overlapping slices');
+    expect(body.prompt.toLowerCase()).toContain('side-angle');
+    expect(body.prompt.toLowerCase()).toContain('offset smoker');
     expect(body.prompt.toLowerCase()).toContain('bolar blade');
+    expect(body.prompt.toLowerCase()).toContain('concentric rings');
     expect(body.aspect_ratio).toBe('1:1');
   });
 
@@ -87,7 +88,9 @@ describe('BBQ cut-accuracy image generation', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://fal.run/fal-ai/gemini-3-pro-image-preview');
     expect(fetchMock.mock.calls[1][0]).toBe('https://fal.run/fal-ai/flux/dev');
     const fluxBody = JSON.parse(fetchMock.mock.calls[1][1].body);
-    expect(fluxBody.prompt.toLowerCase()).toContain('flat-and-point');
+    expect(fluxBody.prompt.toLowerCase()).toContain('overlapping slices');
+    expect(fluxBody.prompt.toLowerCase()).toContain('offset smoker');
     expect(fluxBody.negative_prompt.toLowerCase()).toContain('chuck roast');
+    expect(fluxBody.negative_prompt.toLowerCase()).toContain('radial pattern');
   });
 });

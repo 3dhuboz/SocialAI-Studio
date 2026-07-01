@@ -101,6 +101,11 @@ HARD RULES — any of these conditions force a score of 1-2, no exceptions:
 - Caption is about a butcher, farm, BBQ joint, or any food-adjacent business
   AND the image shows gym equipment, yoga mats, dashboards, or office UI →
   score 1-2.${denylistRule}
+- Caption or archetype is BBQ / smokehouse / brisket-focused AND the image
+  shows impossible meat anatomy: citrus-like segments, concentric rings,
+  radial patterns, organ-like cross-sections, raw-medical-looking slabs, or
+  any surreal cut that does NOT read as real cooked brisket slices on a BBQ
+  tray → score 1-2 with match="no". Reasoning must name the surreal anatomy.
 
 TOPIC-MISMATCH RULE — score 3-4 when:
 - Caption is specifically about a PAIN POINT, problem, or wasted time (e.g. "how many hours do you spend…", "still doing this manually", "drowning in notifications", "never enough time") AND the image shows a completely neutral, generic workspace scene that communicates NOTHING about frustration or time pressure (e.g. a keyboard, a plain laptop, an abstract gradient) → score 3-4.
