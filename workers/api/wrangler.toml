@@ -47,6 +47,8 @@ SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e"
 # Secrets — set via: npx wrangler secret put KEY_NAME
 # OPENROUTER_API_KEY      (OpenRouter API key for AI generation)
 # CLERK_SECRET_KEY        (Clerk secret key for JWT verification — sk_live_... for production)
+# HIGGSFIELD_API_KEY      (optional future image provider; do NOT paste a CLI/browser OAuth token)
+# HIGGSFIELD_API_SECRET   (optional future image provider; only with stable server API)
 # SHOPIFY_API_SECRET      (Shopify Client Secret — signs OAuth HMACs, webhook HMACs, session JWTs)
 # MASTER_ENCRYPTION_KEY   (32-byte hex — AES-GCM key for at-rest token encryption)
 

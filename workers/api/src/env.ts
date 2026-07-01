@@ -65,6 +65,13 @@ export type Env = {
   FACEBOOK_APP_ID?: string;
   FACEBOOK_APP_SECRET?: string;
   FAL_API_KEY?: string;
+  // Optional future image-provider integration. Do not use a desktop/browser
+  // Higgsfield CLI OAuth token here; production workers need a deploy-safe
+  // server credential and a stable API base URL. See docs/higgsfield-production-gate.md.
+  HIGGSFIELD_API_BASE_URL?: string;
+  HIGGSFIELD_API_KEY?: string;
+  HIGGSFIELD_API_SECRET?: string;
+  HIGGSFIELD_IMAGE_MODEL?: string;
   RUNWAY_API_KEY?: string;
   PAYPAL_CLIENT_ID?: string;
   PAYPAL_CLIENT_SECRET?: string;

@@ -153,7 +153,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
 |------|---------|
-| `image-gen.ts` | `generateImageWithGuardrails` — single chokepoint for all image generation. Picks flux-pro-kontext (brand refs) → flux-dev (fallback). Returns `{ imageUrl, modelUsed, referencesUsed, archetypeSlug }` |
+| `image-gen.ts` | `generateImageWithGuardrails` — single chokepoint for all image generation. Applies archetype guardrails, uses Nano Banana Pro for refined BBQ-cut prompts, then falls back to FLUX-dev. Returns `{ imageUrl, modelUsed, archetypeSlug }` |
 | `image-safety.ts` | `buildSafeImagePrompt`, `isAbstractUIPrompt`, `sniffArchetypeFromCaption`, `applyArchetypeGuardrails`, `FLUX_NEGATIVE_PROMPT`, `FLUX_STYLE_SUFFIX` |
 | `critique.ts` | `critiqueImageInternal`, `buildCritiqueSystemPrompt` — vision critique (Haiku 4.5) |
 | `profile-guards.ts` | `loadForbiddenSubjects` (unions users.profile + clients.profile), `scanForForbidden`, `parseForbiddenSubjects` |
@@ -234,7 +234,7 @@ npm run build    # outputs to dist/
 ```bash
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
-Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`
+Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
 
 ---
 
