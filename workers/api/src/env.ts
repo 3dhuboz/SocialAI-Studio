@@ -103,6 +103,13 @@ export type Env = {
   SOCIALAI_STUDIO_API_KEY?: string;
   RICHO_ROAD_AGENT_ACCOUNT_ID?: string;
   RICHO_ROAD_WORKSPACE_ID?: string;
+  // My Assistant server-to-server ingest. My Assistant sends approval-gated
+  // post, campaign, and social-reply draft requests into a mapped SocialAI
+  // workspace. SOCIALAI_STUDIO_API_KEY remains a shared fallback while the
+  // dedicated key is being rolled out.
+  MY_ASSISTANT_INGEST_API_KEY?: string;
+  MY_ASSISTANT_AGENT_ACCOUNT_ID?: string;
+  MY_ASSISTANT_WORKSPACE_ID?: string;
   // Deployment-environment marker. Unset (or 'production') in prod. Set
   // to 'dev' / 'staging' in lower envs so cost-metering and other
   // observability helpers can no-op outside prod (see lib/ai-usage.ts).

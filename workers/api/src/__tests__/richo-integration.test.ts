@@ -46,6 +46,16 @@ function makeD1(db: MiniDb): D1Database {
       return { changes: 1, rows: [] };
     }
 
+    if (/^UPDATE posts SET content = \?, platform = \?, status = 'Draft', scheduled_for = \?, hashtags = \?, topic = \?, pillar = \? WHERE id = \? AND user_id = \? AND COALESCE\(client_id, ''\) = \? AND status = 'Draft'$/i.test(s)) {
+      const [content, platform, scheduled_for, hashtags, topic, pillar, id, userId, clientScope] = params as string[];
+      const row = db.posts.find((post) =>
+        post.id === id && post.user_id === userId && (post.client_id || '') === clientScope && post.status === 'Draft'
+      );
+      if (!row) return { changes: 0, rows: [] };
+      Object.assign(row, { content, platform, hashtags, topic, pillar, status: 'Draft', scheduled_for });
+      return { changes: 1, rows: [] };
+    }
+
     if (/^INSERT INTO posts \(id, user_id, client_id, content, platform, status, scheduled_for, hashtags, topic, pillar\) VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,\?,\?\)$/i.test(s)) {
       const [id, user_id, client_id, content, platform, status, scheduled_for, hashtags, topic, pillar] = params;
       db.posts.push({ id, user_id, client_id, content, platform, status, scheduled_for, hashtags, topic, pillar });
@@ -100,6 +110,9 @@ function makeEnv(db: MiniDb): Env {
     RICHO_ROAD_INGEST_API_KEY: 'rr-secret',
     RICHO_ROAD_AGENT_ACCOUNT_ID: 'user_steve',
     RICHO_ROAD_WORKSPACE_ID: 'client_richo',
+    SOCIALAI_STUDIO_API_KEY: 'socialai-secret',
+    MY_ASSISTANT_AGENT_ACCOUNT_ID: 'user_steve',
+    MY_ASSISTANT_WORKSPACE_ID: 'client_iss',
   } as unknown as Env;
 }
 
@@ -129,6 +142,29 @@ const payload = {
     requestedWindow: 'Friday 2:30-5:00pm',
     finalTotalCents: 15500,
     items: [{ name: 'Family freezer pack', quantity: 1, unit: 'pack', finalLineTotalCents: 15500 }],
+  },
+};
+
+const myAssistantCampaignPayload = {
+  source: 'my-assistant',
+  eventType: 'social_campaign_request',
+  idempotencyKey: 'dictation_campaign_1:campaign',
+  organizationId: 'org_iss',
+  agentAccountId: 'user_steve',
+  workspaceId: 'client_iss',
+  actor: 'my-assistant',
+  approvalState: 'draft_requested',
+  createdAt: '2026-07-03T00:00:00.000Z',
+  campaign: {
+    title: 'Festival appearance push',
+    instruction: "Make a week's worth of posts automatically for me advertising our upcoming festival appearance.",
+    channel: 'facebook',
+    postCount: 7,
+    durationDays: 7,
+    startsAt: '2026-07-04T00:00:00.000Z',
+    callToAction: 'Come see us at the festival',
+    topic: 'Festival appearance',
+    pillar: 'Promotion',
   },
 };
 
@@ -184,5 +220,84 @@ describe('Richo Road integration', () => {
     expect(db.posts).toHaveLength(1);
     expect(db.posts[0].content).toContain('Updated Friday family packs');
     expect(db.client_facts).toHaveLength(1);
+  });
+
+  it('accepts My Assistant campaign prompts and creates a week of draft posts', async () => {
+    const db: MiniDb = {
+      users: [{ id: 'user_steve', email: 'steve@example.com' }],
+      clients: [{ id: 'client_iss', user_id: 'user_steve', name: 'ISS Roofing' }],
+      posts: [],
+      client_facts: [],
+    };
+    const app = makeApp();
+    const first = await app.request('http://localhost/api/integrations/my-assistant/social-campaigns', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer socialai-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify(myAssistantCampaignPayload),
+    }, makeEnv(db));
+    expect(first.status).toBe(200);
+    const firstBody = await first.json() as { status: string; postCount: number; draftPostIds: string[]; draftModes: string[] };
+    expect(firstBody.status).toBe('draft_requested');
+    expect(firstBody.postCount).toBe(7);
+    expect(firstBody.draftPostIds).toHaveLength(7);
+    expect(firstBody.draftModes.every((mode) => mode === 'created')).toBe(true);
+    expect(db.posts).toHaveLength(7);
+    expect(db.posts[0].content).toContain('draft 1 of 7');
+    expect(db.posts[0].content).toContain('festival appearance');
+    expect(db.posts[0].status).toBe('Draft');
+    expect(db.posts[0].scheduled_for).toBe('2026-07-04T09:00:00.000Z');
+    expect(db.client_facts).toHaveLength(1);
+
+    const second = await app.request('http://localhost/api/integrations/my-assistant/social-campaigns', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer socialai-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...myAssistantCampaignPayload,
+        campaign: {
+          ...myAssistantCampaignPayload.campaign,
+          instruction: 'Updated festival appearance push for next week.',
+        },
+      }),
+    }, makeEnv(db));
+    expect(second.status).toBe(200);
+    const secondBody = await second.json() as { draftPostIds: string[]; draftModes: string[] };
+    expect(secondBody.draftPostIds).toEqual(firstBody.draftPostIds);
+    expect(secondBody.draftModes.every((mode) => mode === 'updated')).toBe(true);
+    expect(db.posts).toHaveLength(7);
+    expect(db.posts[0].content).toContain('Updated festival appearance push');
+    expect(db.client_facts).toHaveLength(1);
+  });
+
+  it('accepts My Assistant social reply handoffs without publishing', async () => {
+    const db: MiniDb = {
+      users: [{ id: 'user_steve', email: 'steve@example.com' }],
+      clients: [{ id: 'client_iss', user_id: 'user_steve', name: 'ISS Roofing' }],
+      posts: [],
+      client_facts: [],
+    };
+    const res = await makeApp().request('http://localhost/api/integrations/my-assistant/social-replies', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer socialai-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'my-assistant',
+        eventType: 'social_reply_request',
+        idempotencyKey: 'fb_msg_1:social-reply',
+        agentAccountId: 'user_steve',
+        workspaceId: 'client_iss',
+        inbound: {
+          channel: 'facebook',
+          body: 'When is your next festival appearance?',
+          authorName: 'Customer',
+          providerMessageId: 'fb_msg_1',
+        },
+      }),
+    }, makeEnv(db));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { replyDraftId: string; status: string };
+    expect(body.replyDraftId).toBe('fb_msg_1:social-reply');
+    expect(body.status).toBe('approval_required');
+    expect(db.posts).toHaveLength(0);
+    expect(db.client_facts).toHaveLength(1);
+    expect(db.client_facts[0].content).toContain('When is your next festival appearance?');
   });
 });

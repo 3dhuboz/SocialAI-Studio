@@ -139,6 +139,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `facts.ts` | `client_facts` CRUD (engagement history) |
 | `archetypes.ts` | Business archetype classifier |
 | `campaigns.ts` | Campaign CRUD |
+| `integrations.ts` | Richo Road and My Assistant server-to-server ingest routes |
 | `portal.ts` | White-label portal routes |
 | `activations.ts` | Account activation |
 | `billing.ts` | Subscription billing |
@@ -234,7 +235,7 @@ npm run build    # outputs to dist/
 ```bash
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
-Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
+Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`, `SOCIALAI_STUDIO_API_KEY`, `MY_ASSISTANT_INGEST_API_KEY`. My Assistant routing vars: `MY_ASSISTANT_AGENT_ACCOUNT_ID`, `MY_ASSISTANT_WORKSPACE_ID`. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
 
 ---
 

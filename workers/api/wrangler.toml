@@ -55,6 +55,12 @@ SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e"
 # POSTPROXY_API_KEY       (Postproxy publishing API key)
 # POSTPROXY_WEBHOOK_SECRET or POSTPROXY_WEBHOOK_QUERY_SECRET
 # MONITOR_SECRET          (protects /api/post-schedule deploy monitor feed)
+# SOCIALAI_STUDIO_API_KEY (shared ingest fallback for trusted server-to-server callers)
+# MY_ASSISTANT_INGEST_API_KEY (preferred My Assistant ingest key)
+#
+# Optional My Assistant routing vars:
+# MY_ASSISTANT_AGENT_ACCOUNT_ID = "user_..."
+# MY_ASSISTANT_WORKSPACE_ID = "client_..."
 
 [[d1_databases]]
 binding = "DB"
