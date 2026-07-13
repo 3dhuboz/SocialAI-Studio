@@ -1,7 +1,7 @@
 # Customer Learning Brain Design
 
 Date: 2026-07-14
-Status: Approved design, awaiting written-spec review
+Status: Approved for implementation planning
 
 ## 1. Purpose
 
