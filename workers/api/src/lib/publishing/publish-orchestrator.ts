@@ -8,9 +8,19 @@ import {
   type PreflightDecision,
   type PublishablePost,
 } from '../learning/release-preflight';
+import {
+  recordPublicationEvent,
+  type PublicationPlatform,
+} from '../learning/publication-repository';
 import { normalizeWorkspaceIdentity } from '../learning/types';
+import { fireAlert } from '../alerts';
 
 export type PersistedPublishPost = PublishablePost;
+
+export type PublicationOwnedPost = Pick<
+  PersistedPublishPost,
+  'id' | 'user_id' | 'client_id' | 'owner_kind' | 'owner_id'
+>;
 
 export type PublishTarget =
   | {
@@ -72,6 +82,120 @@ export interface PublishOrchestratorDeps {
   ): Promise<void>;
   createPost: typeof createPost;
   graphFetch: typeof fetch;
+}
+
+export interface PublishedPostDetails {
+  platform: PublicationPlatform;
+  remotePostId: string | null;
+  permalink: string | null;
+  decisionId: string | null;
+  publishedAt: string;
+}
+
+export interface PublicationDecisionContext {
+  decisionId: string | null;
+  reachPlanId: string | null;
+}
+
+export interface PublicationRecordDeps {
+  resolveDecisionContext(
+    db: D1Database,
+    post: PublicationOwnedPost,
+    decisionId: string | null,
+  ): Promise<PublicationDecisionContext>;
+  recordPublicationEvent: typeof recordPublicationEvent;
+  fireAlert: typeof fireAlert;
+}
+
+async function resolveDecisionContext(
+  db: D1Database,
+  post: PublicationOwnedPost,
+  decisionId: string | null,
+): Promise<PublicationDecisionContext> {
+  const identity = normalizeWorkspaceIdentity(
+    post.user_id,
+    post.client_id,
+    post.owner_kind,
+    post.owner_id,
+  );
+  const row = await db.prepare(`
+    SELECT id, reach_plan_id
+    FROM learning_decisions
+    WHERE user_id = ? AND workspace_key = ?
+      AND owner_kind = ? AND owner_id = ? AND post_id = ?
+      AND (? IS NULL OR id = ?)
+    ORDER BY
+      CASE WHEN id = ? THEN 0 WHEN stage = 'release' THEN 1 ELSE 2 END,
+      updated_at DESC
+    LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.ownerKind,
+    identity.ownerId,
+    post.id,
+    decisionId,
+    decisionId,
+    decisionId,
+  ).first<{ id: string; reach_plan_id: string | null }>();
+  return {
+    decisionId: row?.id ?? decisionId,
+    reachPlanId: row?.reach_plan_id ?? null,
+  };
+}
+
+const defaultPublicationRecordDeps: PublicationRecordDeps = {
+  resolveDecisionContext,
+  recordPublicationEvent,
+  fireAlert,
+};
+
+export async function recordPublishedPostBestEffort(
+  env: Env,
+  post: PublicationOwnedPost,
+  details: PublishedPostDetails,
+  injectedDeps: Partial<PublicationRecordDeps> = {},
+): Promise<boolean> {
+  const deps = { ...defaultPublicationRecordDeps, ...injectedDeps };
+  try {
+    const context = await deps.resolveDecisionContext(
+      env.DB,
+      post,
+      details.decisionId,
+    );
+    await deps.recordPublicationEvent(env.DB, {
+      userId: post.user_id,
+      clientId: post.client_id,
+      ownerKind: post.owner_kind,
+      ownerId: post.owner_id,
+      postId: post.id,
+      platform: details.platform,
+      remotePostId: details.remotePostId,
+      permalink: details.permalink,
+      decisionId: context.decisionId,
+      reachPlanId: context.reachPlanId,
+      publishedAt: details.publishedAt,
+    });
+    return true;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(`[publishing] publication event missing for ${post.id}: ${reason}`);
+    try {
+      await deps.fireAlert(
+        env,
+        'publication_event_missing',
+        'warn',
+        `Published post ${post.id} (${post.owner_kind}) needs publication-event reconciliation: ${reason}`,
+      );
+    } catch (alertError) {
+      console.error(
+        `[publishing] publication event alert failed for ${post.id}: ${
+          alertError instanceof Error ? alertError.message : String(alertError)
+        }`,
+      );
+    }
+    return false;
+  }
 }
 
 async function validateWorkspace(

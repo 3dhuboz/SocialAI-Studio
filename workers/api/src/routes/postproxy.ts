@@ -37,7 +37,11 @@ import {
   listPlacements,
   listProfiles,
 } from '../lib/postproxy';
-import { publishPersistedPost } from '../lib/publishing/publish-orchestrator';
+import {
+  publishPersistedPost,
+  recordPublishedPostBestEffort,
+  type PublicationOwnedPost,
+} from '../lib/publishing/publish-orchestrator';
 import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
 import {
   parseWebhookEvent,
@@ -534,8 +538,16 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // Resolve our post row from the Postproxy post id.
     const postRow = await c.env.DB.prepare(
-      `SELECT id, user_id, client_id FROM posts WHERE postproxy_post_id = ? LIMIT 1`
-    ).bind(action.postproxyPostId).first<{ id: string; user_id: string | null; client_id: string | null }>();
+      `SELECT id, user_id, client_id, owner_kind, owner_id, platform
+       FROM posts WHERE postproxy_post_id = ? LIMIT 1`
+    ).bind(action.postproxyPostId).first<{
+      id: string;
+      user_id: string | null;
+      client_id: string | null;
+      owner_kind: PublicationOwnedPost['owner_kind'] | null;
+      owner_id: string | null;
+      platform: string | null;
+    }>();
     if (!postRow) {
       // Possible if the post was deleted between create + webhook, OR
       // we're double-mounted on the same Postproxy account from a
@@ -557,6 +569,19 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
              claim_at = NULL
          WHERE id = ?`
       ).bind(action.permalink ?? null, nowIso, postRow.id).run();
+      await recordPublishedPostBestEffort(c.env, {
+        id: postRow.id,
+        user_id: postRow.user_id ?? '',
+        client_id: postRow.client_id,
+        owner_kind: postRow.owner_kind as PublicationOwnedPost['owner_kind'],
+        owner_id: postRow.owner_id ?? '',
+      }, {
+        platform: normalizePostPlatform(postRow.platform),
+        remotePostId: action.postproxyPostId,
+        permalink: action.permalink ?? null,
+        decisionId: null,
+        publishedAt: nowIso,
+      });
       return c.json({ ok: true, kind: 'mark_published' });
     }
 
@@ -797,6 +822,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       }
 
       let platformPostId = '';
+      let releaseDecisionId: string | null = null;
       if (postPlatform === 'instagram') {
         if (!tokens.instagramBusinessAccountId || !imageUrl?.startsWith('http')) {
           return c.json({
@@ -820,6 +846,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
           throw new Error('Unexpected publish backend');
         }
         platformPostId = outcome.mediaId;
+        releaseDecisionId = outcome.preflight.decisionId;
       } else {
         if (!tokens.facebookPageId) {
           return c.json({
@@ -883,13 +910,22 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
           throw new Error(result.error?.message || `Facebook publish failed (${outcome.response.status})`);
         }
         platformPostId = String(result.post_id || result.id || 'published');
+        releaseDecisionId = outcome.preflight.decisionId;
       }
 
+      const publishedAt = new Date().toISOString();
       await c.env.DB.prepare(
         `UPDATE posts
             SET status = 'Posted', reasoning = ?, claim_id = NULL, claim_at = NULL
           WHERE id = ?`,
       ).bind(`Published via legacy Graph (${postPlatform})`, post.id).run();
+      await recordPublishedPostBestEffort(c.env, persistedPost, {
+        platform: postPlatform,
+        remotePostId: platformPostId || null,
+        permalink: null,
+        decisionId: releaseDecisionId,
+        publishedAt,
+      });
       return c.json({
         ok: true,
         postproxyPostId: null,

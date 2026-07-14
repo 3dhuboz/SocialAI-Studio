@@ -28,6 +28,7 @@ import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
+import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -96,6 +97,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // image_regen_count < MAX_REGEN_ATTEMPTS) so once the backlog is
     // drained these become cheap no-op COUNT(*) queries. fal.ai credits
     // check runs on the same tick — also low-frequency by design.
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_outcomes', () => cronCollectLearningOutcomes(env));
+    }
     await trackCron(env, 'backlog_critique', async () => {
       const r = await runBacklogCritique(env);
       return { posts_processed: r.scored };

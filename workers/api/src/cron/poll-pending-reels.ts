@@ -37,6 +37,10 @@
 
 import type { Env } from '../env';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
+import {
+  recordPublishedPostBestEffort,
+  type PublicationOwnedPost,
+} from '../lib/publishing/publish-orchestrator';
 import { loadSocialTokensForPosts, lookupSocialTokens } from './_shared';
 
 const TICK_BUDGET_MS = 10_000;
@@ -253,12 +257,24 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
 
       try {
         await finishFacebookReel(tokens.facebookPageId, tokens.facebookPageAccessToken, caption, post.fb_video_id);
+        const publishedAt = new Date().toISOString();
         await env.DB.prepare(
           `UPDATE posts SET status = 'Posted', reasoning = 'fb-page-reel',
                             fb_publish_state = 'done', fb_finished_at = ?,
                             claim_id = NULL, claim_at = NULL
            WHERE id = ?`
         ).bind(nowAEST, post.id).run();
+        await recordPublishedPostBestEffort(
+          env,
+          post as PublicationOwnedPost,
+          {
+            platform: 'facebook',
+            remotePostId: post.fb_video_id,
+            permalink: null,
+            decisionId: null,
+            publishedAt,
+          },
+        );
         console.log(`[CRON poll-reels] reel ${post.id} -> Posted (fb_video_id=${post.fb_video_id})`);
         processed++;
       } catch (finishErr: any) {

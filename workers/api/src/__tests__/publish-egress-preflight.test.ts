@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import type { Env } from '../env';
 import {
   publishPersistedPost,
+  recordPublishedPostBestEffort,
   type PersistedPublishPost,
   type PublishOrchestratorDeps,
+  type PublicationRecordDeps,
 } from '../lib/publishing/publish-orchestrator';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
@@ -226,6 +228,106 @@ describe('publishPersistedPost', () => {
   });
 });
 
+describe('recordPublishedPostBestEffort', () => {
+  it('resolves decision context with the complete canonical owner tuple', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM learning_decisions': [{ id: 'decision-1', reach_plan_id: 'reach-1' }],
+    });
+
+    await expect(recordPublishedPostBestEffort(
+      { DB: db } as Env,
+      fixturePost,
+      {
+        platform: 'facebook',
+        remotePostId: 'facebook-1',
+        permalink: null,
+        decisionId: 'decision-1',
+        publishedAt: '2026-07-14T00:00:00.000Z',
+      },
+      {
+        recordPublicationEvent: async () => undefined,
+        fireAlert: async () => undefined,
+      },
+    )).resolves.toBe(true);
+
+    const contextRead = calls.find((call) => call.sql.includes('FROM learning_decisions'))!;
+    expect(contextRead.sql).toContain('owner_kind = ?');
+    expect(contextRead.sql).toContain('owner_id = ?');
+    expect(contextRead.binds).toEqual(expect.arrayContaining(['u1', '__owner__', 'user']));
+  });
+
+  it('records the actual destination and release context after remote success', async () => {
+    const records: unknown[] = [];
+    const deps: PublicationRecordDeps = {
+      resolveDecisionContext: async () => ({
+        decisionId: 'decision-1',
+        reachPlanId: 'reach-1',
+      }),
+      recordPublicationEvent: async (_db, input) => {
+        records.push(input);
+      },
+      fireAlert: async () => undefined,
+    };
+
+    const recorded = await recordPublishedPostBestEffort(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      {
+        platform: 'facebook',
+        remotePostId: 'facebook-1',
+        permalink: 'https://facebook.example/posts/facebook-1',
+        decisionId: 'decision-1',
+        publishedAt: '2026-07-14T00:00:00.000Z',
+      },
+      deps,
+    );
+
+    expect(recorded).toBe(true);
+    expect(records).toEqual([expect.objectContaining({
+      userId: 'u1',
+      clientId: null,
+      ownerKind: 'user',
+      ownerId: 'u1',
+      postId: 'p1',
+      platform: 'facebook',
+      remotePostId: 'facebook-1',
+      decisionId: 'decision-1',
+      reachPlanId: 'reach-1',
+    })]);
+  });
+
+  it('alerts but never throws when event recording fails after publication', async () => {
+    const alerts: Array<{ key: string; body: string }> = [];
+    const deps: PublicationRecordDeps = {
+      resolveDecisionContext: async () => ({ decisionId: null, reachPlanId: null }),
+      recordPublicationEvent: async () => {
+        throw new Error('D1 write unavailable');
+      },
+      fireAlert: async (_env, key, _severity, body) => {
+        alerts.push({ key, body });
+      },
+    };
+
+    await expect(recordPublishedPostBestEffort(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      {
+        platform: 'facebook',
+        remotePostId: 'facebook-1',
+        permalink: null,
+        decisionId: null,
+        publishedAt: '2026-07-14T00:00:00.000Z',
+      },
+      deps,
+    )).resolves.toBe(false);
+
+    expect(alerts).toEqual([expect.objectContaining({
+      key: 'publication_event_missing',
+      body: expect.stringContaining('p1'),
+    })]);
+  });
+});
+
 describe('publish egress source contracts', () => {
   const workerRoot = resolve(process.cwd(), 'src');
   const repoRoot = resolve(process.cwd(), '../..');
@@ -251,6 +353,28 @@ describe('publish egress source contracts', () => {
     expect(source).not.toContain('kickFacebookReelUpload(');
     expect(source).not.toContain('fbRes = await fetch(`${base}/${pageId}/photos');
     expect(source).not.toContain('fbRes = await fetch(`${base}/${pageId}/feed');
+  });
+
+  it('records only confirmed publication completion paths for later outcome collection', () => {
+    const publishCron = readFileSync(
+      resolve(workerRoot, 'cron/publish-missed.ts'),
+      'utf8',
+    );
+    const reelPoll = readFileSync(
+      resolve(workerRoot, 'cron/poll-pending-reels.ts'),
+      'utf8',
+    );
+    const postproxyRoutes = readFileSync(
+      resolve(workerRoot, 'routes/postproxy.ts'),
+      'utf8',
+    );
+
+    expect(publishCron.match(/recordPublishedPostBestEffort\(/g)).toHaveLength(2);
+    expect(reelPoll.match(/recordPublishedPostBestEffort\(/g)).toHaveLength(1);
+    expect(postproxyRoutes.match(/recordPublishedPostBestEffort\(/g)).toHaveLength(2);
+
+    expect(publishCron).not.toMatch(/graph_reel[\s\S]{0,900}recordPublishedPostBestEffort/);
+    expect(postproxyRoutes).not.toMatch(/postproxy_status = 'pending'[\s\S]{0,500}recordPublishedPostBestEffort/);
   });
 
   it('routes Quick Post and Calendar publishing through the Worker only', () => {

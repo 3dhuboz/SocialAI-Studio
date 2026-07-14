@@ -44,6 +44,7 @@ import {
 } from '../lib/postproxy';
 import {
   publishPersistedPost,
+  recordPublishedPostBestEffort,
   type PersistedPublishPost,
 } from '../lib/publishing/publish-orchestrator';
 import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
@@ -86,7 +87,8 @@ function shouldFallbackToLegacyGraphFromPostproxy(raw: string, platform: string)
 async function pollPostproxyPendingPosts(env: Env): Promise<number> {
   if (!env.POSTPROXY_API_KEY) return 0;
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, platform, postproxy_post_id, postproxy_permalink, qa_feedback_note, status
+    `SELECT id, user_id, client_id, owner_kind, owner_id, platform,
+            postproxy_post_id, postproxy_permalink, qa_feedback_note, status
      FROM posts
      WHERE status IN ('Publishing', 'Deleting')
        AND postproxy_status = 'pending'
@@ -94,7 +96,9 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
      ORDER BY postproxy_sent_at ASC
      LIMIT 10`
   ).all<{
-    id: string; user_id: string | null; client_id: string | null; platform: string | null;
+    id: string; user_id: string | null; client_id: string | null;
+    owner_kind: PersistedPublishPost['owner_kind'] | null; owner_id: string | null;
+    platform: string | null;
     postproxy_post_id: string; postproxy_permalink: string | null; qa_feedback_note: string | null; status: string;
   }>();
   const mappingMap = await loadPostproxyMappingForPosts(
@@ -113,6 +117,7 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
       const status = await getPostproxyPost(env, row.postproxy_post_id, mapping?.postproxy_group_id);
       const { state, platform } = normalizePostproxyStatus(status);
       if (['published', 'posted', 'success', 'succeeded'].includes(state)) {
+        const publishedAt = new Date().toISOString();
         await env.DB.prepare(
           `UPDATE posts
            SET status = 'Posted',
@@ -123,10 +128,23 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
            WHERE id = ?`
         ).bind(
           platform?.permalink || null,
-          new Date().toISOString(),
+          publishedAt,
           'Published via Postproxy status poll.',
           row.id,
         ).run();
+        await recordPublishedPostBestEffort(env, {
+          id: row.id,
+          user_id: row.user_id ?? '',
+          client_id: row.client_id,
+          owner_kind: row.owner_kind as PersistedPublishPost['owner_kind'],
+          owner_id: row.owner_id ?? '',
+        }, {
+          platform: postPlatform,
+          remotePostId: row.postproxy_post_id,
+          permalink: platform?.permalink || null,
+          decisionId: null,
+          publishedAt,
+        });
         processed++;
       } else if (['deleted'].includes(state)) {
         await env.DB.prepare(
@@ -1205,6 +1223,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       let publishMethod = postType === 'video' ? 'video-fallback-image' : 'text-only';
 
       let fbRes: Response | null = null;
+      let releaseDecisionId: string | null = null;
 
       if (imageUrl && imageUrl.startsWith('http')) {
         // Download image and upload via manual multipart body construction.
@@ -1260,6 +1279,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             );
             if (outcome.backend !== 'graph') throw new Error('Unexpected publish backend');
             fbRes = outcome.response;
+            releaseDecisionId = outcome.preflight.decisionId;
             publishMethod = `multipart-raw (${imageBytes.length}b)`;
             console.log(`[CRON] Multipart upload status: ${fbRes.status} for post ${(post as any).id}`);
           } else {
@@ -1292,6 +1312,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
         );
         if (outcome.backend !== 'graph') throw new Error('Unexpected publish backend');
         fbRes = outcome.response;
+        releaseDecisionId = outcome.preflight.decisionId;
         publishMethod = 'text-only-fallback';
       }
 
@@ -1305,8 +1326,21 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // Log publish method to D1 for debugging. Clear claim_id so a hung
       // claim can't pin a Posted row indefinitely (defensive — Posted should
       // never be re-claimed, but this avoids dangling state).
+      const publishedAt = new Date().toISOString();
       await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
         .bind('Posted', publishMethod, (post as any).id).run();
+      const remotePostId = fbData.id ?? fbData.post_id ?? null;
+      await recordPublishedPostBestEffort(
+        env,
+        persistedPublishPost(post as Record<string, any>),
+        {
+          platform: 'facebook',
+          remotePostId: remotePostId === null ? null : String(remotePostId),
+          permalink: null,
+          decisionId: releaseDecisionId,
+          publishedAt,
+        },
+      );
       console.log(`[CRON] Published post ${(post as any).id} via ${publishMethod} -> ${fbData.id || fbData.post_id || 'ok'}`);
     } catch (e: any) {
       const rawMessage = e?.message || String(e);
