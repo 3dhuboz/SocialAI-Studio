@@ -150,3 +150,31 @@ until the resulting posts are genuinely published through approval mode,
 receive their 168-hour outcomes, and all 30 decisions are independently
 adjudicated. No synthetic decision, replay-only result, or draft-only result
 may satisfy that promotion requirement.
+
+### Production Promotion Proof
+
+- PR `#170` merged to `main` as
+  `6fbc32195a31eb25f946272cc12969a9b838387c` after GitHub
+  `typecheck-and-build` passed.
+- Production Worker version:
+  `31e50ba6-8295-4df7-b362-02b24ae89b0c`.
+- Production Worker variables remained dormant:
+  `LEARNING_RELEASE_ENFORCEMENT=false`,
+  `LEARNING_AUTOPILOT_ENABLED=false`, and
+  `ORGANIC_REACH_APPLY_ENABLED=false`.
+- Production Pages deployment: `5aa4f0f2-bc19-483e-8185-9eb2906fe4a0`,
+  built from source `6fbc321`.
+- The hash deployment and `https://socialaistudio.au` served identical main
+  and admin chunks. Main SHA-256:
+  `5824077bbabd34128fc14a62dcd537a60321d06f6272d3357edd7e40c943b256`;
+  admin SHA-256:
+  `14452e660e35f73be5c588c43112d7c0a0bb2570559ff0dbaf4ab5a57d8d375b`.
+- Direct Worker and same-domain health returned 200. Unauthenticated candidate,
+  enrollment, and validation probes all returned 401.
+- Post-deploy D1 verification remained unchanged: zero workspace settings,
+  protected rows, autopublish consents, release decisions, adjudications, and
+  scheduled posts. Hugheseys Que remained on hold.
+
+The operational lane is live, but no workspace was enrolled and no draft was
+validated during deployment. Those actions require the authenticated admin UI
+and remain subject to independent adjudication and the 168-hour outcome gate.
