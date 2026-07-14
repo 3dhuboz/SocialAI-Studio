@@ -22,14 +22,20 @@
  * because real owner input ("pork, chicken\nLamb;  FISH ") is sloppy:
  *   "pork, chicken\nLamb;  FISH " → ["pork", "chicken", "lamb", "fish"]
  *
- * Empty / null / non-string input → []. Each token is sanity-capped at 60
- * chars to catch a paste-mistake where the entire profile description ends
- * up in this field.
+ * Empty / null / unsupported input → []. Arrays are accepted because client
+ * onboarding and Shopify settings persist this field as JSON arrays. Each
+ * token is sanity-capped at 60 chars to catch a paste-mistake where the entire
+ * profile description ends up in this field.
  */
-export function parseForbiddenSubjects(raw?: string | null): string[] {
-  if (!raw || typeof raw !== 'string') return [];
-  return raw
-    .split(/[,\n;]/)
+export function parseForbiddenSubjects(raw?: unknown): string[] {
+  const values = typeof raw === 'string'
+    ? [raw]
+    : Array.isArray(raw)
+      ? raw.filter((value): value is string => typeof value === 'string')
+      : [];
+
+  return values
+    .flatMap((value) => value.split(/[,\n;]/))
     .map((s) => s.trim().toLowerCase())
     .filter((s) => s.length > 0 && s.length < 60);
 }

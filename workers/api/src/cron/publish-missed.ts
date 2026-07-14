@@ -13,8 +13,8 @@
 //
 // Extracted from src/index.ts as Phase B step 13 of the route-module split.
 // The owner-failure notifier + escapeHtml were lifted to lib/cron-notify.ts
-// since poll-pending-reels.ts needs them too. friendlyPublishReason +
-// kickFacebookReelUpload remain colocated — they're cron-only.
+// since poll-pending-reels.ts needs them too. Final network sends, including
+// the reel kick, pass through lib/publishing/publish-orchestrator.ts.
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
@@ -38,11 +38,15 @@ import {
   buildPublishCaption,
 } from './_shared';
 import {
-  createPost as postproxyCreatePost,
   deletePost as postproxyDeletePost,
   deletePostOnPlatform as postproxyDeletePostOnPlatform,
   getPost as getPostproxyPost,
 } from '../lib/postproxy';
+import {
+  publishPersistedPost,
+  recordPublishedPostBestEffort,
+  type PersistedPublishPost,
+} from '../lib/publishing/publish-orchestrator';
 import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
 import { CRITIQUE_ACCEPT_THRESHOLD, MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 import { scanContentForTropes } from '../../../../shared/fabrication-patterns';
@@ -83,7 +87,8 @@ function shouldFallbackToLegacyGraphFromPostproxy(raw: string, platform: string)
 async function pollPostproxyPendingPosts(env: Env): Promise<number> {
   if (!env.POSTPROXY_API_KEY) return 0;
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, platform, postproxy_post_id, postproxy_permalink, qa_feedback_note, status
+    `SELECT id, user_id, client_id, owner_kind, owner_id, platform,
+            postproxy_post_id, postproxy_permalink, qa_feedback_note, status
      FROM posts
      WHERE status IN ('Publishing', 'Deleting')
        AND postproxy_status = 'pending'
@@ -91,7 +96,9 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
      ORDER BY postproxy_sent_at ASC
      LIMIT 10`
   ).all<{
-    id: string; user_id: string | null; client_id: string | null; platform: string | null;
+    id: string; user_id: string | null; client_id: string | null;
+    owner_kind: PersistedPublishPost['owner_kind'] | null; owner_id: string | null;
+    platform: string | null;
     postproxy_post_id: string; postproxy_permalink: string | null; qa_feedback_note: string | null; status: string;
   }>();
   const mappingMap = await loadPostproxyMappingForPosts(
@@ -110,6 +117,7 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
       const status = await getPostproxyPost(env, row.postproxy_post_id, mapping?.postproxy_group_id);
       const { state, platform } = normalizePostproxyStatus(status);
       if (['published', 'posted', 'success', 'succeeded'].includes(state)) {
+        const publishedAt = new Date().toISOString();
         await env.DB.prepare(
           `UPDATE posts
            SET status = 'Posted',
@@ -120,10 +128,23 @@ async function pollPostproxyPendingPosts(env: Env): Promise<number> {
            WHERE id = ?`
         ).bind(
           platform?.permalink || null,
-          new Date().toISOString(),
+          publishedAt,
           'Published via Postproxy status poll.',
           row.id,
         ).run();
+        await recordPublishedPostBestEffort(env, {
+          id: row.id,
+          user_id: row.user_id ?? '',
+          client_id: row.client_id,
+          owner_kind: row.owner_kind as PersistedPublishPost['owner_kind'],
+          owner_id: row.owner_id ?? '',
+        }, {
+          platform: postPlatform,
+          remotePostId: row.postproxy_post_id,
+          permalink: platform?.permalink || null,
+          decisionId: null,
+          publishedAt,
+        });
         processed++;
       } else if (['deleted'].includes(state)) {
         await env.DB.prepare(
@@ -352,68 +373,6 @@ function normalizePostproxyStatus(raw: any): {
   };
 }
 
-// ── Facebook Page Reels publishing — KICK phase ─────────────────────────────
-// Audit P0 (Hono/Workers lane, 2026-05) — was previously a 4-phase blocking
-// function that polled FB for up to 180s per post serially inside the publish
-// cron's hot loop. With 20 posts per claim × 180s, the cron blew its 30s CPU
-// budget on the first slow IG response and got killed mid-batch, silently
-// dropping posts.
-//
-// Now split into kickFacebookReelUpload (this function, ~3-5s, runs inside
-// the publish cron) and the new cron/poll-pending-reels.ts (polls FB status
-// + runs the finish phase, owned by a separate */5 tick, 10s tick budget).
-// Pattern mirrors cron/prewarm-videos.ts's kick-then-poll architecture for
-// Kling i2v.
-//
-// Persists the FB-issued video_id to posts.fb_video_id (schema_v17) so the
-// poll cron has a handle for status fetches and the finish phase. The post
-// row stays in status='Publishing' with fb_publish_state='kicked' until the
-// poll cron resolves it to 'done' or 'failed'.
-//
-// Permissions: pages_manage_posts + publish_video (already in OAuth scope).
-// Reel requirements: 9:16 aspect, 3-90s, H.264, MP4. Kling at aspect_ratio:'9:16'
-// satisfies all of these.
-async function kickFacebookReelUpload(
-  pageId: string,
-  pageAccessToken: string,
-  description: string,
-  videoUrl: string,
-): Promise<string> {
-  const base = 'https://graph.facebook.com/v21.0';
-  if (description.length > 2200) {
-    throw new Error(`FB reel description exceeds 2200 char limit (got ${description.length})`);
-  }
-
-  // Phase 1 — start: get a video_id + upload_url.
-  const startRes = await fetch(`${base}/${pageId}/video_reels`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ upload_phase: 'start', access_token: pageAccessToken }),
-  });
-  const startData = await startRes.json() as any;
-  if (startData.error) throw new Error(`FB reel start: ${startData.error.message}`);
-  const videoId: string | undefined = startData.video_id;
-  const uploadUrl: string | undefined = startData.upload_url;
-  if (!videoId || !uploadUrl) throw new Error('FB reel start: missing video_id or upload_url');
-
-  // Phase 2 — hosted-URL transfer. FB pulls the MP4 from R2 itself.
-  const transferRes = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `OAuth ${pageAccessToken}`,
-      file_url: videoUrl,
-    },
-  });
-  const transferData = await transferRes.json() as any;
-  if (transferData.error) throw new Error(`FB reel transfer: ${transferData.error.message}`);
-  if (transferData.success === false) throw new Error('FB reel transfer: hosted-URL fetch failed');
-
-  // Done — FB now has the bytes (or knows where to pull them from). The poll
-  // cron owns Phase 3 (status poll) and Phase 4 (finish). Return the video_id
-  // so the caller can persist it to posts.fb_video_id for handoff.
-  return videoId;
-}
-
 async function persistPublishCritique(
   env: Env,
   postId: string,
@@ -571,6 +530,33 @@ async function enforceFinalImageCritiqueGate(
 const QUALITY_GUARD_THRESHOLD = 3;
 const SHOPIFY_FACEBOOK_ONLY_FILTER =
   `(COALESCE(owner_kind, 'user') != 'shop' OR COALESCE(platform, 'facebook') = 'facebook')`;
+
+function persistedPublishPost(
+  post: Record<string, any>,
+  overrides: Partial<PersistedPublishPost> = {},
+): PersistedPublishPost {
+  const ownerKind = String(post.owner_kind || '');
+  if (!post.id || !post.user_id || !post.owner_id || !['user', 'client', 'shop'].includes(ownerKind)) {
+    throw new Error(`Post ${String(post.id || 'unknown')} has incomplete ownership metadata`);
+  }
+  return {
+    id: String(post.id),
+    user_id: String(post.user_id),
+    client_id: post.client_id ? String(post.client_id) : null,
+    owner_kind: ownerKind as PersistedPublishPost['owner_kind'],
+    owner_id: String(post.owner_id),
+    content: String(post.content || ''),
+    platform: normalizePostPlatform(post.platform),
+    hashtags: typeof post.hashtags === 'string' ? post.hashtags : null,
+    image_url: typeof post.image_url === 'string' ? post.image_url : null,
+    post_type: typeof post.post_type === 'string' ? post.post_type : null,
+    video_url: typeof post.video_url === 'string' ? post.video_url : null,
+    video_status: typeof post.video_status === 'string' ? post.video_status : null,
+    video_script: typeof post.video_script === 'string' ? post.video_script : null,
+    video_shots: typeof post.video_shots === 'string' ? post.video_shots : null,
+    ...overrides,
+  };
+}
 
 export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processed: number }> {
   // Posts are stored in AEST (UTC+10) without timezone offset, so compare in AEST
@@ -740,7 +726,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
   const rows = await env.DB.prepare(
     `SELECT p.id, p.content, p.hashtags, p.image_url, p.image_prompt, p.platform,
             p.user_id, p.client_id, p.owner_kind, p.owner_id,
-            p.post_type, p.video_url, p.video_status,
+            p.post_type, p.video_url, p.video_status, p.video_script, p.video_shots,
             p.audio_mixed_url,
             p.image_critique_score, p.image_critique_reasoning, p.image_regen_count,
             COALESCE(c.use_postproxy, u.use_postproxy, 0) AS use_postproxy
@@ -989,18 +975,35 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
 
         let fallbackToLegacyGraph = false;
         try {
-          const result = await postproxyCreatePost(env, {
-            profileId: mapping.postproxy_profile_id,
-            body: fullTextPp,
-            media: postproxyMediaArray(mediaUrl),
-            format,
-            // page_id is IG-irrelevant — the lib only emits it for FB.
-            // Pass an empty string for IG so the typed arg is satisfied;
-            // buildCreatePostPayload drops it from the IG payload.
-            pageId: mapping.postproxy_placement_id || '',
-            title: isReel ? cleanContentPp.slice(0, 60) : undefined,
-            platform: postPlatform,
-          });
+          const outcome = await publishPersistedPost(
+            env,
+            persistedPublishPost(post as Record<string, any>, {
+              platform: postPlatform,
+              image_url: imageUrlPp,
+              video_url: isReel ? mediaUrl : null,
+              video_status: isReel ? String((post as any).video_status || '') : null,
+              post_type: isReel ? 'video' : 'image',
+            }),
+            {
+              backend: 'postproxy',
+              payload: {
+                profileId: mapping.postproxy_profile_id,
+                body: fullTextPp,
+                media: postproxyMediaArray(mediaUrl),
+                format,
+                // page_id is IG-irrelevant — the lib only emits it for FB.
+                // Pass an empty string for IG so the typed arg is satisfied;
+                // buildCreatePostPayload drops it from the IG payload.
+                pageId: mapping.postproxy_placement_id || '',
+                title: isReel ? cleanContentPp.slice(0, 60) : undefined,
+                platform: postPlatform,
+              },
+            },
+          );
+          if (outcome.backend !== 'postproxy') {
+            throw new Error('Unexpected publish backend');
+          }
+          const result = outcome.result;
           // Stay in Publishing — Postproxy will arrive with a webhook to
           // flip to Posted/Missed. Clear claim_id so a zombie-Publishing
           // sweep doesn't re-claim before the webhook arrives.
@@ -1015,6 +1018,10 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           console.log(`[CRON] Postproxy publish initiated for ${(post as any).id} -> postproxy_id=${result.id}`);
         } catch (err: any) {
           const rawReason = err?.message || String(err);
+          if (/release preflight/i.test(rawReason)) {
+            console.warn(`[CRON] Post ${(post as any).id} held by release preflight`);
+            continue;
+          }
           const legacyTokens = lookupSocialTokens(tokensMap, post as { user_id?: string | null; client_id?: string | null });
           fallbackToLegacyGraph = shouldFallbackToLegacyGraphFromPostproxy(rawReason, postPlatform)
             && !!legacyTokens?.facebookPageId
@@ -1148,7 +1155,26 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           // the exact caption to ship at finish-phase time (it doesn't
           // re-derive from content + hashtags to avoid drift).
           const reelDescription = fullText.length > 2200 ? fullText.slice(0, 2199) : fullText;
-          const fbVideoId = await kickFacebookReelUpload(pageId, token, reelDescription, videoUrl);
+          const outcome = await publishPersistedPost(
+            env,
+            persistedPublishPost(post as Record<string, any>, {
+              image_url: imageUrl,
+              video_url: videoUrl,
+              video_status: videoStatus,
+              post_type: 'video',
+            }),
+            {
+              backend: 'graph_reel',
+              pageId,
+              pageAccessToken: token,
+              description: reelDescription,
+              videoUrl,
+            },
+          );
+          if (outcome.backend !== 'graph_reel') {
+            throw new Error('Unexpected publish backend');
+          }
+          const fbVideoId = outcome.videoId;
           // Stash the FB video_id + caption on the post and stay in Publishing.
           // The poll cron picks this up on its */5 tick (typically the very
           // next tick for FB Reels — fb_publish_state='kicked' is the
@@ -1164,6 +1190,10 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
           console.log(`[CRON] Reel kicked ${(post as any).id} -> fb_video_id=${fbVideoId} (poll cron will finish)`);
           continue;
         } catch (reelErr: any) {
+          if (/release preflight/i.test(String(reelErr?.message || reelErr))) {
+            console.warn(`[CRON] Post ${(post as any).id} held by release preflight`);
+            continue;
+          }
           // Kick failed (start or transfer phase) — fall through to image post
           // so the slot still ships. Persist the error so the dashboard surfaces
           // it. (Note: the previous 180s poll-then-throw failure mode is gone —
@@ -1193,6 +1223,7 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       let publishMethod = postType === 'video' ? 'video-fallback-image' : 'text-only';
 
       let fbRes: Response | null = null;
+      let releaseDecisionId: string | null = null;
 
       if (imageUrl && imageUrl.startsWith('http')) {
         // Download image and upload via manual multipart body construction.
@@ -1228,11 +1259,27 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
             body.set(imageBytes, head.length);
             body.set(mid, head.length + imageBytes.length);
 
-            fbRes = await fetch(`${base}/${pageId}/photos?access_token=${encodeURIComponent(token)}`, {
-              method: 'POST',
-              headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-              body: body,
-            });
+            const outcome = await publishPersistedPost(
+              env,
+              persistedPublishPost(post as Record<string, any>, {
+                image_url: imageUrl,
+                video_url: null,
+                video_status: null,
+                post_type: 'image',
+              }),
+              {
+                backend: 'graph',
+                url: `${base}/${pageId}/photos?access_token=${encodeURIComponent(token)}`,
+                init: {
+                  method: 'POST',
+                  headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+                  body,
+                },
+              },
+            );
+            if (outcome.backend !== 'graph') throw new Error('Unexpected publish backend');
+            fbRes = outcome.response;
+            releaseDecisionId = outcome.preflight.decisionId;
             publishMethod = `multipart-raw (${imageBytes.length}b)`;
             console.log(`[CRON] Multipart upload status: ${fbRes.status} for post ${(post as any).id}`);
           } else {
@@ -1245,11 +1292,27 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
 
       // Text-only fallback
       if (!fbRes) {
-        fbRes = await fetch(`${base}/${pageId}/feed`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: fullText, access_token: token }),
-        });
+        const outcome = await publishPersistedPost(
+          env,
+          persistedPublishPost(post as Record<string, any>, {
+            image_url: null,
+            video_url: null,
+            video_status: null,
+            post_type: 'text',
+          }),
+          {
+            backend: 'graph',
+            url: `${base}/${pageId}/feed`,
+            init: {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: fullText, access_token: token }),
+            },
+          },
+        );
+        if (outcome.backend !== 'graph') throw new Error('Unexpected publish backend');
+        fbRes = outcome.response;
+        releaseDecisionId = outcome.preflight.decisionId;
         publishMethod = 'text-only-fallback';
       }
 
@@ -1263,11 +1326,28 @@ export async function cronPublishMissedPosts(env: Env): Promise<{ posts_processe
       // Log publish method to D1 for debugging. Clear claim_id so a hung
       // claim can't pin a Posted row indefinitely (defensive — Posted should
       // never be re-claimed, but this avoids dangling state).
+      const publishedAt = new Date().toISOString();
       await env.DB.prepare('UPDATE posts SET status = ?, reasoning = ?, claim_id = NULL, claim_at = NULL WHERE id = ?')
         .bind('Posted', publishMethod, (post as any).id).run();
+      const remotePostId = fbData.id ?? fbData.post_id ?? null;
+      await recordPublishedPostBestEffort(
+        env,
+        persistedPublishPost(post as Record<string, any>),
+        {
+          platform: 'facebook',
+          remotePostId: remotePostId === null ? null : String(remotePostId),
+          permalink: null,
+          decisionId: releaseDecisionId,
+          publishedAt,
+        },
+      );
       console.log(`[CRON] Published post ${(post as any).id} via ${publishMethod} -> ${fbData.id || fbData.post_id || 'ok'}`);
     } catch (e: any) {
       const rawMessage = e?.message || String(e);
+      if (/release preflight/i.test(rawMessage)) {
+        console.warn(`[CRON] Post ${(post as any).id} held by release preflight`);
+        continue;
+      }
       const reason = friendlyPublishReason(rawMessage);
       console.error(`[CRON] Failed to publish post ${(post as any).id}:`, e.message, e.stack);
 

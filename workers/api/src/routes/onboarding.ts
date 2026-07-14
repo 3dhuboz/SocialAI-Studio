@@ -24,6 +24,7 @@ import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { ArchetypeRow, classifyArchetypeFromFingerprint } from '../lib/archetypes';
 import { refreshFactsForUser } from '../lib/facebook-facts';
+import { ensureWorkspaceLearningSettings } from '../lib/provisioning';
 import { wrapUntrusted } from '../lib/prompt-safety';
 import { decryptSocialTokensJson, scheduleSocialTokensReencrypt } from '../lib/social-tokens';
 
@@ -43,6 +44,9 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>): void {
       'SELECT id, email, social_tokens, profile FROM users WHERE id = ?'
     ).bind(uid).first<{ id: string; email: string | null; social_tokens: string | null; profile: string | null }>();
 
+    if (userRow) {
+      await ensureWorkspaceLearningSettings(c.env.DB, uid, null, 'user', uid);
+    }
     if (!userRow?.social_tokens) {
       return c.json({ error: 'Facebook not connected — connect a Page first, then call /api/onboarding-magic' }, 400);
     }

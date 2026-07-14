@@ -1,5 +1,6 @@
 export interface SocialPost {
   id: string;
+  clientId?: string | null;
   platform: 'Facebook' | 'Instagram';
   content: string;
   hashtags: string[];

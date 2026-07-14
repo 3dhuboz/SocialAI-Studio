@@ -25,8 +25,27 @@
 import type { Env } from '../env';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { logAiUsage } from '../lib/ai-usage';
+import { evaluateReleasePreflight } from '../lib/learning/release-preflight';
+import type { WorkspaceOwnerKind } from '../lib/learning/types';
 
 const KLING_STANDARD_VIDEO_COST_USD = 0.30;
+
+type PostRow = {
+  id: string;
+  user_id: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind | null;
+  owner_id: string | null;
+  content: string | null;
+  platform: string | null;
+  hashtags: string | null;
+  image_url: string | null;
+  post_type: string | null;
+  video_script: string | null;
+  video_shots: string | null;
+  video_request_id: string | null;
+  video_status: string | null;
+};
 
 async function cacheVideoToR2(env: Env, sourceUrl: string, postId: string): Promise<string | null> {
   if (!env.REELS_R2) {
@@ -90,14 +109,15 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
   ).bind(eightMinAgoAEST).run();
 
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, image_url, video_script, video_request_id, video_status
+    `SELECT id, user_id, client_id, owner_kind, owner_id, content, platform, hashtags,
+            image_url, post_type, video_script, video_shots, video_request_id, video_status
      FROM posts
      WHERE post_type = 'video' AND status = 'Scheduled'
        AND scheduled_for > ? AND scheduled_for <= ?
        AND (video_status IS NULL OR video_status IN ('pending','generating'))
        AND ${ACTIVE_CLIENT_FILTER}
      ORDER BY scheduled_for ASC LIMIT 2`
-  ).bind(nowAEST, in45AEST).all();
+  ).bind(nowAEST, in45AEST).all<PostRow>();
 
   const posts = rows.results ?? [];
   if (posts.length === 0) return { posts_processed: 0 };
@@ -107,16 +127,16 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
   let processed = 0;
 
   for (const post of posts) {
-    const postId = (post as any).id as string;
-    const userId = ((post as any).user_id as string | null) || null;
-    const clientId = ((post as any).client_id as string | null) || null;
-    const status = (post as any).video_status as string | null;
-    const requestId = (post as any).video_request_id as string | null;
+    const postId = post.id;
+    const userId = post.user_id || null;
+    const clientId = post.client_id;
+    const status = post.video_status;
+    const requestId = post.video_request_id;
     try {
       if (!status || status === 'pending') {
         // Kick off generation.
-        const thumbnail = (post as any).image_url as string | null;
-        const motionPrompt = (post as any).video_script as string | null;
+        const thumbnail = post.image_url;
+        const motionPrompt = post.video_script;
         if (!thumbnail) {
           await env.DB.prepare(
             `UPDATE posts SET video_status = 'failed', video_error = 'No thumbnail to animate' WHERE id = ?`
@@ -208,6 +228,7 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
         await env.DB.prepare(
           `UPDATE posts SET video_status = 'ready', video_url = ?, r2_video_key = ? WHERE id = ?`
         ).bind(persistedUrl, durableUrl ? `reels/${postId}.mp4` : null, postId).run();
+        await recordReleasePreflight(env, post, persistedUrl);
         processed++;
         console.log(`[CRON prewarm-video] reel ready for post ${postId}`);
       } else if (statusData.status === 'FAILED') {
@@ -222,4 +243,37 @@ export async function cronPrewarmVideos(env: Env): Promise<{ posts_processed: nu
     }
   }
   return { posts_processed: processed };
+}
+
+async function recordReleasePreflight(
+  env: Env,
+  post: PostRow,
+  videoUrl: string,
+): Promise<void> {
+  if (!post.owner_kind || !post.owner_id) {
+    console.warn(`[CRON prewarm-video] skipped early release receipt for ${post.id}: ownership metadata missing`);
+    return;
+  }
+  try {
+    await evaluateReleasePreflight(env, {
+      id: post.id,
+      user_id: post.user_id,
+      client_id: post.client_id,
+      owner_kind: post.owner_kind,
+      owner_id: post.owner_id,
+      content: post.content ?? '',
+      platform: post.platform ?? 'facebook',
+      hashtags: post.hashtags,
+      image_url: post.image_url,
+      post_type: post.post_type ?? 'video',
+      video_url: videoUrl,
+      video_status: 'ready',
+      video_script: post.video_script,
+      video_shots: post.video_shots,
+    });
+  } catch (error) {
+    console.warn(
+      `[CRON prewarm-video] early release receipt failed for ${post.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }

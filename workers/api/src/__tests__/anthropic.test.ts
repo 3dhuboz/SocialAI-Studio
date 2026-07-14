@@ -252,6 +252,47 @@ describe('callAnthropicDirect — cachedPrefix / prompt caching', () => {
 });
 
 describe('callAnthropicDirect — error paths', () => {
+  it('records a metered network failure before rethrowing', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('network down'));
+    const calls: any[] = [];
+    const env: any = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind: (...bindings: unknown[]) => ({
+            run: async () => {
+              calls.push({ sql, bindings });
+              return { success: true };
+            },
+          }),
+        }),
+      },
+      ENVIRONMENT: 'production',
+    };
+
+    await expect(
+      callAnthropicDirect({
+        apiKey: 'k',
+        model: 'claude-haiku-4-5',
+        prompt: 'hello',
+        temperature: 0,
+        maxTokens: 10,
+        responseFormat: 'json',
+        metering: {
+          env,
+          userId: 'u1',
+          clientId: null,
+          postId: 'p1',
+          operation: 'learning_text_council',
+        },
+      }),
+    ).rejects.toThrow('network down');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bindings[2]).toBe('anthropic');
+    expect(calls[0].bindings[4]).toBe('learning_text_council');
+    expect(calls[0].bindings[10]).toBe(0);
+  });
+
   it('throws on 5xx with status + body context', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response('upstream overloaded', { status: 503 }),
@@ -460,6 +501,87 @@ describe('callOpenRouter', () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ choices: [] }));
     const out = await callOpenRouter('k', 's', 'u', 0.1, 50);
     expect(out.text).toBe('');
+  });
+
+  it('records successful OpenRouter usage against the canonical workspace', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        choices: [{ message: { content: '{"ok":true}' } }],
+        usage: { prompt_tokens: 120, completion_tokens: 30 },
+      }),
+    );
+    const calls: any[] = [];
+    const env: any = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind: (...bindings: unknown[]) => ({
+            run: async () => {
+              calls.push({ sql, bindings });
+              return { success: true };
+            },
+          }),
+        }),
+      },
+      ENVIRONMENT: 'production',
+    };
+
+    await callOpenRouter('k', 's', 'u', 0.1, 50, {
+      responseFormat: 'json',
+      metering: {
+        env,
+        userId: 'u1',
+        clientId: 'c1',
+        postId: 'p1',
+        operation: 'learning_text_council',
+      },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bindings).toMatchObject({
+      0: 'u1',
+      1: 'c1',
+      2: 'openrouter',
+      4: 'learning_text_council',
+      5: 120,
+      6: 30,
+      9: 'p1',
+      10: 1,
+    });
+  });
+
+  it('records failed OpenRouter attempts before throwing', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('upstream error', { status: 500 }));
+    const calls: any[] = [];
+    const env: any = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind: (...bindings: unknown[]) => ({
+            run: async () => {
+              calls.push({ sql, bindings });
+              return { success: true };
+            },
+          }),
+        }),
+      },
+      ENVIRONMENT: 'production',
+    };
+
+    await expect(
+      callOpenRouter('k', 's', 'u', 0.1, 50, {
+        metering: {
+          env,
+          userId: 'u1',
+          clientId: null,
+          postId: 'p1',
+          operation: 'learning_harm_critic',
+        },
+      }),
+    ).rejects.toThrow(/OpenRouter 500/);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bindings[2]).toBe('openrouter');
+    expect(calls[0].bindings[4]).toBe('learning_harm_critic');
+    expect(calls[0].bindings[10]).toBe(0);
   });
 
   it('throws on 5xx with body context', async () => {

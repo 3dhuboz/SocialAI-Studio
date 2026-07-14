@@ -21,6 +21,9 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
+import { deleteLearningWorkspaceData } from '../lib/learning/deletion';
+import { deleteReachWorkspaceData } from '../lib/reach/deletion';
+import { ensureWorkspaceLearningSettings } from '../lib/provisioning';
 import { requireAuth } from '../middleware/auth';
 
 const uuid = () => crypto.randomUUID();
@@ -94,6 +97,7 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
     await c.env.DB.prepare(
       'INSERT INTO clients (id, user_id, name, business_type, created_at, plan) VALUES (?,?,?,?,?,?)'
     ).bind(id, uid, body.name ?? '', body.businessType ?? null, body.createdAt ?? new Date().toISOString(), body.plan ?? null).run();
+    await ensureWorkspaceLearningSettings(c.env.DB, uid, id, 'client', id);
     return c.json({ id });
   });
 
@@ -135,6 +139,9 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
     // child rows under a deleted client used to orphan and — if the
     // client UUID was ever reused — re-attach to the wrong owner.
     // Mirrors the user-delete pattern in routes/user.ts.
+    await deleteLearningWorkspaceData(c.env.DB, uid, clientId);
+    await deleteReachWorkspaceData(c.env.DB, uid, clientId);
+
     const purges: Array<{ name: string; sql: string; binds: unknown[] }> = [
       { name: 'posts',               sql: `DELETE FROM posts WHERE user_id = ? AND client_id = ?`,               binds: [uid, clientId] },
       { name: 'campaigns',           sql: `DELETE FROM campaigns WHERE user_id = ? AND client_id = ?`,           binds: [uid, clientId] },

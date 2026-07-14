@@ -15,6 +15,7 @@ import {
   Icon,
   TextField,
   Tag,
+  InlineGrid,
 } from '@shopify/polaris';
 import {
   SocialPostIcon, LinkIcon, LockIcon, TextIcon, ImageIcon, ClockIcon,
@@ -27,10 +28,16 @@ import {
   connectSocial,
   getDenylist,
   updateDenylist,
+  getShopifyLearningSettings,
+  getShopifyLearningReadiness,
+  updateShopifyLearningSettings,
   ApiError,
   type SocialStatus,
   type FacebookPageOption,
+  type ShopifyLearningReadiness,
+  type ShopifyLearningSettingsResponse,
 } from '../api';
+import { OrganicReachCard } from '../components/OrganicReachCard';
 import { initFB, loginFB } from '../fb-sdk';
 import './settings.css';
 
@@ -251,6 +258,10 @@ export default function Settings() {
       )}
 
       <BrandSafetyCard />
+
+      <OrganicReachCard />
+
+      <ProtectedAutopilotSettingsCard />
 
       <WhatWePublishCard />
     </BlockStack>
@@ -558,6 +569,241 @@ function ConnectedCard({ status, disconnecting, onDisconnect, onSwitchPage, swit
 }
 
 // ── What we'll publish ──────────────────────────────────────────────────
+
+function formatLearningMoney(cents: number | null): string {
+  return cents == null ? 'Unavailable' : `$${(cents / 100).toFixed(2)} USD`;
+}
+
+function learningBudgetCents(value: string): number | null {
+  const match = value.trim().match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) return null;
+  const whole = Number(match[1]);
+  const fraction = Number((match[2] ?? '').padEnd(2, '0'));
+  const cents = whole * 100 + fraction;
+  return Number.isSafeInteger(cents) && cents > 0 ? cents : null;
+}
+
+function ProtectedAutopilotSettingsCard() {
+  const [settings, setSettings] = useState<ShopifyLearningSettingsResponse | null>(null);
+  const [readiness, setReadiness] = useState<ShopifyLearningReadiness | null>(null);
+  const [budget, setBudget] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadLearning = useCallback(async (signal?: AbortSignal) => {
+    setLoadError(null);
+    try {
+      const [nextSettings, nextReadiness] = await Promise.all([
+        getShopifyLearningSettings(signal),
+        getShopifyLearningReadiness(signal),
+      ]);
+      setSettings(nextSettings);
+      setReadiness(nextReadiness);
+      setBudget(nextSettings.settings.monthlyAiBudgetUsdCents == null
+        ? ''
+        : (nextSettings.settings.monthlyAiBudgetUsdCents / 100).toFixed(2));
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setLoadError(reason instanceof ApiError ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadLearning(controller.signal);
+    return () => controller.abort();
+  }, [loadLearning]);
+
+  const saveMode = async (mode: 'approval' | 'protected_autopilot') => {
+    const cents = learningBudgetCents(budget);
+    if (mode === 'protected_autopilot' && cents == null) {
+      setLoadError('Enter a positive monthly AI ceiling with no more than two decimal places.');
+      return;
+    }
+    setSaving(true);
+    setLoadError(null);
+    try {
+      await updateShopifyLearningSettings({
+        mode,
+        consent: mode === 'protected_autopilot' ? true : undefined,
+        monthlyAiBudgetUsdCents: mode === 'protected_autopilot' ? cents : undefined,
+      });
+      await loadLearning();
+    } catch (reason) {
+      setLoadError(reason instanceof ApiError ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Card>
+        <InlineStack gap="200" blockAlign="center">
+          <Spinner size="small" accessibilityLabel="Checking Protected Autopilot gates" />
+          <Text as="span" variant="bodyMd" tone="subdued">Checking permanent safety gates...</Text>
+        </InlineStack>
+      </Card>
+    );
+  }
+
+  if (!settings || !readiness) {
+    return (
+      <Banner tone="warning" title="Protected Autopilot status unavailable">
+        <BlockStack gap="200">
+          <p>{loadError ?? 'No readiness response was returned.'}</p>
+          <Button onClick={() => { setLoading(true); void loadLearning(); }}>Try again</Button>
+        </BlockStack>
+      </Banner>
+    );
+  }
+
+  const requested = settings.settings.mode === 'protected_autopilot'
+    && settings.settings.autopublishConsentAt != null
+    && settings.settings.autopublishPolicyVersion === readiness.policyVersion;
+  const active = requested
+    && settings.effectiveMode === 'protected_autopilot'
+    && readiness.effectiveMode === 'protected_autopilot'
+    && readiness.ready
+    && !readiness.stale
+    && readiness.globalSwitches.learningBrain
+    && readiness.globalSwitches.releaseEnforcement
+    && readiness.globalSwitches.protectedAutopilot;
+  const blockers = [
+    !readiness.globalSwitches.learningBrain ? 'Learning Brain is globally disabled.' : null,
+    !readiness.globalSwitches.releaseEnforcement ? 'Release enforcement is not enabled.' : null,
+    !readiness.globalSwitches.protectedAutopilot ? 'Protected Autopilot is globally disabled.' : null,
+    readiness.stale ? 'Readiness evidence is stale.' : null,
+    !readiness.ready ? 'The release-readiness policy has not passed.' : null,
+    readiness.cost.monthlyAiSpendUsdCents == null ? 'Spend telemetry is unavailable, so activation fails closed.' : null,
+    readiness.cost.monthlyAiSpendUsdCents != null && !readiness.cost.withinBudget
+      ? 'AI spend is not proven below the monthly ceiling.'
+      : null,
+  ].filter((reason): reason is string => Boolean(reason));
+  const tenancy = readiness.checks.tenancyProofs;
+  const tenancyPassed = typeof tenancy === 'object'
+    && tenancy.user === true && tenancy.client === true && tenancy.shop === true;
+  const gates = [
+    ['Pilot decisions', readiness.checks.pilot === true],
+    ['Adjudicated decisions', readiness.checks.adjudications === true],
+    ['No severe false passes', readiness.checks.severeFalsePasses === true],
+    ['False-hold rate', readiness.checks.falseHolds === true],
+    ['Critic availability', readiness.checks.availability === true],
+    ['Decision receipt coverage', readiness.checks.receipts === true],
+    ['Prediction lift', readiness.checks.predictionLift === true],
+    ['Rank correlation', readiness.checks.rankCorrelation === true],
+    ['No critical bypasses', readiness.checks.criticalBypasses === true],
+    ['No publishing regressions', readiness.checks.publishingRegressions === true],
+    ['Cost ceiling', readiness.checks.cost === true],
+    ['Kill-switch proof', readiness.checks.killSwitch === true],
+    ['Replay and red-team proof', readiness.checks.replayRedTeam === true],
+    ['Publish regression proof', readiness.checks.publishRegression === true],
+    ['Tenant isolation proofs', tenancyPassed],
+  ] as const;
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="start" gap="300" wrap>
+          <BlockStack gap="100">
+            <InlineStack gap="200" blockAlign="center">
+              <Icon source={LockIcon} tone={active ? 'success' : 'caution'} />
+              <Text as="h3" variant="headingMd">
+                {active ? 'Protected Autopilot active' : requested ? 'Protected Autopilot pending' : 'Approval mode'}
+              </Text>
+            </InlineStack>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              {active
+                ? 'Safe posts can publish unattended. Uncertain posts are held automatically.'
+                : 'Protected publishing stays off until every independent release gate passes.'}
+            </Text>
+          </BlockStack>
+          <Badge tone={active ? 'success' : requested ? 'attention' : 'info'}>
+            {active ? 'Green' : requested ? 'Pending' : 'Protected off'}
+          </Badge>
+        </InlineStack>
+
+        {blockers.length > 0 && !active && (
+          <Banner tone="warning" title="Why it cannot activate yet">
+            <BlockStack gap="100">
+              {blockers.map((reason) => <Text key={reason} as="p" variant="bodySm">{reason}</Text>)}
+            </BlockStack>
+          </Banner>
+        )}
+        {loadError && <Banner tone="critical"><p>{loadError}</p></Banner>}
+
+        <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+            <BlockStack gap="100">
+              <Text as="p" variant="bodySm" tone="subdued">Current month AI spend</Text>
+              <Text as="p" variant="headingLg">{formatLearningMoney(readiness.cost.monthlyAiSpendUsdCents)}</Text>
+              <Text as="p" variant="bodyXs" tone="subdued">
+                {readiness.cost.telemetryCount} metered event{readiness.cost.telemetryCount === 1 ? '' : 's'}
+              </Text>
+            </BlockStack>
+          </Box>
+          <TextField
+            label="Monthly AI ceiling (USD)"
+            prefix="$"
+            value={budget}
+            onChange={setBudget}
+            inputMode="decimal"
+            autoComplete="off"
+            disabled={saving || active}
+            helpText="Protected mode cannot activate without a positive metered-spend ceiling."
+          />
+        </InlineGrid>
+
+        <Divider />
+
+        <BlockStack gap="200">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="h4" variant="headingSm">Permanent release gates</Text>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {gates.filter(([, passed]) => passed).length} of {gates.length} passed
+            </Text>
+          </InlineStack>
+          <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="200">
+            {gates.map(([label, passed]) => (
+              <Box key={label} background="bg-surface-secondary" padding="200" borderRadius="200">
+                <InlineStack gap="200" blockAlign="center" wrap={false}>
+                  <Icon source={passed ? CheckCircleIcon : AlertTriangleIcon} tone={passed ? 'success' : 'caution'} />
+                  <Text as="span" variant="bodySm">{label}</Text>
+                </InlineStack>
+              </Box>
+            ))}
+          </InlineGrid>
+        </BlockStack>
+
+        <Divider />
+
+        <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+          <Text as="p" variant="bodySm" tone="subdued">
+            A request will not activate until every gate passes. This is one workspace-level consent, not per-post approval.
+          </Text>
+          {requested ? (
+            <Button loading={saving} disabled={saving} onClick={() => { void saveMode('approval'); }}>
+              Switch to Approval mode
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              tone="success"
+              loading={saving}
+              disabled={saving || learningBudgetCents(budget) == null}
+              onClick={() => { void saveMode('protected_autopilot'); }}
+            >
+              Consent and request Protected Autopilot
+            </Button>
+          )}
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
 
 function WhatWePublishCard() {
   const items = [

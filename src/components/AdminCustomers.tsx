@@ -3,11 +3,13 @@ import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
   RefreshCw, Search, Loader2, ExternalLink, Clock,
   ChevronDown, ChevronRight, ShieldCheck, X, MessageSquare,
+  BrainCircuit, ClipboardCheck,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
   AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons, AdminPrewarmReadiness,
   AdminPostFeedback,
+  AdminLearningOperations, LearningAdjudicationInput,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
 import { PaymentList } from './PaymentList';
@@ -65,6 +67,9 @@ export const AdminCustomers: React.FC = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [prewarmReadiness, setPrewarmReadiness] = useState<AdminPrewarmReadiness | null>(null);
   const [postFeedback, setPostFeedback] = useState<AdminPostFeedback[] | null>(null);
+  const [learningOperations, setLearningOperations] = useState<AdminLearningOperations | null>(null);
+  const [learningSavingDecisionId, setLearningSavingDecisionId] = useState<string | null>(null);
+  const [learningError, setLearningError] = useState<string | null>(null);
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
@@ -90,6 +95,9 @@ export const AdminCustomers: React.FC = () => {
       db.getAdminPostFeedback(10)
         .then(r => setPostFeedback(r.feedback))
         .catch(() => setPostFeedback(null));
+      db.getAdminLearningOperations(100)
+        .then(setLearningOperations)
+        .catch(() => setLearningOperations(null));
     } catch (e: any) {
       setError(e?.message || 'Failed to load customers');
     } finally {
@@ -111,6 +119,23 @@ export const AdminCustomers: React.FC = () => {
       || (c.paypal_subscription_id || '').toLowerCase().includes(q)
     );
   }, [customers, search]);
+
+  const adjudicateLearningDecision = async (
+    decisionId: string,
+    input: LearningAdjudicationInput,
+  ) => {
+    setLearningSavingDecisionId(decisionId);
+    setLearningError(null);
+    try {
+      await db.adjudicateLearningDecision(decisionId, input);
+      setLearningOperations(await db.getAdminLearningOperations(100));
+    } catch (reason) {
+      setLearningError(reason instanceof Error ? reason.message : 'Audit label could not be saved');
+      throw reason;
+    } finally {
+      setLearningSavingDecisionId(null);
+    }
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
@@ -141,6 +166,14 @@ export const AdminCustomers: React.FC = () => {
           Added 2026-05 audit follow-up. Mounted here (above stats) so admins
           see flagged-post counts before drilling into customer metrics. */}
       <AdminQualityScan />
+
+      <LearningOperationsCard
+        operations={learningOperations}
+        loading={loading && !learningOperations}
+        savingDecisionId={learningSavingDecisionId}
+        error={learningError}
+        onAdjudicate={adjudicateLearningDecision}
+      />
 
       <PrewarmReadinessCard readiness={prewarmReadiness} loading={loading && !prewarmReadiness} />
 
@@ -287,6 +320,245 @@ export const AdminCustomers: React.FC = () => {
 // ──────────────────────────────────────────────────────────────────────────────
 // StatCard — top strip metric card. Tone controls the icon colour.
 // ──────────────────────────────────────────────────────────────────────────────
+
+const fmtRate = (value: number | null) => value == null ? 'No sample' : `${(value * 100).toFixed(1)}%`;
+
+const SampleAdjudicationForm: React.FC<{
+  decisionId: string;
+  postId: string | null;
+  observedState: string | null;
+  saving: boolean;
+  onAdjudicate: (decisionId: string, input: LearningAdjudicationInput) => Promise<void>;
+}> = ({ decisionId, postId, observedState, saving, onAdjudicate }) => {
+  const canonicalObserved = observedState === 'pass_green'
+    || observedState === 'hold_amber'
+    || observedState === 'block_red'
+    ? observedState
+    : 'pass_green';
+  const [expectedState, setExpectedState] = useState<LearningAdjudicationInput['expectedState']>(canonicalObserved);
+  const [severity, setSeverity] = useState<LearningAdjudicationInput['severity']>('advisory');
+  const [note, setNote] = useState('');
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!note.trim()) return;
+    try {
+      await onAdjudicate(decisionId, {
+        expectedState,
+        severity,
+        note: note.trim(),
+      });
+      setNote('');
+    } catch {
+      // The parent displays the API error without losing the operator's note.
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-3 rounded-xl border border-sky-400/15 bg-sky-500/[0.035] p-3.5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-bold text-sky-200/75">Sample receipt {decisionId}</p>
+          <p className="mt-0.5 text-[9px] text-white/30">
+            Post {postId ?? 'unavailable'} - Observed {(observedState ?? 'unknown').replace(/_/g, ' ')}
+          </p>
+        </div>
+        <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1 text-[9px] font-bold text-white/35">
+          Unadjudicated
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <label className="text-[10px] font-bold text-white/45">
+          Expected release state
+          <select
+            value={expectedState}
+            onChange={(event) => setExpectedState(event.target.value as LearningAdjudicationInput['expectedState'])}
+            disabled={saving}
+            className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] text-white outline-none"
+          >
+            <option value="pass_green">Pass green</option>
+            <option value="hold_amber">Hold amber</option>
+            <option value="block_red">Block red</option>
+          </select>
+        </label>
+        <label className="text-[10px] font-bold text-white/45">
+          Audit severity
+          <select
+            value={severity}
+            onChange={(event) => setSeverity(event.target.value as LearningAdjudicationInput['severity'])}
+            disabled={saving}
+            className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] text-white outline-none"
+          >
+            <option value="advisory">Advisory</option>
+            <option value="release_critical">Release critical</option>
+          </select>
+        </label>
+      </div>
+      <label className="mt-2 block text-[10px] font-bold text-white/45">
+        Required audit note
+        <textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          maxLength={2000}
+          disabled={saving}
+          placeholder="What should the independent release decision have been, and why?"
+          className="mt-1 min-h-20 w-full resize-y rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] text-white outline-none placeholder:text-white/20"
+        />
+      </label>
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[9px] leading-relaxed text-white/30">
+          This audit label cannot approve, schedule, or publish anything.
+        </p>
+        <button
+          type="submit"
+          disabled={saving || !note.trim()}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/20 bg-sky-500/10 px-3 py-1.5 text-[10px] font-bold text-sky-200 transition hover:bg-sky-500/15 disabled:opacity-40"
+        >
+          {saving ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
+          Save audit label
+        </button>
+      </div>
+    </form>
+  );
+};
+
+export const LearningOperationsCard: React.FC<{
+  operations: AdminLearningOperations | null;
+  loading: boolean;
+  savingDecisionId: string | null;
+  error?: string | null;
+  onAdjudicate: (decisionId: string, input: LearningAdjudicationInput) => Promise<void>;
+}> = ({ operations, loading, savingDecisionId, error = null, onAdjudicate }) => {
+  const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
+  const killSwitchEngaged = operations?.globalSwitches.protectedAutopilot !== true;
+
+  return (
+    <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${
+      ready ? 'border-emerald-500/20 bg-emerald-500/[0.03]' : 'border-amber-500/20 bg-amber-500/[0.03]'
+    }`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <BrainCircuit size={15} className={ready ? 'text-emerald-300' : 'text-amber-300'} />
+            <h3 className="text-sm font-black text-white">Learning and Protected Autopilot operations</h3>
+          </div>
+          <p className="mt-1 text-xs text-white/35">
+            Immutable release evidence, sampled audit labels, and global safety state.
+          </p>
+        </div>
+        {loading ? (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-white/40">
+            <Loader2 size={11} className="animate-spin" /> Loading
+          </span>
+        ) : (
+          <div className="flex flex-wrap gap-1.5 text-[9px] font-bold uppercase tracking-wider">
+            <span className={`rounded-full border px-2 py-1 ${
+              ready
+                ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+                : 'border-amber-400/20 bg-amber-500/10 text-amber-200'
+            }`}>
+              {ready ? 'Release readiness passed' : 'Release readiness pending'}
+            </span>
+            <span className={`rounded-full border px-2 py-1 ${
+              killSwitchEngaged
+                ? 'border-rose-400/20 bg-rose-500/10 text-rose-200'
+                : 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+            }`}>
+              {killSwitchEngaged ? 'Kill switch engaged' : 'Protected switch enabled'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {operations && (
+        <div className="mt-3 flex flex-wrap gap-2 text-[9px] text-white/40">
+          <span>Learning brain: {operations.globalSwitches.learningBrain ? 'on' : 'off'}</span>
+          <span>Release enforcement: {operations.globalSwitches.releaseEnforcement ? 'on' : 'off'}</span>
+          <span>Policy: {operations.policyVersion}</span>
+          <span>{operations.workspaces.length} workspace{operations.workspaces.length === 1 ? '' : 's'}</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 rounded-xl border border-rose-400/20 bg-rose-500/[0.05] px-3 py-2 text-[10px] text-rose-200/75">
+          {error}
+        </div>
+      )}
+
+      {!loading && operations?.workspaces.length === 0 && (
+        <div className="mt-3 flex items-center gap-2 text-xs text-white/35">
+          <CheckCircle size={13} className="text-emerald-300" /> No workspace learning rows yet.
+        </div>
+      )}
+
+      {operations && operations.workspaces.length > 0 && (
+        <div className="mt-4 space-y-3">
+          {operations.workspaces.map((workspace) => {
+            const currentConsent = workspace.consentAt != null
+              && workspace.consentPolicyVersion === operations.policyVersion;
+            return (
+              <div key={`${workspace.ownerKind}:${workspace.ownerId}`} className="rounded-xl border border-white/[0.07] bg-black/15 p-3.5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-white/75">{workspace.ownerId}</p>
+                    <p className="mt-0.5 text-[9px] text-white/30">
+                      {workspace.ownerKind} - {workspace.decisionCount} recent release decisions
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 text-[9px] font-bold">
+                    <span className="rounded-full border border-sky-400/15 bg-sky-500/10 px-2 py-1 text-sky-200">
+                      {workspace.mode.replace(/_/g, ' ').replace(/\b\w/g, (value) => value.toUpperCase())}
+                    </span>
+                    <span className={`rounded-full border px-2 py-1 ${
+                      workspace.onHold
+                        ? 'border-rose-400/20 bg-rose-500/10 text-rose-200'
+                        : workspace.active
+                          ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+                          : 'border-white/10 bg-white/5 text-white/40'
+                    }`}>
+                      {workspace.onHold ? 'On hold' : workspace.active ? 'Active' : 'Inactive'}
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-white/40">
+                      {currentConsent ? `Consent ${workspace.consentPolicyVersion}` : 'No current-policy consent'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                  {[
+                    ['Hold rate', fmtRate(workspace.holdRate)],
+                    ['Sampled false holds', fmtRate(workspace.sampledFalseHoldRate)],
+                    ['Critic availability', fmtRate(workspace.criticAvailability)],
+                    ['Judge receipt availability', fmtRate(workspace.judgeAvailability)],
+                    ['Severe false passes', String(workspace.severeFalsePasses)],
+                    ['Adjudication coverage', fmtRate(workspace.adjudicationCoverage)],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-lg border border-white/[0.05] bg-black/15 p-2.5">
+                      <p className="text-[9px] leading-tight text-white/30">{label}</p>
+                      <p className="mt-1 text-xs font-black text-white/70">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {workspace.sampleDecisionId ? (
+                  <SampleAdjudicationForm
+                    decisionId={workspace.sampleDecisionId}
+                    postId={workspace.samplePostId ?? null}
+                    observedState={workspace.sampleReleaseState ?? null}
+                    saving={savingDecisionId === workspace.sampleDecisionId}
+                    onAdjudicate={onAdjudicate}
+                  />
+                ) : (
+                  <p className="mt-3 text-[10px] text-white/30">No unlabelled release receipt is available in the current sample.</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const issueLabel: Record<AdminPrewarmReadiness['posts'][number]['issue'], string> = {
   missing_image: 'Missing image',

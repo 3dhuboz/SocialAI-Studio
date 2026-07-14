@@ -12,6 +12,11 @@ enabled = true
 
 [vars]
 ENVIRONMENT = "production"
+LEARNING_BRAIN_ENABLED = "true"
+LEARNING_RELEASE_ENFORCEMENT = "false"
+LEARNING_AUTOPILOT_ENABLED = "false"
+ORGANIC_REACH_ENABLED = "true"
+ORGANIC_REACH_APPLY_ENABLED = "false"
 # Public base URL for the REELS_R2 bucket (set via R2 → socialai-reels →
 # Settings → Public Development URL → Allow Access). Required so the prewarm
 # cron can persist a durable, publicly-fetchable URL on each reel post for
@@ -138,7 +143,7 @@ port = 8787
 
 [env.staging]
 name = "socialai-api-staging"
-vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev" }
+vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev", LEARNING_BRAIN_ENABLED = "true", LEARNING_RELEASE_ENFORCEMENT = "false", LEARNING_AUTOPILOT_ENABLED = "false", ORGANIC_REACH_ENABLED = "true", ORGANIC_REACH_APPLY_ENABLED = "false", SHOPIFY_APP_URL = "https://app.socialaistudio.au", SHOPIFY_APP_SCOPES = "read_products", SHOPIFY_FORCE_TEST_SHOPS = "socialai-dev-store.myshopify.com", SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e" }
 
 # Staging D1 — created 2026-05-17 via `npx wrangler d1 create socialai-db-staging`.
 # Schema bootstrapped via `wrangler d1 export socialai-db --remote` followed by
@@ -153,4 +158,8 @@ database_id = "0ce38359-c7d6-4d6e-b278-7ca1a719dbb4"
 [[env.staging.r2_buckets]]
 binding = "REELS_R2"
 bucket_name = "socialai-reels"
+
+[[env.staging.r2_buckets]]
+binding = "POSTER_ASSETS"
+bucket_name = "socialai-posters"
 preview_bucket_name = "socialai-reels"

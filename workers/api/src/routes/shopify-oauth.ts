@@ -42,6 +42,9 @@ import {
 import { createAppSubscription, shouldForceTestMode, PLAN_INFO } from '../lib/shopify-billing';
 import { exchangeSessionToken } from '../lib/shopify-token-exchange';
 import { encryptToken, decryptToken } from '../lib/crypto';
+import { deleteLearningWorkspaceData } from '../lib/learning/deletion';
+import { deleteReachWorkspaceData } from '../lib/reach/deletion';
+import { ensureWorkspaceLearningSettings } from '../lib/provisioning';
 import { shopifyGraphQL } from '../lib/shopify-admin-api';
 
 // At-rest encryption helper. When MASTER_ENCRYPTION_KEY is set, returns the
@@ -391,6 +394,7 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
          currency = COALESCE(excluded.currency, shopify_stores.currency),
          plan_name = COALESCE(excluded.plan_name, shopify_stores.plan_name)`,
     ).bind(shop, storedToken, tokenFormat, tokenData.scope ?? cfg.scopes, now, shopName, shopEmail, countryCode, currency, planName).run();
+    await ensureWorkspaceLearningSettings(c.env.DB, shop, null, 'shop', shop, now);
 
     // ── Billing handoff ────────────────────────────────────────────────
     // Wrapped in try/catch so a billing failure NEVER blocks install. The
@@ -588,6 +592,7 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
          currency = COALESCE(excluded.currency, shopify_stores.currency),
          plan_name = COALESCE(excluded.plan_name, shopify_stores.plan_name)`,
     ).bind(shop, storedToken, tokenFormat, result.scope, now, shopName, shopEmail, countryCode, currency, planName).run();
+    await ensureWorkspaceLearningSettings(c.env.DB, shop, null, 'shop', shop, now);
 
     await c.env.DB.prepare(
       `INSERT INTO shopify_billing_events
@@ -884,6 +889,9 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
     const posterKeys = (posterRows.results ?? [])
       .map((r) => r.image_r2_key)
       .filter((k): k is string => typeof k === 'string' && k.length > 0);
+
+    await deleteLearningWorkspaceData(c.env.DB, shop, `shop:${shop}`);
+    await deleteReachWorkspaceData(c.env.DB, shop, `shop:${shop}`);
 
     // 2. D1 purge. Order doesn't matter — every constraint is shop-scoped or
     //    references shopify_stores with ON DELETE CASCADE.

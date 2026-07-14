@@ -164,19 +164,25 @@ export async function callAnthropicDirect(opts: {
   };
   if (sys) body.system = sys;
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-      // 1-hour cache TTL beta header. Without this, the ttl: '1h' field is
-      // silently ignored and you get the default 5-min TTL.
-      'anthropic-beta': 'extended-cache-ttl-2025-04-11',
-    },
-    body: JSON.stringify(body),
-    signal: llmFetchSignal(),
-  });
+  let res: Response;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        // 1-hour cache TTL beta header. Without this, the ttl: '1h' field is
+        // silently ignored and you get the default 5-min TTL.
+        'anthropic-beta': 'extended-cache-ttl-2025-04-11',
+      },
+      body: JSON.stringify(body),
+      signal: llmFetchSignal(),
+    });
+  } catch (error) {
+    await logAnthropicCall(metering, model, {}, false);
+    throw error;
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -269,16 +275,48 @@ export async function callAnthropicVision(opts: {
 // /api/ai/generate ceremony (auth, rate limit, etc — those are at the
 // endpoint level). Used by /api/score-post as the OpenRouter fallback when
 // ANTHROPIC_API_KEY isn't configured.
+async function logOpenRouterCall(
+  metering: AnthropicMetering | undefined,
+  model: string,
+  usage: any,
+  ok: boolean,
+): Promise<void> {
+  if (!metering) return;
+  const tokensIn = usage?.prompt_tokens != null
+    ? Number(usage.prompt_tokens)
+    : undefined;
+  const tokensOut = usage?.completion_tokens != null
+    ? Number(usage.completion_tokens)
+    : undefined;
+  await logAiUsage(metering.env, {
+    userId: metering.userId ?? null,
+    clientId: metering.clientId ?? null,
+    postId: metering.postId ?? null,
+    provider: 'openrouter',
+    model,
+    operation: metering.operation,
+    tokensIn,
+    tokensOut,
+    estCostUsd: metering.estCostUsdOverride
+      ?? (((tokensIn ?? 0) * 1) + ((tokensOut ?? 0) * 5)) / 1_000_000,
+    ok,
+  });
+}
+
 export async function callOpenRouter(
   apiKey: string,
   systemPrompt: string,
   userPrompt: string,
   temperature: number,
   maxTokens: number,
-  opts: { responseFormat?: 'json' | 'text' } = {},
+  opts: {
+    responseFormat?: 'json' | 'text';
+    metering?: AnthropicMetering;
+  } = {},
 ): Promise<{ text: string }> {
+  const model = 'anthropic/claude-haiku-4.5';
   const body: Record<string, unknown> = {
-    model: 'anthropic/claude-haiku-4.5',
+    model,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -290,21 +328,29 @@ export async function callOpenRouter(
     body.response_format = { type: 'json_object' };
   }
 
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://socialaistudio.au',
-      'X-Title': 'SocialAI Studio',
-    },
-    body: JSON.stringify(body),
-    signal: llmFetchSignal(),
-  });
+  let res: Response;
+  try {
+    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://socialaistudio.au',
+        'X-Title': 'SocialAI Studio',
+      },
+      body: JSON.stringify(body),
+      signal: llmFetchSignal(),
+    });
+  } catch (error) {
+    await logOpenRouterCall(opts.metering, model, {}, false);
+    throw error;
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
+    await logOpenRouterCall(opts.metering, model, {}, false);
     throw new Error(`OpenRouter ${res.status}: ${errText.slice(0, 200)}`);
   }
   const data = await res.json() as any;
+  await logOpenRouterCall(opts.metering, model, data?.usage, true);
   return { text: data.choices?.[0]?.message?.content || '' };
 }

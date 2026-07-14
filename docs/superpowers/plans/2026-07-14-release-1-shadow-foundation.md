@@ -203,7 +203,7 @@ import { normalizeWorkspaceIdentity, workspaceKey } from '../lib/learning/types'
 import { loadWorkspaceLearningMode, resolveLearningMode } from '../lib/learning/workspace-mode';
 
 function modeEnv(rows: {
-  client?: { on_hold: number } | null;
+  client?: { status: string | null } | null;
   shop?: { shop_domain: string } | null;
   settings?: { mode: string } | null;
 }): Env {
@@ -266,7 +266,7 @@ describe('resolveLearningMode', () => {
   });
 
   it('returns off for an on-hold or cross-owner client', async () => {
-    await expect(loadWorkspaceLearningMode(modeEnv({ client: { on_hold: 1 } }), 'owner_1', 'client_1')).resolves.toBe('off');
+    await expect(loadWorkspaceLearningMode(modeEnv({ client: { status: 'on_hold' } }), 'owner_1', 'client_1')).resolves.toBe('off');
     await expect(loadWorkspaceLearningMode(modeEnv({ client: null }), 'owner_1', 'client_1')).resolves.toBe('off');
   });
 });
@@ -388,9 +388,9 @@ export async function loadWorkspaceLearningMode(
   }
   if (identity.ownerKind === 'client') {
     const client = await env.DB.prepare(
-      'SELECT on_hold FROM clients WHERE id = ? AND user_id = ?',
-    ).bind(identity.ownerId, identity.userId).first<{ on_hold: number | null }>();
-    if (!client || Number(client.on_hold) === 1) return 'off';
+      'SELECT status FROM clients WHERE id = ? AND user_id = ?',
+    ).bind(identity.ownerId, identity.userId).first<{ status: string | null }>();
+    if (!client || client.status?.trim().toLowerCase() === 'on_hold') return 'off';
   } else if (identity.ownerKind === 'shop') {
     const shop = await env.DB.prepare(
       'SELECT shop_domain FROM shopify_stores WHERE shop_domain = ? AND uninstalled_at IS NULL',
@@ -412,7 +412,7 @@ export async function loadWorkspaceLearningMode(
 }
 ```
 
-Extend the tests with a recording D1 fake: an owner with no row resolves to `shadow`, a client row resolves to its explicit mode, inconsistent identity tuples resolve to `off` without a settings query, a cross-owner client ID resolves to `off`, and `on_hold=1` always resolves to `off`.
+Extend the tests with a recording D1 fake: an owner with no row resolves to `shadow`, a client row resolves to its explicit mode, inconsistent identity tuples resolve to `off` without a settings query, a cross-owner client ID resolves to `off`, and `status='on_hold'` always resolves to `off`.
 
 - [ ] **Step 5: Add off-by-default Worker bindings**
 
@@ -615,7 +615,7 @@ it('creates receipts without updating posts', async () => {
 });
 ```
 
-Import `makeRecordingD1` from `./helpers/recording-d1` in this test. Add a second fixture with `clients.on_hold=1` and assert `posts_processed=0` and no decision insert.
+Import `makeRecordingD1` from `./helpers/recording-d1` in this test. Add a second fixture with `clients.status='on_hold'` and assert `posts_processed=0` and no decision insert.
 
 - [ ] **Step 2: Run the test and verify it fails**
 
@@ -643,7 +643,7 @@ export async function cronEvaluateLearningShadow(env: Env): Promise<{ posts_proc
     LEFT JOIN clients c ON c.id=p.client_id AND c.user_id=p.user_id
     WHERE p.status='Scheduled' AND p.scheduled_for > datetime('now')
       AND p.scheduled_for <= datetime('now','+24 hours')
-      AND (p.client_id IS NULL OR (c.id IS NOT NULL AND COALESCE(c.on_hold,0)=0))
+      AND (p.client_id IS NULL OR (c.id IS NOT NULL AND COALESCE(c.status,'active')!='on_hold'))
     ORDER BY p.scheduled_for ASC LIMIT 8`).all<Record<string, unknown>>();
   let processed = 0;
   for (const post of rows.results ?? []) {

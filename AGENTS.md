@@ -50,8 +50,10 @@ GitHub repo
 | Component | What it does |
 |-----------|-------------|
 | `HomeDashboard.tsx` | Main dashboard — stats, quick actions |
+| `WhatsWorkingPanel.tsx` | Customer learning summary — measured signals, predicted audiences, geography, and evidence confidence |
+| `ProtectedAutopilotPanel.tsx` | One-time consent control — readiness gates, spend ceiling, blockers, and effective learning mode |
 | `CalendarGrid.tsx` | Post calendar — view, create, edit scheduled posts |
-| `PostModal.tsx` | Post editor — content, image gen, critique, score |
+| `PostModal.tsx` | Post editor — content, image gen, critique, score, and collapsed read-only learning safety report |
 | `AdminDashboard.tsx` | Owner admin — all clients, posts, quality scan |
 | `AdminQualityScan.tsx` | Bulk image/post quality review |
 | `AdminCustomers.tsx` | Customer management |
@@ -71,6 +73,8 @@ GitHub repo
 | `PostShowcase.tsx` | Featured post display |
 | `PosterManager.tsx` (`src/pages/`) | AI poster/graphic builder |
 | `AiEnginePanel.tsx` | AI settings panel |
+| `ReachProfilePanel.tsx` | One-time organic reach geography/profile confirmation and protected audience review |
+| `OrganicReachCard.tsx` (`shopify-app/src/components/`) | Signed-session Shopify mirror of the one-time organic reach setup |
 | `AccountPanel.tsx` | Account/billing settings |
 | `AuthScreen.tsx` | Login/signup screen |
 | `CinematicTour.tsx` | Feature tour overlay |
@@ -150,6 +154,11 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
+| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
+| `tracking.ts` | Public HTTPS-only short-link redirects with aggregate, bot-filtered click counts and no personal tracking |
+| `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
+| `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
+| `shopify-learning.ts` | Signed Shopify-session settings/readiness controls and owner conversion feedback with server-derived shop identity |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -165,11 +174,18 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `campaign-research.ts` | Campaign AI research |
 | `email.ts` | Resend email helpers |
 | `post-critique.ts` | Shared critique context + stale-score invalidation rules |
+| `learning/read-model.ts` | Tenant-scoped customer learning profile, signal, and outcome read model |
 | `pricing.ts` | Plan/tier logic |
-| `provisioning.ts` | White-label workspace provisioning |
+| `provisioning.ts` | White-label workspace provisioning and insert-only canonical learning settings defaults |
 | `prompt-safety.ts` | Prompt injection detection |
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
+| `lib/learning/` | Tenant-scoped critic council, bounded repair, Release Judge, decision receipts, immutable outcomes, bounded strategy learning, and safe experiment policy |
+| `lib/learning/archetype-aggregates.ts` | Privacy-gated coarse fleet learning with 10-workspace/100-post thresholds and atomic per-archetype rebuilds |
+| `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, prediction quality, and strict tenant-scoped metric collection |
+| `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
+| `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
+| `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |
@@ -177,6 +193,10 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `dispatcher.ts` | — | Routes `scheduled()` events to the right cron handler |
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
+| `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
+| `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
+| `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
+| `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
 | `refresh-tokens.ts` | `0 3 * * *` | Refresh 60-day Facebook tokens |
 | `refresh-facts.ts` | `0 4 * * *` | Scrape FB Pages → `client_facts` engagement history |
@@ -190,7 +210,19 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v35
+**Current production schema version:** v39
+
+Release 1 migration: `workers/api/schema_v37_learning_foundation.sql`.
+
+Release 3 migration: `workers/api/schema_v38_organic_reach.sql`.
+
+Release 4 migration: `workers/api/schema_v39_learning_outcomes.sql`.
+
+Release 1 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-1-shadow-foundation.md`.
+
+Release 3 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-3-organic-reach-shadow.md`.
+
+Release 4 dormant rollout proof is recorded in `docs/superpowers/evidence/2026-07-14-release-4-learning-protected-autopilot.md`.
 
 ### Migration process
 ```bash
@@ -203,7 +235,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | Table | Purpose |
 |-------|---------|
 | `users` | Clerk users — profile, subscription, denylist (`profile` JSON) |
-| `clients` | Agency-managed clients — profile JSON, `on_hold` flag |
+| `clients` | Agency-managed clients — profile JSON; `status='on_hold'` pauses cron work |
 | `posts` | Scheduled/published posts — content, image_url, critique score |
 | `social_tokens` | FB/IG OAuth tokens per user+client |
 | `client_facts` | Engagement history scraped from FB — powers virality scorer |
@@ -211,6 +243,24 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `posters` | AI poster metadata + R2 key |
 | `activations` | Account activation codes |
 | `portals` | White-label portal configs |
+| `workspace_learning_settings` | Tenant mode, consent, policy, experiment, and AI-budget settings |
+| `learning_decisions` | Immutable tenant-scoped evaluation and release receipts |
+| `learning_critic_verdicts` | Per-critic evidence attached to decision receipts |
+| `reach_profiles` | Versioned owner-confirmed geography, timezone, service area, platforms, and cadence |
+| `audience_segments` | Private predicted/confirmed audience needs scoped to one reach profile and workspace |
+| `approved_media_assets` | Tenant-scoped media with explicit usage-rights status and matching tags |
+| `reach_plans` | Immutable shadow/selected platform, timing, hashtag, media, and experiment treatments |
+| `publication_events` | Confirmed publication receipts and due outcome-window checkpoints |
+| `learning_outcomes` | Immutable 24/72/168-hour business and engagement outcome windows |
+| `learning_signals` | Bounded tenant strategy associations learned from confirmed outcomes |
+| `learning_profiles` | Versioned tenant learning-profile summaries |
+| `learning_experiments` | Bounded tenant experiments and their measured result state |
+| `archetype_aggregates` | Privacy-thresholded, coarse cross-workspace archetype aggregates |
+| `tracking_links` | Tenant-scoped organic action and conversion tracking links |
+| `conversion_feedback` | Owner-recorded calls, messages, leads, bookings, sales, and order value |
+| `learning_adjudications` | Admin pilot labels for sampled immutable release decisions |
+| `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
+| `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
 
 ---
 
@@ -236,6 +286,12 @@ npm run build    # outputs to dist/
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
 Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`, `SOCIALAI_STUDIO_API_KEY`, `MY_ASSISTANT_INGEST_API_KEY`. My Assistant routing vars: `MY_ASSISTANT_AGENT_ACCOUNT_ID`, `MY_ASSISTANT_WORKSPACE_ID`. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
+
+Release 2 runs the Customer Learning Brain in shadow mode in production and staging with `LEARNING_BRAIN_ENABLED="true"`. Release enforcement remains disabled with `LEARNING_RELEASE_ENFORCEMENT="false"`. Shadow mode may record decision receipts and critic verdicts only. It cannot hold or change post content, media, schedules, status, or publishing behavior.
+
+Release 3 enables organic reach planning in shadow with `ORGANIC_REACH_ENABLED="true"` and keeps application disabled with `ORGANIC_REACH_APPLY_ENABLED="false"` in production and staging. Recommendation timing changes additionally require an explicit `dryRun=false` request and a confirmed reach profile, so the disabled apply flag prevents schedule writes even when a caller requests application.
+
+Release 4 controls are deployed but activation remains gated. Keep `LEARNING_RELEASE_ENFORCEMENT="false"`, `LEARNING_AUTOPILOT_ENABLED="false"`, and `ORGANIC_REACH_APPLY_ENABLED="false"` until the current-policy readiness snapshot passes every documented check with at least 30 real pilot decisions and 30 sampled adjudications. Never manufacture readiness rows or insert release evidence directly into D1; use the authenticated admin evidence route. On-hold clients, including Hugheseys Que, remain ineligible and must retain normal app access without learning release activation. Higgsfield remains a separate production gate and is not enabled by learning readiness.
 
 ---
 
@@ -294,7 +350,7 @@ import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 
 - **`wrangler deploy` fails without `--config`** — the `functions/` dir at repo root makes wrangler think it's a Pages project. Always use `npx wrangler deploy --config wrangler.toml` from `workers/api/`.
 - **Same-domain `/api/*` depends on the Pages catch-all proxy plus explicit invocation routes** — `functions/api/[[path]].js` forwards unmatched `/api/*` requests to `https://socialai-api.steve-700.workers.dev`, and `public/_routes.json` pins Pages Functions to `/api/*` + `/embed`. Without that pair, `public/_redirects` (`/* /index.html 200`) can swallow URLs like `/api/health` and serve the SPA HTML shell instead of JSON.
-- **Seamus (Hugheseys Que) is on hold** — `clients.on_hold = 1`. Cron skips automatically. Do not remove the flag without checking with Steve.
+- **Seamus (Hugheseys Que) is on hold** — the canonical field is `clients.status = 'on_hold'`. It was verified after the Release 1 production rollout. Cron skips automatically; do not change it without checking with Steve.
 - **Facebook `scheduled_publish_time` is banned** — creates uncancellable FB orphans. DB is the source of truth; the `publish-missed` cron publishes at the right time.
 - **CORS list in `index.ts`** — when adding a new white-label domain, add it to the `allowed` array at the top of `index.ts`.
 - **`tech-saas-agency` archetype** — image examples are bright daylight desk/notebook scenes. Never revert to dark UI/server rack shots.

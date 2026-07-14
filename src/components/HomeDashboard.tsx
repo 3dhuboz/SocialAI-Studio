@@ -6,6 +6,8 @@ import {
   Film, X,
 } from 'lucide-react';
 import { SocialPost, ContentCalendarStats } from '../types';
+import { ProtectedAutopilotPanel } from './ProtectedAutopilotPanel';
+import { WhatsWorkingPanel } from './WhatsWorkingPanel';
 
 interface LiveFbStats {
   fanCount: number;
@@ -24,6 +26,7 @@ interface Props {
   activePlan: string | null;
   planName?: string;
   businessName: string;
+  clientId?: string | null;
   onGoCalendar: () => void;
   onGoCreate: () => void;
   onGoSchedule: () => void;
@@ -52,7 +55,7 @@ const REELS_ANNOUNCE_KEY = 'sa_announce_dismissed_reels_v1';
 
 export const HomeDashboard: React.FC<Props> = ({
   posts, stats, liveStats, hasApiKey, fbConnected,
-  activePlan, planName, businessName,
+  activePlan, planName, businessName, clientId = null,
   onGoCalendar, onGoCreate, onGoSchedule, onGoInsights, onGoSettings,
 }) => {
   // Stable snapshot of 'now' — recalculates only when component mounts, not every render
@@ -237,6 +240,11 @@ export const HomeDashboard: React.FC<Props> = ({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="space-y-5">
+        <ProtectedAutopilotPanel clientId={clientId} />
+        <WhatsWorkingPanel clientId={clientId} />
       </div>
 
       {/* ── AI Reels launch announcement (dismissable, persists via

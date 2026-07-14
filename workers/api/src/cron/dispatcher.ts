@@ -27,6 +27,10 @@ import { cronPublishMissedPosts } from './publish-missed';
 import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
+import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
+import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
+import { cronLearnStrategies } from './learn-strategies';
+import { cronEvaluateLearningReadiness } from './evaluate-learning-readiness';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -77,6 +81,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // up to 20 imgs/tick = $0.80/tick = $9.60/hr if it ran here).
     await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
     await trackCron(env, 'prewarm_videos', () => cronPrewarmVideos(env));
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_shadow', () => cronEvaluateLearningShadow(env));
+    }
     await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
     // Poll FB Reel uploads kicked off by the publish cron. Audit P0 fix
     // (2026-05) — Phase 3 (status poll) + Phase 4 (finish) of the reel
@@ -92,6 +99,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // image_regen_count < MAX_REGEN_ATTEMPTS) so once the backlog is
     // drained these become cheap no-op COUNT(*) queries. fal.ai credits
     // check runs on the same tick — also low-frequency by design.
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_outcomes', () => cronCollectLearningOutcomes(env));
+    }
     await trackCron(env, 'backlog_critique', async () => {
       const r = await runBacklogCritique(env);
       return { posts_processed: r.scored };
@@ -124,6 +134,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // webhooks. Cheap when no Shopify shops are out of sync; runs on the same
     // 15-min cadence as health sweep since both are observability-tier work.
     await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_readiness', () => cronEvaluateLearningReadiness(env));
+    }
     return;
   }
   // Monday 7am AEST (Sunday 21:00 UTC) — Autonomous Weekly Review.
@@ -138,6 +151,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // and the fallback chain ran instead, double-firing prewarm + publish at
   // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
   if (cron === '0 21 * * SUN') {
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
+    }
     await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
     return;
   }

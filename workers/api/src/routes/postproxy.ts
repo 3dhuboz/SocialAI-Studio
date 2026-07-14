@@ -36,8 +36,12 @@ import {
   initializeConnection,
   listPlacements,
   listProfiles,
-  createPost,
 } from '../lib/postproxy';
+import {
+  publishPersistedPost,
+  recordPublishedPostBestEffort,
+  type PublicationOwnedPost,
+} from '../lib/publishing/publish-orchestrator';
 import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
 import {
   parseWebhookEvent,
@@ -47,6 +51,8 @@ import {
 import {
   normalizePostPlatform,
   buildPublishCaption,
+  loadSocialTokensForPosts,
+  lookupSocialTokens,
 } from '../cron/_shared';
 
 const uuid = () => crypto.randomUUID();
@@ -532,8 +538,16 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
 
     // Resolve our post row from the Postproxy post id.
     const postRow = await c.env.DB.prepare(
-      `SELECT id, user_id, client_id FROM posts WHERE postproxy_post_id = ? LIMIT 1`
-    ).bind(action.postproxyPostId).first<{ id: string; user_id: string | null; client_id: string | null }>();
+      `SELECT id, user_id, client_id, owner_kind, owner_id, platform
+       FROM posts WHERE postproxy_post_id = ? LIMIT 1`
+    ).bind(action.postproxyPostId).first<{
+      id: string;
+      user_id: string | null;
+      client_id: string | null;
+      owner_kind: PublicationOwnedPost['owner_kind'] | null;
+      owner_id: string | null;
+      platform: string | null;
+    }>();
     if (!postRow) {
       // Possible if the post was deleted between create + webhook, OR
       // we're double-mounted on the same Postproxy account from a
@@ -555,6 +569,19 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
              claim_at = NULL
          WHERE id = ?`
       ).bind(action.permalink ?? null, nowIso, postRow.id).run();
+      await recordPublishedPostBestEffort(c.env, {
+        id: postRow.id,
+        user_id: postRow.user_id ?? '',
+        client_id: postRow.client_id,
+        owner_kind: postRow.owner_kind as PublicationOwnedPost['owner_kind'],
+        owner_id: postRow.owner_id ?? '',
+      }, {
+        platform: normalizePostPlatform(postRow.platform),
+        remotePostId: action.postproxyPostId,
+        permalink: action.permalink ?? null,
+        decisionId: null,
+        publishedAt: nowIso,
+      });
       return c.json({ ok: true, kind: 'mark_published' });
     }
 
@@ -605,18 +632,26 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const post = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.client_id, p.content, p.hashtags, p.platform,
               p.image_url, p.video_url, p.audio_mixed_url, p.post_type,
-              p.image_prompt, p.postproxy_post_id, p.status
+              p.video_status, p.video_script, p.video_shots, p.image_prompt,
+              p.postproxy_post_id, p.status,
+              p.owner_kind, p.owner_id,
+              COALESCE(client.use_postproxy, owner.use_postproxy, 0) AS use_postproxy
        FROM posts p
-       LEFT JOIN clients c ON c.id = p.client_id
+       LEFT JOIN users owner ON owner.id = p.user_id
+       LEFT JOIN clients client ON client.id = p.client_id
        WHERE p.id = ?
-         AND (p.user_id = ? OR c.user_id = ?)`
+         AND (p.user_id = ? OR client.user_id = ?)`
     ).bind(body.postId, uid, uid).first<{
       id: string; user_id: string | null; client_id: string | null;
       content: string; hashtags: string | null; platform: string | null;
       image_url: string | null; video_url: string | null;
       audio_mixed_url: string | null; post_type: string | null;
-      image_prompt: string | null;
+      video_status: string | null; video_script: string | null;
+      video_shots: string | null; image_prompt: string | null;
       postproxy_post_id: string | null; status: string | null;
+      owner_kind: 'user' | 'client' | 'shop' | null;
+      owner_id: string | null;
+      use_postproxy: number | null;
     }>();
     if (!post) return c.json({ error: 'Post not found' }, 404);
 
@@ -643,17 +678,21 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // IG-targeted post resolves to the workspace's IG mapping (not the FB
     // row). Mirrors the cron path in publish-missed.ts.
     const postPlatform = normalizePostPlatform(post.platform);
-    const mapping = await selectProfileByWorkspace(
-      c.env,
-      post.user_id ?? uid,
-      post.client_id,
-      postPlatform,
-    );
+    const usePostproxy = c.env.ENABLE_POSTPROXY !== 'false'
+      && Number(post.use_postproxy) === 1;
+    const mapping = usePostproxy
+      ? await selectProfileByWorkspace(
+          c.env,
+          post.user_id ?? uid,
+          post.client_id,
+          postPlatform,
+        )
+      : null;
     // FB requires a placement_id (the chosen Page); IG does not (no
     // placements per docs §3299). Match the cron's check shape so the
     // failure mode is identical across the two publish paths.
     const placementMissingForFb = postPlatform === 'facebook' && !mapping?.postproxy_placement_id;
-    if (!mapping?.postproxy_profile_id || placementMissingForFb) {
+    if (usePostproxy && (!mapping?.postproxy_profile_id || placementMissingForFb)) {
       const label = postPlatform === 'instagram' ? 'Instagram' : 'Facebook';
       return c.json({
         error: `${label} not connected for this workspace — connect ${label} in Settings before publishing.`,
@@ -704,37 +743,203 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       postType: post.post_type,
       mediaUrl: media,
     });
-    if (missingMediaReason) return c.json({ error: missingMediaReason }, 400);
+    if (usePostproxy && missingMediaReason) {
+      return c.json({ error: missingMediaReason }, 400);
+    }
 
     const format: 'post' | 'reel' =
       isReel ? 'reel'
       : 'post';
 
     try {
-      const result = await createPost(c.env, {
-        profileId: mapping.postproxy_profile_id,
-        body: fullText,
-        media: postproxyMediaArray(media),
-        format,
-        // page_id is IG-irrelevant — buildCreatePostPayload drops it from
-        // the IG payload. Pass an empty string for IG so the typed arg is
-        // satisfied without leaking through. Same shape as the cron.
-        pageId: mapping.postproxy_placement_id || '',
-        title: isReel ? cleanContent.slice(0, 60) : undefined,
+      if (!post.user_id || !post.owner_kind || !post.owner_id) {
+        return c.json({
+          error: 'Post ownership metadata is incomplete. Re-save the post before publishing.',
+          code: 'OWNERSHIP_INCOMPLETE',
+        }, 409);
+      }
+      const persistedPost = {
+        id: post.id,
+        user_id: post.user_id,
+        client_id: post.client_id,
+        owner_kind: post.owner_kind,
+        owner_id: post.owner_id,
+        content: post.content,
         platform: postPlatform,
-      });
+        hashtags: post.hashtags,
+        image_url: imageUrl,
+        post_type: post.post_type,
+        video_url: post.audio_mixed_url ?? post.video_url,
+        video_status: post.video_status,
+        video_script: post.video_script,
+        video_shots: post.video_shots,
+      };
 
-      const nowIso = new Date().toISOString();
+      if (usePostproxy) {
+        if (!mapping?.postproxy_profile_id) {
+          throw new Error('Postproxy profile missing after connection validation');
+        }
+        const outcome = await publishPersistedPost(
+          c.env,
+          persistedPost,
+          {
+            backend: 'postproxy',
+            payload: {
+              profileId: mapping.postproxy_profile_id,
+              body: fullText,
+              media: postproxyMediaArray(media),
+              format,
+              // page_id is IG-irrelevant — buildCreatePostPayload drops it from
+              // the IG payload. Pass an empty string for IG so the typed arg is
+              // satisfied without leaking through. Same shape as the cron.
+              pageId: mapping.postproxy_placement_id || '',
+              title: isReel ? cleanContent.slice(0, 60) : undefined,
+              platform: postPlatform,
+            },
+          },
+        );
+        if (outcome.backend !== 'postproxy') {
+          throw new Error('Unexpected publish backend');
+        }
+        const nowIso = new Date().toISOString();
+        await c.env.DB.prepare(
+          `UPDATE posts
+           SET postproxy_post_id = ?, postproxy_sent_at = ?,
+               postproxy_status = 'pending', status = 'Publishing'
+           WHERE id = ?`,
+        ).bind(outcome.result.id, nowIso, post.id).run();
+        return c.json({ ok: true, postproxyPostId: outcome.result.id });
+      }
+
+      const tokensMap = await loadSocialTokensForPosts(c.env, [persistedPost]);
+      const tokens = lookupSocialTokens(tokensMap, persistedPost);
+      if (!tokens?.facebookPageAccessToken) {
+        return c.json({
+          error: 'Facebook is not connected for this workspace.',
+          code: 'NOT_CONNECTED',
+          platform: postPlatform,
+        }, 409);
+      }
+
+      let platformPostId = '';
+      let releaseDecisionId: string | null = null;
+      if (postPlatform === 'instagram') {
+        if (!tokens.instagramBusinessAccountId || !imageUrl?.startsWith('http')) {
+          return c.json({
+            error: 'Instagram requires a connected business account and a public image URL.',
+            code: 'NOT_CONNECTED',
+            platform: postPlatform,
+          }, 409);
+        }
+        const outcome = await publishPersistedPost(
+          c.env,
+          { ...persistedPost, image_url: imageUrl, post_type: 'image', video_url: null, video_status: null },
+          {
+            backend: 'graph_instagram',
+            accountId: tokens.instagramBusinessAccountId,
+            pageAccessToken: tokens.facebookPageAccessToken,
+            caption: fullText,
+            imageUrl,
+          },
+        );
+        if (outcome.backend !== 'graph_instagram') {
+          throw new Error('Unexpected publish backend');
+        }
+        platformPostId = outcome.mediaId;
+        releaseDecisionId = outcome.preflight.decisionId;
+      } else {
+        if (!tokens.facebookPageId) {
+          return c.json({
+            error: 'Facebook Page is not connected for this workspace.',
+            code: 'NOT_CONNECTED',
+            platform: postPlatform,
+          }, 409);
+        }
+        let target: Parameters<typeof publishPersistedPost>[2];
+        let actualPost = persistedPost;
+        if (imageUrl?.startsWith('http')) {
+          const imageResponse = await fetch(imageUrl);
+          if (!imageResponse.ok) {
+            throw new Error(`Failed to download image: ${imageResponse.status}`);
+          }
+          const form = new FormData();
+          form.append('source', await imageResponse.blob(), 'image.jpg');
+          form.append('message', fullText);
+          form.append('access_token', tokens.facebookPageAccessToken);
+          form.append('published', 'true');
+          actualPost = {
+            ...persistedPost,
+            image_url: imageUrl,
+            post_type: 'image',
+            video_url: null,
+            video_status: null,
+          };
+          target = {
+            backend: 'graph',
+            url: `https://graph.facebook.com/v21.0/${tokens.facebookPageId}/photos`,
+            init: { method: 'POST', body: form },
+          };
+        } else {
+          actualPost = {
+            ...persistedPost,
+            image_url: null,
+            post_type: 'text',
+            video_url: null,
+            video_status: null,
+          };
+          target = {
+            backend: 'graph',
+            url: `https://graph.facebook.com/v21.0/${tokens.facebookPageId}/feed`,
+            init: {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: fullText,
+                access_token: tokens.facebookPageAccessToken,
+              }),
+            },
+          };
+        }
+        const outcome = await publishPersistedPost(c.env, actualPost, target);
+        if (outcome.backend !== 'graph') {
+          throw new Error('Unexpected publish backend');
+        }
+        const raw = await outcome.response.text();
+        const result = raw ? JSON.parse(raw) : {};
+        if (!outcome.response.ok || result.error) {
+          throw new Error(result.error?.message || `Facebook publish failed (${outcome.response.status})`);
+        }
+        platformPostId = String(result.post_id || result.id || 'published');
+        releaseDecisionId = outcome.preflight.decisionId;
+      }
+
+      const publishedAt = new Date().toISOString();
       await c.env.DB.prepare(
         `UPDATE posts
-         SET postproxy_post_id = ?, postproxy_sent_at = ?,
-             postproxy_status = 'pending', status = 'Publishing'
-         WHERE id = ?`
-      ).bind(result.id, nowIso, post.id).run();
-
-      return c.json({ ok: true, postproxyPostId: result.id });
+            SET status = 'Posted', reasoning = ?, claim_id = NULL, claim_at = NULL
+          WHERE id = ?`,
+      ).bind(`Published via legacy Graph (${postPlatform})`, post.id).run();
+      await recordPublishedPostBestEffort(c.env, persistedPost, {
+        platform: postPlatform,
+        remotePostId: platformPostId || null,
+        permalink: null,
+        decisionId: releaseDecisionId,
+        publishedAt,
+      });
+      return c.json({
+        ok: true,
+        postproxyPostId: null,
+        platformPostId,
+      });
     } catch (err: any) {
       console.error('[postproxy] publish-now failed:', err?.message);
+      if (/release preflight/i.test(String(err?.message || err))) {
+        return c.json({
+          error: 'Post held by the release safety check',
+          message: String(err?.message || err),
+          code: 'RELEASE_PREFLIGHT_HOLD',
+        }, 409);
+      }
       return c.json({ error: 'Publish failed', message: String(err?.message || err) }, 502);
     }
   });
