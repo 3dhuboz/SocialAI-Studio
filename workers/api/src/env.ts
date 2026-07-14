@@ -120,6 +120,7 @@ export type Env = {
   // off-by-default flags; workspace settings can only narrow behaviour.
   LEARNING_BRAIN_ENABLED?: string;
   LEARNING_RELEASE_ENFORCEMENT?: string;
+  LEARNING_AUTOPILOT_ENABLED?: string;
   ORGANIC_REACH_ENABLED?: string;
   ORGANIC_REACH_APPLY_ENABLED?: string;
 

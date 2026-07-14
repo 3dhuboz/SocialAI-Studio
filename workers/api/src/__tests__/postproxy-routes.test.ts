@@ -30,6 +30,7 @@ interface MiniDb {
   posts: Map<string, Row>;
   postproxy_profiles: Map<string, Row>;
   postproxy_webhook_events: Map<string, Row>;
+  publication_events: Map<string, Row>;
 }
 
 function makeDb(): MiniDb {
@@ -37,6 +38,7 @@ function makeDb(): MiniDb {
     posts: new Map(),
     postproxy_profiles: new Map(),
     postproxy_webhook_events: new Map(),
+    publication_events: new Map(),
   };
 }
 
@@ -57,10 +59,27 @@ function makeD1(db: MiniDb): D1Database {
     }
 
     // SELECT ... FROM posts WHERE postproxy_post_id = ? LIMIT 1
-    if (/^SELECT id, user_id, client_id FROM posts WHERE postproxy_post_id = \? LIMIT 1$/i.test(s)) {
+    if (/^SELECT id, user_id, client_id, owner_kind, owner_id, platform FROM posts WHERE postproxy_post_id = \? LIMIT 1$/i.test(s)) {
       const ppId = params[0] as string;
       const match = [...db.posts.values()].find((p) => p.postproxy_post_id === ppId);
       return { changes: 0, rows: match ? [match] : [] };
+    }
+
+    if (/^SELECT id, reach_plan_id FROM learning_decisions/i.test(s)) {
+      return { changes: 0, rows: [] };
+    }
+
+    if (/^INSERT INTO publication_events/i.test(s)) {
+      const [id, user_id, workspace_key, client_id, owner_kind, owner_id,
+        post_id, platform, remote_post_id, permalink, decision_id,
+        reach_plan_id, published_at] = params;
+      const key = `${user_id}:${workspace_key}:${post_id}:${platform}`;
+      db.publication_events.set(key, {
+        id, user_id, workspace_key, client_id, owner_kind, owner_id,
+        post_id, platform, remote_post_id, permalink, decision_id,
+        reach_plan_id, published_at,
+      });
+      return { changes: 1, rows: [] };
     }
 
     // UPDATE posts SET status='Posted' ...
@@ -226,6 +245,7 @@ describe('POST /api/postproxy/webhook — idempotency + side effects', () => {
   it('second POST with same event_id returns dedup:true and does NOT re-update', async () => {
     db.posts.set('post_a', {
       id: 'post_a', user_id: 'user_x', client_id: null,
+      owner_kind: 'user', owner_id: 'user_x', platform: 'facebook',
       postproxy_post_id: 'pp_a', status: 'Publishing',
     });
     const { app, env } = makeApp(db, { POSTPROXY_WEBHOOK_QUERY_SECRET: 'qs' });
@@ -247,6 +267,7 @@ describe('POST /api/postproxy/webhook — idempotency + side effects', () => {
     expect(j1.kind).toBe('mark_published');
     expect(db.posts.get('post_a')!.status).toBe('Posted');
     expect(db.posts.get('post_a')!.postproxy_permalink).toBe('https://fb.com/1');
+    expect(db.publication_events.size).toBe(1);
 
     // Manually corrupt the post to assert the second call doesn't overwrite
     db.posts.get('post_a')!.status = 'Tampered';
@@ -260,6 +281,7 @@ describe('POST /api/postproxy/webhook — idempotency + side effects', () => {
     expect(j2.dedup).toBe(true);
     // Crucially: the post row was NOT updated again on the duplicate.
     expect(db.posts.get('post_a')!.status).toBe('Tampered');
+    expect(db.publication_events.size).toBe(1);
   });
 
   it('platform_post.failed marks post Missed and persists reasoning', async () => {

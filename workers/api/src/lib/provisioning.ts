@@ -14,6 +14,44 @@
 // Extracted from src/index.ts as Phase B step 21 of the route-module split.
 
 import type { Env } from '../env';
+import {
+  normalizeWorkspaceIdentity,
+  type WorkspaceOwnerKind,
+} from './learning/types';
+
+export async function ensureWorkspaceLearningSettings(
+  db: D1Database,
+  userId: string,
+  clientId: string | null,
+  ownerKind: WorkspaceOwnerKind,
+  ownerId: string,
+  now: string = new Date().toISOString(),
+): Promise<boolean> {
+  const identity = normalizeWorkspaceIdentity(
+    userId,
+    clientId,
+    ownerKind,
+    ownerId,
+  );
+  const result = await db.prepare(`
+    INSERT INTO workspace_learning_settings (
+      id,user_id,workspace_key,client_id,owner_kind,owner_id,mode,
+      autopublish_consent_at,autopublish_policy_version,experiment_rate,
+      monthly_ai_budget_usd_cents,disabled_reason,created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,'approval',NULL,NULL,0,NULL,NULL,?,?)
+    ON CONFLICT(user_id,workspace_key) DO NOTHING
+  `).bind(
+    crypto.randomUUID(),
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    now,
+    now,
+  ).run();
+  return result.meta?.changes !== 0;
+}
 
 /**
  * Create a Clerk user via the Backend API. Returns { created, userId?, error? }.

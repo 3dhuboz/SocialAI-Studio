@@ -222,6 +222,7 @@ describe('runAndPersistReleasePipeline', () => {
           candidateSeen = candidate;
           return { ...pipeline, candidate };
         },
+        predictOutcome: async () => 77,
         createReceipt: async (_db, input) => {
           receiptSeen = input;
           return 'decision-1';
@@ -245,7 +246,7 @@ describe('runAndPersistReleasePipeline', () => {
       postId: 'p1',
       stage: 'release',
       releaseState: 'pass_green',
-      summary: { verdictCount: 1, attemptCount: 1 },
+      summary: { verdictCount: 1, attemptCount: 1, predictedOutcomeScore: 77 },
     });
     expect(verdictsSeen).toEqual([[verdict]]);
     expect(result).toEqual({ id: 'decision-1', state: 'pass_green' });

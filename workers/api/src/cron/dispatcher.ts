@@ -30,6 +30,7 @@ import { cronPrewarmVideos } from './prewarm-videos';
 import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
 import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
 import { cronLearnStrategies } from './learn-strategies';
+import { cronEvaluateLearningReadiness } from './evaluate-learning-readiness';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -133,6 +134,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // webhooks. Cheap when no Shopify shops are out of sync; runs on the same
     // 15-min cadence as health sweep since both are observability-tier work.
     await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_readiness', () => cronEvaluateLearningReadiness(env));
+    }
     return;
   }
   // Monday 7am AEST (Sunday 21:00 UTC) — Autonomous Weekly Review.

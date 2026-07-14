@@ -23,6 +23,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { deleteLearningWorkspaceData } from '../lib/learning/deletion';
 import { deleteReachWorkspaceData } from '../lib/reach/deletion';
+import { ensureWorkspaceLearningSettings } from '../lib/provisioning';
 import { requireAuth } from '../middleware/auth';
 
 const uuid = () => crypto.randomUUID();
@@ -96,6 +97,7 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
     await c.env.DB.prepare(
       'INSERT INTO clients (id, user_id, name, business_type, created_at, plan) VALUES (?,?,?,?,?,?)'
     ).bind(id, uid, body.name ?? '', body.businessType ?? null, body.createdAt ?? new Date().toISOString(), body.plan ?? null).run();
+    await ensureWorkspaceLearningSettings(c.env.DB, uid, id, 'client', id);
     return c.json({ id });
   });
 

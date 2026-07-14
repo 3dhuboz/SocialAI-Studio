@@ -34,6 +34,7 @@ import type {
   ReleaseState,
   WorkspaceOwnerKind,
 } from './types';
+import { normalizeWorkspaceIdentity } from './types';
 import { loadWorkspaceLearningMode } from './workspace-mode';
 
 export interface PublishablePost {
@@ -85,8 +86,57 @@ interface ReleasePipelineRunnerDeps {
     candidate: CandidateInput,
     context: ReleaseContext,
   ): Promise<ReleasePipelineResult>;
+  predictOutcome?(db: D1Database, post: PublishablePost): Promise<number | null>;
   createReceipt(db: D1Database, input: DecisionReceiptInput): Promise<string>;
   replaceVerdicts: typeof replaceCriticVerdicts;
+}
+
+export async function predictReleaseOutcomeScore(
+  db: D1Database,
+  post: PublishablePost,
+): Promise<number | null> {
+  const identity = normalizeWorkspaceIdentity(
+    post.user_id,
+    post.client_id,
+    post.owner_kind,
+    post.owner_id,
+  );
+  const mediaFormat = post.post_type?.trim().toLowerCase() || 'text';
+  const rows = await db.prepare(`
+    SELECT effect, confidence, sample_count
+      FROM learning_signals
+     WHERE user_id = ? AND workspace_key = ?
+       AND owner_kind = ? AND owner_id = ?
+       AND variable_key = 'media_format' AND variable_value = ?
+       AND status IN ('usable','proven','operator_locked')
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.ownerKind,
+    identity.ownerId,
+    mediaFormat,
+  ).all<{ effect: number | string; confidence: number | string; sample_count: number | string }>();
+
+  let weightedEffect = 0;
+  let totalWeight = 0;
+  for (const row of rows.results ?? []) {
+    const effect = Number(row.effect);
+    const confidence = Number(row.confidence);
+    const sampleCount = Number(row.sample_count);
+    if (
+      !Number.isFinite(effect)
+      || !Number.isFinite(confidence)
+      || confidence <= 0
+      || !Number.isFinite(sampleCount)
+      || sampleCount <= 0
+    ) continue;
+    const weight = confidence * Math.sqrt(sampleCount);
+    weightedEffect += Math.max(-1, Math.min(1, effect)) * weight;
+    totalWeight += weight;
+  }
+  if (totalWeight === 0) return null;
+  const score = 50 + (weightedEffect / totalWeight) * 50;
+  return Math.round(Math.max(0, Math.min(100, score)) * 100) / 100;
 }
 
 type FinalReleaseState = Extract<
@@ -374,6 +424,12 @@ export async function runAndPersistReleasePipeline(
     (total, attempt) => total + attempt.length,
     0,
   );
+  let predictedOutcomeScore: number | null = null;
+  try {
+    predictedOutcomeScore = await (deps.predictOutcome ?? predictReleaseOutcomeScore)(env.DB, post);
+  } catch {
+    // Prediction telemetry is readiness evidence, never a publishing dependency.
+  }
   const summary = {
     pipelineState: result.state,
     candidateChanged,
@@ -382,6 +438,7 @@ export async function runAndPersistReleasePipeline(
     attemptCount: result.attempts.length,
     repairCount: result.repairHistory.length,
     verdictCount,
+    predictedOutcomeScore,
   };
   const receiptInput: DecisionReceiptInput = {
     userId: post.user_id,

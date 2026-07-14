@@ -24,4 +24,19 @@ describe('learning shadow wiring', () => {
     expect(shadowIndex).toBeGreaterThan(prewarmIndex);
     expect(publishIndex).toBeGreaterThan(shadowIndex);
   });
+
+  it('runs readiness in the isolated 15-minute lane and defaults autopilot off', () => {
+    const dispatcher = readFileSync(resolve(process.cwd(), 'src/cron/dispatcher.ts'), 'utf8');
+    const wrangler = readFileSync(resolve(process.cwd(), 'wrangler.toml'), 'utf8');
+    const env = readFileSync(resolve(process.cwd(), 'src/env.ts'), 'utf8');
+
+    expect(dispatcher).toContain(
+      "import { cronEvaluateLearningReadiness } from './evaluate-learning-readiness';",
+    );
+    const lane = dispatcher.indexOf("if (cron === '*/15 * * * *')");
+    const readiness = dispatcher.indexOf("trackCron(env, 'learning_readiness'");
+    expect(readiness).toBeGreaterThan(lane);
+    expect(env).toContain('LEARNING_AUTOPILOT_ENABLED?: string;');
+    expect(wrangler.match(/LEARNING_AUTOPILOT_ENABLED\s*=\s*"false"/g)).toHaveLength(2);
+  });
 });

@@ -22,7 +22,11 @@ import { critiqueImageInternal } from '../lib/critique';
 import { resolveArchetypeSlug } from '../lib/archetypes';
 import { generateImageWithGuardrails } from '../lib/image-gen';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from '../lib/image-safety';
-import { tryCreateClerkUser, tryCreateCFPagesProject } from '../lib/provisioning';
+import {
+  ensureWorkspaceLearningSettings,
+  tryCreateClerkUser,
+  tryCreateCFPagesProject,
+} from '../lib/provisioning';
 import { refreshFactsForWorkspace } from '../lib/facebook-facts';
 import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 import { decryptSocialTokensJson } from '../lib/social-tokens';
@@ -359,6 +363,13 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     await c.env.DB.prepare(
       'INSERT INTO clients (id, user_id, name, business_type, created_at, plan) VALUES (?,?,?,?,?,?)'
     ).bind(clientId, body.ownerUserId, body.businessName, body.businessType ?? null, new Date().toISOString(), plan).run();
+    await ensureWorkspaceLearningSettings(
+      c.env.DB,
+      body.ownerUserId,
+      clientId,
+      'client',
+      clientId,
+    );
 
     // 30-day expiry on initial issuance — admin can re-issue indefinitely
     // via PUT /api/db/portal/:slug to refresh the window (see portal.ts).

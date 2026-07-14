@@ -152,11 +152,11 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
-| `routes/learning.ts` | Authenticated decision receipts, anonymous-link creation, and tenant-scoped owner outcome feedback |
+| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
 | `tracking.ts` | Public HTTPS-only short-link redirects with aggregate, bot-filtered click counts and no personal tracking |
 | `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
 | `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
-| `shopify-learning.ts` | Signed Shopify-session owner conversion feedback with server-derived shop identity |
+| `shopify-learning.ts` | Signed Shopify-session settings/readiness controls and owner conversion feedback with server-derived shop identity |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -173,12 +173,13 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `email.ts` | Resend email helpers |
 | `post-critique.ts` | Shared critique context + stale-score invalidation rules |
 | `pricing.ts` | Plan/tier logic |
-| `provisioning.ts` | White-label workspace provisioning |
+| `provisioning.ts` | White-label workspace provisioning and insert-only canonical learning settings defaults |
 | `prompt-safety.ts` | Prompt injection detection |
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
 | `lib/learning/` | Tenant-scoped critic council, bounded repair, Release Judge, decision receipts, immutable outcomes, bounded strategy learning, and safe experiment policy |
 | `lib/learning/archetype-aggregates.ts` | Privacy-gated coarse fleet learning with 10-workspace/100-post thresholds and atomic per-archetype rebuilds |
+| `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, prediction quality, and strict tenant-scoped metric collection |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 | `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
@@ -190,6 +191,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
 | `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
+| `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
 | `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
 | `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
