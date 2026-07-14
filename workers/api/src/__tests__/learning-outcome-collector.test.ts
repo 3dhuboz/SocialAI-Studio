@@ -12,7 +12,9 @@ import {
   dueOutcomeWindows,
   fetchOutcomeSignals,
   listDueOutcomeWindows,
+  OUTCOME_MAX_ATTEMPTS,
   OUTCOME_WINDOWS,
+  recordUnavailableOutcomeAttempt,
   saveLearningOutcome,
 } from '../lib/learning/outcome-collector';
 import { cronCollectLearningOutcomes } from '../cron/collect-learning-outcomes';
@@ -178,6 +180,7 @@ describe('immutable outcome windows', () => {
 
   it('collects each canonical window once in canonical order', async () => {
     const saved: number[] = [];
+    const resolved: number[] = [];
 
     const result = await collectOutcomeWindows(
       userPublication,
@@ -192,11 +195,18 @@ describe('immutable outcome windows', () => {
         saveOutcome: async (_event, window) => {
           saved.push(window);
         },
+        recordUnavailableAttempt: async () => {
+          throw new Error('complete outcomes must not consume retry budget');
+        },
+        markAttemptResolved: async (_eventId, window) => {
+          resolved.push(window);
+        },
       },
     );
 
-    expect(result).toEqual({ saved: 3, skipped: 0 });
+    expect(result).toEqual({ saved: 3, skipped: 0, deferred: 0 });
     expect(saved).toEqual([24, 72, 168]);
+    expect(resolved).toEqual([24, 72, 168]);
   });
 
   it('skips a window already saved for the immutable publication event id', async () => {
@@ -218,6 +228,10 @@ describe('immutable outcome windows', () => {
         saveOutcome: async (_event, window) => {
           saved.push(window);
         },
+        recordUnavailableAttempt: async () => {
+          throw new Error('complete outcomes must not consume retry budget');
+        },
+        markAttemptResolved: async () => undefined,
       },
     );
 
@@ -227,13 +241,14 @@ describe('immutable outcome windows', () => {
       ['publication_1', 168],
     ]);
     expect(saved).toEqual([24, 168]);
-    expect(result).toEqual({ saved: 2, skipped: 1 });
+    expect(result).toEqual({ saved: 2, skipped: 1, deferred: 0 });
   });
 
-  it('persists an unavailable source with no numeric zero score', async () => {
+  it('defers an unavailable source instead of freezing the first failed measurement', async () => {
     const writes: Array<Record<string, unknown>> = [];
+    const attempts: number[] = [];
 
-    await collectOutcomeWindows(userPublication, [24], {
+    const result = await collectOutcomeWindows(userPublication, [24], {
       hasOutcome: async () => false,
       fetchSignals: async () => ({
         sourceStatus: 'unavailable',
@@ -243,15 +258,50 @@ describe('immutable outcome windows', () => {
       saveOutcome: async (_event, _window, outcome) => {
         writes.push(outcome);
       },
+      recordUnavailableAttempt: async (_event, window) => {
+        attempts.push(window);
+        return { attempt: 1, finalize: false, nextRetryAt: '2026-07-02T06:00:00.000Z' };
+      },
+      markAttemptResolved: async () => undefined,
     });
 
-    expect(writes).toHaveLength(1);
+    expect(result).toEqual({ saved: 0, skipped: 0, deferred: 1 });
+    expect(attempts).toEqual([24]);
+    expect(writes).toEqual([]);
+  });
+
+  it('persists an unavailable source only after the bounded retry budget is exhausted', async () => {
+    const writes: Array<Record<string, unknown>> = [];
+    const resolved: number[] = [];
+
+    const result = await collectOutcomeWindows(userPublication, [24], {
+      hasOutcome: async () => false,
+      fetchSignals: async () => ({
+        sourceStatus: 'unavailable',
+        values: {},
+        rawSignals: { facts: { status: 'unavailable' } },
+      }),
+      saveOutcome: async (_event, _window, outcome) => {
+        writes.push(outcome);
+      },
+      recordUnavailableAttempt: async () => ({
+        attempt: 4,
+        finalize: true,
+        nextRetryAt: null,
+      }),
+      markAttemptResolved: async (_eventId, window) => {
+        resolved.push(window);
+      },
+    });
+
+    expect(result).toEqual({ saved: 1, skipped: 0, deferred: 0 });
     expect(writes[0]).toMatchObject({
       sourceStatus: 'unavailable',
       score: null,
       completeness: 'none',
     });
     expect(writes[0].score).not.toBe(0);
+    expect(resolved).toEqual([24]);
   });
 
   it('turns a source exception into unavailable rather than a zero outcome', async () => {
@@ -265,6 +315,12 @@ describe('immutable outcome windows', () => {
       saveOutcome: async (_event, _window, outcome) => {
         writes.push(outcome);
       },
+      recordUnavailableAttempt: async () => ({
+        attempt: 4,
+        finalize: true,
+        nextRetryAt: null,
+      }),
+      markAttemptResolved: async () => undefined,
     });
 
     expect(writes[0]).toMatchObject({
@@ -297,6 +353,44 @@ describe('immutable outcome windows', () => {
       'partial',
       '2026-07-02T00:00:00.000Z',
     ]));
+  });
+
+  it('backs off unavailable metric retries and finalizes only on attempt four', async () => {
+    const first = makeRecordingD1();
+    const firstDecision = await recordUnavailableOutcomeAttempt(
+      first.db,
+      userPublication,
+      24,
+      '2026-07-02T00:00:00.000Z',
+    );
+
+    expect(OUTCOME_MAX_ATTEMPTS).toBe(4);
+    expect(firstDecision).toEqual({
+      attempt: 1,
+      finalize: false,
+      nextRetryAt: '2026-07-02T06:00:00.000Z',
+    });
+    expect(first.calls[0].binds).toEqual(['publication_1', 24]);
+    expect(first.calls[1].sql).toContain(
+      'ON CONFLICT(publication_event_id,window_hours) DO UPDATE',
+    );
+    expect(first.calls[1].binds).toEqual(expect.arrayContaining([
+      'publication_1',
+      24,
+      1,
+      '2026-07-02T06:00:00.000Z',
+    ]));
+
+    const final = makeRecordingD1({
+      'FROM learning_outcome_attempts': [{ attempt_count: 3, resolved_at: null }],
+    });
+    const finalDecision = await recordUnavailableOutcomeAttempt(
+      final.db,
+      userPublication,
+      168,
+      '2026-07-08T00:00:00.000Z',
+    );
+    expect(finalDecision).toEqual({ attempt: 4, finalize: true, nextRetryAt: null });
   });
 });
 
@@ -331,9 +425,12 @@ describe('due-window repository and tenant signal collection', () => {
     expect(calls[0].sql).toContain('(VALUES (24), (72), (168))');
     expect(calls[0].sql).toContain('NOT EXISTS');
     expect(calls[0].sql).toContain('FROM learning_outcomes lo');
+    expect(calls[0].sql).toContain('learning_outcome_attempts');
+    expect(calls[0].sql).toContain('next_retry_at');
     expect(calls[0].sql).toContain("'on_hold'");
     expect(calls[0].sql).toContain("'+' || w.window_hours || ' hours'");
     expect(calls[0].binds).toEqual([
+      '2026-07-02T00:00:00.000Z',
       '2026-07-02T00:00:00.000Z',
       50,
     ]);
@@ -348,13 +445,19 @@ describe('due-window repository and tenant signal collection', () => {
       sourceStatus: 'unavailable',
       values: {},
     });
-    const factCalls = calls.filter((call) => call.sql.includes('FROM client_facts'));
+    const factCalls = calls.filter((call) =>
+      call.sql.includes('platform_metric_snapshots'));
     expect(factCalls.length).toBeGreaterThanOrEqual(2);
     expect(factCalls.every((call) =>
       call.sql.includes('user_id = ?')
+      && call.sql.includes('workspace_key = ?')
       && call.sql.includes('client_id IS ?')
+      && call.sql.includes('owner_kind = ?')
+      && call.sql.includes('owner_id = ?')
       && call.binds.includes('user_1')
+      && call.binds.includes('__owner__')
       && call.binds.includes(null))).toBe(true);
+    expect(calls.some((call) => call.sql.includes('FROM client_facts'))).toBe(false);
 
     for (const table of ['tracking_links', 'conversion_feedback']) {
       const scoped = calls.filter((call) => call.sql.includes(`FROM ${table}`));
@@ -377,17 +480,23 @@ describe('due-window repository and tenant signal collection', () => {
     expect(currentConversion?.binds).toContain('post_1');
   });
 
-  it('uses Shopify facts and never queries client_facts for a shop publication', async () => {
+  it('uses tenant-scoped metric snapshots for a Shopify publication', async () => {
     const { db, calls } = makeRecordingD1();
 
     await fetchOutcomeSignals(db, shopPublication, 24);
 
-    const shopFacts = calls.filter((call) => call.sql.includes('FROM shopify_facts'));
+    const shopFacts = calls.filter((call) =>
+      call.sql.includes('platform_metric_snapshots'));
     expect(shopFacts.length).toBeGreaterThanOrEqual(2);
     expect(shopFacts.every((call) =>
-      call.sql.includes('shop_domain = ?')
-      && call.binds.includes('store.myshopify.com'))).toBe(true);
+      call.sql.includes('workspace_key = ?')
+      && call.sql.includes('owner_kind = ?')
+      && call.sql.includes('owner_id = ?')
+      && call.binds.includes('store.myshopify.com')
+      && call.binds.includes('shop:store.myshopify.com')
+      && call.binds.includes('shop'))).toBe(true);
     expect(calls.some((call) => call.sql.includes('FROM client_facts'))).toBe(false);
+    expect(calls.some((call) => call.sql.includes('FROM shopify_facts'))).toBe(false);
 
     for (const table of ['tracking_links', 'conversion_feedback']) {
       const scoped = calls.filter((call) => call.sql.includes(`FROM ${table}`));
@@ -439,6 +548,7 @@ describe('learning outcome cron', () => {
       dueEvents: 0,
       saved: 0,
       skipped: 0,
+      deferred: 0,
     });
     expect(remoteFetch).not.toHaveBeenCalled();
     const reconciliationRead = calls.find((call) => call.sql.includes('FROM posts p'));

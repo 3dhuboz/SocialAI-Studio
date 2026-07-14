@@ -22,7 +22,7 @@ describe('learning data deletion', () => {
     await deleteLearningWorkspaceData(db, userId, workspaceKey);
 
     const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
-    expect(deletes).toHaveLength(11);
+    expect(deletes).toHaveLength(13);
     expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
     expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
     expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
@@ -37,7 +37,7 @@ describe('learning data deletion', () => {
     await deleteLearningUserData(db, 'owner_1');
 
     const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
-    expect(deletes).toHaveLength(11);
+    expect(deletes).toHaveLength(13);
     expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
     expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
     expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');

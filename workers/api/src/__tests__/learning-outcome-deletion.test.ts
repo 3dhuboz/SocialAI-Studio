@@ -13,7 +13,9 @@ import { makeRecordingD1 } from './helpers/recording-d1';
 const EXPECTED_WORKSPACE_DELETE_ORDER = [
   'archetype_aggregates',
   'learning_outcomes',
+  'learning_outcome_attempts',
   'publication_events',
+  'platform_metric_snapshots',
   'conversion_feedback',
   'tracking_links',
   'learning_experiments',
