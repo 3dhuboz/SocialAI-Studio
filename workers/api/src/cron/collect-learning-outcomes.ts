@@ -17,6 +17,7 @@ export async function cronCollectLearningOutcomes(
   dueEvents: number;
   saved: number;
   skipped: number;
+  deferred: number;
 }> {
   const now = options.now ?? new Date().toISOString();
   const reconciled = await reconcilePublishedPosts(

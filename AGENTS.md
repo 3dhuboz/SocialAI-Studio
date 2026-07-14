@@ -212,11 +212,17 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Current production schema version:** v39
 
+Pending metric-window hardening migration: `workers/api/schema_v40_learning_metric_snapshots.sql`.
+Apply it before deploying Worker code that reads `platform_metric_snapshots` or
+`learning_outcome_attempts`.
+
 Release 1 migration: `workers/api/schema_v37_learning_foundation.sql`.
 
 Release 3 migration: `workers/api/schema_v38_organic_reach.sql`.
 
 Release 4 migration: `workers/api/schema_v39_learning_outcomes.sql`.
+
+Release 4 metric-window hardening migration: `workers/api/schema_v40_learning_metric_snapshots.sql`.
 
 Release 1 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-1-shadow-foundation.md`.
 
@@ -238,7 +244,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `clients` | Agency-managed clients — profile JSON; `status='on_hold'` pauses cron work |
 | `posts` | Scheduled/published posts — content, image_url, critique score |
 | `social_tokens` | FB/IG OAuth tokens per user+client |
-| `client_facts` | Engagement history scraped from FB — powers virality scorer |
+| `client_facts` | Current verified Facebook fact cache used by prompts and account analysis |
 | `campaigns` | Marketing campaigns with date ranges |
 | `posters` | AI poster metadata + R2 key |
 | `activations` | Account activation codes |
@@ -252,6 +258,8 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `reach_plans` | Immutable shadow/selected platform, timing, hashtag, media, and experiment treatments |
 | `publication_events` | Confirmed publication receipts and due outcome-window checkpoints |
 | `learning_outcomes` | Immutable 24/72/168-hour business and engagement outcome windows |
+| `platform_metric_snapshots` | Append-only, tenant-scoped Facebook metric scrapes used at exact outcome windows |
+| `learning_outcome_attempts` | Bounded 6h/12h/24h retry state before an unavailable outcome becomes final |
 | `learning_signals` | Bounded tenant strategy associations learned from confirmed outcomes |
 | `learning_profiles` | Versioned tenant learning-profile summaries |
 | `learning_experiments` | Bounded tenant experiments and their measured result state |

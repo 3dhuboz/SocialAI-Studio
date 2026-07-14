@@ -43,6 +43,17 @@ export interface OutcomeCollectorDeps {
     window: OutcomeWindow,
     outcome: LearningOutcomeWrite,
   ): Promise<void>;
+  recordUnavailableAttempt(
+    event: PersistedPublicationEvent,
+    window: OutcomeWindow,
+  ): Promise<OutcomeRetryDecision>;
+  markAttemptResolved(eventId: string, window: OutcomeWindow): Promise<void>;
+}
+
+export interface OutcomeRetryDecision {
+  attempt: number;
+  finalize: boolean;
+  nextRetryAt: string | null;
 }
 
 export interface DuePublicationWindows {
@@ -70,6 +81,12 @@ type DueOutcomeRow = {
 type FactRow = {
   engagement_score: number | string | null;
   metadata: string | null;
+  captured_at: string | null;
+};
+
+type OutcomeAttemptRow = {
+  attempt_count: number | string | null;
+  resolved_at: string | null;
 };
 
 type AggregateRow = {
@@ -99,6 +116,9 @@ interface SignalContribution {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+export const OUTCOME_RETRY_DELAYS_HOURS = Object.freeze([6, 12, 24] as const);
+export const OUTCOME_MAX_ATTEMPTS = OUTCOME_RETRY_DELAYS_HOURS.length + 1;
+const SNAPSHOT_TOLERANCE_HOURS = 18;
 
 function numberOrNull(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -231,9 +251,10 @@ export async function collectOutcomeWindows(
   event: PersistedPublicationEvent,
   windows: readonly OutcomeWindow[],
   deps: OutcomeCollectorDeps,
-): Promise<{ saved: number; skipped: number }> {
+): Promise<{ saved: number; skipped: number; deferred: number }> {
   let saved = 0;
   let skipped = 0;
+  let deferred = 0;
 
   for (const window of canonicalWindows(windows)) {
     if (await deps.hasOutcome(event.id, window)) {
@@ -259,17 +280,37 @@ export async function collectOutcomeWindows(
       ? { score: null, completeness: 'none' as const }
       : scoreOutcome(values);
 
+    let retry: OutcomeRetryDecision | null = null;
+    if (fetched.sourceStatus === 'unavailable') {
+      retry = await deps.recordUnavailableAttempt(event, window);
+      if (!retry.finalize) {
+        deferred += 1;
+        continue;
+      }
+    }
+
     await deps.saveOutcome(event, window, {
       sourceStatus: fetched.sourceStatus,
       score: scored.score,
       completeness: outcomeCompleteness(scored.completeness),
       values,
-      rawSignals: fetched.rawSignals ?? {},
+      rawSignals: retry
+        ? { ...(fetched.rawSignals ?? {}), retry }
+        : fetched.rawSignals ?? {},
     });
+    try {
+      await deps.markAttemptResolved(event.id, window);
+    } catch (error) {
+      console.warn(
+        `[CRON learning_outcomes] could not resolve retry state for ${event.id}/${window}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     saved += 1;
   }
 
-  return { saved, skipped };
+  return { saved, skipped, deferred };
 }
 
 export async function listDueOutcomeWindows(
@@ -285,6 +326,9 @@ export async function listDueOutcomeWindows(
       pe.decision_id, pe.reach_plan_id, pe.published_at, w.window_hours
     FROM publication_events pe
     CROSS JOIN outcome_windows w
+    LEFT JOIN learning_outcome_attempts oa
+      ON oa.publication_event_id = pe.id
+     AND oa.window_hours = w.window_hours
     WHERE datetime(pe.published_at, '+' || w.window_hours || ' hours') <= datetime(?)
       AND (
         pe.owner_kind != 'client'
@@ -300,9 +344,19 @@ export async function listDueOutcomeWindows(
         WHERE lo.publication_event_id = pe.id
           AND lo.window_hours = w.window_hours
       )
+      AND (
+        oa.publication_event_id IS NULL
+        OR (
+          oa.resolved_at IS NULL
+          AND (
+            oa.next_retry_at IS NULL
+            OR datetime(oa.next_retry_at) <= datetime(?)
+          )
+        )
+      )
     ORDER BY pe.published_at ASC, pe.id ASC, w.window_hours ASC
     LIMIT ?
-  `).bind(now, boundedLimit(limit)).all<DueOutcomeRow>();
+  `).bind(now, now, boundedLimit(limit)).all<DueOutcomeRow>();
 
   const grouped = new Map<string, DuePublicationWindows>();
   for (const row of result.results ?? []) {
@@ -336,59 +390,100 @@ async function loadFactSignals(
   db: D1Database,
   event: PersistedPublicationEvent,
   identity: WorkspaceIdentity,
+  window: OutcomeWindow,
   end: string,
 ): Promise<SignalContribution> {
-  const current = identity.ownerKind === 'shop'
-    ? await db.prepare(`
-        SELECT engagement_score, metadata
-        FROM shopify_facts
-        WHERE shop_domain = ?
-          AND fact_type = 'own_post'
-          AND fb_id = ?
-          AND datetime(verified_at) <= datetime(?)
-        ORDER BY datetime(verified_at) DESC
-        LIMIT 1
-      `).bind(identity.ownerId, event.remotePostId, end).first<FactRow>()
-    : await db.prepare(`
-        SELECT engagement_score, metadata
-        FROM client_facts
-        WHERE user_id = ?
-          AND client_id IS ?
-          AND fact_type = 'own_post'
-          AND fb_id = ?
-          AND datetime(verified_at) <= datetime(?)
-        ORDER BY datetime(verified_at) DESC
-        LIMIT 1
-      `).bind(
-        identity.userId,
-        identity.clientId,
-        event.remotePostId,
-        end,
-      ).first<FactRow>();
+  const current = await db.prepare(`
+    SELECT s.engagement_score, s.metadata_json AS metadata, s.captured_at
+    FROM platform_metric_snapshots s
+    WHERE s.user_id = ?
+      AND s.workspace_key = ?
+      AND s.client_id IS ?
+      AND s.owner_kind = ?
+      AND s.owner_id = ?
+      AND s.platform = ?
+      AND s.remote_post_id = ?
+      AND datetime(s.captured_at) BETWEEN
+        datetime(?, '-${SNAPSHOT_TOLERANCE_HOURS} hours')
+        AND datetime(?, '+${SNAPSHOT_TOLERANCE_HOURS} hours')
+    ORDER BY ABS(julianday(s.captured_at) - julianday(?)) ASC,
+             datetime(s.captured_at) ASC
+    LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    event.platform,
+    event.remotePostId,
+    end,
+    end,
+    end,
+  ).first<FactRow>();
 
-  const historyResult = identity.ownerKind === 'shop'
-    ? await db.prepare(`
-        SELECT engagement_score, metadata
-        FROM shopify_facts
-        WHERE shop_domain = ?
-          AND fact_type = 'own_post'
-          AND datetime(verified_at) <= datetime(?)
-        ORDER BY datetime(verified_at) DESC
-        LIMIT 100
-      `).bind(identity.ownerId, end).all<FactRow>()
-    : await db.prepare(`
-        SELECT engagement_score, metadata
-        FROM client_facts
-        WHERE user_id = ?
-          AND client_id IS ?
-          AND fact_type = 'own_post'
-          AND datetime(verified_at) <= datetime(?)
-        ORDER BY datetime(verified_at) DESC
-        LIMIT 100
-      `).bind(identity.userId, identity.clientId, end).all<FactRow>();
+  const historyResult = await db.prepare(`
+    WITH ranked_history AS (
+      SELECT
+        s.engagement_score,
+        s.metadata_json AS metadata,
+        s.captured_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY pe.id
+          ORDER BY ABS(
+            julianday(s.captured_at)
+            - julianday(datetime(pe.published_at, '+' || ? || ' hours'))
+          ) ASC,
+          datetime(s.captured_at) ASC
+        ) AS snapshot_rank
+      FROM publication_events pe
+      JOIN platform_metric_snapshots s
+        ON s.user_id = pe.user_id
+       AND s.workspace_key = pe.workspace_key
+       AND s.client_id IS pe.client_id
+       AND s.owner_kind = pe.owner_kind
+       AND s.owner_id = pe.owner_id
+       AND s.platform = pe.platform
+       AND s.remote_post_id = pe.remote_post_id
+      WHERE pe.user_id = ?
+        AND pe.workspace_key = ?
+        AND pe.client_id IS ?
+        AND pe.owner_kind = ?
+        AND pe.owner_id = ?
+        AND pe.platform = ?
+        AND pe.id <> ?
+        AND datetime(s.captured_at) BETWEEN
+          datetime(pe.published_at, '+' || ? || ' hours', '-${SNAPSHOT_TOLERANCE_HOURS} hours')
+          AND datetime(pe.published_at, '+' || ? || ' hours', '+${SNAPSHOT_TOLERANCE_HOURS} hours')
+    )
+    SELECT engagement_score, metadata, captured_at
+    FROM ranked_history
+    WHERE snapshot_rank = 1
+    ORDER BY datetime(captured_at) DESC
+    LIMIT 100
+  `).bind(
+    window,
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    event.platform,
+    event.id,
+    window,
+    window,
+  ).all<FactRow>();
 
   const contribution = emptyContribution();
   if (!current) return contribution;
+  contribution.raw.snapshotCapturedAt = current.captured_at;
+  const captured = Date.parse(current.captured_at ?? '');
+  const boundary = Date.parse(end);
+  if (Number.isFinite(captured) && Number.isFinite(boundary)) {
+    contribution.raw.measurementLagHours = Math.round(
+      (Math.abs(captured - boundary) / HOUR_MS) * 100,
+    ) / 100;
+  }
   const history = historyResult.results ?? [];
   const engagement = numberOrNull(current.engagement_score);
   if (engagement !== null) {
@@ -580,7 +675,7 @@ export async function fetchOutcomeSignals(
   const identity = canonicalIdentity(event);
   const end = windowEnd(event, window);
   const sources = await Promise.allSettled([
-    loadFactSignals(db, event, identity, end),
+    loadFactSignals(db, event, identity, window, end),
     loadTrackingSignals(db, identity, event.postId, end),
     loadConversionSignals(db, identity, event.postId, end),
   ]);
@@ -656,14 +751,81 @@ export async function saveLearningOutcome(
   ).run();
 }
 
+function retryAt(now: string, attempt: number): string | null {
+  if (attempt >= OUTCOME_MAX_ATTEMPTS) return null;
+  const timestamp = Date.parse(now);
+  if (!Number.isFinite(timestamp)) throw new Error('Outcome attempt timestamp is invalid');
+  const delayHours = OUTCOME_RETRY_DELAYS_HOURS[attempt - 1];
+  return new Date(timestamp + delayHours * HOUR_MS).toISOString();
+}
+
+export async function recordUnavailableOutcomeAttempt(
+  db: D1Database,
+  event: PersistedPublicationEvent,
+  window: OutcomeWindow,
+  now: string,
+): Promise<OutcomeRetryDecision> {
+  const existing = await db.prepare(`
+    SELECT attempt_count, resolved_at
+    FROM learning_outcome_attempts
+    WHERE publication_event_id = ? AND window_hours = ?
+    LIMIT 1
+  `).bind(event.id, window).first<OutcomeAttemptRow>();
+  const previous = Math.max(0, Number(existing?.attempt_count ?? 0));
+  const attempt = Math.min(previous + 1, OUTCOME_MAX_ATTEMPTS);
+  const nextRetryAt = retryAt(now, attempt);
+
+  await db.prepare(`
+    INSERT INTO learning_outcome_attempts (
+      id, publication_event_id, window_hours, attempt_count,
+      next_retry_at, last_attempted_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(publication_event_id,window_hours) DO UPDATE SET
+      attempt_count = excluded.attempt_count,
+      next_retry_at = excluded.next_retry_at,
+      last_attempted_at = excluded.last_attempted_at,
+      updated_at = datetime('now')
+    WHERE learning_outcome_attempts.resolved_at IS NULL
+  `).bind(
+    crypto.randomUUID(),
+    event.id,
+    window,
+    attempt,
+    nextRetryAt,
+    now,
+  ).run();
+
+  return {
+    attempt,
+    finalize: attempt >= OUTCOME_MAX_ATTEMPTS,
+    nextRetryAt,
+  };
+}
+
+export async function markOutcomeAttemptResolved(
+  db: D1Database,
+  eventId: string,
+  window: OutcomeWindow,
+  now: string,
+): Promise<void> {
+  await db.prepare(`
+    UPDATE learning_outcome_attempts
+    SET resolved_at = COALESCE(resolved_at, ?),
+        next_retry_at = NULL,
+        updated_at = datetime('now')
+    WHERE publication_event_id = ? AND window_hours = ?
+  `).bind(now, eventId, window).run();
+}
+
 export async function collectDueLearningOutcomes(
   db: D1Database,
   now: string,
   limit = 100,
-): Promise<{ dueEvents: number; saved: number; skipped: number }> {
+): Promise<{ dueEvents: number; saved: number; skipped: number; deferred: number }> {
   const due = await listDueOutcomeWindows(db, now, limit);
   let saved = 0;
   let skipped = 0;
+  let deferred = 0;
 
   for (const item of due) {
     const result = await collectOutcomeWindows(item.event, item.windows, {
@@ -671,10 +833,15 @@ export async function collectDueLearningOutcomes(
       fetchSignals: (event, window) => fetchOutcomeSignals(db, event, window),
       saveOutcome: (event, window, outcome) =>
         saveLearningOutcome(db, event, window, outcome, now),
+      recordUnavailableAttempt: (event, window) =>
+        recordUnavailableOutcomeAttempt(db, event, window, now),
+      markAttemptResolved: (eventId, window) =>
+        markOutcomeAttemptResolved(db, eventId, window, now),
     });
     saved += result.saved;
     skipped += result.skipped;
+    deferred += result.deferred;
   }
 
-  return { dueEvents: due.length, saved, skipped };
+  return { dueEvents: due.length, saved, skipped, deferred };
 }

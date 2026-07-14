@@ -72,8 +72,16 @@ async function deleteOutcomeWorkspaceData(
       WHERE user_id = ? AND workspace_key = ?
     )
   `).bind(userId, workspaceKey).run();
+  await db.prepare(`
+    DELETE FROM learning_outcome_attempts
+    WHERE publication_event_id IN (
+      SELECT id FROM publication_events
+      WHERE user_id = ? AND workspace_key = ?
+    )
+  `).bind(userId, workspaceKey).run();
   for (const table of [
     'publication_events',
+    'platform_metric_snapshots',
     'conversion_feedback',
     'tracking_links',
     'learning_experiments',
@@ -98,8 +106,15 @@ async function deleteOutcomeUserData(
       SELECT id FROM publication_events WHERE user_id = ?
     )
   `).bind(userId).run();
+  await db.prepare(`
+    DELETE FROM learning_outcome_attempts
+    WHERE publication_event_id IN (
+      SELECT id FROM publication_events WHERE user_id = ?
+    )
+  `).bind(userId).run();
   for (const table of [
     'publication_events',
+    'platform_metric_snapshots',
     'conversion_feedback',
     'tracking_links',
     'learning_experiments',
