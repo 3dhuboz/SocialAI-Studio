@@ -178,6 +178,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `lib/learning/` | Tenant-scoped critic context, independent critic council, bounded repair, Release Judge, hash-addressed decision receipts, and release preflight |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
+| `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |
@@ -185,7 +186,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `dispatcher.ts` | — | Routes `scheduled()` events to the right cron handler |
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
-| `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots of up to 8 upcoming posts |
+| `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
 | `refresh-tokens.ts` | `0 3 * * *` | Refresh 60-day Facebook tokens |
 | `refresh-facts.ts` | `0 4 * * *` | Scrape FB Pages → `client_facts` engagement history |
@@ -199,11 +200,15 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current production schema version:** v37
+**Current production schema version:** v38
 
 Release 1 migration: `workers/api/schema_v37_learning_foundation.sql`.
 
+Release 3 migration: `workers/api/schema_v38_organic_reach.sql`.
+
 Release 1 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-1-shadow-foundation.md`.
+
+Release 3 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-3-organic-reach-shadow.md`.
 
 ### Migration process
 ```bash
@@ -227,6 +232,10 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `workspace_learning_settings` | Tenant mode, consent, policy, experiment, and AI-budget settings |
 | `learning_decisions` | Immutable tenant-scoped evaluation and release receipts |
 | `learning_critic_verdicts` | Per-critic evidence attached to decision receipts |
+| `reach_profiles` | Versioned owner-confirmed geography, timezone, service area, platforms, and cadence |
+| `audience_segments` | Private predicted/confirmed audience needs scoped to one reach profile and workspace |
+| `approved_media_assets` | Tenant-scoped media with explicit usage-rights status and matching tags |
+| `reach_plans` | Immutable shadow/selected platform, timing, hashtag, media, and experiment treatments |
 
 ---
 
@@ -254,6 +263,8 @@ wrangler secret put SECRET_NAME   # from workers/api/
 Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`, `SOCIALAI_STUDIO_API_KEY`, `MY_ASSISTANT_INGEST_API_KEY`. My Assistant routing vars: `MY_ASSISTANT_AGENT_ACCOUNT_ID`, `MY_ASSISTANT_WORKSPACE_ID`. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
 
 Release 2 runs the Customer Learning Brain in shadow mode in production and staging with `LEARNING_BRAIN_ENABLED="true"`. Release enforcement remains disabled with `LEARNING_RELEASE_ENFORCEMENT="false"`. Shadow mode may record decision receipts and critic verdicts only. It cannot hold or change post content, media, schedules, status, or publishing behavior.
+
+Release 3 enables organic reach planning in shadow with `ORGANIC_REACH_ENABLED="true"` and keeps application disabled with `ORGANIC_REACH_APPLY_ENABLED="false"` in production and staging. Recommendation timing changes additionally require an explicit `dryRun=false` request and a confirmed reach profile, so the disabled apply flag prevents schedule writes even when a caller requests application.
 
 ---
 

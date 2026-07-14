@@ -541,7 +541,7 @@ Run: `cd shopify-app; npm run typecheck; npm run build`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit API and UI**
+- [x] **Step 7: Commit API and UI**
 
 ```powershell
 git add workers/api/src/routes/reach.ts workers/api/src/routes/shopify-reach.ts workers/api/src/routes/user.ts workers/api/src/routes/clients.ts workers/api/src/routes/shopify-oauth.ts workers/api/src/index.ts workers/api/src/__tests__/reach-routes.test.ts workers/api/src/__tests__/shopify-reach-routes.test.ts workers/api/src/__tests__/reach-deletion.test.ts src/components/ReachProfilePanel.tsx src/services/db.ts src/components/AiEnginePanel.tsx src/components/PostModal.tsx shopify-app/src/api.ts shopify-app/src/pages/Settings.tsx
@@ -556,30 +556,30 @@ git commit -m "feat: add organic reach setup and rationale"
 - Modify: `workers/api/wrangler.toml`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Attach shadow Reach Plans to decision receipts**
+- [x] **Step 1: Attach shadow Reach Plans to decision receipts**
 
 When `ORGANIC_REACH_ENABLED=true`, build a shadow Reach Plan for each upcoming post and persist its ID on the snapshot decision. Do not alter content, hashtags, image, platform, or `scheduled_for` while apply is false.
 
-- [ ] **Step 2: Replace generic schedule advice only in preview results**
+- [x] **Step 2: Replace generic schedule advice only in preview results**
 
 Refactor the recommendations schedule audit to call the timing ranker and return account-specific preview windows. Do not write new times unless the existing auto-fix request has `dryRun=false` and `ORGANIC_REACH_APPLY_ENABLED=true`.
 
-- [ ] **Step 3: Configure shadow flags**
+- [x] **Step 3: Configure shadow flags**
 
 ```toml
 ORGANIC_REACH_ENABLED = "true"
 ORGANIC_REACH_APPLY_ENABLED = "false"
 ```
 
-- [ ] **Step 4: Migrate staging, back up production, migrate production**
+- [x] **Step 4: Migrate staging, back up production, migrate production**
 
 Use the Release 1 migration sequence with `schema_v38_organic_reach.sql` and backup name `socialai-db-pre-v38-$stamp.sql`. Verify all four tables with `PRAGMA table_info`.
 
-- [ ] **Step 5: Run complete verification and deploy**
+- [x] **Step 5: Run complete verification and deploy**
 
 Run Worker tests/typecheck, main frontend tests/build, and Shopify typecheck/build. Deploy Worker with explicit config. Verify live health, shadow plan counts for user/client/shop ownership, zero out-of-area plans, and no post mutations while apply is false.
 
-- [ ] **Step 6: Update map, commit, push, and save**
+- [x] **Step 6: Update map, commit, push, and save**
 
 Update schema version to v38 and document all reach modules/flags in `AGENTS.md`.
 

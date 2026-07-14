@@ -2,7 +2,7 @@
 //
 // Exposes one route:
 //   POST /api/recommendations/auto-fix-checklist
-//     Body:    { items: string[], clientId?: string|null }
+//     Body:    { items: string[], clientId?: string|null, dryRun?: boolean }
 //     Returns: { results: AutoFixResult[] }
 //
 // For every checklist item the AI handed back as a `view-checklist` rec, we:
@@ -24,9 +24,8 @@
 //   - Suggested rewrites are NEVER pushed to Facebook automatically. The user
 //     reviews the diff and applies manually — same philosophy as the rest of
 //     the platform's "AI suggests, owner approves" pattern.
-//   - Schedule auto-fix only nudges posts INSIDE the recommended window
-//     (default Mon-Fri 9am-5pm AEST). If a post is already inside it, we
-//     leave it. We never widen the gap between posts — only narrow it.
+//   - Schedule changes use confirmed-profile timing evidence. D1 writes need
+//     dryRun=false, the apply flag, and a confirmed reach profile.
 //   - LLM classification falls back to a keyword sniffer if no provider key
 //     is configured, so the route degrades gracefully in local dev.
 
@@ -35,6 +34,15 @@ import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 import { backfillImagesForPastDrafts } from '../lib/backfill';
+import { getLatestReachProfile } from '../lib/reach/reach-profile';
+import {
+  isInsideRankedWindow,
+  loadReachTimingEvidence,
+  nextRankedWindowSlot,
+  rankWorkspaceTiming,
+} from '../lib/reach/timing-evidence';
+import type { RankedWindow } from '../lib/reach/timing-model';
+import type { OrganicPlatform, ReachWorkspaceScope } from '../lib/reach/types';
 import { decryptSocialTokensJson } from '../lib/social-tokens';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -62,15 +70,117 @@ interface AutoFixResult {
   payload?: Record<string, unknown>;
 }
 
-/** Recommended posting-time window. Hardcoded to Mon-Fri 9am-5pm in the
- *  workspace's timezone (defaults to Australia/Brisbane — Central QLD is the
- *  modal customer). Future iteration: pull from the workspace profile. */
+interface ScheduledPostRow {
+  id?: string;
+  scheduled_for: string;
+  platform: string | null;
+  post_type: string | null;
+}
+
+interface ScheduleTimingContext {
+  timezone: string;
+  windows: RankedWindow[];
+  source: 'account' | 'archetype' | 'legacy';
+  reachProfileId: string | null;
+  profileConfirmed: boolean;
+}
+
+/** Legacy fallback used only when no confirmed reach profile is available. */
 const WINDOW = {
   startHour: 9,
   endHour: 17,
   // Weekdays only: Mon=1 ... Fri=5. (Date.prototype.getUTCDay returns 0=Sun.)
   weekdaysOnly: true,
 };
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function normalizePlatform(value: string | null): OrganicPlatform {
+  return value?.trim().toLowerCase() === 'instagram'
+    ? 'instagram'
+    : 'facebook';
+}
+
+function normalizeMediaType(value: string | null): 'image' | 'video' {
+  const normalized = value?.trim().toLowerCase() ?? '';
+  return normalized.includes('video') || normalized.includes('reel')
+    ? 'video'
+    : 'image';
+}
+
+async function loadScheduleTimingContext(
+  env: Env,
+  uid: string,
+  clientId: string | null,
+): Promise<ScheduleTimingContext> {
+  const legacy: ScheduleTimingContext = {
+    timezone: 'UTC',
+    windows: [],
+    source: 'legacy',
+    reachProfileId: null,
+    profileConfirmed: false,
+  };
+  if (env.ORGANIC_REACH_ENABLED !== 'true') return legacy;
+  const scope: ReachWorkspaceScope = {
+    userId: uid,
+    clientId,
+    ownerKind: clientId ? 'client' : 'user',
+    ownerId: clientId ?? uid,
+  };
+  try {
+    const profile = await getLatestReachProfile(env.DB, scope);
+    if (!profile || profile.confirmationStatus !== 'confirmed') return legacy;
+    const evidence = await loadReachTimingEvidence(env.DB, scope, profile.timezone);
+    const windows = rankWorkspaceTiming(evidence);
+    return {
+      timezone: profile.timezone,
+      windows,
+      source: windows.some((window) => window.source === 'account')
+        ? 'account'
+        : 'archetype',
+      reachProfileId: profile.id,
+      profileConfirmed: true,
+    };
+  } catch {
+    return legacy;
+  }
+}
+
+function isInsideScheduleWindow(
+  row: ScheduledPostRow,
+  timing: ScheduleTimingContext,
+): boolean {
+  if (timing.source === 'legacy') return isInsideWindow(row.scheduled_for);
+  return isInsideRankedWindow(
+    row.scheduled_for,
+    timing.timezone,
+    timing.windows,
+    normalizePlatform(row.platform),
+    normalizeMediaType(row.post_type),
+  );
+}
+
+function nextScheduleWindow(
+  row: ScheduledPostRow,
+  timing: ScheduleTimingContext,
+): string {
+  if (timing.source === 'legacy') return nextWindowSlot(row.scheduled_for);
+  return nextRankedWindowSlot(
+    row.scheduled_for,
+    timing.timezone,
+    timing.windows,
+    normalizePlatform(row.platform),
+    normalizeMediaType(row.post_type),
+  );
+}
+
+function timingPreview(timing: ScheduleTimingContext): string {
+  if (timing.source === 'legacy') return 'Mon-Fri 9am-5pm';
+  const top = timing.windows[0];
+  if (!top) return `confirmed local timing (${timing.timezone})`;
+  const platform = top.platform === 'instagram' ? 'Instagram' : 'Facebook';
+  return `${WEEKDAY_LABELS[top.weekday]} ${String(top.startHour).padStart(2, '0')}:00-${String(top.endHour).padStart(2, '0')}:00 ${platform}/${top.mediaType} (${timing.timezone}, ${top.source})`;
+}
 
 // ── Classifier ───────────────────────────────────────────────────────────
 
@@ -208,12 +318,13 @@ async function handleAuditDb(
   item: string,
 ): Promise<AutoFixResult> {
   const scheduled = await env.DB.prepare(
-    `SELECT scheduled_for FROM posts
+    `SELECT scheduled_for, platform, post_type FROM posts
      WHERE user_id = ? AND COALESCE(client_id, '') = ?
        AND status = 'Scheduled' AND scheduled_for IS NOT NULL`
-  ).bind(uid, clientId || '').all<{ scheduled_for: string }>();
+  ).bind(uid, clientId || '').all<ScheduledPostRow>();
   const rows = scheduled.results || [];
-  const outsideWindow = rows.filter((r) => !isInsideWindow(r.scheduled_for));
+  const timing = await loadScheduleTimingContext(env, uid, clientId);
+  const outsideWindow = rows.filter((row) => !isInsideScheduleWindow(row, timing));
 
   const factsRow = await env.DB.prepare(
     `SELECT COUNT(*) as cnt, AVG(engagement_score) as avg_score
@@ -226,6 +337,12 @@ async function handleAuditDb(
     lines.push('No scheduled posts to audit.');
   } else {
     lines.push(`${rows.length} post(s) scheduled — ${outsideWindow.length} fall outside Mon-Fri 9am-5pm.`);
+  }
+  if (timing.source !== 'legacy') {
+    if (rows.length > 0) {
+      lines[0] = `${rows.length} post(s) scheduled — ${outsideWindow.length} fall outside ${timingPreview(timing)}.`;
+    }
+    lines.push(`Timing preview uses ${timing.source} evidence in ${timing.timezone}.`);
   }
   if (factsRow && factsRow.cnt > 0) {
     const avg = Math.round(factsRow.avg_score ?? 0);
@@ -244,6 +361,10 @@ async function handleAuditDb(
       outside_window_count: outsideWindow.length,
       historical_posts: factsRow?.cnt ?? 0,
       avg_engagement_score: factsRow?.avg_score ?? null,
+      timing_source: timing.source,
+      timezone: timing.timezone,
+      reach_profile_id: timing.reachProfileId,
+      recommended_windows: timing.windows.slice(0, 8),
     },
   };
 }
@@ -320,42 +441,54 @@ async function handleAuditFbPage(
   }
 }
 
-/** AUTO_FIX_SCHEDULE — shift Scheduled posts whose scheduled_for falls
- *  outside Mon-Fri 9am-5pm into the next slot inside the window. Honours
- *  `preview` to support a dry-run mode in future without changing the call
- *  shape. */
+/** AUTO_FIX_SCHEDULE previews account-ranked shifts by default. Applying a
+ *  shift requires explicit request consent, the apply flag, and a confirmed
+ *  reach profile. */
 async function handleAutoFixSchedule(
   env: Env,
   uid: string,
   clientId: string | null,
   item: string,
-  opts: { preview: boolean } = { preview: false },
+  opts: { preview: boolean } = { preview: true },
 ): Promise<AutoFixResult> {
+  const timing = await loadScheduleTimingContext(env, uid, clientId);
   const rows = await env.DB.prepare(
-    `SELECT id, scheduled_for FROM posts
+    `SELECT id, scheduled_for, platform, post_type FROM posts
      WHERE user_id = ? AND COALESCE(client_id, '') = ?
        AND status = 'Scheduled' AND scheduled_for IS NOT NULL`
-  ).bind(uid, clientId || '').all<{ id: string; scheduled_for: string }>();
+  ).bind(uid, clientId || '').all<ScheduledPostRow & { id: string }>();
   const all = rows.results || [];
-  const offenders = all.filter((r) => !isInsideWindow(r.scheduled_for));
+  const offenders = all.filter((row) => !isInsideScheduleWindow(row, timing));
+  const applyEnabled = env.ORGANIC_REACH_APPLY_ENABLED === 'true';
+  const mayApply = !opts.preview && applyEnabled && timing.profileConfirmed;
 
   if (offenders.length === 0) {
     return {
       item,
       kind: 'auto_fix',
       status: 'ok',
-      details: `All ${all.length} scheduled posts already fall inside Mon-Fri 9am-5pm. Nothing to shift.`,
-      payload: { shifted: 0, total: all.length },
+      details: `All ${all.length} scheduled posts already fall inside ${timingPreview(timing)}. Nothing to shift.`,
+      payload: {
+        shifted: 0,
+        total: all.length,
+        applied: false,
+        dry_run: opts.preview,
+        apply_enabled: applyEnabled,
+        timing_source: timing.source,
+        timezone: timing.timezone,
+        profile_confirmed: timing.profileConfirmed,
+        recommended_windows: timing.windows.slice(0, 8),
+      },
     };
   }
 
   const shifts: Array<{ id: string; from: string; to: string }> = [];
   for (const p of offenders) {
-    const next = nextWindowSlot(p.scheduled_for);
+    const next = nextScheduleWindow(p, timing);
     shifts.push({ id: p.id, from: p.scheduled_for, to: next });
   }
 
-  if (!opts.preview) {
+  if (mayApply) {
     // Apply shifts one row at a time — D1 doesn't have native multi-row
     // update with per-row values, and the per-row count is small (worst-case
     // ~50 across a Smart Schedule batch).
@@ -369,13 +502,21 @@ async function handleAutoFixSchedule(
   return {
     item,
     kind: 'auto_fix',
-    status: opts.preview ? 'suggested' : 'fixed',
-    details: opts.preview
-      ? `Would shift ${shifts.length} post(s) to land inside Mon-Fri 9am-5pm.`
-      : `Shifted ${shifts.length} post(s) into Mon-Fri 9am-5pm.`,
+    status: mayApply ? 'fixed' : 'suggested',
+    details: mayApply
+      ? `Shifted ${shifts.length} post(s) into ${timingPreview(timing)}.`
+      : `Would shift ${shifts.length} post(s) into ${timingPreview(timing)}. No schedule changes were applied.`,
     payload: {
       shifted: shifts.length,
       total: all.length,
+      applied: mayApply,
+      dry_run: opts.preview,
+      apply_enabled: applyEnabled,
+      timing_source: timing.source,
+      timezone: timing.timezone,
+      reach_profile_id: timing.reachProfileId,
+      profile_confirmed: timing.profileConfirmed,
+      recommended_windows: timing.windows.slice(0, 8),
       shifts: shifts.slice(0, 10), // cap to keep the payload bounded
     },
   };
@@ -598,14 +739,11 @@ async function loadTokens(
   return decryptSocialTokensJson<Record<string, unknown>>(env, row.social_tokens);
 }
 
-/** Is `iso` inside Mon-Fri 9am-5pm? We work in UTC here because that's
- *  what's stored in D1 — the AEST window translates to UTC 23:00 prev day
- *  through 07:00 current day. To keep this dependency-free we approximate
- *  in UTC: many AU customers schedule from BNE/SYD time anyway, so the
- *  practical case is "an hour passed UTC midnight" which we accept. A
- *  future iteration can pull the workspace timezone from the profile. */
+/** Legacy Mon-Fri 9am-5pm check. Canonical naive values are AEST wall time;
+ *  timestamped values preserve their explicit instant. */
 export function isInsideWindow(iso: string): boolean {
-  const d = new Date(iso);
+  const naive = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(iso);
+  const d = new Date(naive ? `${iso}Z` : iso);
   if (isNaN(d.getTime())) return false;
   const day = d.getUTCDay();
   const hour = d.getUTCHours();
@@ -613,10 +751,10 @@ export function isInsideWindow(iso: string): boolean {
   return hour >= WINDOW.startHour && hour < WINDOW.endHour;
 }
 
-/** Next valid window slot after `iso`. If `iso` is on a weekend, jump to
- *  Monday 9am. If after 5pm, jump to next weekday 9am. Returns ISO string. */
+/** Next legacy window slot, preserving the canonical naive-AEST format. */
 export function nextWindowSlot(iso: string): string {
-  const d = new Date(iso);
+  const naive = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(iso);
+  const d = new Date(naive ? `${iso}Z` : iso);
   if (isNaN(d.getTime())) return new Date().toISOString();
 
   // Walk forward in 1-hour steps until we land in the window. Cap at 14d
@@ -624,7 +762,11 @@ export function nextWindowSlot(iso: string): string {
   // Schedule batch ever runs.
   for (let i = 0; i < 14 * 24; i++) {
     const candidate = new Date(d.getTime() + i * 60 * 60 * 1000);
-    if (isInsideCandidate(candidate)) return candidate.toISOString();
+    if (isInsideCandidate(candidate)) {
+      return naive
+        ? candidate.toISOString().replace(/\.\d{3}Z$/, '')
+        : candidate.toISOString();
+    }
   }
   return d.toISOString();
 }
@@ -649,6 +791,7 @@ export function registerRecommendationsRoutes(app: Hono<{ Bindings: Env }>): voi
     const body = await c.req.json().catch(() => ({})) as {
       items?: unknown;
       clientId?: string | null;
+      dryRun?: unknown;
     };
     const itemsRaw = Array.isArray(body.items) ? body.items : [];
     const items: string[] = itemsRaw
@@ -657,6 +800,7 @@ export function registerRecommendationsRoutes(app: Hono<{ Bindings: Env }>): voi
       .filter((s) => s.length > 0)
       .slice(0, 20); // hard cap — checklists rarely exceed 7
     const clientId = body.clientId ?? null;
+    const dryRun = body.dryRun !== false;
 
     if (items.length === 0) {
       return c.json({ error: 'items array is required and must be non-empty' }, 400);
@@ -687,7 +831,13 @@ export function registerRecommendationsRoutes(app: Hono<{ Bindings: Env }>): voi
             results.push(await handleAuditDb(c.env, uid, clientId, item));
             break;
           case 'AUTO_FIX_SCHEDULE':
-            results.push(await handleAutoFixSchedule(c.env, uid, clientId, item));
+            results.push(await handleAutoFixSchedule(
+              c.env,
+              uid,
+              clientId,
+              item,
+              { preview: dryRun },
+            ));
             break;
           case 'SUGGEST_REWRITE':
             results.push(await handleSuggestRewrite(c.env, uid, clientId, item));

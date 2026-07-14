@@ -49,6 +49,7 @@ interface MiniDb {
   clients: Map<string, Row>;
   posts: Map<string, Row>;
   client_facts: Row[];
+  reach_profiles: Row[];
 }
 
 function makeDb(): MiniDb {
@@ -57,6 +58,7 @@ function makeDb(): MiniDb {
     clients: new Map(),
     posts: new Map(),
     client_facts: [],
+    reach_profiles: [],
   };
 }
 
@@ -71,27 +73,51 @@ function makeD1(db: MiniDb): D1Database {
       if (c && c.user_id === uid) return { changes: 0, rows: [{ id }] };
       return { changes: 0, rows: [] };
     }
+    if (/^SELECT id FROM users WHERE id = \?$/i.test(s)) {
+      const user = db.users.get(params[0] as string);
+      return { changes: 0, rows: user ? [{ id: user.id }] : [] };
+    }
+
+    if (/^SELECT \* FROM reach_profiles WHERE user_id = \? AND workspace_key = \? AND owner_kind = \? AND owner_id = \? ORDER BY version DESC LIMIT 1$/i.test(s)) {
+      const [userId, workspaceKey, ownerKind, ownerId] = params as string[];
+      const rows = db.reach_profiles
+        .filter((profile) => profile.user_id === userId
+          && profile.workspace_key === workspaceKey
+          && profile.owner_kind === ownerKind
+          && profile.owner_id === ownerId)
+        .sort((a, b) => Number(b.version) - Number(a.version));
+      return { changes: 0, rows: rows.slice(0, 1) };
+    }
 
     // ── posts: read scheduled, COALESCE(client_id, '') = ? ─────────────
-    if (/^SELECT scheduled_for FROM posts WHERE user_id = \? AND COALESCE\(client_id, ''\) = \? AND status = 'Scheduled' AND scheduled_for IS NOT NULL$/i.test(s)) {
+    if (/^SELECT scheduled_for, platform, post_type FROM posts WHERE user_id = \? AND COALESCE\(client_id, ''\) = \? AND status = 'Scheduled' AND scheduled_for IS NOT NULL$/i.test(s)) {
       const [uid, clientId] = params as [string, string];
       const rows = [...db.posts.values()].filter((p) =>
         p.user_id === uid
         && (p.client_id || '') === clientId
         && p.status === 'Scheduled'
         && p.scheduled_for !== null
-      ).map((p) => ({ scheduled_for: p.scheduled_for }));
+      ).map((p) => ({
+        scheduled_for: p.scheduled_for,
+        platform: p.platform ?? 'facebook',
+        post_type: p.post_type ?? 'image',
+      }));
       return { changes: 0, rows };
     }
 
-    if (/^SELECT id, scheduled_for FROM posts WHERE user_id = \? AND COALESCE\(client_id, ''\) = \? AND status = 'Scheduled' AND scheduled_for IS NOT NULL$/i.test(s)) {
+    if (/^SELECT id, scheduled_for, platform, post_type FROM posts WHERE user_id = \? AND COALESCE\(client_id, ''\) = \? AND status = 'Scheduled' AND scheduled_for IS NOT NULL$/i.test(s)) {
       const [uid, clientId] = params as [string, string];
       const rows = [...db.posts.values()].filter((p) =>
         p.user_id === uid
         && (p.client_id || '') === clientId
         && p.status === 'Scheduled'
         && p.scheduled_for !== null
-      ).map((p) => ({ id: p.id, scheduled_for: p.scheduled_for }));
+      ).map((p) => ({
+        id: p.id,
+        scheduled_for: p.scheduled_for,
+        platform: p.platform ?? 'facebook',
+        post_type: p.post_type ?? 'image',
+      }));
       return { changes: 0, rows };
     }
 
@@ -117,6 +143,19 @@ function makeD1(db: MiniDb): D1Database {
         ? rows.reduce((s, f) => s + (f.engagement_score as number), 0) / cnt
         : null;
       return { changes: 0, rows: [{ cnt, avg_score: avg }] };
+    }
+
+    if (/^SELECT metadata, engagement_score FROM client_facts/i.test(s)) {
+      const [uid, clientId] = params as [string, string];
+      const rows = db.client_facts.filter((fact) =>
+        fact.user_id === uid
+        && (fact.client_id || '') === clientId
+        && fact.fact_type === 'own_post'
+      ).map((fact) => ({
+        metadata: fact.metadata ?? null,
+        engagement_score: fact.engagement_score ?? null,
+      }));
+      return { changes: 0, rows };
     }
 
     // ── social_tokens reads
@@ -171,7 +210,7 @@ function makeD1(db: MiniDb): D1Database {
   return { prepare } as unknown as D1Database;
 }
 
-function makeApp(db: MiniDb) {
+function makeApp(db: MiniDb, overrides: Partial<Env> = {}) {
   const app = new Hono<{ Bindings: Env }>();
   registerRecommendationsRoutes(app);
   const env = {
@@ -179,6 +218,7 @@ function makeApp(db: MiniDb) {
     CLERK_SECRET_KEY: 'sk_test',
     // No LLM provider keys → classifier falls back to the keyword sniffer
     // (hermetic, no fetch needed).
+    ...overrides,
   } as unknown as Env;
   return { app, env };
 }
@@ -330,12 +370,88 @@ describe('AUDIT_DB handler', () => {
     const json = await res.json() as { results: Array<{ kind: string; status: string }> };
     expect(json.results[0].status).toBe('ok');
   });
+
+  it('returns account-ranked preview windows in the confirmed local timezone', async () => {
+    db.users.set('user_a', { id: 'user_a' });
+    db.reach_profiles.push({
+      id: 'profile_1',
+      user_id: 'user_a',
+      client_id: null,
+      workspace_key: '__owner__',
+      owner_kind: 'user',
+      owner_id: 'user_a',
+      version: 3,
+      confirmation_status: 'confirmed',
+      timezone: 'Australia/Brisbane',
+      base_location_json: JSON.stringify({ country: 'Australia', region: 'QLD', locality: 'Gladstone' }),
+      service_area_json: JSON.stringify({ radiusKm: 30, included: ['Gladstone'] }),
+      excluded_locations_json: '[]',
+      platforms_json: '["facebook","instagram"]',
+      cadence_json: '{}',
+      confirmed_at: '2026-07-14T00:00:00.000Z',
+    });
+    for (let i = 0; i < 5; i += 1) {
+      db.client_facts.push({
+        user_id: 'user_a',
+        client_id: null,
+        fact_type: 'own_post',
+        metadata: JSON.stringify({ created_time: `2026-07-17T08:0${i}:00.000Z` }),
+        engagement_score: 80 + i,
+      });
+    }
+
+    const { app, env } = makeApp(db, { ORGANIC_REACH_ENABLED: 'true' });
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items: ['Look at recent engagement data in the database'] }),
+    }, env);
+    const json = await res.json() as { results: Array<{ payload?: any; details: string }> };
+
+    expect(json.results[0].payload.timing_source).toBe('account');
+    expect(json.results[0].payload.timezone).toBe('Australia/Brisbane');
+    expect(json.results[0].payload.recommended_windows[0]).toMatchObject({
+      weekday: 5,
+      startHour: 18,
+      endHour: 19,
+      source: 'account',
+      sampleSize: 5,
+    });
+    expect(json.results[0].details).not.toContain('Mon-Fri 9am-5pm');
+  });
 });
 
 // ── AUTO_FIX_SCHEDULE handler ───────────────────────────────────────────
 
 describe('AUTO_FIX_SCHEDULE handler', () => {
-  it('shifts posts outside the window into the next valid slot and updates D1', async () => {
+  it('shifts posts only with explicit consent and the apply flag enabled', async () => {
+    db.users.set('user_a', { id: 'user_a' });
+    db.reach_profiles.push({
+      id: 'profile_apply',
+      user_id: 'user_a',
+      client_id: null,
+      workspace_key: '__owner__',
+      owner_kind: 'user',
+      owner_id: 'user_a',
+      version: 1,
+      confirmation_status: 'confirmed',
+      timezone: 'Australia/Brisbane',
+      base_location_json: JSON.stringify({ country: 'Australia', region: 'QLD', locality: 'Gladstone' }),
+      service_area_json: JSON.stringify({ radiusKm: 30, included: ['Gladstone'] }),
+      excluded_locations_json: '[]',
+      platforms_json: '["facebook"]',
+      cadence_json: '{}',
+      confirmed_at: '2026-07-14T00:00:00.000Z',
+    });
+    for (let i = 0; i < 5; i += 1) {
+      db.client_facts.push({
+        user_id: 'user_a',
+        client_id: null,
+        fact_type: 'own_post',
+        metadata: JSON.stringify({ created_time: `2026-07-14T14:0${i}:00.000Z` }),
+        engagement_score: 80 + i,
+      });
+    }
     // Saturday 3am UTC — needs to move to Monday 9am UTC
     db.posts.set('p1', {
       id: 'p1', user_id: 'user_a', client_id: null,
@@ -353,24 +469,101 @@ describe('AUTO_FIX_SCHEDULE handler', () => {
     });
     const original3 = db.posts.get('p3')!.scheduled_for;
 
-    const { app, env } = makeApp(db);
+    const { app, env } = makeApp(db, {
+      ORGANIC_REACH_ENABLED: 'true',
+      ORGANIC_REACH_APPLY_ENABLED: 'true',
+    });
     const res = await app.request('/api/recommendations/auto-fix-checklist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
       body: JSON.stringify({
         items: ['Reschedule posts to align with business hours 9am-5pm'],
+        dryRun: false,
       }),
     }, env);
     const json = await res.json() as { results: Array<{ kind: string; status: string; payload?: any }> };
     expect(json.results[0].kind).toBe('auto_fix');
     expect(json.results[0].status).toBe('fixed');
     expect(json.results[0].payload.shifted).toBe(2);
+    expect(json.results[0].payload.profile_confirmed).toBe(true);
 
     // p3 stayed where it was
     expect(db.posts.get('p3')!.scheduled_for).toBe(original3);
     // p1 + p2 both landed inside the window
     expect(isInsideWindow(db.posts.get('p1')!.scheduled_for as string)).toBe(true);
     expect(isInsideWindow(db.posts.get('p2')!.scheduled_for as string)).toBe(true);
+  });
+
+  it('does not apply without a confirmed reach profile even when both request gates are open', async () => {
+    db.posts.set('p1', {
+      id: 'p1', user_id: 'user_a', client_id: null,
+      status: 'Scheduled', scheduled_for: '2026-05-16T03:00:00',
+    });
+    const original = db.posts.get('p1')!.scheduled_for;
+    const { app, env } = makeApp(db, {
+      ORGANIC_REACH_ENABLED: 'true',
+      ORGANIC_REACH_APPLY_ENABLED: 'true',
+    });
+
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({
+        items: ['Reschedule posts into business hours'],
+        dryRun: false,
+      }),
+    }, env);
+    const json = await res.json() as { results: Array<{ status: string; payload?: any }> };
+
+    expect(db.posts.get('p1')!.scheduled_for).toBe(original);
+    expect(json.results[0].status).toBe('suggested');
+    expect(json.results[0].payload.applied).toBe(false);
+    expect(json.results[0].payload.profile_confirmed).toBe(false);
+  });
+
+  it('does not update posts when apply is disabled even if dryRun is false', async () => {
+    db.posts.set('p1', {
+      id: 'p1', user_id: 'user_a', client_id: null,
+      status: 'Scheduled', scheduled_for: '2026-05-16T03:00:00',
+    });
+    const original = db.posts.get('p1')!.scheduled_for;
+    const { app, env } = makeApp(db, { ORGANIC_REACH_APPLY_ENABLED: 'false' });
+
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({
+        items: ['Reschedule posts into business hours'],
+        dryRun: false,
+      }),
+    }, env);
+    const json = await res.json() as { results: Array<{ status: string; payload?: any }> };
+
+    expect(db.posts.get('p1')!.scheduled_for).toBe(original);
+    expect(json.results[0].status).toBe('suggested');
+    expect(json.results[0].payload.applied).toBe(false);
+    expect(json.results[0].payload.apply_enabled).toBe(false);
+  });
+
+  it('defaults to preview when dryRun is omitted even if apply is enabled', async () => {
+    db.posts.set('p1', {
+      id: 'p1', user_id: 'user_a', client_id: null,
+      status: 'Scheduled', scheduled_for: '2026-05-16T03:00:00.000Z',
+    });
+    const original = db.posts.get('p1')!.scheduled_for;
+    const { app, env } = makeApp(db, { ORGANIC_REACH_APPLY_ENABLED: 'true' });
+
+    const res = await app.request('/api/recommendations/auto-fix-checklist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_a' },
+      body: JSON.stringify({ items: ['Reschedule posts into business hours'] }),
+    }, env);
+    const json = await res.json() as { results: Array<{ status: string; payload?: any }> };
+
+    expect(db.posts.get('p1')!.scheduled_for).toBe(original);
+    expect(json.results[0].status).toBe('suggested');
+    expect(json.results[0].payload.applied).toBe(false);
+    expect(json.results[0].payload.dry_run).toBe(true);
   });
 
   it('returns ok when nothing needs shifting', async () => {
@@ -488,6 +681,11 @@ describe('isInsideWindow + nextWindowSlot', () => {
     ['2026-05-17T11:00:00.000Z', false],  // Sun 11am UTC — weekend
   ])('isInsideWindow("%s") = %s', (iso, expected) => {
     expect(isInsideWindow(iso)).toBe(expected);
+  });
+
+  it('preserves the canonical naive AEST format when shifting a stored post', () => {
+    expect(nextWindowSlot('2026-05-16T03:00:00'))
+      .toBe('2026-05-18T09:00:00');
   });
 
   it('nextWindowSlot moves a Saturday into the following Monday window', () => {
