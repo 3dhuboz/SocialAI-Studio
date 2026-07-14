@@ -79,12 +79,20 @@ export async function listDecisionReceipts(
   );
   const result = await db.prepare(`
     SELECT * FROM learning_decisions
-    WHERE user_id = ? AND workspace_key = ? AND post_id = ?
+    WHERE user_id = ?
+      AND workspace_key = ?
+      AND client_id IS ?
+      AND owner_kind = ?
+      AND owner_id = ?
+      AND post_id = ?
     ORDER BY created_at DESC
     LIMIT ?
   `).bind(
     identity.userId,
     identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
     postId,
     limit,
   ).all();
@@ -113,6 +121,9 @@ export async function findFreshReleaseReceipt(
       FROM learning_decisions d
      WHERE d.user_id = ?
        AND d.workspace_key = ?
+       AND d.client_id IS ?
+       AND d.owner_kind = ?
+       AND d.owner_id = ?
        AND d.post_id = ?
        AND d.content_hash = ?
        AND d.mode = ?
@@ -127,6 +138,9 @@ export async function findFreshReleaseReceipt(
   `).bind(
     identity.userId,
     identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
     postId,
     contentHash,
     mode,

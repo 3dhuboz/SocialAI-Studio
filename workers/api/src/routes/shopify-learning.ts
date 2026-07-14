@@ -6,8 +6,11 @@ import {
   type WorkspaceIdentity,
 } from '../lib/learning/types';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
+import { listDecisionReceipts } from '../lib/learning/decision-repository';
 import {
   getWorkspaceLearningSettings,
+  getWorkspaceMonthlyAiSpend,
   loadWorkspaceLearningMode,
   saveWorkspaceLearningSettings,
   type StoredWorkspaceLearningSettings,
@@ -123,9 +126,92 @@ function parseJsonObject(value: string | null | undefined): Record<string, unkno
   }
 }
 
+function parseJsonStrings(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function registerShopifyLearningRoutes(
   app: Hono<{ Bindings: Env }>,
 ): void {
+  app.get('/api/shopify/learning/profile', async (c) => {
+    const session = await requireSession(c);
+    if (session instanceof Response) return session;
+    const identity = await installedShopIdentity(c.env, session);
+    if (!identity) return c.json({ error: 'Shop not installed' }, 404);
+    return c.json(await getWorkspaceLearningSummary(c.env.DB, identity));
+  });
+
+  app.get('/api/shopify/learning/decisions/:postId', async (c) => {
+    const session = await requireSession(c);
+    if (session instanceof Response) return session;
+    const identity = await installedShopIdentity(c.env, session);
+    if (!identity) return c.json({ error: 'Shop not installed' }, 404);
+    const postId = c.req.param('postId');
+    const post = await c.env.DB.prepare(`
+      SELECT id
+        FROM posts
+       WHERE id = ? AND user_id = ? AND client_id IS NULL
+         AND owner_kind = 'shop' AND owner_id = ?
+       LIMIT 1
+    `).bind(
+      postId,
+      identity.userId,
+      identity.ownerId,
+    ).first<{ id: string }>();
+    if (!post) return c.json({ error: 'Not found' }, 404);
+
+    const decisions = await listDecisionReceipts(
+      c.env.DB,
+      identity.userId,
+      null,
+      postId,
+      20,
+      'shop',
+      identity.ownerId,
+    ) as Array<Record<string, unknown> & {
+      id: string;
+      summary_json?: string | null;
+    }>;
+    if (decisions.length === 0) return c.json({ decisions: [] });
+    const ids = decisions.map((decision) => decision.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const verdicts = await c.env.DB.prepare(`
+      SELECT *
+        FROM learning_critic_verdicts
+       WHERE decision_id IN (${placeholders})
+       ORDER BY decision_id, attempt ASC, critic_kind ASC
+    `).bind(...ids).all<Record<string, unknown> & {
+      decision_id: string;
+      evidence_json?: string | null;
+      repair_json?: string | null;
+    }>();
+    const grouped = new Map<string, Array<Record<string, unknown>>>();
+    for (const verdict of verdicts.results ?? []) {
+      const values = grouped.get(verdict.decision_id) ?? [];
+      values.push({
+        ...verdict,
+        evidence: parseJsonStrings(verdict.evidence_json),
+        repairs: parseJsonStrings(verdict.repair_json),
+      });
+      grouped.set(verdict.decision_id, values);
+    }
+    return c.json({
+      decisions: decisions.map((decision) => ({
+        ...decision,
+        summary: parseJsonObject(decision.summary_json),
+        verdicts: grouped.get(decision.id) ?? [],
+      })),
+    });
+  });
+
   app.get('/api/shopify/learning/settings', async (c) => {
     const session = await requireSession(c);
     if (session instanceof Response) return session;
@@ -228,6 +314,8 @@ export function registerShopifyLearningRoutes(
     if (session instanceof Response) return session;
     const identity = await installedShopIdentity(c.env, session);
     if (!identity) return c.json({ error: 'Shop not installed' }, 404);
+    const settings = await getWorkspaceLearningSettings(c.env.DB, identity);
+    const cost = await getWorkspaceMonthlyAiSpend(c.env.DB, identity);
     const row = await c.env.DB.prepare(`
       SELECT id, ready, metrics_json, checks_json, evaluated_by, evaluated_at
       FROM learning_release_readiness
@@ -258,6 +346,19 @@ export function registerShopifyLearningRoutes(
       evaluatedAt: row?.evaluated_at ?? null,
       checks: row ? parseJsonObject(row.checks_json) : {},
       metrics: row ? parseJsonObject(row.metrics_json) : {},
+      cost: {
+        ...cost,
+        monthlyAiBudgetUsdCents: settings.monthlyAiBudgetUsdCents ?? null,
+        withinBudget: cost.monthlyAiSpendUsdCents != null
+          && Number.isSafeInteger(settings.monthlyAiBudgetUsdCents)
+          && Number(settings.monthlyAiBudgetUsdCents) > 0
+          && cost.monthlyAiSpendUsdCents < Number(settings.monthlyAiBudgetUsdCents),
+      },
+      globalSwitches: {
+        learningBrain: c.env.LEARNING_BRAIN_ENABLED === 'true',
+        releaseEnforcement: c.env.LEARNING_RELEASE_ENFORCEMENT === 'true',
+        protectedAutopilot: c.env.LEARNING_AUTOPILOT_ENABLED === 'true',
+      },
     });
   });
 

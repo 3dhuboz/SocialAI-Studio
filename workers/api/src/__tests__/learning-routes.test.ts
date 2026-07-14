@@ -65,7 +65,9 @@ describe('learning receipt routes', () => {
       }],
     });
     expect(calls[0].binds).toEqual(['post_1', 'owner_1']);
-    expect(calls[1].binds).toEqual(['owner_1', '__owner__', 'post_1', 20]);
+    expect(calls[1].binds).toEqual([
+      'owner_1', '__owner__', null, 'user', 'owner_1', 'post_1', 20,
+    ]);
     expect(calls[2].binds).toEqual(['decision_1']);
   });
 
@@ -135,7 +137,9 @@ describe('learning receipt routes', () => {
       clientApp.env,
     );
     expect(clientResponse.status).toBe(200);
-    expect(clientDb.calls[1].binds).toEqual(['owner_1', 'client_1', 'post_client', 20]);
+    expect(clientDb.calls[1].binds).toEqual([
+      'owner_1', 'client_1', 'client_1', 'client', 'client_1', 'post_client', 20,
+    ]);
 
     const shopDb = makeRecordingD1({
       'FROM posts': [{
@@ -152,7 +156,8 @@ describe('learning receipt routes', () => {
     );
     expect(shopResponse.status).toBe(200);
     expect(shopDb.calls[1].binds).toEqual([
-      'store.myshopify.com', 'shop:store.myshopify.com', 'post_shop', 20,
+      'store.myshopify.com', 'shop:store.myshopify.com', null,
+      'shop', 'store.myshopify.com', 'post_shop', 20,
     ]);
   });
 });
@@ -166,6 +171,38 @@ describe('learning settings and release evidence routes', () => {
     ...ownerHeaders,
     Authorization: 'Bearer admin-token',
   };
+
+  it('returns the authenticated client learning summary under its canonical tuple', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM clients': [{ status: 'active' }],
+      'FROM learning_profiles': [{
+        version: 2, profile_json: '{}', approved: 0,
+        created_at: '2026-07-14T00:00:00.000Z',
+      }],
+      'FROM learning_signals ls': [],
+      'FROM learning_outcomes lo': [],
+    });
+    const env = { DB: db } as Env;
+    const { app } = makeApp(env);
+    const response = await app.request(
+      '/api/learning/profile?clientId=client_1&userId=forged',
+      { headers: ownerHeaders },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      profile: { version: 2 }, signals: [], outcomes: [],
+    });
+    for (const call of calls.filter((entry) =>
+      entry.sql.includes('FROM learning_profiles')
+      || entry.sql.includes('FROM learning_signals ls')
+      || entry.sql.includes('FROM learning_outcomes lo'))) {
+      expect(call.binds).toContain('owner_1');
+      expect(call.binds).toContain('client_1');
+      expect(call.binds).not.toContain('forged');
+    }
+  });
 
   it('reads only the authenticated canonical client settings tuple', async () => {
     const { db, calls } = makeRecordingD1({
@@ -202,6 +239,49 @@ describe('learning settings and release evidence routes', () => {
     expect(settingsRead.binds).toEqual(['owner_1', 'client_1', 'client_1', 'client', 'client_1']);
   });
 
+  it('reports current-month metered cost and literal global readiness switches', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db } = makeRecordingD1({
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 2500, disabled_reason: null,
+      }],
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 0, metrics_json: '{}', checks_json: '{}',
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 7.25, telemetry_count: 4 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+    const response = await app.request(
+      '/api/learning/readiness',
+      { headers: ownerHeaders },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      cost: {
+        monthlyAiSpendUsdCents: 725,
+        monthlyAiBudgetUsdCents: 2500,
+        telemetryCount: 4,
+        withinBudget: true,
+      },
+      globalSwitches: {
+        learningBrain: true,
+        releaseEnforcement: false,
+        protectedAutopilot: false,
+      },
+    });
+  });
+
   it('requires explicit current consent and a positive budget for protected mode', async () => {
     const { db, calls } = makeRecordingD1({ 'FROM clients': [{ status: 'active' }] });
     const env = { DB: db, LEARNING_RELEASE_ENFORCEMENT: 'true' } as Env;
@@ -215,6 +295,26 @@ describe('learning settings and release evidence routes', () => {
     }, env);
 
     expect(response.status).toBe(400);
+    expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
+  it('does not persist protected consent for an on-hold client workspace', async () => {
+    const { db, calls } = makeRecordingD1({ 'FROM clients': [{ status: 'on_hold' }] });
+    const env = { DB: db, LEARNING_RELEASE_ENFORCEMENT: 'true' } as Env;
+    const { app } = makeApp(env);
+    const response = await app.request('/api/learning/settings', {
+      method: 'PUT',
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        clientId: 'client_1', mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 1000,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Protected Autopilot cannot be requested while this client is on hold',
+    });
     expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
@@ -440,5 +540,70 @@ describe('learning settings and release evidence routes', () => {
     expect(response.status).toBe(400);
     expect(calls.some((call) => call.sql.includes('FROM ('))).toBe(false);
     expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
+  it('returns bounded admin operational metrics from immutable release evidence', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 0, metrics_json: '{"pilotDecisions":12}',
+        checks_json: '{"pilot":false}', evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'WITH recent AS': [{
+        user_id: 'owner-2', workspace_key: 'client-2', client_id: 'client-2',
+        owner_kind: 'client', owner_id: 'client-2', mode: 'approval',
+        autopublish_policy_version: null, updated_at: evaluatedAt,
+        client_status: 'on_hold', shop_uninstalled_at: null,
+        decision_count: 20, hold_count: 4, adjudicated_count: 10,
+        false_hold_count: 1, severe_false_passes: 0,
+        critic_total: 100, critic_available: 99, judge_available: 20,
+        sample_decision_id: 'decision-sample-1', sample_post_id: 'post-sample-1',
+        sample_release_state: 'hold_amber',
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+    const response = await app.request(
+      '/api/learning/admin/operations?limit=10',
+      { headers: adminHeaders },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      readiness: {
+        ready: false,
+        checks: { pilot: false },
+        metrics: { pilotDecisions: 12 },
+      },
+      globalSwitches: {
+        learningBrain: true,
+        releaseEnforcement: false,
+        protectedAutopilot: false,
+      },
+      workspaces: [{
+        workspaceKey: 'client-2', ownerKind: 'client', mode: 'approval',
+        onHold: true, decisionCount: 20, holdRate: 0.2,
+        sampledFalseHoldRate: 0.1, criticAvailability: 0.99,
+        judgeAvailability: 1, severeFalsePasses: 0,
+        adjudicationCoverage: 0.5, globalKillSwitchEnabled: false,
+        sampleDecisionId: 'decision-sample-1', samplePostId: 'post-sample-1',
+        sampleReleaseState: 'hold_amber',
+      }],
+    });
+    const operations = calls.find((call) => call.sql.includes('WITH recent AS'))!;
+    expect(operations.sql).toContain('ROW_NUMBER() OVER');
+    expect(operations.sql).toContain('r.rn <= 30');
+    expect(operations.sql).toContain("w.owner_kind = 'client'");
+    expect(operations.sql).toContain("w.owner_kind = 'shop'");
+    expect(operations.sql).toContain('a.id IS NULL');
+    expect(operations.sql).toContain('sample_rank = 1');
+    expect(operations.binds).toEqual([10]);
   });
 });

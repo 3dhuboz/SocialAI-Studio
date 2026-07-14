@@ -159,6 +159,175 @@ export interface LearningDecision {
   verdicts: LearningCriticVerdict[];
 }
 
+export type LearningMode = 'off' | 'shadow' | 'approval' | 'protected_autopilot';
+
+export interface LearningProfile {
+  version: number;
+  approved: boolean;
+  createdAt: string;
+  data: Record<string, unknown>;
+}
+
+export interface LearningSignal {
+  variableKey: string;
+  variableValue: string;
+  objective: string;
+  sampleCount: number;
+  effect: number;
+  confidence: number;
+  freshnessAt: string;
+  status: string;
+  evidenceKind: 'association' | 'experiment';
+}
+
+export interface LearningOutcome {
+  id: string;
+  postId: string;
+  platform: string;
+  postType: string | null;
+  content: string | null;
+  windowHours: number;
+  rawSignals: Record<string, unknown>;
+  normalizedScore: number | null;
+  completeness: string;
+  sourceStatus: string;
+  publishedAt: string;
+  measuredAt: string;
+}
+
+export interface LearningSummary {
+  profile: LearningProfile | null;
+  signals: LearningSignal[];
+  outcomes: LearningOutcome[];
+}
+
+export interface LearningSettings {
+  mode: LearningMode;
+  autopublishConsentAt: string | null;
+  autopublishPolicyVersion: string | null;
+  experimentRate: number;
+  monthlyAiBudgetUsdCents: number | null;
+  disabledReason: string | null;
+  exists: boolean;
+}
+
+export interface LearningSettingsResponse {
+  settings: LearningSettings;
+  effectiveMode: LearningMode;
+}
+
+export interface LearningSettingsUpdate {
+  clientId?: string | null;
+  mode: 'approval' | 'protected_autopilot';
+  consent?: boolean;
+  experimentRate?: number;
+  monthlyAiBudgetUsdCents?: number | null;
+}
+
+export interface LearningReadinessChecks {
+  pilot?: boolean;
+  adjudications?: boolean;
+  severeFalsePasses?: boolean;
+  falseHolds?: boolean;
+  availability?: boolean;
+  receipts?: boolean;
+  predictionLift?: boolean;
+  rankCorrelation?: boolean;
+  criticalBypasses?: boolean;
+  publishingRegressions?: boolean;
+  cost?: boolean;
+  killSwitch?: boolean;
+  replayRedTeam?: boolean;
+  publishRegression?: boolean;
+  tenancyProofs?: Partial<Record<'user' | 'client' | 'shop', boolean>>;
+}
+
+export interface LearningReadinessMetrics {
+  pilotDecisions?: number;
+  adjudicatedDecisions?: number;
+  severeFalsePasses?: number;
+  falseHoldRate?: number;
+  requiredAvailability?: number;
+  decisionReceiptCoverage?: number;
+  predictionLift?: number;
+  rankCorrelation?: number;
+  criticalBypasses?: number;
+  publishingRegressions?: number;
+  costWithinBudget?: boolean;
+  killSwitchTested?: boolean;
+}
+
+export interface LearningGlobalSwitches {
+  learningBrain: boolean;
+  releaseEnforcement: boolean;
+  protectedAutopilot: boolean;
+}
+
+export interface LearningReadinessResponse {
+  policyVersion: string;
+  ready: boolean;
+  stale: boolean;
+  effectiveMode: LearningMode;
+  evaluatedAt: string | null;
+  checks: LearningReadinessChecks;
+  metrics: LearningReadinessMetrics;
+  cost: {
+    monthlyAiSpendUsdCents: number | null;
+    telemetryCount: number;
+    monthlyAiBudgetUsdCents: number | null;
+    withinBudget: boolean;
+  };
+  globalSwitches: LearningGlobalSwitches;
+}
+
+export interface LearningConversionFeedback {
+  clientId?: string | null;
+  calls?: number;
+  messages?: number;
+  leads?: number;
+  bookings?: number;
+  sales?: number;
+  orderValueCents?: number;
+}
+
+export interface LearningAdjudicationInput {
+  expectedState: 'pass_green' | 'hold_amber' | 'block_red';
+  severity: 'advisory' | 'release_critical';
+  note: string;
+}
+
+export interface AdminLearningWorkspace {
+  userId: string;
+  workspaceKey: string;
+  clientId: string | null;
+  ownerKind: 'user' | 'client' | 'shop';
+  ownerId: string;
+  mode: LearningMode;
+  consentAt: string | null;
+  consentPolicyVersion: string | null;
+  active: boolean;
+  onHold: boolean;
+  decisionCount: number;
+  holdRate: number | null;
+  sampledFalseHoldRate: number | null;
+  criticAvailability: number | null;
+  judgeAvailability: number | null;
+  severeFalsePasses: number;
+  adjudicationCoverage: number | null;
+  globalKillSwitchEnabled: boolean;
+  updatedAt: string;
+  sampleDecisionId?: string | null;
+  samplePostId?: string | null;
+  sampleReleaseState?: LearningDecision['release_state'] | null;
+}
+
+export interface AdminLearningOperations {
+  policyVersion: string;
+  globalSwitches: LearningGlobalSwitches;
+  readiness: Omit<LearningReadinessResponse, 'policyVersion' | 'effectiveMode' | 'cost' | 'globalSwitches'>;
+  workspaces: AdminLearningWorkspace[];
+}
+
 export type OrganicReachPlatform = 'facebook' | 'instagram';
 
 export interface ReachProfile {
@@ -377,6 +546,84 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       );
       const data = await res.json() as { decisions: LearningDecision[] };
       return data.decisions ?? [];
+    },
+
+    async getLearningSummary(clientId?: string | null): Promise<LearningSummary> {
+      const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/learning/profile${query}`);
+      const data = await res.json() as LearningSummary;
+      return {
+        profile: data.profile ?? null,
+        signals: data.signals ?? [],
+        outcomes: data.outcomes ?? [],
+      };
+    },
+
+    async getLearningSettings(clientId?: string | null): Promise<LearningSettingsResponse> {
+      const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/learning/settings${query}`);
+      return res.json() as Promise<LearningSettingsResponse>;
+    },
+
+    async getLearningReadiness(clientId?: string | null): Promise<LearningReadinessResponse> {
+      const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/learning/readiness${query}`);
+      return res.json() as Promise<LearningReadinessResponse>;
+    },
+
+    async updateLearningSettings(
+      input: LearningSettingsUpdate,
+    ): Promise<LearningSettingsResponse> {
+      const body: Record<string, unknown> = {
+        clientId: input.clientId ?? null,
+        mode: input.mode,
+      };
+      if (input.consent !== undefined) body.consent = input.consent;
+      if (input.experimentRate !== undefined) body.experimentRate = input.experimentRate;
+      if (input.monthlyAiBudgetUsdCents !== undefined) {
+        body.monthlyAiBudgetUsdCents = input.monthlyAiBudgetUsdCents;
+      }
+      const res = await f('/api/learning/settings', put(body));
+      return res.json() as Promise<LearningSettingsResponse>;
+    },
+
+    async recordConversionFeedback(
+      postId: string,
+      input: LearningConversionFeedback,
+    ): Promise<{ ok: boolean; feedbackId: string }> {
+      const body: Record<string, unknown> = { clientId: input.clientId ?? null };
+      const fields = [
+        'calls', 'messages', 'leads', 'bookings', 'sales', 'orderValueCents',
+      ] as const;
+      for (const field of fields) {
+        if (input[field] !== undefined) body[field] = input[field];
+      }
+      const res = await f(
+        `/api/learning/outcomes/${encodeURIComponent(postId)}/feedback`,
+        j(body),
+      );
+      return res.json() as Promise<{ ok: boolean; feedbackId: string }>;
+    },
+
+    async getAdminLearningOperations(limit = 100): Promise<AdminLearningOperations> {
+      const res = await f(`/api/learning/admin/operations?limit=${encodeURIComponent(limit)}`);
+      return res.json() as Promise<AdminLearningOperations>;
+    },
+
+    async adjudicateLearningDecision(
+      decisionId: string,
+      input: LearningAdjudicationInput,
+    ): Promise<{ adjudicationId: string }> {
+      const body: LearningAdjudicationInput = {
+        expectedState: input.expectedState,
+        severity: input.severity,
+        note: input.note,
+      };
+      const res = await f(
+        `/api/learning/decisions/${encodeURIComponent(decisionId)}/adjudicate`,
+        j(body),
+      );
+      return res.json() as Promise<{ adjudicationId: string }>;
     },
 
     async getReachProfile(clientId?: string | null): Promise<{

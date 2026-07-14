@@ -19,6 +19,12 @@ describe('learning decision repository', () => {
     await listDecisionReceipts(db, 'owner_1', 'client_1', 'post_1', 20);
     expect(calls.every((call) => call.binds.includes('owner_1'))).toBe(true);
     expect(calls.every((call) => call.binds.includes('client_1'))).toBe(true);
+    expect(calls[1].sql).toContain('client_id IS ?');
+    expect(calls[1].sql).toContain('owner_kind = ?');
+    expect(calls[1].sql).toContain('owner_id = ?');
+    expect(calls[1].binds).toEqual([
+      'owner_1', 'client_1', 'client_1', 'client', 'client_1', 'post_1', 20,
+    ]);
   });
 
   it('uses a non-null owner key so duplicate owner receipts upsert', async () => {
@@ -95,8 +101,12 @@ describe('learning decision repository', () => {
     expect(calls[0].sql).toContain("datetime('now', '-24 hours')");
     expect(calls[0].sql).toContain('learning_critic_verdicts');
     expect(calls[0].sql).toContain('verdictCount');
+    expect(calls[0].sql).toContain('d.client_id IS ?');
+    expect(calls[0].sql).toContain('d.owner_kind = ?');
+    expect(calls[0].sql).toContain('d.owner_id = ?');
     expect(calls[0].binds).toEqual([
-      'owner_1', 'client_1', 'post_1', 'content-hash', 'shadow',
+      'owner_1', 'client_1', 'client_1', 'client', 'client_1',
+      'post_1', 'content-hash', 'shadow',
     ]);
   });
 

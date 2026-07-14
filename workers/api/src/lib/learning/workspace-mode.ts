@@ -111,6 +111,48 @@ function currentMonthBounds(now: Date): [string, string] {
   return [start.toISOString(), end.toISOString()];
 }
 
+export interface WorkspaceMonthlyAiSpend {
+  monthlyAiSpendUsdCents: number | null;
+  telemetryCount: number;
+}
+
+export async function getWorkspaceMonthlyAiSpend(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  now: Date = new Date(),
+): Promise<WorkspaceMonthlyAiSpend> {
+  const [monthStart, monthEnd] = currentMonthBounds(now);
+  const sql = identity.clientId === null
+    ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+         FROM ai_usage
+        WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
+    : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+         FROM ai_usage
+        WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
+  const bindings = identity.clientId === null
+    ? [identity.userId, monthStart, monthEnd]
+    : [identity.userId, identity.clientId, monthStart, monthEnd];
+  const row = await db.prepare(sql).bind(...bindings).first<{
+    spend_usd: number | null;
+    telemetry_count: number;
+  }>();
+  const spendUsd = Number(row?.spend_usd);
+  const telemetryCount = Number(row?.telemetry_count ?? 0);
+  if (
+    !row
+    || !Number.isSafeInteger(telemetryCount)
+    || telemetryCount <= 0
+    || !Number.isFinite(spendUsd)
+    || spendUsd < 0
+  ) {
+    return { monthlyAiSpendUsdCents: null, telemetryCount: Math.max(0, telemetryCount || 0) };
+  }
+  return {
+    monthlyAiSpendUsdCents: Math.round(spendUsd * 100),
+    telemetryCount,
+  };
+}
+
 export function resolveLearningMode(
   globalFlag: string | undefined,
   settings: WorkspaceLearningSettings,
@@ -205,27 +247,10 @@ export async function loadWorkspaceLearningMode(
   }
   if (checks.tenancyProofs?.[identity.ownerKind] !== true) return 'approval';
 
-  const [monthStart, monthEnd] = currentMonthBounds(now);
-  const costSql = identity.clientId === null
-    ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
-         FROM ai_usage
-        WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
-    : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
-         FROM ai_usage
-        WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
-  const costBindings = identity.clientId === null
-    ? [identity.userId, monthStart, monthEnd]
-    : [identity.userId, identity.clientId, monthStart, monthEnd];
-  const cost = await env.DB.prepare(costSql).bind(...costBindings).first<{
-    spend_usd: number | null;
-    telemetry_count: number;
-  }>();
-  const spendUsd = Number(cost?.spend_usd);
+  const cost = await getWorkspaceMonthlyAiSpend(env.DB, identity, now);
   if (
-    !cost
-    || Number(cost.telemetry_count) <= 0
-    || !Number.isFinite(spendUsd)
-    || spendUsd * 100 >= Number(budgetCents)
+    cost.monthlyAiSpendUsdCents == null
+    || cost.monthlyAiSpendUsdCents >= Number(budgetCents)
   ) return 'approval';
 
   return 'protected_autopilot';

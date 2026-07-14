@@ -14,8 +14,9 @@ import {
 import './autopilot.css';
 import {
   listProducts, generateAutopilotPost, saveAutopilotBatch, getActiveCampaign,
-  getFactsStatus, refreshFacts, ApiError,
+  getFactsStatus, refreshFacts, getShopifyLearningDecisions, getShopifyReachPlans, ApiError,
   type Product, type AutopilotGeneratedPost, type ShopifyCampaign, type FactsStatus,
+  type ShopifyLearningDecision, type ShopifyReachPlan,
 } from '../api';
 
 /**
@@ -254,6 +255,7 @@ export default function Autopilot() {
   const [saveProgress, setSaveProgress] = useState<{ saved: number; failed: number; total: number }>({
     saved: 0, failed: 0, total: 0,
   });
+  const [savedPostIds, setSavedPostIds] = useState<string[]>([]);
 
   const vibeConfig = VIBES.find((v) => v.id === vibe)!;
 
@@ -397,6 +399,7 @@ export default function Autopilot() {
         failed: result.failed.length,
         total: survivors.length,
       });
+      setSavedPostIds(result.saved);
       // If everything saved, flip straight to done. If partial, leave the
       // merchant in 'done' anyway so they can choose to retry the failures
       // by running another batch.
@@ -412,6 +415,7 @@ export default function Autopilot() {
     setProgress({ done: 0, total: 0, succeeded: [], failed: [] });
     setRemovedIds(new Set());
     setSaveProgress({ saved: 0, failed: 0, total: 0 });
+    setSavedPostIds([]);
   };
 
   const handleRemovePost = (id: string) => {
@@ -755,7 +759,8 @@ export default function Autopilot() {
 
           {/* ── Done — celebratory finish state ──────────────────────── */}
           {phase === 'done' && (
-            <Card>
+            <BlockStack gap="400">
+              <Card>
               <Box background="bg-fill-success-secondary" padding="600" borderRadius="200">
                 <BlockStack gap="500" align="center" inlineAlign="center">
                   <Box
@@ -790,7 +795,9 @@ export default function Autopilot() {
                   </InlineStack>
                 </BlockStack>
               </Box>
-            </Card>
+              </Card>
+              <SavedBatchEvidence postIds={savedPostIds} />
+            </BlockStack>
           )}
         </>
       )}
@@ -809,6 +816,197 @@ export default function Autopilot() {
 //   - corner Remove button (overlay on the image, easy to scan + click)
 //
 // Hover state gives a subtle lift so it feels card-like and clickable.
+
+interface SavedPostEvidenceRow {
+  postId: string;
+  decision: ShopifyLearningDecision | null;
+  plan: ShopifyReachPlan | null;
+  error: string | null;
+}
+
+const EVIDENCE_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function evidenceTime(plan: ShopifyReachPlan): string {
+  const timing = plan.timing[0];
+  if (!timing) return 'Timing evidence pending';
+  const hour = timing.startHour % 12 || 12;
+  const suffix = timing.startHour >= 12 ? 'pm' : 'am';
+  return `${EVIDENCE_WEEKDAYS[timing.weekday] ?? `Day ${timing.weekday}`} at ${hour}:00 ${suffix} - ${Math.round(timing.confidence * 100)}% confidence from ${timing.sampleSize} samples`;
+}
+
+function SavedBatchEvidence({ postIds }: { postIds: string[] }) {
+  const [rows, setRows] = useState<SavedPostEvidenceRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadEvidence = useCallback(async (signal?: AbortSignal) => {
+    if (postIds.length === 0) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await Promise.all(postIds.map(async (postId): Promise<SavedPostEvidenceRow> => {
+        const [decisions, plans] = await Promise.allSettled([
+          getShopifyLearningDecisions(postId, signal),
+          getShopifyReachPlans(postId, signal),
+        ]);
+        const decisionRows = decisions.status === 'fulfilled' ? decisions.value : [];
+        const planRows = plans.status === 'fulfilled' ? plans.value : [];
+        const failures = [decisions, plans]
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+        return {
+          postId,
+          decision: decisionRows[0] ?? null,
+          plan: planRows[0] ?? null,
+          error: failures.length > 0 ? failures.join(' / ') : null,
+        };
+      }));
+      if (signal?.aborted) return;
+      setRows(next);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setError(reason instanceof ApiError ? reason.message : String(reason));
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [postIds]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadEvidence(controller.signal);
+    return () => controller.abort();
+  }, [loadEvidence]);
+
+  if (postIds.length === 0) return null;
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+          <BlockStack gap="100">
+            <Text as="h3" variant="headingMd">Latest safety receipt and organic reach rationale</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Read-only evidence for this saved batch. It cannot change a post or bypass pre-publish checks.
+            </Text>
+          </BlockStack>
+          <Button
+            icon={RefreshIcon}
+            loading={loading}
+            disabled={loading}
+            onClick={() => { void loadEvidence(); }}
+          >
+            Refresh evidence
+          </Button>
+        </InlineStack>
+
+        {error && <Banner tone="warning"><p>{error}</p></Banner>}
+        {loading && rows.length === 0 && (
+          <InlineStack gap="200" blockAlign="center">
+            <Spinner size="small" accessibilityLabel="Loading release evidence" />
+            <Text as="span" variant="bodySm" tone="subdued">Reading immutable receipts...</Text>
+          </InlineStack>
+        )}
+
+        {rows.map((row) => {
+          const verdicts = row.decision?.verdicts ?? [];
+          const availableVerdicts = verdicts.filter((verdict) => verdict.verdict !== 'unavailable');
+          const evidence = verdicts.flatMap((verdict) => verdict.evidence).slice(0, 4);
+          const hashtags = row.plan
+            ? [...new Set([
+                ...(row.plan.hashtags.localKeywords ?? []),
+                ...(row.plan.hashtags.facebookTags ?? []),
+              ])]
+            : [];
+          const releaseState = row.decision?.release_state.replace(/_/g, ' ') ?? 'pending';
+          const receiptTone = row.decision?.release_state === 'pass_green'
+            ? 'success' as const
+            : row.decision?.release_state === 'block_red'
+              ? 'critical' as const
+              : 'attention' as const;
+
+          return (
+            <Box key={row.postId} background="bg-surface-secondary" padding="400" borderRadius="300">
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="start" gap="300" wrap>
+                  <BlockStack gap="050">
+                    <Text as="h4" variant="headingSm">Post {row.postId}</Text>
+                    <Text as="p" variant="bodyXs" tone="subdued">Newest persisted evidence only</Text>
+                  </BlockStack>
+                  {row.decision && <Badge tone={receiptTone}>{releaseState}</Badge>}
+                </InlineStack>
+
+                {row.error && <Banner tone="warning"><p>{row.error}</p></Banner>}
+
+                {!row.decision && !row.plan ? (
+                  <Banner tone="info" title="Safety pass queued">
+                    <p>
+                      The permanent preflight normally writes the receipt and reach rationale within five minutes. Refresh after the next safety pass.
+                    </p>
+                  </Banner>
+                ) : (
+                  <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+                    <Box background="bg-surface" padding="300" borderRadius="200">
+                      <BlockStack gap="200">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text as="h5" variant="headingSm">Release receipt</Text>
+                          {row.decision
+                            ? <Badge>{`${row.decision.mode.replace(/_/g, ' ')} / ${row.decision.stage.replace(/_/g, ' ')}`}</Badge>
+                            : <Badge tone="attention">Pending</Badge>}
+                        </InlineStack>
+                        {row.decision ? (
+                          <>
+                            <Text as="p" variant="bodySm">
+                              {availableVerdicts.length} of {verdicts.length} critic verdicts available.
+                            </Text>
+                            {evidence.length > 0 ? evidence.map((item) => (
+                              <Text key={item} as="p" variant="bodyXs" tone="subdued">{item}</Text>
+                            )) : (
+                              <Text as="p" variant="bodyXs" tone="subdued">No critic exception evidence recorded.</Text>
+                            )}
+                          </>
+                        ) : <Text as="p" variant="bodySm" tone="subdued">Receipt pending.</Text>}
+                      </BlockStack>
+                    </Box>
+
+                    <Box background="bg-surface" padding="300" borderRadius="200">
+                      <BlockStack gap="200">
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text as="h5" variant="headingSm">Organic reach rationale</Text>
+                          <Badge tone="info">Shadow guidance</Badge>
+                        </InlineStack>
+                        {row.plan ? (
+                          <>
+                            <Text as="p" variant="bodySm">
+                              Audience: {row.plan.audience?.label ?? 'Broad commercial audience pending'}
+                            </Text>
+                            <Text as="p" variant="bodyXs" tone="subdued">
+                              Geography: {row.plan.geographicFocus.join(', ') || 'No geographic focus recorded'}
+                            </Text>
+                            <Text as="p" variant="bodyXs" tone="subdued">Timing: {evidenceTime(row.plan)}</Text>
+                            <Text as="p" variant="bodyXs" tone="subdued">
+                              Hashtags: {hashtags.join(' ') || 'Hashtag evidence pending'}
+                            </Text>
+                          </>
+                        ) : <Text as="p" variant="bodySm" tone="subdued">Reach rationale pending.</Text>}
+                        <Text as="p" variant="bodyXs" tone="subdued">
+                          Predicted organic guidance only, not paid promotion or a reach guarantee.
+                        </Text>
+                      </BlockStack>
+                    </Box>
+                  </InlineGrid>
+                )}
+              </BlockStack>
+            </Box>
+          );
+        })}
+      </BlockStack>
+    </Card>
+  );
+}
 
 function PreviewCard({
   post, index, onRemove,

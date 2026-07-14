@@ -4210,6 +4210,7 @@ const Dashboard: React.FC = () => {
             activePlan={effectivePlan}
             planName={planCfg?.name}
             businessName={authMode === 'portal' ? (CLIENT.defaultBusinessName || profile.name) : (profile.name || CLIENT.defaultBusinessName)}
+            clientId={activeClientId}
             onGoCalendar={() => setActiveTab('calendar')}
             onGoCreate={() => { setActiveTab('smart'); setSmartSubMode('quickpost'); }}
             onGoSchedule={() => { setActiveTab('smart'); setSmartSubMode('autopilot'); }}

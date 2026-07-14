@@ -50,6 +50,8 @@ GitHub repo
 | Component | What it does |
 |-----------|-------------|
 | `HomeDashboard.tsx` | Main dashboard — stats, quick actions |
+| `WhatsWorkingPanel.tsx` | Customer learning summary — measured signals, predicted audiences, geography, and evidence confidence |
+| `ProtectedAutopilotPanel.tsx` | One-time consent control — readiness gates, spend ceiling, blockers, and effective learning mode |
 | `CalendarGrid.tsx` | Post calendar — view, create, edit scheduled posts |
 | `PostModal.tsx` | Post editor — content, image gen, critique, score, and collapsed read-only learning safety report |
 | `AdminDashboard.tsx` | Owner admin — all clients, posts, quality scan |
@@ -172,6 +174,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `campaign-research.ts` | Campaign AI research |
 | `email.ts` | Resend email helpers |
 | `post-critique.ts` | Shared critique context + stale-score invalidation rules |
+| `learning/read-model.ts` | Tenant-scoped customer learning profile, signal, and outcome read model |
 | `pricing.ts` | Plan/tier logic |
 | `provisioning.ts` | White-label workspace provisioning and insert-only canonical learning settings defaults |
 | `prompt-safety.ts` | Prompt injection detection |

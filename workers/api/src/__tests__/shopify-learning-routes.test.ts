@@ -242,6 +242,79 @@ describe('Shopify learning settings and readiness', () => {
     expect(calls).toEqual([]);
   });
 
+  it('returns profile, signals, and outcomes only for the signed installed shop', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM learning_profiles': [{
+        version: 4, profile_json: '{}', approved: 0,
+        created_at: '2026-07-14T00:00:00.000Z',
+      }],
+      'FROM learning_signals ls': [],
+      'FROM learning_outcomes lo': [],
+    });
+    const { app, env } = makeApp(db);
+    const response = await app.request(
+      '/api/shopify/learning/profile?shop=evil.myshopify.com',
+      { headers: validHeaders },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      profile: { version: 4 }, signals: [], outcomes: [],
+    });
+    const profile = calls.find((call) => call.sql.includes('FROM learning_profiles'))!;
+    expect(profile.binds).toEqual([
+      'store.myshopify.com', 'shop:store.myshopify.com', null,
+      'shop', 'store.myshopify.com',
+    ]);
+    expect(profile.binds).not.toContain('evil.myshopify.com');
+  });
+
+  it('returns decision receipts only after verifying the post belongs to the signed shop', async () => {
+    const decision = {
+      id: 'decision-1', post_id: 'post-1', mode: 'approval', stage: 'release',
+      release_state: 'hold_amber', content_hash: 'hash', summary_json: '{"pipelineState":"hold_amber"}',
+      created_at: '2026-07-14T00:00:00.000Z',
+    };
+    const verdict = {
+      id: 'verdict-1', decision_id: 'decision-1', critic_kind: 'fact',
+      verdict: 'block', severity: 'release_critical', confidence: 0.95,
+      evidence_json: '["Unsupported offer"]', repair_json: '["Remove offer"]',
+      provider: 'anthropic', model: 'claude-haiku', attempt: 0,
+    };
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM posts': [{ id: 'post-1' }],
+      'FROM learning_decisions': [decision],
+      'FROM learning_critic_verdicts': [verdict],
+    });
+    const { app, env } = makeApp(db);
+    const response = await app.request(
+      '/api/shopify/learning/decisions/post-1?shop=evil.myshopify.com',
+      { headers: validHeaders },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      decisions: [{
+        ...decision,
+        summary: { pipelineState: 'hold_amber' },
+        verdicts: [{ ...verdict, evidence: ['Unsupported offer'], repairs: ['Remove offer'] }],
+      }],
+    });
+    const ownership = calls.find((call) => call.sql.includes('FROM posts'))!;
+    expect(ownership.binds).toEqual([
+      'post-1', 'store.myshopify.com', 'store.myshopify.com',
+    ]);
+    const decisions = calls.find((call) => call.sql.includes('FROM learning_decisions'))!;
+    expect(decisions.binds).toEqual([
+      'store.myshopify.com', 'shop:store.myshopify.com', null,
+      'shop', 'store.myshopify.com', 'post-1', 20,
+    ]);
+  });
+
   it('reads settings only from the installed canonical shop tuple', async () => {
     const { db, calls } = makeRecordingD1({
       'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
@@ -314,6 +387,7 @@ describe('Shopify learning settings and readiness', () => {
         id: 'ready-1', ready: 0, metrics_json: '{}',
         checks_json: '{"pilot":false}', evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
+      'FROM ai_usage': [{ spend_usd: 3.5, telemetry_count: 2 }],
     });
     const { app, env } = makeApp(db);
     env.LEARNING_BRAIN_ENABLED = 'true';
@@ -328,6 +402,17 @@ describe('Shopify learning settings and readiness', () => {
       ready: false,
       effectiveMode: 'approval',
       checks: { pilot: false },
+      cost: {
+        monthlyAiSpendUsdCents: 350,
+        monthlyAiBudgetUsdCents: 1200,
+        telemetryCount: 2,
+        withinBudget: true,
+      },
+      globalSwitches: {
+        learningBrain: true,
+        releaseEnforcement: false,
+        protectedAutopilot: false,
+      },
     });
   });
 });

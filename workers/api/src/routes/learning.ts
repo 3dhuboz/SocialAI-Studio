@@ -8,8 +8,10 @@ import {
   type WorkspaceOwnerKind,
 } from '../lib/learning/types';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
   getWorkspaceLearningSettings,
+  getWorkspaceMonthlyAiSpend,
   loadWorkspaceLearningMode,
   saveWorkspaceLearningSettings,
   type StoredWorkspaceLearningSettings,
@@ -43,6 +45,34 @@ type BackfillWorkspaceRow = {
   client_id: string | null;
   owner_kind: WorkspaceOwnerKind;
   owner_id: string;
+};
+
+type AdminOperationsRow = {
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  mode: LearningMode;
+  autopublish_consent_at: string | null;
+  autopublish_policy_version: string | null;
+  updated_at: string;
+  user_exists: string | null;
+  client_id_found: string | null;
+  client_status: string | null;
+  shop_domain: string | null;
+  shop_uninstalled_at: string | null;
+  decision_count: number | string | null;
+  hold_count: number | string | null;
+  adjudicated_count: number | string | null;
+  false_hold_count: number | string | null;
+  severe_false_passes: number | string | null;
+  critic_total: number | string | null;
+  critic_available: number | string | null;
+  judge_available: number | string | null;
+  sample_decision_id: string | null;
+  sample_post_id: string | null;
+  sample_release_state: string | null;
 };
 
 function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
@@ -158,6 +188,17 @@ async function ownedSettingsIdentity(
   return identity;
 }
 
+async function clientWorkspaceCannotRequestProtected(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+): Promise<boolean> {
+  if (identity.ownerKind !== 'client') return false;
+  const client = await db.prepare(
+    'SELECT status FROM clients WHERE id = ? AND user_id = ?',
+  ).bind(identity.ownerId, identity.userId).first<{ status: string | null }>();
+  return !client || client.status?.trim().toLowerCase() === 'on_hold';
+}
+
 function publicSettings(
   settings: StoredWorkspaceLearningSettings,
   fallbackMode: LearningMode,
@@ -201,6 +242,15 @@ function releaseOwnerKind(value: string): WorkspaceOwnerKind | null {
   return value === 'user' || value === 'client' || value === 'shop' ? value : null;
 }
 
+function countValue(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? numerator / denominator : null;
+}
+
 function latestReadiness(db: D1Database) {
   return db.prepare(`
     SELECT id, ready, metrics_json, checks_json, evaluated_by, evaluated_at
@@ -220,6 +270,14 @@ function latestReadiness(db: D1Database) {
 
 export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
   app.use('/api/learning/*', requireAuth);
+
+  app.get('/api/learning/profile', async (c) => {
+    const userId = c.get('uid') as string;
+    const clientId = c.req.query('clientId')?.trim() || null;
+    const identity = await ownedSettingsIdentity(c.env.DB, userId, clientId);
+    if (!identity) return c.json({ error: 'Not found' }, 404);
+    return c.json(await getWorkspaceLearningSummary(c.env.DB, identity));
+  });
 
   app.get('/api/learning/settings', async (c) => {
     const userId = c.get('uid') as string;
@@ -249,6 +307,14 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       if (!identity) return c.json({ error: 'Not found' }, 404);
       if (body.mode !== 'approval' && body.mode !== 'protected_autopilot') {
         return c.json({ error: 'mode must be approval or protected_autopilot' }, 400);
+      }
+      if (
+        body.mode === 'protected_autopilot'
+        && await clientWorkspaceCannotRequestProtected(c.env.DB, identity)
+      ) {
+        return c.json({
+          error: 'Protected Autopilot cannot be requested while this client is on hold',
+        }, 409);
       }
       const current = await getWorkspaceLearningSettings(c.env.DB, identity);
       const rate = experimentRate(body.experimentRate, Number(current.experimentRate ?? 0));
@@ -413,6 +479,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     const clientId = c.req.query('clientId')?.trim() || null;
     const identity = await ownedSettingsIdentity(c.env.DB, userId, clientId);
     if (!identity) return c.json({ error: 'Not found' }, 404);
+    const settings = await getWorkspaceLearningSettings(c.env.DB, identity);
+    const cost = await getWorkspaceMonthlyAiSpend(c.env.DB, identity);
     const row = await latestReadiness(c.env.DB);
     const effectiveMode = await loadWorkspaceLearningMode(
       c.env,
@@ -430,6 +498,19 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       evaluatedAt: row?.evaluated_at ?? null,
       checks: row ? parseJsonObject(row.checks_json) : {},
       metrics: row ? parseJsonObject(row.metrics_json) : {},
+      cost: {
+        ...cost,
+        monthlyAiBudgetUsdCents: settings.monthlyAiBudgetUsdCents ?? null,
+        withinBudget: cost.monthlyAiSpendUsdCents != null
+          && Number.isSafeInteger(settings.monthlyAiBudgetUsdCents)
+          && Number(settings.monthlyAiBudgetUsdCents) > 0
+          && cost.monthlyAiSpendUsdCents < Number(settings.monthlyAiBudgetUsdCents),
+      },
+      globalSwitches: {
+        learningBrain: c.env.LEARNING_BRAIN_ENABLED === 'true',
+        releaseEnforcement: c.env.LEARNING_RELEASE_ENFORCEMENT === 'true',
+        protectedAutopilot: c.env.LEARNING_AUTOPILOT_ENABLED === 'true',
+      },
     });
   });
 
@@ -561,6 +642,164 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Invalid request' }, 400);
     }
+  });
+
+  app.get('/api/learning/admin/operations', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const rawLimit = c.req.query('limit');
+    const limit = rawLimit == null || rawLimit === '' ? 100 : Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+      return c.json({ error: 'limit must be an integer between 1 and 200' }, 400);
+    }
+    const rows = await c.env.DB.prepare(`
+      WITH recent AS (
+        SELECT d.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY d.user_id, d.workspace_key
+                 ORDER BY d.updated_at DESC, d.id DESC
+               ) AS rn
+          FROM learning_decisions d
+         WHERE d.stage = 'release'
+      ), decision_metrics AS (
+        SELECT r.user_id, r.workspace_key,
+               COUNT(*) AS decision_count,
+               SUM(CASE WHEN r.release_state IN ('hold_amber','block_red') THEN 1 ELSE 0 END) AS hold_count,
+               COUNT(a.id) AS adjudicated_count,
+               SUM(CASE
+                 WHEN a.expected_state = 'pass_green'
+                  AND r.release_state IN ('hold_amber','block_red') THEN 1 ELSE 0 END
+               ) AS false_hold_count,
+               SUM(CASE
+                 WHEN a.expected_state = 'block_red'
+                  AND a.severity = 'release_critical'
+                  AND r.release_state = 'pass_green' THEN 1 ELSE 0 END
+               ) AS severe_false_passes,
+               SUM(CASE
+                 WHEN json_extract(r.summary_json, '$.persistenceState') = 'complete'
+                  AND json_extract(r.summary_json, '$.pipelineState') IS NOT NULL
+                 THEN 1 ELSE 0 END
+               ) AS judge_available
+          FROM recent r
+          LEFT JOIN learning_adjudications a ON a.decision_id = r.id
+           AND a.user_id = r.user_id AND a.workspace_key = r.workspace_key
+           AND a.owner_kind = r.owner_kind AND a.owner_id = r.owner_id
+         WHERE r.rn <= 30
+         GROUP BY r.user_id, r.workspace_key
+      ), verdict_metrics AS (
+        SELECT r.user_id, r.workspace_key,
+               COUNT(v.id) AS critic_total,
+               SUM(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS critic_available
+          FROM recent r
+          JOIN learning_critic_verdicts v ON v.decision_id = r.id
+         WHERE r.rn <= 30
+         GROUP BY r.user_id, r.workspace_key
+      ), sample_candidates AS (
+        SELECT r.user_id, r.workspace_key, r.owner_kind, r.owner_id,
+               r.id AS sample_decision_id, r.post_id AS sample_post_id,
+               r.release_state AS sample_release_state,
+               ROW_NUMBER() OVER (
+                 PARTITION BY r.user_id, r.workspace_key, r.owner_kind, r.owner_id
+                 ORDER BY r.updated_at DESC, r.id DESC
+               ) AS sample_rank
+          FROM recent r
+          LEFT JOIN learning_adjudications a ON a.decision_id = r.id
+           AND a.user_id = r.user_id AND a.workspace_key = r.workspace_key
+           AND a.owner_kind = r.owner_kind AND a.owner_id = r.owner_id
+         WHERE r.rn <= 30 AND a.id IS NULL
+      )
+      SELECT w.user_id, w.workspace_key, w.client_id, w.owner_kind, w.owner_id,
+             w.mode, w.autopublish_consent_at, w.autopublish_policy_version,
+             w.updated_at, u.id AS user_exists, c.id AS client_id_found,
+             c.status AS client_status, s.shop_domain,
+             s.uninstalled_at AS shop_uninstalled_at,
+             dm.decision_count, dm.hold_count, dm.adjudicated_count,
+             dm.false_hold_count, dm.severe_false_passes,
+             vm.critic_total, vm.critic_available, dm.judge_available,
+             sc.sample_decision_id, sc.sample_post_id, sc.sample_release_state
+        FROM workspace_learning_settings w
+        LEFT JOIN users u ON w.owner_kind = 'user' AND u.id = w.user_id
+        LEFT JOIN clients c ON w.owner_kind = 'client'
+         AND c.id = w.client_id AND c.user_id = w.user_id
+        LEFT JOIN shopify_stores s ON w.owner_kind = 'shop'
+         AND LOWER(s.shop_domain) = w.owner_id
+        LEFT JOIN decision_metrics dm ON dm.user_id = w.user_id
+         AND dm.workspace_key = w.workspace_key
+        LEFT JOIN verdict_metrics vm ON vm.user_id = w.user_id
+         AND vm.workspace_key = w.workspace_key
+        LEFT JOIN sample_candidates sc ON sc.user_id = w.user_id
+         AND sc.workspace_key = w.workspace_key
+         AND sc.owner_kind = w.owner_kind AND sc.owner_id = w.owner_id
+         AND sc.sample_rank = 1
+       ORDER BY w.updated_at DESC, w.user_id, w.workspace_key
+       LIMIT ?
+    `).bind(limit).all<AdminOperationsRow>();
+    const readinessRow = await latestReadiness(c.env.DB);
+    const readinessAgeMs = readinessRow
+      ? Date.now() - Date.parse(readinessRow.evaluated_at)
+      : Number.POSITIVE_INFINITY;
+    const globalSwitches = {
+      learningBrain: c.env.LEARNING_BRAIN_ENABLED === 'true',
+      releaseEnforcement: c.env.LEARNING_RELEASE_ENFORCEMENT === 'true',
+      protectedAutopilot: c.env.LEARNING_AUTOPILOT_ENABLED === 'true',
+    };
+    const workspaces = (rows.results ?? []).map((row) => {
+      const decisionCount = countValue(row.decision_count);
+      const holdCount = countValue(row.hold_count);
+      const adjudicatedCount = countValue(row.adjudicated_count);
+      const falseHoldCount = countValue(row.false_hold_count);
+      const criticTotal = countValue(row.critic_total);
+      const criticAvailable = countValue(row.critic_available);
+      const judgeAvailable = countValue(row.judge_available);
+      const onHold = row.owner_kind === 'client'
+        && row.client_status?.trim().toLowerCase() === 'on_hold';
+      const active = row.owner_kind === 'user' ? row.user_exists != null
+        : row.owner_kind === 'client' ? row.client_id_found != null && !onHold
+          : row.shop_domain != null && row.shop_uninstalled_at == null;
+      return {
+        userId: row.user_id,
+        workspaceKey: row.workspace_key,
+        clientId: row.client_id,
+        ownerKind: row.owner_kind,
+        ownerId: row.owner_id,
+        mode: row.mode,
+        consentAt: row.autopublish_consent_at,
+        consentPolicyVersion: row.autopublish_policy_version,
+        active,
+        onHold,
+        decisionCount,
+        holdRate: ratio(holdCount, decisionCount),
+        sampledFalseHoldRate: ratio(falseHoldCount, adjudicatedCount),
+        criticAvailability: ratio(criticAvailable, criticTotal),
+        judgeAvailability: ratio(judgeAvailable, decisionCount),
+        severeFalsePasses: countValue(row.severe_false_passes),
+        adjudicationCoverage: ratio(adjudicatedCount, decisionCount),
+        globalKillSwitchEnabled: globalSwitches.protectedAutopilot,
+        sampleDecisionId: row.sample_decision_id ?? null,
+        samplePostId: row.sample_post_id ?? null,
+        sampleReleaseState: row.sample_release_state ?? null,
+        updatedAt: row.updated_at,
+      };
+    });
+    return c.json({
+      policyVersion: AUTOPILOT_POLICY_VERSION,
+      globalSwitches,
+      readiness: {
+        ready: readinessRow?.ready === 1
+          && readinessAgeMs >= 0
+          && readinessAgeMs <= 20 * 60 * 1000,
+        stale: !readinessRow
+          || !Number.isFinite(readinessAgeMs)
+          || readinessAgeMs < 0
+          || readinessAgeMs > 20 * 60 * 1000,
+        evaluatedAt: readinessRow?.evaluated_at ?? null,
+        checks: readinessRow ? parseJsonObject(readinessRow.checks_json) : {},
+        metrics: readinessRow ? parseJsonObject(readinessRow.metrics_json) : {},
+      },
+      workspaces,
+    });
   });
 
   app.get('/api/learning/decisions/:postId', async (c) => {

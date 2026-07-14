@@ -108,16 +108,46 @@ export interface ShopifyReachAudienceSegment {
   status: 'predicted' | 'confirmed' | 'disabled';
 }
 
+export interface ShopifyReachTimingWindow {
+  weekday: number;
+  startHour: number;
+  endHour: number;
+  platform: ShopifyReachPlatform;
+  mediaType: string;
+  expectedScore: number;
+  confidence: number;
+  sampleSize: number;
+  source: 'account' | 'archetype';
+}
+
 export interface ShopifyReachPlan {
   id: string;
   postId: string;
+  reachProfileId: string | null;
+  reachProfileVersion: number | null;
+  objective: string | null;
+  audienceSegmentId: string | null;
   status: 'shadow' | 'selected' | 'invalidated';
+  createdAt: string | null;
   geographicFocus: string[];
   audience: { label: string; needs: string[] } | null;
-  platformPlan: Record<string, unknown>;
-  timing: unknown[];
-  hashtags: Record<string, unknown>;
-  media: Record<string, unknown>;
+  platformPlan: Partial<Record<ShopifyReachPlatform, {
+    caption?: string;
+    hashtags?: string[];
+  }>>;
+  timing: ShopifyReachTimingWindow[];
+  hashtags: {
+    localKeywords?: string[];
+    facebookTags?: string[];
+    instagramTags?: string[];
+    evidence?: string[];
+  };
+  media: Partial<Record<ShopifyReachPlatform, {
+    source?: 'approved_asset' | 'generated';
+    assetId?: string | null;
+    format?: string;
+    generate?: boolean;
+  }>> & { generatedUrl?: string | null };
 }
 
 export async function getShopifyReachProfile(signal?: AbortSignal) {
@@ -177,6 +207,185 @@ export async function getShopifyReachPlans(
     { signal },
   );
   return result.plans ?? [];
+}
+
+// Customer learning is always scoped from the signed shop session on the
+// worker. None of these payloads accept shop, user, client, or owner ids.
+export type ShopifyLearningMode = 'off' | 'shadow' | 'approval' | 'protected_autopilot';
+
+export interface ShopifyLearningProfile {
+  version: number;
+  approved: boolean;
+  createdAt: string;
+  data: Record<string, unknown>;
+}
+
+export interface ShopifyLearningSignal {
+  variableKey: string;
+  variableValue: string;
+  objective: string;
+  sampleCount: number;
+  effect: number;
+  confidence: number;
+  freshnessAt: string;
+  status: string;
+  evidenceKind: 'association' | 'experiment';
+}
+
+export interface ShopifyLearningOutcome {
+  id: string;
+  postId: string;
+  platform: string;
+  postType: string | null;
+  content: string | null;
+  windowHours: number;
+  rawSignals: Record<string, unknown>;
+  normalizedScore: number | null;
+  completeness: string;
+  sourceStatus: string;
+  publishedAt: string;
+  measuredAt: string;
+}
+
+export interface ShopifyLearningSummary {
+  profile: ShopifyLearningProfile | null;
+  signals: ShopifyLearningSignal[];
+  outcomes: ShopifyLearningOutcome[];
+}
+
+export interface ShopifyLearningSettings {
+  mode: ShopifyLearningMode;
+  autopublishConsentAt: string | null;
+  autopublishPolicyVersion: string | null;
+  experimentRate: number;
+  monthlyAiBudgetUsdCents: number | null;
+  disabledReason: string | null;
+  exists: boolean;
+}
+
+export interface ShopifyLearningSettingsResponse {
+  settings: ShopifyLearningSettings;
+  effectiveMode: ShopifyLearningMode;
+}
+
+export interface ShopifyLearningReadiness {
+  policyVersion: string;
+  ready: boolean;
+  stale: boolean;
+  effectiveMode: ShopifyLearningMode;
+  evaluatedAt: string | null;
+  checks: Record<string, boolean | Record<string, boolean>>;
+  metrics: Record<string, number | boolean>;
+  cost: {
+    monthlyAiSpendUsdCents: number | null;
+    telemetryCount: number;
+    monthlyAiBudgetUsdCents: number | null;
+    withinBudget: boolean;
+  };
+  globalSwitches: {
+    learningBrain: boolean;
+    releaseEnforcement: boolean;
+    protectedAutopilot: boolean;
+  };
+}
+
+export interface ShopifyLearningCriticVerdict {
+  id: string;
+  critic_kind: string;
+  verdict: 'pass' | 'warn_repairable' | 'block' | 'unavailable';
+  severity: 'advisory' | 'release_critical';
+  confidence: number;
+  evidence: string[];
+  repairs: string[];
+}
+
+export interface ShopifyLearningDecision {
+  id: string;
+  post_id: string;
+  mode: ShopifyLearningMode;
+  stage: 'snapshot' | 'text_preflight' | 'media_preflight' | 'release';
+  release_state: 'pending' | 'pass_green' | 'hold_amber' | 'block_red' | 'shadow_only';
+  summary: Record<string, unknown>;
+  created_at: string;
+  updated_at?: string;
+  verdicts: ShopifyLearningCriticVerdict[];
+}
+
+export interface ShopifyConversionFeedback {
+  calls?: number;
+  messages?: number;
+  leads?: number;
+  bookings?: number;
+  sales?: number;
+  orderValueCents?: number;
+}
+
+export async function getShopifyLearningSummary(signal?: AbortSignal) {
+  return apiFetch<ShopifyLearningSummary>('/api/shopify/learning/profile', { signal });
+}
+
+export async function getShopifyLearningSettings(signal?: AbortSignal) {
+  return apiFetch<ShopifyLearningSettingsResponse>(
+    '/api/shopify/learning/settings',
+    { signal },
+  );
+}
+
+export async function getShopifyLearningReadiness(signal?: AbortSignal) {
+  return apiFetch<ShopifyLearningReadiness>(
+    '/api/shopify/learning/readiness',
+    { signal },
+  );
+}
+
+export async function updateShopifyLearningSettings(
+  input: {
+    mode: 'approval' | 'protected_autopilot';
+    consent?: boolean;
+    experimentRate?: number;
+    monthlyAiBudgetUsdCents?: number | null;
+  },
+  signal?: AbortSignal,
+) {
+  const body: Record<string, unknown> = { mode: input.mode };
+  if (input.consent !== undefined) body.consent = input.consent;
+  if (input.experimentRate !== undefined) body.experimentRate = input.experimentRate;
+  if (input.monthlyAiBudgetUsdCents !== undefined) {
+    body.monthlyAiBudgetUsdCents = input.monthlyAiBudgetUsdCents;
+  }
+  return apiFetch<ShopifyLearningSettingsResponse>(
+    '/api/shopify/learning/settings',
+    { method: 'PUT', body: JSON.stringify(body), signal },
+  );
+}
+
+export async function getShopifyLearningDecisions(
+  postId: string,
+  signal?: AbortSignal,
+) {
+  const result = await apiFetch<{ decisions: ShopifyLearningDecision[] }>(
+    `/api/shopify/learning/decisions/${encodeURIComponent(postId)}`,
+    { signal },
+  );
+  return result.decisions ?? [];
+}
+
+export async function recordShopifyConversionFeedback(
+  postId: string,
+  input: ShopifyConversionFeedback,
+  signal?: AbortSignal,
+) {
+  const body: Record<string, unknown> = {};
+  const fields = [
+    'calls', 'messages', 'leads', 'bookings', 'sales', 'orderValueCents',
+  ] as const;
+  for (const field of fields) {
+    if (input[field] !== undefined) body[field] = input[field];
+  }
+  return apiFetch<{ feedbackId: string }>(
+    `/api/shopify/learning/outcomes/${encodeURIComponent(postId)}/feedback`,
+    { method: 'POST', body: JSON.stringify(body), signal },
+  );
 }
 
 export interface ShopInfo {
