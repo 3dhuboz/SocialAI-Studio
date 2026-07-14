@@ -193,9 +193,11 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current production schema version:** v35
+**Current production schema version:** v37
 
-**Pending Release 1 migration:** `schema_v37_learning_foundation.sql`. Do not label v37 live until the staged migration, production backup, production migration, and table inspection gates pass.
+Release 1 migration: `workers/api/schema_v37_learning_foundation.sql`.
+
+Release 1 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-1-shadow-foundation.md`.
 
 ### Migration process
 ```bash
@@ -216,9 +218,9 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `posters` | AI poster metadata + R2 key |
 | `activations` | Account activation codes |
 | `portals` | White-label portal configs |
-| `workspace_learning_settings` | Tenant mode, consent, policy, experiment, and AI-budget settings (v37 pending) |
-| `learning_decisions` | Immutable tenant-scoped evaluation and release receipts (v37 pending) |
-| `learning_critic_verdicts` | Per-critic evidence attached to decision receipts (v37 pending) |
+| `workspace_learning_settings` | Tenant mode, consent, policy, experiment, and AI-budget settings |
+| `learning_decisions` | Immutable tenant-scoped evaluation and release receipts |
+| `learning_critic_verdicts` | Per-critic evidence attached to decision receipts |
 
 ---
 
@@ -304,7 +306,7 @@ import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 
 - **`wrangler deploy` fails without `--config`** — the `functions/` dir at repo root makes wrangler think it's a Pages project. Always use `npx wrangler deploy --config wrangler.toml` from `workers/api/`.
 - **Same-domain `/api/*` depends on the Pages catch-all proxy plus explicit invocation routes** — `functions/api/[[path]].js` forwards unmatched `/api/*` requests to `https://socialai-api.steve-700.workers.dev`, and `public/_routes.json` pins Pages Functions to `/api/*` + `/embed`. Without that pair, `public/_redirects` (`/* /index.html 200`) can swallow URLs like `/api/health` and serve the SPA HTML shell instead of JSON.
-- **Seamus (Hugheseys Que) is intended to remain on hold** — the canonical field is `clients.status = 'on_hold'`. Cron skips automatically. Verify the live row before rollout and do not change it without checking with Steve.
+- **Seamus (Hugheseys Que) is on hold** — the canonical field is `clients.status = 'on_hold'`. It was verified after the Release 1 production rollout. Cron skips automatically; do not change it without checking with Steve.
 - **Facebook `scheduled_publish_time` is banned** — creates uncancellable FB orphans. DB is the source of truth; the `publish-missed` cron publishes at the right time.
 - **CORS list in `index.ts`** — when adding a new white-label domain, add it to the `allowed` array at the top of `index.ts`.
 - **`tech-saas-agency` archetype** — image examples are bright daylight desk/notebook scenes. Never revert to dark UI/server rack shots.
