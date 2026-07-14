@@ -104,7 +104,7 @@ describe('learning decision client', () => {
   });
 
   it('keeps learning profile, settings, and readiness reads in the selected client scope', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       const body = url.includes('/profile')
         ? { profile: null, signals: [], outcomes: [] }
@@ -153,7 +153,7 @@ describe('learning decision client', () => {
   });
 
   it('sends only bounded customer controls and conversion feedback', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       const body = url.includes('/settings')
         ? {
@@ -228,7 +228,7 @@ describe('learning decision client', () => {
   });
 
   it('keeps admin operations read-only except for explicit adjudication labels', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       return new Response(JSON.stringify(
         url.includes('/adjudicate')
@@ -360,7 +360,7 @@ describe('organic reach client', () => {
   });
 
   it('sends only reviewed reach data and the selected client id to mutations', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       const body = url.includes('/segments/propose')
         ? { segments: [{ id: 'segment_1' }] }

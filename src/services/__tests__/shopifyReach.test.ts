@@ -39,7 +39,7 @@ describe('Shopify organic reach client', () => {
         config: { apiKey: 'key', host: 'host' },
       },
     });
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const path = String(input);
       const response = path.includes('/plans/')
         ? { plans: [] }
