@@ -35,9 +35,9 @@ export async function loadWorkspaceLearningMode(
 
   if (identity.ownerKind === 'client') {
     const client = await env.DB.prepare(
-      'SELECT on_hold FROM clients WHERE id = ? AND user_id = ?',
-    ).bind(identity.ownerId, identity.userId).first<{ on_hold: number | null }>();
-    if (!client || Number(client.on_hold) === 1) return 'off';
+      'SELECT status FROM clients WHERE id = ? AND user_id = ?',
+    ).bind(identity.ownerId, identity.userId).first<{ status: string | null }>();
+    if (!client || client.status?.trim().toLowerCase() === 'on_hold') return 'off';
   } else if (identity.ownerKind === 'shop') {
     const shop = await env.DB.prepare(
       'SELECT shop_domain FROM shopify_stores WHERE shop_domain = ? AND uninstalled_at IS NULL',

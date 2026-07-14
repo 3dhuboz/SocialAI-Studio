@@ -51,7 +51,7 @@ export async function cronEvaluateLearningShadow(
       AND p.scheduled_for <= ?
       AND (
         p.client_id IS NULL
-        OR (c.id IS NOT NULL AND COALESCE(c.on_hold, 0) = 0)
+        OR (c.id IS NOT NULL AND COALESCE(c.status, 'active') != 'on_hold')
       )
     ORDER BY p.scheduled_for ASC
     LIMIT 8

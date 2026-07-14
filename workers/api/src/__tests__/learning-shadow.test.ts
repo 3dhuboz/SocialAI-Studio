@@ -62,7 +62,7 @@ describe('learning shadow evaluation', () => {
     expect(query).toContain('LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id');
     expect(query).toContain('p.scheduled_for > ?');
     expect(query).toContain('p.scheduled_for <= ?');
-    expect(query).toContain('COALESCE(c.on_hold, 0) = 0');
+    expect(query).toContain("COALESCE(c.status, 'active') != 'on_hold'");
     expect(query).toMatch(/LIMIT\s+8/i);
     expect(queryCall?.binds).toEqual([
       '2026-07-14T10:00:00.000',
@@ -83,7 +83,7 @@ describe('learning shadow evaluation', () => {
         platform: 'facebook',
         scheduled_for: '2026-07-14T12:00:00.000Z',
       }],
-      'FROM clients': [{ on_hold: 1 }],
+      'FROM clients': [{ status: 'on_hold' }],
     });
 
     const result = await cronEvaluateLearningShadow({

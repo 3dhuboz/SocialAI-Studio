@@ -42,7 +42,7 @@
 - Run each migration against `socialai-db-staging` and verify table shape before production.
 - Keep `LEARNING_BRAIN_ENABLED=false` until Release 1 verification is complete.
 - Keep release enforcement disabled until Release 2 shadow and approval evidence passes.
-- Preserve `clients.on_hold = 1`; Hugheseys Que must remain excluded unless Steve separately authorises removing the hold.
+- Preserve `clients.status = 'on_hold'`; Hugheseys Que must remain excluded unless Steve separately authorises removing the hold.
 - Preserve `generateImageWithGuardrails`, the BBQ cut-accuracy rules, forbidden-subject loading, image critique/retry, and publish-time quality threshold. A new critic supplements these root fixes; it is not a substitute for them.
 - Keep Higgsfield behind its existing production gate until a documented server-to-server API, deploy-safe credentials, critic/retry path, and fal.ai fallback are proven.
 - A critic or learning failure must not change existing publishing while the workspace is `off` or `shadow`.

@@ -4,7 +4,7 @@ import { normalizeWorkspaceIdentity, workspaceKey } from '../lib/learning/types'
 import { loadWorkspaceLearningMode, resolveLearningMode } from '../lib/learning/workspace-mode';
 
 type ModeRows = {
-  client?: { on_hold: number } | null;
+  client?: { status: string | null } | null;
   shop?: { shop_domain: string } | null;
   settings?: { mode: string } | null;
 };
@@ -66,7 +66,7 @@ describe('learning workspace mode', () => {
 
   it('returns an explicit active client setting', async () => {
     await expect(loadWorkspaceLearningMode(modeEnv({
-      client: { on_hold: 0 }, settings: { mode: 'approval' },
+      client: { status: 'active' }, settings: { mode: 'approval' },
     }), 'owner_1', 'client_1')).resolves.toBe('approval');
   });
 
@@ -92,7 +92,7 @@ describe('learning workspace mode', () => {
 
   it('returns off for an on-hold or cross-owner client', async () => {
     await expect(loadWorkspaceLearningMode(
-      modeEnv({ client: { on_hold: 1 } }), 'owner_1', 'client_1',
+      modeEnv({ client: { status: 'on_hold' } }), 'owner_1', 'client_1',
     )).resolves.toBe('off');
     await expect(loadWorkspaceLearningMode(
       modeEnv({ client: null }), 'owner_1', 'client_1',
