@@ -17,6 +17,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
 import { deleteLearningUserData } from '../lib/learning/deletion';
+import { deleteReachUserData } from '../lib/reach/deletion';
 import { requireAuth } from '../middleware/auth';
 
 export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
@@ -190,6 +191,7 @@ export function registerUserRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     await deleteLearningUserData(c.env.DB, uid);
+    await deleteReachUserData(c.env.DB, uid);
 
     // Per-table purges. Wrap each in try/catch so a missing table (e.g.
     // a future schema rename) doesn't abort the whole delete. Order

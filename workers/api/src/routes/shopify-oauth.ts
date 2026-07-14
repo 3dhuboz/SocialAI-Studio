@@ -43,6 +43,7 @@ import { createAppSubscription, shouldForceTestMode, PLAN_INFO } from '../lib/sh
 import { exchangeSessionToken } from '../lib/shopify-token-exchange';
 import { encryptToken, decryptToken } from '../lib/crypto';
 import { deleteLearningWorkspaceData } from '../lib/learning/deletion';
+import { deleteReachWorkspaceData } from '../lib/reach/deletion';
 import { shopifyGraphQL } from '../lib/shopify-admin-api';
 
 // At-rest encryption helper. When MASTER_ENCRYPTION_KEY is set, returns the
@@ -887,6 +888,7 @@ export function registerShopifyOauthRoutes(app: Hono<{ Bindings: Env }>): void {
       .filter((k): k is string => typeof k === 'string' && k.length > 0);
 
     await deleteLearningWorkspaceData(c.env.DB, shop, `shop:${shop}`);
+    await deleteReachWorkspaceData(c.env.DB, shop, `shop:${shop}`);
 
     // 2. D1 purge. Order doesn't matter — every constraint is shop-scoped or
     //    references shopify_stores with ON DELETE CASCADE.

@@ -41,7 +41,9 @@ import { registerPostproxyRoutes } from './routes/postproxy';
 import { registerRecommendationsRoutes } from './routes/recommendations';
 import { registerIntegrationRoutes } from './routes/integrations';
 import { registerLearningRoutes } from './routes/learning';
+import { registerReachRoutes } from './routes/reach';
 import { registerShopifyOauthRoutes } from './routes/shopify-oauth';
+import { registerShopifyReachRoutes } from './routes/shopify-reach';
 import { registerAdminShopifyRoutes } from './routes/admin-shopify';
 import { registerShopifyProductsRoutes } from './routes/shopify-products';
 import { registerShopifyComposeRoutes } from './routes/shopify-compose';
@@ -126,6 +128,7 @@ registerPostproxyRoutes(app);
 registerRecommendationsRoutes(app);
 registerIntegrationRoutes(app);
 registerLearningRoutes(app);
+registerReachRoutes(app);
 
 // ── Shopify embedded app ──────────────────────────────────────────────────
 // All /api/shopify/* routes — install + GDPR webhooks + Phase 2 product
@@ -144,6 +147,7 @@ registerShopifyAutopilotRoutes(app);
 registerShopifyCampaignRoutes(app);
 registerShopifyFactsRoutes(app);
 registerShopifyProfileRoutes(app);
+registerShopifyReachRoutes(app);
 
 // ── Global error handler ──────────────────────────────────────────────────
 // Without this, a thrown error in any handler falls through to Hono's
