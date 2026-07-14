@@ -56,4 +56,23 @@ decisions and verdicts, but it cannot hold or alter a post while
 
 ## Production Gates
 
-Pending. Do not enable release enforcement during this rollout.
+- Pre-deploy health returned `ok=true`.
+- Pre-deploy readback confirmed Hugheseys Que remained `status='on_hold'`,
+  there were zero learning decisions and verdicts, no non-shadow workspace
+  overrides, and zero scheduled posts.
+- The privacy-safe SHA-256 of all scheduled post fields was
+  `4F53CDA18C2BAA0C0354BB5F9A3ECBE5ED12AB4D8E11BA873C2F11161202B945`
+  (the SHA-256 of an empty JSON array because no posts were scheduled).
+- Production Worker version:
+  `bb40465d-cbf2-45f6-90ae-5695a4e8e58e`.
+- Cloudflare displayed `LEARNING_BRAIN_ENABLED="true"` and
+  `LEARNING_RELEASE_ENFORCEMENT="false"` at deployment.
+- Immediate and post-cron-boundary health checks returned `ok=true`.
+- Immediate and post-cron-boundary database checks both showed Hugheseys Que
+  still on hold, zero decisions, zero verdicts, zero non-shadow workspaces, and
+  zero scheduled posts.
+- The scheduled-state SHA-256 remained unchanged before deployment,
+  immediately after deployment, and after a cron boundary.
+
+Release 2 is live in shadow mode. Do not enable release enforcement until the
+later protected-autopilot gates pass.
