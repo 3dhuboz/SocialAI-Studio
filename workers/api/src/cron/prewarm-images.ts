@@ -26,6 +26,8 @@ import { generateImageWithGuardrails } from '../lib/image-gen';
 import { critiqueImageInternal } from '../lib/critique';
 import { buildCritiqueContextText } from '../lib/post-critique';
 import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
+import { evaluateReleasePreflight } from '../lib/learning/release-preflight';
+import type { WorkspaceOwnerKind } from '../lib/learning/types';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
@@ -37,8 +39,17 @@ type PostRow = {
   id: string;
   user_id: string;
   client_id: string | null;
+  owner_kind: WorkspaceOwnerKind | null;
+  owner_id: string | null;
   image_prompt: string | null;
   content: string | null;
+  platform: string | null;
+  hashtags: string | null;
+  post_type: string | null;
+  video_url: string | null;
+  video_status: string | null;
+  video_script: string | null;
+  video_shots: string | null;
 };
 
 export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: number }> {
@@ -46,7 +57,9 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
   const inLookaheadAEST = new Date(Date.now() + 10 * 60 * 60 * 1000 + PREWARM_LOOKAHEAD_MINUTES * 60 * 1000).toISOString().replace('Z', '');
   const rows = await env.DB.prepare(
-    `SELECT id, user_id, client_id, image_prompt, content FROM posts
+    `SELECT id, user_id, client_id, owner_kind, owner_id, image_prompt, content,
+            platform, hashtags, post_type, video_url, video_status, video_script, video_shots
+       FROM posts
      WHERE status = 'Scheduled'
        AND scheduled_for > ? AND scheduled_for <= ?
        AND ${PREWARM_MISSING_IMAGE_PREDICATE}
@@ -185,6 +198,7 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
         await env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
           .bind(finalUrl, postId).run();
       }
+      await recordReleasePreflight(env, post, finalUrl, gen.archetypeSlug);
       console.log(`[CRON prewarm] generated for post ${postId} via ${finalModel}`);
       return true;
     }
@@ -193,5 +207,40 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
   } catch (e: any) {
     console.warn(`[CRON prewarm] failed for post ${post.id}: ${e?.message}`);
     return false;
+  }
+}
+
+async function recordReleasePreflight(
+  env: Env,
+  post: PostRow,
+  finalUrl: string,
+  archetypeSlug: string | null,
+): Promise<void> {
+  if (!post.owner_kind || !post.owner_id) {
+    console.warn(`[CRON prewarm] skipped early release receipt for ${post.id}: ownership metadata missing`);
+    return;
+  }
+  try {
+    await evaluateReleasePreflight(env, {
+      id: post.id,
+      user_id: post.user_id,
+      client_id: post.client_id,
+      owner_kind: post.owner_kind,
+      owner_id: post.owner_id,
+      content: post.content ?? '',
+      platform: post.platform ?? 'facebook',
+      hashtags: post.hashtags,
+      image_url: finalUrl,
+      post_type: post.post_type,
+      video_url: post.video_url,
+      video_status: post.video_status,
+      video_script: post.video_script,
+      video_shots: post.video_shots,
+      archetype_slug: archetypeSlug,
+    });
+  } catch (error) {
+    console.warn(
+      `[CRON prewarm] early release receipt failed for ${post.id}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

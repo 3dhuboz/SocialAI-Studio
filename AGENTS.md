@@ -171,7 +171,8 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prompt-safety.ts` | Prompt injection detection |
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
-| `lib/learning/` | Canonical workspace identity, mode resolution, decision receipts, and explicit tenant deletion helpers |
+| `lib/learning/` | Tenant-scoped critic context, independent critic council, bounded repair, Release Judge, hash-addressed decision receipts, and release preflight |
+| `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |

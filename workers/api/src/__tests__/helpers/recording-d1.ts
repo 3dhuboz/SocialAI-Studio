@@ -33,6 +33,9 @@ export function makeRecordingD1(fixtures: Record<string, unknown[]> = {}) {
       };
       return statement;
     },
+    async batch(statements: Array<{ run(): Promise<unknown> }>) {
+      return Promise.all(statements.map((statement) => statement.run()));
+    },
   } as unknown as D1Database;
   return { db, calls };
 }

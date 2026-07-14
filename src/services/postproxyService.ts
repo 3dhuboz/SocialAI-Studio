@@ -80,7 +80,9 @@ export interface SavePlacementArgs {
 
 export interface PublishNowResponse {
   ok: true;
-  postproxyPostId: string;
+  postproxyPostId: string | null;
+  platformPostId?: string;
+  alreadyPublished?: boolean;
 }
 
 /** Factory matches the `createDb()` pattern in `services/db.ts` — caller is

@@ -822,9 +822,8 @@ const Dashboard: React.FC = () => {
     });
   };
 
-  // Postproxy migration — service factory used for the publish-now path
-  // (replaces direct FacebookService.postToPageDirect calls when the
-  // workspace is on the Postproxy path) and the MigrationBanner reconnect
+  // Publishing service factory used for the single Worker egress and the
+  // MigrationBanner reconnect
   // trigger. The reconnect handler navigates to Settings + forces the
   // PostproxyConnectButton into Stage 1, bypassing the URL ?step= check
   // for users who haven't hit OAuth yet.
@@ -1879,99 +1878,27 @@ const Dashboard: React.FC = () => {
   }, [authMode, fbConnected, socialTokens.facebookPageId, socialTokens.facebookPageAccessToken]);
 
   const handlePublishDirect = async (platforms: ('facebook' | 'instagram')[] = ['facebook']) => {
-    // Postproxy dual-path: a workspace is on the new path once a placement
-    // has been chosen. For the Quick Post flow we have no post.id yet —
-    // the worker's /publish-now needs one — so we save the draft to D1
-    // first, then call publishNow with the returned id.
-    const onPostproxyPath = !!socialTokens.postproxyPlacementId;
-    if (!onPostproxyPath && (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken)) {
-      toast('Connect your Facebook page in Settings first.', 'warning'); return;
-    }
+    // Quick Post first persists the exact candidate that will be published.
+    // The Worker then selects Postproxy or legacy Graph only after ownership
+    // validation and the release preflight have passed.
     setIsPublishing(true);
     setPublishingPlatforms(platforms);
     try {
       const _postNowBase = generatedContent.replace(/(\s+#\w+)+\s*$/, '').trim();
-      const fullText = generatedHashtags.length > 0
-        ? `${_postNowBase}\n\n${generatedHashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`
-        : _postNowBase;
-
-      if (onPostproxyPath) {
-        // Postproxy path: create one Scheduled post per requested platform
-        // and call publish-now for each. The worker's publish-now route
-        // honours post.platform (ig-wire schema_v24) so IG-tagged posts
-        // route through the Postproxy IG block and FB-tagged ones through
-        // the FB block. The 409 NOT_CONNECTED gate fires per-post if the
-        // workspace hasn't connected that platform — the catch below
-        // surfaces an actionable CTA instead of a raw error toast.
-        for (const plat of platforms) {
-          const newId = await db.createPost({
-            content: _postNowBase,
-            platform: plat === 'instagram' ? 'Instagram' : 'Facebook',
-            status: 'Scheduled',
-            scheduled_for: new Date().toISOString(),
-            hashtags: generatedHashtags,
-            image_url: generatedImage?.startsWith('http') ? generatedImage : null,
-            clientId: activeClientId,
-          });
-          await postproxyService.publishNow(newId);
-        }
-        setPublishSuccess(true);
-        setTimeout(() => setPublishSuccess(false), 4000);
-        return;
-      }
-
-      // Audit P0-6 (2026-05-22): track per-platform success so we don't
-      // fire the green success animation when one of two cross-posts
-      // silently failed. Previously a base64 image + cross-post to FB+IG
-      // would post on FB, no-op on IG with a warning toast, then setPublish-
-      // Success(true) — the most common "I published but it didn't appear
-      // on IG" support ticket.
-      const platformResults: Array<{ platform: string; ok: boolean; reason?: string }> = [];
       for (const plat of platforms) {
-        try {
-          if (plat === 'facebook') {
-            if (generatedImage) {
-              await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText, generatedImage);
-            } else {
-              await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, fullText);
-            }
-            platformResults.push({ platform: 'facebook', ok: true });
-          } else if (plat === 'instagram' && socialTokens.instagramBusinessAccountId) {
-            if (generatedImage) {
-              const imgUrl = generatedImage.startsWith('http') ? generatedImage : undefined;
-              if (imgUrl) {
-                await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, fullText, imgUrl);
-                platformResults.push({ platform: 'instagram', ok: true });
-              } else {
-                // Base64 — IG can't use it. Track as a real failure
-                // (was a silent warning before, masked by success state).
-                platformResults.push({ platform: 'instagram', ok: false, reason: 'IG requires a public image URL — generate or upload an image first, then publish' });
-              }
-            } else {
-              // IG requires media for feed posts. No image at all = can't post.
-              platformResults.push({ platform: 'instagram', ok: false, reason: 'IG requires an image — generate or upload one before publishing' });
-            }
-          }
-        } catch (err: any) {
-          platformResults.push({ platform: plat, ok: false, reason: err?.message?.substring(0, 100) || 'publish failed' });
-        }
+        const newId = await db.createPost({
+          content: _postNowBase,
+          platform: plat === 'instagram' ? 'Instagram' : 'Facebook',
+          status: 'Scheduled',
+          scheduled_for: new Date().toISOString(),
+          hashtags: generatedHashtags,
+          image_url: generatedImage?.startsWith('http') ? generatedImage : null,
+          clientId: activeClientId,
+        });
+        await postproxyService.publishNow(newId);
       }
-
-      const ok = platformResults.filter(r => r.ok);
-      const failed = platformResults.filter(r => !r.ok);
-      if (failed.length === 0) {
-        setPublishSuccess(true);
-        setTimeout(() => setPublishSuccess(false), 4000);
-      } else if (ok.length > 0) {
-        // Partial success — celebrate what worked, name what didn't so the
-        // user can fix it manually rather than thinking everything published.
-        const okNames = ok.map(r => r.platform === 'instagram' ? 'Instagram' : 'Facebook').join(' + ');
-        const failedSummary = failed.map(r => `${r.platform === 'instagram' ? 'Instagram' : 'Facebook'} (${r.reason})`).join('; ');
-        toast(`Posted to ${okNames}. ${failedSummary}`, 'warning');
-      } else {
-        // Total failure — every platform errored. Surface the first error.
-        toast(`Publish failed — ${failed[0].reason || 'unknown error'}`, 'error');
-      }
+      setPublishSuccess(true);
+      setTimeout(() => setPublishSuccess(false), 4000);
     } catch (e: any) {
       // 409 NOT_CONNECTED: the worker's schedule-time gate (PR #137) or the
       // publish-now route (ig-wire) couldn't find a Postproxy mapping for
@@ -1983,72 +1910,21 @@ const Dashboard: React.FC = () => {
       } else {
         toast(`Publish failed: ${e?.message?.substring(0, 100) || 'Unknown error'}`, 'error');
       }
+    } finally {
+      setIsPublishing(false);
     }
-    setIsPublishing(false);
   };
 
   // Calendar publish path — used by both the Publish button and the Retry
-  // button on failed posts. Mirrors handlePublishDirect's dual-path logic
-  // (Postproxy when the workspace has a profile for the post's platform,
-  // legacy Graph otherwise) but works against a SocialPost that's already
-  // in D1 (we have post.id, so the Postproxy worker route can resolve
-  // workspace ownership and media itself).
-  //
-  // Why this helper exists: pre-refactor the gate was a bare
-  // `socialTokens.postproxyPlacementId` check, which is FB-centric. An
-  // IG-only Postproxy user (no FB placement, only postproxyInstagramProfileId)
-  // would fall through to the legacy Graph branch and fail because the
-  // workspace has no Graph token at all. The new gate is platform-aware:
-  // FB posts route to Postproxy when postproxyPlacementId is set, IG posts
-  // route to Postproxy when postproxyInstagramProfileId is set. Same shape
-  // as the worker's per-platform mapping resolution in publish-now.
+  // button on failed posts. The Worker owns backend selection, release
+  // preflight, final status persistence, and all external network egress.
   const publishCalendarPost = async (
     post: SocialPost,
     labels: { success: string; failurePrefix: string },
   ): Promise<void> => {
     try {
-      // Postproxy dual-path — gate per post.platform, not per workspace
-      // wholesale. A workspace can hold both an FB placement and an IG
-      // profile (or just one) and the right path depends on what this
-      // specific post is targeting. The worker's /publish-now route runs
-      // the same per-platform mapping lookup, so the gate here only needs
-      // to be correct enough to know SOMETHING is connected.
-      const onPostproxyPath = post.platform === 'Instagram'
-        ? !!socialTokens.postproxyInstagramProfileId
-        : !!socialTokens.postproxyPlacementId;
-      if (onPostproxyPath) {
-        await postproxyService.publishNow(post.id);
-        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-        toast(labels.success, 'success');
-        return;
-      }
-
-      // Legacy Graph path — preserved for the dual-path migration window.
-      // Cleanup specialist drops it once every workspace is on Postproxy.
-      const _base = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
-      const text = post.hashtags?.length ? `${_base}\n\n${post.hashtags.join(' ')}` : _base;
-      if (!socialTokens.facebookPageId) { toast('Connect Facebook in Settings first.', 'warning'); return; }
-      const imageSource = calendarImages[post.id] || post.image;
-      const imageUrl = imageSource?.startsWith('http') ? imageSource : undefined;
-      if (post.platform === 'Facebook') {
-        if (imageUrl) {
-          await FacebookService.postToPageWithImageUrl(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageUrl);
-        } else if (imageSource?.startsWith('data:')) {
-          await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text, imageSource);
-        } else {
-          await FacebookService.postToPageDirect(socialTokens.facebookPageId, socialTokens.facebookPageAccessToken, text);
-        }
-      } else if (post.platform === 'Instagram') {
-        if (!socialTokens.instagramBusinessAccountId) {
-          throw new Error('Instagram is not connected. Connect an Instagram Business account before publishing.');
-        }
-        if (!imageUrl || !imageUrl.startsWith('http')) {
-          throw new Error('Instagram publishing requires a public image URL. Generate or upload an image first.');
-        }
-        await FacebookService.postToInstagram(socialTokens.instagramBusinessAccountId, socialTokens.facebookPageAccessToken, text, imageUrl);
-      }
+      await postproxyService.publishNow(post.id);
       setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: 'Posted' as const } : p));
-      await db.updatePost(post.id, { status: 'Posted' });
       toast(labels.success, 'success');
     } catch (e: any) {
       // 409 NOT_CONNECTED: the worker's publish-now route couldn't find a
