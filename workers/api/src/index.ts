@@ -41,9 +41,11 @@ import { registerPostproxyRoutes } from './routes/postproxy';
 import { registerRecommendationsRoutes } from './routes/recommendations';
 import { registerIntegrationRoutes } from './routes/integrations';
 import { registerLearningRoutes } from './routes/learning';
+import { registerTrackingRoutes } from './routes/tracking';
 import { registerReachRoutes } from './routes/reach';
 import { registerShopifyOauthRoutes } from './routes/shopify-oauth';
 import { registerShopifyReachRoutes } from './routes/shopify-reach';
+import { registerShopifyLearningRoutes } from './routes/shopify-learning';
 import { registerAdminShopifyRoutes } from './routes/admin-shopify';
 import { registerShopifyProductsRoutes } from './routes/shopify-products';
 import { registerShopifyComposeRoutes } from './routes/shopify-compose';
@@ -128,6 +130,7 @@ registerPostproxyRoutes(app);
 registerRecommendationsRoutes(app);
 registerIntegrationRoutes(app);
 registerLearningRoutes(app);
+registerTrackingRoutes(app);
 registerReachRoutes(app);
 
 // ── Shopify embedded app ──────────────────────────────────────────────────
@@ -148,6 +151,7 @@ registerShopifyCampaignRoutes(app);
 registerShopifyFactsRoutes(app);
 registerShopifyProfileRoutes(app);
 registerShopifyReachRoutes(app);
+registerShopifyLearningRoutes(app);
 
 // ── Global error handler ──────────────────────────────────────────────────
 // Without this, a thrown error in any handler falls through to Hono's

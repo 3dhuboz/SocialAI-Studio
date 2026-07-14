@@ -519,19 +519,19 @@ git commit -m "feat: learn bounded customer strategies"
 - Modify: `workers/api/src/routes/learning.ts`
 - Modify: `workers/api/src/index.ts`
 
-- [ ] **Step 1: Write tracking and ownership tests**
+- [x] **Step 1: Write tracking and ownership tests**
 
 Cover safe `https` destinations only, short-code uniqueness, expired links, aggregate click increments, bot user-agent exclusion, no IP storage, tenant-scoped feedback, and integer-cent order values.
 
-- [ ] **Step 2: Implement public redirects without personal tracking**
+- [x] **Step 2: Implement public redirects without personal tracking**
 
 `GET /r/:code` loads an unexpired destination, increments only aggregate `click_count` for non-bot requests, and returns `302 Location`. It stores no IP, cookie, fingerprint, or user identifier.
 
-- [ ] **Step 3: Implement conversion feedback endpoint**
+- [x] **Step 3: Implement conversion feedback endpoint**
 
 Add `POST /api/learning/outcomes/:postId/feedback`. Validate non-negative integer counts and `orderValueCents`; bind authenticated `user_id` plus `workspace_key`; write `source='owner'`. Main/portal routes use `getAuthUserId` with the existing embed-secret argument and verify the post belongs to the requested workspace. Add the equivalent `/api/shopify/learning/outcomes/:postId/feedback` behind the signed Shopify session gate; derive `user_id`, `owner_kind='shop'`, `owner_id`, and the canonical shop key on the server.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `cd workers/api; npm test -- learning-tracking.test.ts shopify-learning-routes.test.ts; npm run typecheck`
 
