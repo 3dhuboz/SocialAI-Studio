@@ -277,9 +277,9 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 ### Worker (manual — required after any `workers/api/src/` change)
 ```bash
 cd workers/api
-npx wrangler deploy --config wrangler.toml   # --config flag required — avoids Pages detection bug
+npx --yes wrangler@4.110.0 deploy --config wrangler.toml --env=""
 ```
-> The global `wrangler` (v4) detects the repo root `functions/` dir and thinks it's a Pages project. Always use `npx wrangler` (v3) with `--config wrangler.toml`.
+> `--config` avoids the repo-root Pages detection bug, and `--env=""` explicitly targets the top-level production config. The pinned Wrangler 3.114.17 currently rejects the refreshed OAuth token with error 9109; Wrangler 4.110.0 authentication, dry-run bundling, and production deployment were verified on 2026-07-15.
 
 ### Frontend (auto via GitHub → Cloudflare Pages)
 Push to `main` → Pages auto-deploys. Check status at Cloudflare Dashboard → Pages → `socialai-studio`.
@@ -356,7 +356,7 @@ import { callAnthropicDirect, callOpenRouter } from '../lib/anthropic';
 
 ## Known quirks
 
-- **`wrangler deploy` fails without `--config`** — the `functions/` dir at repo root makes wrangler think it's a Pages project. Always use `npx wrangler deploy --config wrangler.toml` from `workers/api/`.
+- **Use the verified Wrangler v4 production command** — the repo-root `functions/` directory can trigger Pages detection without `--config`, while the pinned Wrangler 3.114.17 rejects the current OAuth token with error 9109. From `workers/api/`, use `npx --yes wrangler@4.110.0 deploy --config wrangler.toml --env=""`; run the same command with `--dry-run` first when validating a new deployment path.
 - **Same-domain `/api/*` depends on the Pages catch-all proxy plus explicit invocation routes** — `functions/api/[[path]].js` forwards unmatched `/api/*` requests to `https://socialai-api.steve-700.workers.dev`, and `public/_routes.json` pins Pages Functions to `/api/*` + `/embed`. Without that pair, `public/_redirects` (`/* /index.html 200`) can swallow URLs like `/api/health` and serve the SPA HTML shell instead of JSON.
 - **Seamus (Hugheseys Que) is on hold** — the canonical field is `clients.status = 'on_hold'`. It was verified after the Release 1 production rollout. Cron skips automatically; do not change it without checking with Steve.
 - **Facebook `scheduled_publish_time` is banned** — creates uncancellable FB orphans. DB is the source of truth; the `publish-missed` cron publishes at the right time.
