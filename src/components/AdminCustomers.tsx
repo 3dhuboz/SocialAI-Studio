@@ -9,7 +9,7 @@ import { useDb } from '../hooks/useDb';
 import type {
   AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons, AdminPrewarmReadiness,
   AdminPostFeedback,
-  AdminLearningOperations, LearningAdjudicationInput,
+  AdminLearningOperations, LearningAdjudicationInput, LearningPilotQueue,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
 import { PaymentList } from './PaymentList';
@@ -68,7 +68,9 @@ export const AdminCustomers: React.FC = () => {
   const [prewarmReadiness, setPrewarmReadiness] = useState<AdminPrewarmReadiness | null>(null);
   const [postFeedback, setPostFeedback] = useState<AdminPostFeedback[] | null>(null);
   const [learningOperations, setLearningOperations] = useState<AdminLearningOperations | null>(null);
+  const [learningPilotQueue, setLearningPilotQueue] = useState<LearningPilotQueue | null>(null);
   const [learningSavingDecisionId, setLearningSavingDecisionId] = useState<string | null>(null);
+  const [learningPilotActionKey, setLearningPilotActionKey] = useState<string | null>(null);
   const [learningError, setLearningError] = useState<string | null>(null);
   const [customers, setCustomers] = useState<AdminCustomer[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
@@ -98,6 +100,9 @@ export const AdminCustomers: React.FC = () => {
       db.getAdminLearningOperations(100)
         .then(setLearningOperations)
         .catch(() => setLearningOperations(null));
+      db.getLearningPilotCandidates()
+        .then(setLearningPilotQueue)
+        .catch(() => setLearningPilotQueue(null));
     } catch (e: any) {
       setError(e?.message || 'Failed to load customers');
     } finally {
@@ -137,6 +142,43 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
+  const reloadLearningPanels = async () => {
+    const [operations, queue] = await Promise.all([
+      db.getAdminLearningOperations(100),
+      db.getLearningPilotCandidates(),
+    ]);
+    setLearningOperations(operations);
+    setLearningPilotQueue(queue);
+  };
+
+  const enrollLearningPilot = async (clientId: string | null, budgetCents: number) => {
+    const actionKey = `enroll:${clientId ?? '__owner__'}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      await db.enrollLearningPilotWorkspace(clientId, budgetCents);
+      await reloadLearningPanels();
+    } catch (reason) {
+      setLearningError(reason instanceof Error ? reason.message : 'Pilot enrollment could not be saved');
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
+  const validateLearningPilotDraft = async (postId: string) => {
+    const actionKey = `validate:${postId}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      await db.validateLearningPilotDraft(postId);
+      await reloadLearningPanels();
+    } catch (reason) {
+      setLearningError(reason instanceof Error ? reason.message : 'Draft validation failed closed');
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
       {/* Section header */}
@@ -169,10 +211,14 @@ export const AdminCustomers: React.FC = () => {
 
       <LearningOperationsCard
         operations={learningOperations}
+        pilotQueue={learningPilotQueue}
+        pilotActionKey={learningPilotActionKey}
         loading={loading && !learningOperations}
         savingDecisionId={learningSavingDecisionId}
         error={learningError}
         onAdjudicate={adjudicateLearningDecision}
+        onPilotEnroll={enrollLearningPilot}
+        onPilotValidate={validateLearningPilotDraft}
       />
 
       <PrewarmReadinessCard readiness={prewarmReadiness} loading={loading && !prewarmReadiness} />
@@ -424,13 +470,36 @@ const SampleAdjudicationForm: React.FC<{
 
 export const LearningOperationsCard: React.FC<{
   operations: AdminLearningOperations | null;
+  pilotQueue?: LearningPilotQueue | null;
+  pilotActionKey?: string | null;
   loading: boolean;
   savingDecisionId: string | null;
   error?: string | null;
   onAdjudicate: (decisionId: string, input: LearningAdjudicationInput) => Promise<void>;
-}> = ({ operations, loading, savingDecisionId, error = null, onAdjudicate }) => {
+  onPilotEnroll?: (clientId: string | null, budgetCents: number) => Promise<void>;
+  onPilotValidate?: (postId: string) => Promise<void>;
+}> = ({
+  operations,
+  pilotQueue = null,
+  pilotActionKey = null,
+  loading,
+  savingDecisionId,
+  error = null,
+  onAdjudicate,
+  onPilotEnroll,
+  onPilotValidate,
+}) => {
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
   const killSwitchEngaged = operations?.globalSwitches.protectedAutopilot !== true;
+  const [pilotBudgetDollars, setPilotBudgetDollars] = useState('5.00');
+  const budgetNumber = Number(pilotBudgetDollars);
+  const pilotBudgetCents = Number.isFinite(budgetNumber)
+    ? Math.round(budgetNumber * 100)
+    : 0;
+  const validPilotBudget = pilotBudgetCents >= 1 && pilotBudgetCents <= 10_000;
+  const pilotBudgetLabel = validPilotBudget
+    ? `$${(pilotBudgetCents / 100).toFixed(2)}`
+    : 'invalid cap';
 
   return (
     <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${
@@ -482,6 +551,83 @@ export const LearningOperationsCard: React.FC<{
       {error && (
         <div className="mt-3 rounded-xl border border-rose-400/20 bg-rose-500/[0.05] px-3 py-2 text-[10px] text-rose-200/75">
           {error}
+        </div>
+      )}
+
+      {pilotQueue && (
+        <div className="mt-4 rounded-xl border border-cyan-400/15 bg-cyan-500/[0.035] p-3.5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <ClipboardCheck size={12} className="text-cyan-300" />
+                <h4 className="text-xs font-black text-cyan-100/85">Approval pilot queue</h4>
+              </div>
+              <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-white/35">
+                Draft content, status, schedule, and publishing stay unchanged. No autopublish consent is recorded.
+              </p>
+            </div>
+            <label className="text-[9px] font-bold uppercase tracking-wider text-white/35">
+              Monthly AI ceiling
+              <span className="mt-1 flex items-center rounded-lg border border-white/10 bg-black/25 px-2 py-1.5 normal-case tracking-normal">
+                <span className="mr-1 text-white/35">$</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  max="100"
+                  step="0.01"
+                  value={pilotBudgetDollars}
+                  onChange={(event) => setPilotBudgetDollars(event.target.value)}
+                  className="w-20 bg-transparent text-[11px] font-bold text-white/75 outline-none"
+                  aria-label="Pilot monthly AI ceiling in dollars"
+                />
+              </span>
+            </label>
+          </div>
+
+          {pilotQueue.candidates.length === 0 ? (
+            <p className="mt-3 text-[10px] text-white/30">No eligible unvalidated drafts are available.</p>
+          ) : (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {pilotQueue.candidates.map((candidate) => {
+                const actionKey = candidate.enrolled
+                  ? `validate:${candidate.samplePostId}`
+                  : `enroll:${candidate.clientId ?? '__owner__'}`;
+                const busy = pilotActionKey === actionKey;
+                return (
+                  <div key={candidate.workspaceKey} className="rounded-lg border border-white/[0.07] bg-black/20 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-[11px] font-bold text-white/75">{candidate.label}</p>
+                        <p className="mt-0.5 text-[9px] text-white/30">
+                          {candidate.eligibleDraftCount} eligible real draft{candidate.eligibleDraftCount === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
+                        candidate.enrolled
+                          ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+                          : 'border-white/10 bg-white/5 text-white/35'
+                      }`}>
+                        {candidate.enrolled ? 'Approval enrolled' : 'Not enrolled'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy || (!candidate.enrolled && !validPilotBudget)}
+                      onClick={() => candidate.enrolled
+                        ? onPilotValidate?.(candidate.samplePostId)
+                        : onPilotEnroll?.(candidate.clientId, pilotBudgetCents)}
+                      className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
+                    >
+                      {busy ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
+                      {candidate.enrolled
+                        ? 'Validate next real draft'
+                        : `Enroll with ${pilotBudgetLabel} cap`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

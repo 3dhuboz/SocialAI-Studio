@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
@@ -7,8 +7,15 @@ vi.mock('../auth', () => ({
   getAuthUserId: async (request: Request) => request.headers.get('X-Test-Uid') || null,
 }));
 
+vi.mock('../lib/learning/release-preflight', () => ({
+  runAndPersistReleasePipeline: vi.fn(),
+}));
+
 import { registerLearningRoutes } from '../routes/learning';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import { runAndPersistReleasePipeline } from '../lib/learning/release-preflight';
+
+const runPilotPipeline = vi.mocked(runAndPersistReleasePipeline);
 
 function makeApp(env: Env) {
   const app = new Hono<{ Bindings: Env }>();
@@ -171,6 +178,10 @@ describe('learning settings and release evidence routes', () => {
     ...ownerHeaders,
     Authorization: 'Bearer admin-token',
   };
+
+  beforeEach(() => {
+    runPilotPipeline.mockReset();
+  });
 
   it('returns the authenticated client learning summary under its canonical tuple', async () => {
     const { db, calls } = makeRecordingD1({
@@ -356,6 +367,213 @@ describe('learning settings and release evidence routes', () => {
     const write = calls.find((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))!;
     expect(write.binds).toContain('shadow');
     await expect(response.json()).resolves.toMatchObject({ settings: { mode: 'shadow' } });
+  });
+
+  it('validates one real active-client draft in approval mode without mutating the post', async () => {
+    const draft = {
+      id: 'draft-1', user_id: 'owner_1', client_id: 'client-1',
+      owner_kind: 'client', owner_id: 'client-1', status: 'Draft',
+      content: 'Real customer draft', platform: 'Facebook', hashtags: '[]',
+      image_url: 'https://images.example/draft.jpg', post_type: 'image',
+      video_url: null, video_status: null, video_script: null, video_shots: null,
+      archetype_slug: 'bbq-smokehouse', client_status: 'active',
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [draft],
+      'SELECT status FROM clients': [{ status: 'active' }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 500, disabled_reason: null,
+      }],
+    });
+    runPilotPipeline.mockResolvedValue({ id: 'decision-pilot-1', state: 'pass_green' });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/validate/draft-1', {
+      method: 'POST', headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      decisionId: 'decision-pilot-1', releaseState: 'pass_green',
+      postId: 'draft-1', sourceStatus: 'Draft', postMutated: false,
+    });
+    expect(runPilotPipeline).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        id: 'draft-1', user_id: 'owner_1', client_id: 'client-1',
+        owner_kind: 'client', owner_id: 'client-1', content: 'Real customer draft',
+      }),
+      'approval',
+    );
+    expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+    expect(calls.some((call) => /INSERT\s+INTO\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('refuses pilot validation for an on-hold client before running critics', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [{
+        id: 'held-draft', user_id: 'owner_1', client_id: 'hughesq-001',
+        owner_kind: 'client', owner_id: 'hughesq-001', status: 'Draft',
+        content: 'Held draft', platform: 'Facebook', hashtags: '[]',
+        image_url: null, post_type: 'text', video_url: null, video_status: null,
+        video_script: null, video_shots: null, archetype_slug: 'bbq-smokehouse',
+        client_status: 'on_hold',
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/validate/held-draft', {
+      method: 'POST', headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Pilot validation cannot include an on-hold client',
+    });
+    expect(runPilotPipeline).not.toHaveBeenCalled();
+    expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('enrolls one active client into record-only approval validation with an explicit cost ceiling', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT status FROM clients': [{ status: 'active' }],
+      'COUNT(*) AS draft_count': [{ draft_count: 4 }],
+      'COUNT(*) AS approval_count': [{ approval_count: 0 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enroll', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({ clientId: 'client-1', monthlyAiBudgetUsdCents: 500 }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      workspaceKey: 'client-1', ownerKind: 'client', ownerId: 'client-1',
+      mode: 'approval', monthlyAiBudgetUsdCents: 500,
+      autopublishConsentAt: null, recordOnly: true,
+    });
+    const write = calls.find((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))!;
+    expect(write.binds.slice(1, 11)).toEqual([
+      'owner_1', 'client-1', 'client-1', 'client', 'client-1',
+      'approval', null, null, 0, 500,
+    ]);
+    expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('refuses to enroll an on-hold client or exceed one client pilot workspace', async () => {
+    const heldDb = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT status FROM clients': [{ status: 'on_hold' }],
+    });
+    const heldEnv = {
+      DB: heldDb.db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const heldApp = makeApp(heldEnv);
+    const held = await heldApp.app.request('/api/learning/pilot/enroll', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({ clientId: 'hughesq-001', monthlyAiBudgetUsdCents: 500 }),
+    }, heldEnv);
+    expect(held.status).toBe(409);
+    expect(heldDb.calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+
+    const cappedDb = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT status FROM clients': [{ status: 'active' }],
+      'COUNT(*) AS draft_count': [{ draft_count: 2 }],
+      'COUNT(*) AS approval_count': [{ approval_count: 1 }],
+    });
+    const cappedEnv = { ...heldEnv, DB: cappedDb.db } as Env;
+    const cappedApp = makeApp(cappedEnv);
+    const capped = await cappedApp.app.request('/api/learning/pilot/enroll', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({ clientId: 'client-2', monthlyAiBudgetUsdCents: 500 }),
+    }, cappedEnv);
+    expect(capped.status).toBe(409);
+    await expect(capped.json()).resolves.toEqual({
+      error: 'Only one client workspace may be enrolled in the approval pilot',
+    });
+    expect(cappedDb.calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
+  it('returns a server-selected queue of eligible non-held drafts and their enrollment state', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [
+        {
+          user_id: 'owner_1', client_id: null, owner_kind: 'user',
+          owner_id: 'owner_1', workspace_key: '__owner__', label: 'My workspace',
+          eligible_draft_count: 5, sample_post_id: 'draft-owner',
+          enrolled: 1, monthly_ai_budget_usd_cents: 500,
+        },
+        {
+          user_id: 'owner_1', client_id: 'client-1', owner_kind: 'client',
+          owner_id: 'client-1', workspace_key: 'client-1', label: 'Active Client',
+          eligible_draft_count: 4, sample_post_id: 'draft-client',
+          enrolled: 0, monthly_ai_budget_usd_cents: null,
+        },
+      ],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/candidates', {
+      headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      recordOnly: true,
+      candidates: [
+        {
+          clientId: null, ownerKind: 'user', ownerId: 'owner_1',
+          workspaceKey: '__owner__', label: 'My workspace', eligibleDraftCount: 5,
+          samplePostId: 'draft-owner', enrolled: true, monthlyAiBudgetUsdCents: 500,
+        },
+        {
+          clientId: 'client-1', ownerKind: 'client', ownerId: 'client-1',
+          workspaceKey: 'client-1', label: 'Active Client', eligibleDraftCount: 4,
+          samplePostId: 'draft-client', enrolled: false, monthlyAiBudgetUsdCents: null,
+        },
+      ],
+    });
+    const query = calls.find((call) => call.sql.includes('FROM posts p'))!;
+    expect(query.binds).toEqual(['owner_1']);
+    expect(query.sql).toContain("p.status = 'Draft'");
+    expect(query.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");
+    expect(query.sql).toContain('NOT EXISTS');
+    expect(query.sql).toContain("d.stage = 'release'");
   });
 
   it('lets only an admin adjudicate a release decision and derives its tenant tuple', async () => {

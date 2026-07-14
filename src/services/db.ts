@@ -328,6 +328,41 @@ export interface AdminLearningOperations {
   workspaces: AdminLearningWorkspace[];
 }
 
+export interface LearningPilotCandidate {
+  clientId: string | null;
+  ownerKind: 'user' | 'client';
+  ownerId: string;
+  workspaceKey: string;
+  label: string;
+  eligibleDraftCount: number;
+  samplePostId: string;
+  enrolled: boolean;
+  monthlyAiBudgetUsdCents: number | null;
+}
+
+export interface LearningPilotQueue {
+  recordOnly: true;
+  candidates: LearningPilotCandidate[];
+}
+
+export interface LearningPilotEnrollment {
+  workspaceKey: string;
+  ownerKind: 'user' | 'client';
+  ownerId: string;
+  mode: 'approval';
+  monthlyAiBudgetUsdCents: number;
+  autopublishConsentAt: null;
+  recordOnly: true;
+}
+
+export interface LearningPilotValidation {
+  decisionId: string;
+  releaseState: 'pass_green' | 'hold_amber' | 'block_red';
+  postId: string;
+  sourceStatus: 'Draft';
+  postMutated: false;
+}
+
 export type OrganicReachPlatform = 'facebook' | 'instagram';
 
 export interface ReachProfile {
@@ -608,6 +643,30 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     async getAdminLearningOperations(limit = 100): Promise<AdminLearningOperations> {
       const res = await f(`/api/learning/admin/operations?limit=${encodeURIComponent(limit)}`);
       return res.json() as Promise<AdminLearningOperations>;
+    },
+
+    async getLearningPilotCandidates(): Promise<LearningPilotQueue> {
+      const res = await f('/api/learning/pilot/candidates');
+      return res.json() as Promise<LearningPilotQueue>;
+    },
+
+    async enrollLearningPilotWorkspace(
+      clientId: string | null,
+      monthlyAiBudgetUsdCents: number,
+    ): Promise<LearningPilotEnrollment> {
+      const res = await f('/api/learning/pilot/enroll', j({
+        clientId,
+        monthlyAiBudgetUsdCents,
+      }));
+      return res.json() as Promise<LearningPilotEnrollment>;
+    },
+
+    async validateLearningPilotDraft(postId: string): Promise<LearningPilotValidation> {
+      const res = await f(
+        `/api/learning/pilot/validate/${encodeURIComponent(postId)}`,
+        j({}),
+      );
+      return res.json() as Promise<LearningPilotValidation>;
     },
 
     async adjudicateLearningDecision(

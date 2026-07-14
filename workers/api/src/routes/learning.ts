@@ -10,6 +10,10 @@ import {
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
 import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
+  runAndPersistReleasePipeline,
+  type PublishablePost,
+} from '../lib/learning/release-preflight';
+import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
   loadWorkspaceLearningMode,
@@ -26,6 +30,39 @@ type OwnedPostRow = {
   client_id: string | null;
   owner_kind: string | null;
   owner_id: string | null;
+};
+
+type PilotDraftRow = {
+  id: string;
+  user_id: string;
+  client_id: string | null;
+  owner_kind: string | null;
+  owner_id: string | null;
+  status: string | null;
+  content: string;
+  platform: string | null;
+  hashtags: string | null;
+  image_url: string | null;
+  post_type: string | null;
+  video_url: string | null;
+  video_status: string | null;
+  video_script: string | null;
+  video_shots: string | null;
+  archetype_slug: string | null;
+  client_status: string | null;
+};
+
+type PilotCandidateRow = {
+  user_id: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  workspace_key: string;
+  label: string;
+  eligible_draft_count: number | string | null;
+  sample_post_id: string;
+  enrolled: number | string | null;
+  monthly_ai_budget_usd_cents: number | string | null;
 };
 
 type DecisionRow = Record<string, unknown> & {
@@ -231,6 +268,18 @@ function budgetCents(value: unknown, fallback: number | null): number | null {
   return value;
 }
 
+function pilotBudgetCents(value: unknown): number {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || value < 1
+    || value > 10_000
+  ) {
+    throw new Error('monthlyAiBudgetUsdCents must be an integer between 1 and 10000');
+  }
+  return value;
+}
+
 async function learningAdmin(db: D1Database, userId: string): Promise<boolean> {
   const row = await db.prepare(
     'SELECT email, is_admin FROM users WHERE id = ?',
@@ -249,6 +298,12 @@ function countValue(value: unknown): number {
 
 function ratio(numerator: number, denominator: number): number | null {
   return denominator > 0 ? numerator / denominator : null;
+}
+
+function dormantPilotEnabled(env: Env): boolean {
+  return env.LEARNING_BRAIN_ENABLED === 'true'
+    && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
+    && env.LEARNING_AUTOPILOT_ENABLED !== 'true';
 }
 
 function latestReadiness(db: D1Database) {
@@ -369,6 +424,260 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ settings: publicSettings(settings, mode), effectiveMode });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Invalid request' }, 400);
+    }
+  });
+
+  app.post('/api/learning/pilot/enroll', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot enrollment is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    try {
+      const body = await jsonBody(c.req.raw);
+      const clientId = requestedClientId(body.clientId);
+      const budget = pilotBudgetCents(body.monthlyAiBudgetUsdCents);
+      const identity = normalizeWorkspaceIdentity(
+        adminId,
+        clientId,
+        clientId === null ? 'user' : 'client',
+        clientId ?? adminId,
+      );
+
+      if (identity.ownerKind === 'client') {
+        const client = await c.env.DB.prepare(
+          'SELECT status FROM clients WHERE id = ? AND user_id = ?',
+        ).bind(identity.ownerId, identity.userId).first<{ status: string | null }>();
+        if (!client) return c.json({ error: 'Not found' }, 404);
+        if (client.status?.trim().toLowerCase() === 'on_hold') {
+          return c.json({ error: 'Pilot enrollment cannot include an on-hold client' }, 409);
+        }
+      }
+
+      const drafts = await c.env.DB.prepare(`
+        SELECT COUNT(*) AS draft_count
+        FROM posts
+        WHERE user_id = ? AND client_id IS ? AND status = 'Draft'
+          AND (owner_kind IS NULL OR owner_kind = ?)
+      `).bind(
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+      ).first<{ draft_count: number | string | null }>();
+      if (countValue(drafts?.draft_count) === 0) {
+        return c.json({ error: 'Workspace has no eligible Draft posts for pilot validation' }, 409);
+      }
+
+      const existing = await c.env.DB.prepare(`
+        SELECT COUNT(*) AS approval_count
+        FROM workspace_learning_settings
+        WHERE user_id = ? AND owner_kind = ? AND mode = 'approval'
+          AND workspace_key != ?
+      `).bind(
+        identity.userId,
+        identity.ownerKind,
+        identity.workspaceKey,
+      ).first<{ approval_count: number | string | null }>();
+      if (countValue(existing?.approval_count) > 0) {
+        return c.json({
+          error: `Only one ${identity.ownerKind} workspace may be enrolled in the approval pilot`,
+        }, 409);
+      }
+
+      const now = new Date().toISOString();
+      await saveWorkspaceLearningSettings(c.env.DB, identity, {
+        mode: 'approval',
+        autopublishConsentAt: null,
+        autopublishPolicyVersion: null,
+        experimentRate: 0,
+        monthlyAiBudgetUsdCents: budget,
+      }, now);
+      return c.json({
+        workspaceKey: identity.workspaceKey,
+        ownerKind: identity.ownerKind,
+        ownerId: identity.ownerId,
+        mode: 'approval',
+        monthlyAiBudgetUsdCents: budget,
+        autopublishConsentAt: null,
+        recordOnly: true,
+      });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid request' }, 400);
+    }
+  });
+
+  app.get('/api/learning/pilot/candidates', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot candidates are available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    const rows = await c.env.DB.prepare(`
+      SELECT
+        p.user_id,
+        p.client_id,
+        CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END AS owner_kind,
+        CASE WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END AS owner_id,
+        CASE WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END AS workspace_key,
+        CASE WHEN p.client_id IS NULL THEN 'My workspace'
+             ELSE COALESCE(NULLIF(TRIM(c.name), ''), 'Client workspace') END AS label,
+        COUNT(*) AS eligible_draft_count,
+        MIN(p.id) AS sample_post_id,
+        MAX(CASE WHEN w.mode = 'approval' THEN 1 ELSE 0 END) AS enrolled,
+        MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents
+      FROM posts p
+      LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+      LEFT JOIN workspace_learning_settings w
+        ON w.user_id = p.user_id
+       AND w.workspace_key = CASE
+         WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+       AND w.client_id IS p.client_id
+       AND w.owner_kind = CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+       AND w.owner_id = CASE WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+      WHERE p.user_id = ?
+        AND p.status = 'Draft'
+        AND (
+          (p.client_id IS NULL AND (p.owner_kind IS NULL OR p.owner_kind = 'user'))
+          OR (
+            p.client_id IS NOT NULL
+            AND c.id IS NOT NULL
+            AND (p.owner_kind IS NULL OR p.owner_kind = 'client')
+            AND LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'
+          )
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM learning_decisions d
+          WHERE d.user_id = p.user_id
+            AND d.workspace_key = CASE
+              WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+            AND d.post_id = p.id
+            AND d.stage = 'release'
+        )
+      GROUP BY p.user_id,p.client_id
+      ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
+      LIMIT 50
+    `).bind(adminId).all<PilotCandidateRow>();
+    return c.json({
+      recordOnly: true,
+      candidates: (rows.results ?? []).map((row) => ({
+        clientId: row.client_id,
+        ownerKind: row.owner_kind,
+        ownerId: row.owner_id,
+        workspaceKey: row.workspace_key,
+        label: row.label,
+        eligibleDraftCount: countValue(row.eligible_draft_count),
+        samplePostId: row.sample_post_id,
+        enrolled: countValue(row.enrolled) > 0,
+        monthlyAiBudgetUsdCents: row.monthly_ai_budget_usd_cents == null
+          ? null
+          : countValue(row.monthly_ai_budget_usd_cents),
+      })),
+    });
+  });
+
+  app.post('/api/learning/pilot/validate/:postId', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot validation is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    const postId = c.req.param('postId').trim();
+    if (!postId) return c.json({ error: 'Not found' }, 404);
+    const row = await c.env.DB.prepare(`
+      SELECT
+        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
+        p.content,p.platform,p.hashtags,p.image_url,p.post_type,
+        p.video_url,p.video_status,p.video_script,p.video_shots,p.archetype_slug,
+        c.status AS client_status
+      FROM posts p
+      LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+      WHERE p.id = ? AND p.user_id = ?
+      LIMIT 1
+    `).bind(postId, adminId).first<PilotDraftRow>();
+    if (!row) return c.json({ error: 'Not found' }, 404);
+    if (row.status?.trim().toLowerCase() !== 'draft') {
+      return c.json({ error: 'Pilot validation accepts Draft posts only' }, 409);
+    }
+
+    const clientId = row.client_id?.trim() || null;
+    const ownerKind: WorkspaceOwnerKind = row.owner_kind === 'shop'
+      ? 'shop'
+      : clientId === null ? 'user' : 'client';
+    if (ownerKind === 'shop' || (row.owner_kind && row.owner_kind !== ownerKind)) {
+      return c.json({ error: 'Pilot validation supports canonical user and client drafts only' }, 409);
+    }
+    if (clientId && row.client_status?.trim().toLowerCase() === 'on_hold') {
+      return c.json({ error: 'Pilot validation cannot include an on-hold client' }, 409);
+    }
+    if (clientId && row.client_status == null) return c.json({ error: 'Not found' }, 404);
+
+    const identity = normalizeWorkspaceIdentity(
+      row.user_id,
+      clientId,
+      ownerKind,
+      row.owner_id?.trim() || clientId || row.user_id,
+    );
+    const mode = await loadWorkspaceLearningMode(
+      c.env,
+      identity.userId,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+    );
+    if (mode !== 'approval') {
+      return c.json({ error: 'Workspace must be enrolled in approval-mode pilot validation' }, 409);
+    }
+
+    const post: PublishablePost = {
+      id: row.id,
+      user_id: identity.userId,
+      client_id: identity.clientId,
+      owner_kind: identity.ownerKind,
+      owner_id: identity.ownerId,
+      content: row.content,
+      platform: row.platform?.trim() || 'facebook',
+      hashtags: row.hashtags,
+      image_url: row.image_url,
+      post_type: row.post_type,
+      video_url: row.video_url,
+      video_status: row.video_status,
+      video_script: row.video_script,
+      video_shots: row.video_shots,
+      archetype_slug: row.archetype_slug,
+    };
+    try {
+      const result = await runAndPersistReleasePipeline(c.env, post, 'approval');
+      return c.json({
+        decisionId: result.id,
+        releaseState: result.state,
+        postId: row.id,
+        sourceStatus: 'Draft',
+        postMutated: false,
+      });
+    } catch (error) {
+      console.warn('[learning-pilot] validation failed closed', {
+        postId: row.id,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot validation failed closed; no post changes were made',
+      }, 503);
     }
   });
 

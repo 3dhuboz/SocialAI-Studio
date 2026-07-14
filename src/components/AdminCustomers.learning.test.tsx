@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { AdminLearningOperations } from '../services/db';
+import type { AdminLearningOperations, LearningPilotQueue } from '../services/db';
 import { LearningOperationsCard } from './AdminCustomers';
 
 const operations: AdminLearningOperations = {
@@ -24,6 +24,22 @@ const operations: AdminLearningOperations = {
     sampleDecisionId: 'decision_1', samplePostId: 'post_1',
     sampleReleaseState: 'hold_amber',
   }],
+};
+
+const pilotQueue: LearningPilotQueue = {
+  recordOnly: true,
+  candidates: [
+    {
+      clientId: null, ownerKind: 'user', ownerId: 'owner_1',
+      workspaceKey: '__owner__', label: 'My workspace', eligibleDraftCount: 5,
+      samplePostId: 'draft_owner', enrolled: false, monthlyAiBudgetUsdCents: null,
+    },
+    {
+      clientId: 'client_2', ownerKind: 'client', ownerId: 'client_2',
+      workspaceKey: 'client_2', label: 'Active Client', eligibleDraftCount: 4,
+      samplePostId: 'draft_client', enrolled: true, monthlyAiBudgetUsdCents: 500,
+    },
+  ],
 };
 
 describe('LearningOperationsCard', () => {
@@ -77,5 +93,30 @@ describe('LearningOperationsCard', () => {
     expect(html).not.toContain('Approve post');
     expect(html).not.toContain('Schedule post');
     expect(html).not.toContain('Publish post');
+  });
+
+  it('shows a record-only pilot queue with explicit enrollment and single-draft validation actions', () => {
+    const html = renderToStaticMarkup(
+      <LearningOperationsCard
+        operations={operations}
+        pilotQueue={pilotQueue}
+        pilotActionKey={null}
+        loading={false}
+        savingDecisionId={null}
+        onAdjudicate={async () => undefined}
+        onPilotEnroll={async () => undefined}
+        onPilotValidate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('Approval pilot queue');
+    expect(html).toContain('My workspace');
+    expect(html).toContain('Active Client');
+    expect(html).toContain('5 eligible real drafts');
+    expect(html).toContain('4 eligible real drafts');
+    expect(html).toContain('Enroll with $5.00 cap');
+    expect(html).toContain('Validate next real draft');
+    expect(html).toContain('Draft content, status, schedule, and publishing stay unchanged');
+    expect(html).toContain('No autopublish consent is recorded');
   });
 });
