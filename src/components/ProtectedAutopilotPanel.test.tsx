@@ -165,4 +165,29 @@ describe('ProtectedAutopilotControl', () => {
     expect(html).toContain('A positive monthly AI ceiling is required');
     expect(html).toContain('<button type="button" disabled=""');
   });
+
+  it('labels missing publish-regression proof without claiming a real incident', () => {
+    const html = renderToStaticMarkup(
+      <ProtectedAutopilotControl
+        settings={settings}
+        readiness={{
+          ...readiness,
+          checks: {
+            ...readiness.checks,
+            publishingRegressions: false,
+            publishRegression: false,
+          },
+          metrics: { ...readiness.metrics, publishingRegressions: 1 },
+        }}
+        budgetDollars="20.00"
+        saving={false}
+        onBudgetChange={() => undefined}
+        onRequestProtected={() => undefined}
+        onUseApproval={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('Validated regression proof pending or failed');
+    expect(html).not.toContain('1 recorded');
+  });
 });

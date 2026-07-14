@@ -64,7 +64,13 @@ function gateRows(readiness: LearningReadinessResponse): Array<{
     ['predictionLift', 'Prediction lift', `${formatPercent(metrics.predictionLift)} (minimum 15%)`],
     ['rankCorrelation', 'Prediction rank correlation', `${metrics.rankCorrelation ?? 0} (must be positive)`],
     ['criticalBypasses', 'Critical bypasses', `${metrics.criticalBypasses ?? 0} recorded`],
-    ['publishingRegressions', 'Publishing regressions', `${metrics.publishingRegressions ?? 0} recorded`],
+    [
+      'publishingRegressions',
+      'Publishing regressions',
+      checks.publishRegression
+        ? `${metrics.publishingRegressions ?? 0} recorded`
+        : 'Validated regression proof pending or failed',
+    ],
     ['cost', 'AI cost ceiling', readiness.cost.withinBudget ? 'Within monthly ceiling' : 'Not proven within ceiling'],
     ['killSwitch', 'Kill-switch proof', metrics.killSwitchTested ? 'Tested' : 'Not tested'],
     ['replayRedTeam', 'Replay and red-team suite', checks.replayRedTeam ? 'Passed' : 'Pending'],
