@@ -10,6 +10,7 @@ import {
   type WorkspaceOwnerKind,
 } from '../lib/learning/types';
 import { localWeekdayHour } from '../lib/reach/timing-model';
+import { rebuildAllArchetypeAggregates } from '../lib/learning/archetype-aggregates';
 
 type CandidateOutcomeRow = {
   outcome_id: string;
@@ -62,6 +63,8 @@ export interface LearnStrategiesResult {
   outcomes_processed: number;
   signals_updated: number;
   profiles_created: number;
+  archetypes_rebuilt: number;
+  aggregates_written: number;
   skipped: number;
 }
 
@@ -448,11 +451,15 @@ export async function cronLearnStrategies(
     }
   }
 
+  const aggregateRebuild = await rebuildAllArchetypeAggregates(env.DB, now, randomId);
+
   return {
     posts_processed: processedPosts.size,
     outcomes_processed: outcomesProcessed,
     signals_updated: signalsUpdated,
     profiles_created: profilesCreated,
+    archetypes_rebuilt: aggregateRebuild.archetypes,
+    aggregates_written: aggregateRebuild.inserted,
     skipped,
   };
 }

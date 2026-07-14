@@ -552,7 +552,7 @@ git commit -m "feat: track organic actions and conversions"
 - Modify: `workers/api/src/routes/clients.ts`
 - Modify: `workers/api/src/routes/shopify-oauth.ts`
 
-- [ ] **Step 1: Write privacy-threshold tests**
+- [x] **Step 1: Write privacy-threshold tests**
 
 ```ts
 const contributions = (workspaceCount: number, postsPerWorkspace: number): AggregateContribution[] =>
@@ -585,7 +585,7 @@ it('rebuilds after customer deletion without the deleted contribution', () => {
 });
 ```
 
-- [ ] **Step 2: Implement thresholded rebuild**
+- [x] **Step 2: Implement thresholded rebuild**
 
 ```ts
 export interface AggregateContribution {
@@ -615,13 +615,13 @@ export function buildEligibleAggregates(rows: AggregateContribution[]) {
 
 Construct `tenantKey` internally as the opaque composite `user_id + "\u0000" + workspace_key`, so different owner workspaces and shops count separately even when their display key is similar. Write only the returned coarse fields. Delete and rebuild an archetype's aggregate rows inside one D1 batch. Do not persist or return the source rows, tenant keys, post IDs, captions, image URLs, names, or raw facts.
 
-- [ ] **Step 3: Extend tenant deletion and aggregate invalidation**
+- [x] **Step 3: Extend tenant deletion and aggregate invalidation**
 
 Before raw tenant deletion, read the affected user/client/shop `archetype_slug`, then delete all `archetype_aggregates` rows for that slug so no stale fleet value remains. The weekly learning cron rebuilds that archetype from remaining eligible workspaces. Delete tenant rows in dependency-safe order: delete `learning_outcomes` selected through tenant-scoped `publication_events`, then `publication_events`, `conversion_feedback`, `tracking_links`, `learning_experiments`, `learning_profiles`, `learning_signals`, and `learning_adjudications`; Release 1 then removes decisions/settings. Bind both `user_id` and `workspace_key` for client deletion, `user_id` for account deletion, and shop sentinel plus canonical shop key during Shopify uninstall.
 
 In `learning-outcome-deletion.test.ts`, assert the delete order and tenant binds, prove a sibling workspace survives, prove the affected archetype aggregate is removed, and prove a deleted tracking code returns 404.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `cd workers/api; npm test -- learning-archetype-aggregates.test.ts learning-outcome-deletion.test.ts; npm run typecheck`
 

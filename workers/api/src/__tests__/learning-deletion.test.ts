@@ -21,11 +21,12 @@ describe('learning data deletion', () => {
 
     await deleteLearningWorkspaceData(db, userId, workspaceKey);
 
-    expect(calls).toHaveLength(3);
-    expect(calls[0].sql).toContain('DELETE FROM learning_critic_verdicts');
-    expect(calls[1].sql).toContain('DELETE FROM learning_decisions');
-    expect(calls[2].sql).toContain('DELETE FROM workspace_learning_settings');
-    expect(calls.every((call) =>
+    const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
+    expect(deletes).toHaveLength(11);
+    expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
+    expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
+    expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
+    expect(deletes.every((call) =>
       call.binds[0] === userId && call.binds[1] === workspaceKey,
     )).toBe(true);
   });
@@ -35,11 +36,12 @@ describe('learning data deletion', () => {
 
     await deleteLearningUserData(db, 'owner_1');
 
-    expect(calls).toHaveLength(3);
-    expect(calls[0].sql).toContain('DELETE FROM learning_critic_verdicts');
-    expect(calls[1].sql).toContain('DELETE FROM learning_decisions');
-    expect(calls[2].sql).toContain('DELETE FROM workspace_learning_settings');
-    expect(calls.every((call) => call.binds[0] === 'owner_1')).toBe(true);
+    const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
+    expect(deletes).toHaveLength(11);
+    expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
+    expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
+    expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
+    expect(deletes.every((call) => call.binds[0] === 'owner_1')).toBe(true);
   });
 
   it('wires cleanup before every parent deletion', () => {

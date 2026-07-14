@@ -178,6 +178,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
 | `lib/learning/` | Tenant-scoped critic council, bounded repair, Release Judge, decision receipts, immutable outcomes, bounded strategy learning, and safe experiment policy |
+| `lib/learning/archetype-aggregates.ts` | Privacy-gated coarse fleet learning with 10-workspace/100-post thresholds and atomic per-archetype rebuilds |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 | `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
