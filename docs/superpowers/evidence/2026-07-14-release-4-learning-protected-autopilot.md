@@ -107,3 +107,46 @@ Evidence must be recorded through the authenticated admin evidence route. Do
 not insert readiness evidence directly into D1 and do not fabricate pilot rows.
 Hugheseys Que remains excluded while on hold. Higgsfield remains independently
 production-gated and is not enabled by this release.
+
+## Approval Pilot Operations Continuation
+
+Commit `952c918377347c3cf2986f5911cff17319b4acd0` adds an admin-only,
+record-only path for collecting the required genuine pilot evidence. It does
+not relax the activation gate above and does not count draft validation as a
+publication outcome.
+
+- `GET /api/learning/pilot/candidates` returns only server-selected Draft posts
+  owned by the authenticated admin. It excludes Shopify ownership, missing
+  clients, held clients, non-canonical ownership, and posts that already have a
+  release receipt.
+- `POST /api/learning/pilot/enroll` can enroll at most one owner workspace and
+  one active client workspace in approval mode. It requires an explicit monthly
+  AI ceiling between 1 and 10,000 cents, uses experiment rate `0`, and records
+  no autopublish consent.
+- `POST /api/learning/pilot/validate/:postId` evaluates one unchanged Draft
+  through the existing independent critics, bounded repair, and Release Judge.
+  It persists the release receipt and critic verdicts but has no post update,
+  scheduling, or publishing path.
+- All pilot routes refuse operation unless the learning brain is enabled while
+  release enforcement and Protected Autopilot remain disabled.
+- Production D1 read-only discovery found exactly one eligible owner workspace
+  with five drafts and one eligible active-client workspace with four drafts
+  for an admin account. Sixteen held-client drafts remain excluded.
+
+Verification before production promotion:
+
+- Frontend: 15 files and 175 tests passed; production build passed.
+- Worker: 87 files and 1,106 tests passed; TypeScript passed.
+- Existing AI guardrail smoke suite: 70 of 70 checks passed.
+- Staging Worker version: `c1f5ab25-cc8f-488d-a3be-f242f514fa66`.
+- Staging health returned 200; all three unauthenticated pilot probes returned
+  401 before route logic or D1 access.
+- Pages preview: `https://c1e5853b.socialai-studio.pages.dev`; the rendered
+  admin chunk contains the immutable-draft, no-consent, enrollment, and
+  single-draft validation wording.
+
+This continuation makes evidence collection operable. Readiness remains red
+until the resulting posts are genuinely published through approval mode,
+receive their 168-hour outcomes, and all 30 decisions are independently
+adjudicated. No synthetic decision, replay-only result, or draft-only result
+may satisfy that promotion requirement.

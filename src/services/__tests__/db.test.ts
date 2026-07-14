@@ -104,7 +104,7 @@ describe('learning decision client', () => {
   });
 
   it('keeps learning profile, settings, and readiness reads in the selected client scope', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       const body = url.includes('/profile')
         ? { profile: null, signals: [], outcomes: [] }
@@ -153,7 +153,7 @@ describe('learning decision client', () => {
   });
 
   it('sends only bounded customer controls and conversion feedback', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       const body = url.includes('/settings')
         ? {
@@ -228,7 +228,7 @@ describe('learning decision client', () => {
   });
 
   it('keeps admin operations read-only except for explicit adjudication labels', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       return new Response(JSON.stringify(
         url.includes('/adjudicate')
@@ -269,6 +269,67 @@ describe('learning decision client', () => {
     });
     expect(result).toEqual({ adjudicationId: 'adjudication_1' });
   });
+
+  it('uses the bounded pilot queue and explicit single-draft validation endpoints', async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ url, method, body });
+      const payload = url.includes('/pilot/candidates')
+        ? {
+            recordOnly: true,
+            candidates: [{
+              clientId: 'client_1', ownerKind: 'client', ownerId: 'client_1',
+              workspaceKey: 'client_1', label: 'Active Client',
+              eligibleDraftCount: 4, samplePostId: 'draft_1', enrolled: false,
+              monthlyAiBudgetUsdCents: null,
+            }],
+          }
+        : url.includes('/pilot/enroll')
+          ? {
+              workspaceKey: 'client_1', ownerKind: 'client', ownerId: 'client_1',
+              mode: 'approval', monthlyAiBudgetUsdCents: 500,
+              autopublishConsentAt: null, recordOnly: true,
+            }
+          : {
+              decisionId: 'decision_1', releaseState: 'pass_green',
+              postId: 'draft_1', sourceStatus: 'Draft', postMutated: false,
+            };
+      return new Response(JSON.stringify(payload), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const db = createDb(async () => 'token');
+
+    const queue = await db.getLearningPilotCandidates();
+    const enrolled = await db.enrollLearningPilotWorkspace('client_1', 500);
+    const validated = await db.validateLearningPilotDraft('draft 1');
+
+    expect(queue.recordOnly).toBe(true);
+    expect(queue.candidates[0].samplePostId).toBe('draft_1');
+    expect(enrolled).toMatchObject({ mode: 'approval', recordOnly: true });
+    expect(validated).toMatchObject({
+      decisionId: 'decision_1', postMutated: false, sourceStatus: 'Draft',
+    });
+    expect(calls).toEqual([
+      {
+        url: expect.stringContaining('/api/learning/pilot/candidates'),
+        method: 'GET', body: null,
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/enroll'),
+        method: 'POST',
+        body: { clientId: 'client_1', monthlyAiBudgetUsdCents: 500 },
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/validate/draft%201'),
+        method: 'POST', body: {},
+      },
+    ]);
+  });
 });
 
 describe('organic reach client', () => {
@@ -299,7 +360,7 @@ describe('organic reach client', () => {
   });
 
   it('sends only reviewed reach data and the selected client id to mutations', async () => {
-    const fetchMock = vi.fn(async (input: unknown) => {
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const url = String(input);
       const body = url.includes('/segments/propose')
         ? { segments: [{ id: 'segment_1' }] }
