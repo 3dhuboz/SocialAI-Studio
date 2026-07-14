@@ -210,15 +210,19 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current production schema version:** v38
+**Current production schema version:** v39
 
 Release 1 migration: `workers/api/schema_v37_learning_foundation.sql`.
 
 Release 3 migration: `workers/api/schema_v38_organic_reach.sql`.
 
+Release 4 migration: `workers/api/schema_v39_learning_outcomes.sql`.
+
 Release 1 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-1-shadow-foundation.md`.
 
 Release 3 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-3-organic-reach-shadow.md`.
+
+Release 4 dormant rollout proof is recorded in `docs/superpowers/evidence/2026-07-14-release-4-learning-protected-autopilot.md`.
 
 ### Migration process
 ```bash
@@ -246,6 +250,17 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `audience_segments` | Private predicted/confirmed audience needs scoped to one reach profile and workspace |
 | `approved_media_assets` | Tenant-scoped media with explicit usage-rights status and matching tags |
 | `reach_plans` | Immutable shadow/selected platform, timing, hashtag, media, and experiment treatments |
+| `publication_events` | Confirmed publication receipts and due outcome-window checkpoints |
+| `learning_outcomes` | Immutable 24/72/168-hour business and engagement outcome windows |
+| `learning_signals` | Bounded tenant strategy associations learned from confirmed outcomes |
+| `learning_profiles` | Versioned tenant learning-profile summaries |
+| `learning_experiments` | Bounded tenant experiments and their measured result state |
+| `archetype_aggregates` | Privacy-thresholded, coarse cross-workspace archetype aggregates |
+| `tracking_links` | Tenant-scoped organic action and conversion tracking links |
+| `conversion_feedback` | Owner-recorded calls, messages, leads, bookings, sales, and order value |
+| `learning_adjudications` | Admin pilot labels for sampled immutable release decisions |
+| `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
+| `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
 
 ---
 
@@ -275,6 +290,8 @@ Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLE
 Release 2 runs the Customer Learning Brain in shadow mode in production and staging with `LEARNING_BRAIN_ENABLED="true"`. Release enforcement remains disabled with `LEARNING_RELEASE_ENFORCEMENT="false"`. Shadow mode may record decision receipts and critic verdicts only. It cannot hold or change post content, media, schedules, status, or publishing behavior.
 
 Release 3 enables organic reach planning in shadow with `ORGANIC_REACH_ENABLED="true"` and keeps application disabled with `ORGANIC_REACH_APPLY_ENABLED="false"` in production and staging. Recommendation timing changes additionally require an explicit `dryRun=false` request and a confirmed reach profile, so the disabled apply flag prevents schedule writes even when a caller requests application.
+
+Release 4 controls are deployed but activation remains gated. Keep `LEARNING_RELEASE_ENFORCEMENT="false"`, `LEARNING_AUTOPILOT_ENABLED="false"`, and `ORGANIC_REACH_APPLY_ENABLED="false"` until the current-policy readiness snapshot passes every documented check with at least 30 real pilot decisions and 30 sampled adjudications. Never manufacture readiness rows or insert release evidence directly into D1; use the authenticated admin evidence route. On-hold clients, including Hugheseys Que, remain ineligible and must retain normal app access without learning release activation. Higgsfield remains a separate production gate and is not enabled by learning readiness.
 
 ---
 
