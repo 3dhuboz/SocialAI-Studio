@@ -224,7 +224,7 @@ Verification completed before promotion:
 - The exact nearest-snapshot and same-window history SQL returned the expected
   24-hour current and historical rows in local SQLite.
 
-### Production Split State
+### Production Deployment State
 
 - Pre-migration Time Travel bookmark:
   `00004fae-00000000-000050a8-f91d747005dd2a5ea079d0efb40afa57`.
@@ -236,16 +236,25 @@ Verification completed before promotion:
 - Post-migration verification remained dormant: zero retry rows, workspace
   settings, protected rows, autopublish consents, release decisions, and
   scheduled posts. Hugheseys Que remained `status='on_hold'`.
-- The Wrangler credential rejected D1 export, file import, Time Travel lookup,
-  and Worker upload with Cloudflare error `10000`. The authenticated Cloudflare
-  connector supplied the recovery bookmark and applied/verified the additive
-  migration.
-- The Worker upload failed before a new version was created. Production remains
-  on Worker version `31e50ba6-8295-4df7-b362-02b24ae89b0c`; direct Worker and
-  same-domain health both returned 200.
+- The pinned Wrangler 3.114.17 credential path rejected Cloudflare operations
+  with errors `10000` and `9109`. Wrangler 4.110.0 authenticated with the same
+  OAuth profile and its dry-run bundle exactly matched merged `origin/main`.
+- Wrangler 4.110.0 deployed the reviewed top-level production config as Worker
+  version `793abfff-2e61-4967-8a19-ee2520e93404`, deployment
+  `4d1f2aa4-5a1f-40cb-987f-f4d555bebdde`, at 100 percent traffic.
+- Direct Worker and same-domain health both returned 200 after deployment.
+- The post-deploy audit remained dormant: zero workspace settings, approval or
+  protected workspaces, autopublish consents, release decisions,
+  adjudications, release-evidence rows, and scheduled posts. Production still
+  had 90 metric snapshots, zero retry rows, and Hugheseys Que remained
+  `status='on_hold'`.
+- Runtime controls remained unchanged:
+  `LEARNING_BRAIN_ENABLED=true`, `LEARNING_RELEASE_ENFORCEMENT=false`,
+  `LEARNING_AUTOPILOT_ENABLED=false`, `ORGANIC_REACH_ENABLED=true`, and
+  `ORGANIC_REACH_APPLY_ENABLED=false`.
 
-The v40 schema is safe with the previous Worker because it is additive and the
-new triggers only copy refreshed facts into new tables. The snapshot-aware
-collector is not live until a valid Worker-write credential deploys merged
-`main` and a new version is independently verified. Release enforcement,
-reach application, and Protected Autopilot must remain disabled throughout.
+The snapshot-aware collector is now live for future due windows. The 102
+previously recorded unavailable outcomes remain immutable historical evidence;
+they are not rewritten. Release enforcement, reach application, and Protected
+Autopilot remain disabled until authenticated pilot decisions, adjudications,
+outcomes, and readiness evidence satisfy the release gates.
