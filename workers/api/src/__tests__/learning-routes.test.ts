@@ -27,13 +27,23 @@ describe('learning receipt routes', () => {
   });
 
   it('returns receipts only after verifying owner-post ownership', async () => {
-    const decision = { id: 'decision_1', post_id: 'post_1' };
+    const decision = {
+      id: 'decision_1', post_id: 'post_1', release_state: 'pass_green',
+      summary_json: '{"pipelineState":"pass_green"}',
+    };
+    const verdict = {
+      id: 'verdict_1', decision_id: 'decision_1', critic_kind: 'brand',
+      verdict: 'pass', severity: 'advisory', confidence: 1,
+      evidence_json: '["brand.denylist"]', repair_json: '[]',
+      provider: 'deterministic', model: 'rules-v1', attempt: 0,
+    };
     const { db, calls } = makeRecordingD1({
       'FROM posts': [{
         id: 'post_1', user_id: 'owner_1', client_id: null,
         owner_kind: 'user', owner_id: 'owner_1',
       }],
       'FROM learning_decisions': [decision],
+      'FROM learning_critic_verdicts': [verdict],
     });
     const { app, env } = makeApp({ DB: db } as Env);
 
@@ -42,9 +52,40 @@ describe('learning receipt routes', () => {
     }, env);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ decisions: [decision] });
+    await expect(response.json()).resolves.toEqual({
+      decisions: [{
+        ...decision,
+        summary: { pipelineState: 'pass_green' },
+        verdicts: [{
+          ...verdict,
+          evidence: ['brand.denylist'],
+          repairs: [],
+        }],
+      }],
+    });
     expect(calls[0].binds).toEqual(['post_1', 'owner_1']);
     expect(calls[1].binds).toEqual(['owner_1', '__owner__', 'post_1', 20]);
+    expect(calls[2].binds).toEqual(['decision_1']);
+  });
+
+  it('never queries verdicts when the scoped parent has no decisions', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM posts': [{
+        id: 'post_1', user_id: 'owner_1', client_id: null,
+        owner_kind: 'user', owner_id: 'owner_1',
+      }],
+      'FROM learning_decisions': [],
+      'FROM learning_critic_verdicts': [{ id: 'orphan-verdict' }],
+    });
+    const { app, env } = makeApp({ DB: db } as Env);
+
+    const response = await app.request('/api/learning/decisions/post_1', {
+      headers: { 'X-Test-Uid': 'owner_1' },
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ decisions: [] });
+    expect(calls.some((call) => call.sql.includes('FROM learning_critic_verdicts'))).toBe(false);
   });
 
   it('uses a leak-safe 404 and never reads receipts for another owner', async () => {

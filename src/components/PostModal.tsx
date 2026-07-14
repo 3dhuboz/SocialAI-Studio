@@ -7,7 +7,7 @@ import {
 import { SocialPost } from '../types';
 import { AnimatedReelPreview } from './AnimatedReelPreview';
 import { useDb } from '../hooks/useDb';
-import type { ViralityScore } from '../services/db';
+import type { LearningDecision, ViralityScore } from '../services/db';
 
 interface Props {
   post: SocialPost;
@@ -26,6 +26,104 @@ interface Props {
    *  the same paid attempt. */
   onRetryReel?: (postId: string) => Promise<void>;
 }
+
+const RELEASE_STATE_COPY: Record<LearningDecision['release_state'], {
+  label: string;
+  tone: string;
+  reason: string;
+}> = {
+  pass_green: {
+    label: 'Ready',
+    tone: 'text-emerald-300 bg-emerald-500/15 border-emerald-400/25',
+    reason: 'Independent critics found no release-critical issue.',
+  },
+  hold_amber: {
+    label: 'Needs attention',
+    tone: 'text-amber-300 bg-amber-500/15 border-amber-400/25',
+    reason: 'One or more checks need stronger evidence or a safe repair.',
+  },
+  block_red: {
+    label: 'Blocked',
+    tone: 'text-rose-300 bg-rose-500/15 border-rose-400/25',
+    reason: 'A release-critical business risk remains unresolved.',
+  },
+  shadow_only: {
+    label: 'Shadow only',
+    tone: 'text-sky-300 bg-sky-500/15 border-sky-400/25',
+    reason: 'The review was recorded without changing publishing behaviour.',
+  },
+  pending: {
+    label: 'Pending',
+    tone: 'text-white/50 bg-white/[0.05] border-white/10',
+    reason: 'Independent review has not finished yet.',
+  },
+};
+
+function criticLabel(kind: string): string {
+  return kind.replace(/_/g, ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase());
+}
+
+export const LearningSafetyReport: React.FC<{
+  decision: LearningDecision | null;
+  loading: boolean;
+}> = ({ decision, loading }) => {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-[11px] text-white/35">
+        <Loader2 size={11} className="animate-spin text-amber-400/60" />
+        Loading safety report...
+      </div>
+    );
+  }
+  if (!decision) return null;
+
+  const state = RELEASE_STATE_COPY[decision.release_state];
+  const candidateChanged = decision.summary.candidateChanged === true;
+  const reason = candidateChanged
+    ? 'A safer repair was proposed but has not replaced the scheduled post.'
+    : state.reason;
+
+  return (
+    <details className="group rounded-xl border border-white/[0.08] bg-white/[0.03] overflow-hidden">
+      <summary className="cursor-pointer list-none flex items-center justify-between gap-3 px-3 py-2.5">
+        <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-white/50">
+          {decision.release_state === 'pass_green'
+            ? <ShieldCheck size={12} className="text-emerald-400" />
+            : <ShieldAlert size={12} className="text-amber-400" />}
+          Safety report
+        </span>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${state.tone}`}>
+          {state.label}
+        </span>
+      </summary>
+      <div className="border-t border-white/[0.06] px-3 py-3 space-y-3 bg-black/15">
+        <div className="space-y-1">
+          <p className="text-[11px] leading-relaxed text-white/55">{reason}</p>
+          <p className="text-[10px] text-white/25">
+            {decision.mode === 'shadow' ? 'Shadow review' : criticLabel(decision.mode)}
+            {' · '}{decision.verdicts.length} critic result{decision.verdicts.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        {decision.verdicts.map((verdict) => (
+          <div key={verdict.id} className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-white/70">{criticLabel(verdict.critic_kind)}</span>
+              <span className="text-[9px] uppercase tracking-wider text-white/30">
+                {criticLabel(verdict.verdict)} · {Math.round(verdict.confidence * 100)}%
+              </span>
+            </div>
+            {verdict.evidence.map((item, index) => (
+              <p key={`e-${index}`} className="text-[10px] leading-relaxed text-white/45">Evidence: {item}</p>
+            ))}
+            {verdict.repairs.map((item, index) => (
+              <p key={`r-${index}`} className="text-[10px] leading-relaxed text-amber-300/70">Repair: {item}</p>
+            ))}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+};
 
 export const PostModal: React.FC<Props> = ({
   post, image, isGeneratingImage, fbConnected, hasApiKey,
@@ -116,6 +214,8 @@ export const PostModal: React.FC<Props> = ({
   const [isScoringPost, setIsScoringPost] = useState(false);
   const [qaFeedbackReason, setQaFeedbackReason] = useState(post.qaFeedbackReason);
   const [isSendingFeedback, setIsSendingFeedback] = useState(false);
+  const [learningDecisions, setLearningDecisions] = useState<LearningDecision[]>([]);
+  const [isLoadingSafetyReport, setIsLoadingSafetyReport] = useState(true);
   type FeedbackReason = NonNullable<SocialPost['qaFeedbackReason']>;
   type FeedbackTarget = NonNullable<SocialPost['qaFeedbackTarget']>;
   const markFeedback = async (target: FeedbackTarget, reason: FeedbackReason) => {
@@ -129,6 +229,24 @@ export const PostModal: React.FC<Props> = ({
       setIsSendingFeedback(false);
     }
   };
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingSafetyReport(true);
+    db.getLearningDecisions(post.id, post.clientId)
+      .then((decisions) => {
+        if (!cancelled) setLearningDecisions(decisions);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLearningDecisions([]);
+          console.warn('[learning-decisions]', error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingSafetyReport(false);
+      });
+    return () => { cancelled = true; };
+  }, [db, post.id, post.clientId]);
   useEffect(() => {
     if (!isScorable) return;
     if (!scoringContent || scoringContent.trim().length < 10) return;
@@ -369,6 +487,11 @@ export const PostModal: React.FC<Props> = ({
                 {new Date(post.scheduledFor).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </span>
             </div>
+
+            <LearningSafetyReport
+              decision={learningDecisions[0] ?? null}
+              loading={isLoadingSafetyReport}
+            />
 
             {/* ── Virality Score (Tier 3 wow feature) ──
                  Pre-publish prediction trained on this workspace's own past

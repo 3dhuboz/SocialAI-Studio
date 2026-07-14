@@ -12,6 +12,41 @@ type OwnedPostRow = {
   owner_id: string | null;
 };
 
+type DecisionRow = Record<string, unknown> & {
+  id: string;
+  summary_json?: string | null;
+};
+
+type VerdictRow = Record<string, unknown> & {
+  decision_id: string;
+  evidence_json?: string | null;
+  repair_json?: string | null;
+};
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonStrings(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
   app.use('/api/learning/*', requireAuth);
 
@@ -51,8 +86,38 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         20,
         ownerKind,
         ownerId,
-      );
-      return c.json({ decisions });
+      ) as DecisionRow[];
+      if (decisions.length === 0) return c.json({ decisions: [] });
+
+      // Decision ids come only from the tenant-scoped parent query above.
+      // Verdict rows therefore cannot be fetched by an arbitrary id supplied
+      // by the browser.
+      const decisionIds = decisions.map((decision) => decision.id);
+      const placeholders = decisionIds.map(() => '?').join(',');
+      const verdictResult = await c.env.DB.prepare(`
+        SELECT * FROM learning_critic_verdicts
+        WHERE decision_id IN (${placeholders})
+        ORDER BY decision_id, attempt ASC, critic_kind ASC
+      `).bind(...decisionIds).all<VerdictRow>();
+      const verdictsByDecision = new Map<string, Array<Record<string, unknown>>>();
+      for (const verdict of verdictResult.results ?? []) {
+        const normalized = {
+          ...verdict,
+          evidence: parseJsonStrings(verdict.evidence_json),
+          repairs: parseJsonStrings(verdict.repair_json),
+        };
+        const rows = verdictsByDecision.get(verdict.decision_id) ?? [];
+        rows.push(normalized);
+        verdictsByDecision.set(verdict.decision_id, rows);
+      }
+
+      return c.json({
+        decisions: decisions.map((decision) => ({
+          ...decision,
+          summary: parseJsonObject(decision.summary_json),
+          verdicts: verdictsByDecision.get(decision.id) ?? [],
+        })),
+      });
     } catch {
       return c.json({ error: 'Not found' }, 404);
     }

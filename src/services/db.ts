@@ -132,6 +132,33 @@ export interface DbPost {
   qa_feedback_at?: string | null;
 }
 
+export interface LearningCriticVerdict {
+  id: string;
+  decision_id: string;
+  critic_kind: string;
+  verdict: 'pass' | 'warn_repairable' | 'block' | 'unavailable';
+  severity: 'advisory' | 'release_critical';
+  confidence: number;
+  evidence: string[];
+  repairs: string[];
+  provider: string | null;
+  model: string | null;
+  attempt: number;
+}
+
+export interface LearningDecision {
+  id: string;
+  post_id: string;
+  mode: 'off' | 'shadow' | 'approval' | 'protected_autopilot';
+  stage: 'snapshot' | 'text_preflight' | 'media_preflight' | 'release';
+  release_state: 'pending' | 'pass_green' | 'hold_amber' | 'block_red' | 'shadow_only';
+  content_hash: string;
+  summary: Record<string, unknown>;
+  created_at: string;
+  updated_at?: string;
+  verdicts: LearningCriticVerdict[];
+}
+
 /** Maps a `DbPost` row (snake_case from D1) to the front-end `SocialPost`
  *  (camelCase). Three near-identical inline copies of this shape used to
  *  live in App.tsx — extracted here so any new field added to `posts` is a
@@ -139,6 +166,7 @@ export interface DbPost {
 export function mapDbPostToSocialPost(p: DbPost): import('../types').SocialPost {
   return {
     id: p.id,
+    clientId: p.client_id ?? null,
     content: p.content,
     platform: p.platform as import('../types').SocialPost['platform'],
     status: p.status as import('../types').SocialPost['status'],
@@ -256,6 +284,20 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       const res = await f(`/api/db/posts${qs}`);
       const data = await res.json() as { posts: DbPost[] };
       return data.posts ?? [];
+    },
+
+    async getLearningDecisions(
+      postId: string,
+      clientId?: string | null,
+    ): Promise<LearningDecision[]> {
+      const query = clientId
+        ? `?clientId=${encodeURIComponent(clientId)}`
+        : '';
+      const res = await f(
+        `/api/learning/decisions/${encodeURIComponent(postId)}${query}`,
+      );
+      const data = await res.json() as { decisions: LearningDecision[] };
+      return data.decisions ?? [];
     },
 
     async createPost(post: Omit<DbPost, 'id'> & { clientId?: string | null }): Promise<string> {

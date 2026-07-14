@@ -10,8 +10,12 @@
  * — narrow enough that a regression (e.g. someone widening the guard to
  * accept any 409, or someone narrowing it to only Facebook) fails loudly.
  */
-import { describe, it, expect } from 'vitest';
-import { ApiError, isNotConnectedError } from '../db';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { ApiError, createDb, isNotConnectedError, mapDbPostToSocialPost } from '../db';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('isNotConnectedError', () => {
   it('returns true for canonical 409 NOT_CONNECTED with platform=facebook', () => {
@@ -73,5 +77,29 @@ describe('isNotConnectedError', () => {
     expect(isNotConnectedError(undefined)).toBe(false);
     expect(isNotConnectedError(null)).toBe(false);
     expect(isNotConnectedError({ status: 409, body: { code: 'NOT_CONNECTED' } })).toBe(false);
+  });
+});
+
+describe('learning decision client', () => {
+  it('carries the canonical client scope from D1 posts into the receipt request', async () => {
+    const post = mapDbPostToSocialPost({
+      id: 'post_1', client_id: 'client 1', content: 'Safe copy',
+      platform: 'Facebook', status: 'Scheduled', scheduled_for: new Date().toISOString(),
+      hashtags: [],
+    });
+    const fetchMock = vi.fn(async (_input: unknown) => new Response(
+      JSON.stringify({ decisions: [{ id: 'decision_1', verdicts: [] }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const db = createDb(async () => 'token');
+
+    const decisions = await db.getLearningDecisions(post.id, post.clientId);
+
+    expect(post.clientId).toBe('client 1');
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      '/api/learning/decisions/post_1?clientId=client%201',
+    );
+    expect(decisions).toEqual([{ id: 'decision_1', verdicts: [] }]);
   });
 });
