@@ -12,6 +12,8 @@ enabled = true
 
 [vars]
 ENVIRONMENT = "production"
+LEARNING_BRAIN_ENABLED = "false"
+LEARNING_RELEASE_ENFORCEMENT = "false"
 # Public base URL for the REELS_R2 bucket (set via R2 → socialai-reels →
 # Settings → Public Development URL → Allow Access). Required so the prewarm
 # cron can persist a durable, publicly-fetchable URL on each reel post for
@@ -138,7 +140,7 @@ port = 8787
 
 [env.staging]
 name = "socialai-api-staging"
-vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev" }
+vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev", LEARNING_BRAIN_ENABLED = "false", LEARNING_RELEASE_ENFORCEMENT = "false" }
 
 # Staging D1 — created 2026-05-17 via `npx wrangler d1 create socialai-db-staging`.
 # Schema bootstrapped via `wrangler d1 export socialai-db --remote` followed by

@@ -150,6 +150,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
+| `routes/learning.ts` | Authenticated, tenant-scoped inspection of Customer Learning Brain decision receipts |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -170,6 +171,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prompt-safety.ts` | Prompt injection detection |
 | `web-fetch.ts` | Fetch wrapper with retries |
 | `paypal.ts` | PayPal API helpers |
+| `lib/learning/` | Canonical workspace identity, mode resolution, decision receipts, and explicit tenant deletion helpers |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |
@@ -177,6 +179,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `dispatcher.ts` | — | Routes `scheduled()` events to the right cron handler |
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
+| `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only snapshots of up to 8 upcoming posts; off by default |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
 | `refresh-tokens.ts` | `0 3 * * *` | Refresh 60-day Facebook tokens |
 | `refresh-facts.ts` | `0 4 * * *` | Scrape FB Pages → `client_facts` engagement history |
@@ -190,7 +193,9 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current schema version:** v35
+**Current production schema version:** v35
+
+**Pending Release 1 migration:** `schema_v37_learning_foundation.sql`. Do not label v37 live until the staged migration, production backup, production migration, and table inspection gates pass.
 
 ### Migration process
 ```bash
@@ -211,6 +216,9 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `posters` | AI poster metadata + R2 key |
 | `activations` | Account activation codes |
 | `portals` | White-label portal configs |
+| `workspace_learning_settings` | Tenant mode, consent, policy, experiment, and AI-budget settings (v37 pending) |
+| `learning_decisions` | Immutable tenant-scoped evaluation and release receipts (v37 pending) |
+| `learning_critic_verdicts` | Per-critic evidence attached to decision receipts (v37 pending) |
 
 ---
 
@@ -236,6 +244,8 @@ npm run build    # outputs to dist/
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
 Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`, `SOCIALAI_STUDIO_API_KEY`, `MY_ASSISTANT_INGEST_API_KEY`. My Assistant routing vars: `MY_ASSISTANT_AGENT_ACCOUNT_ID`, `MY_ASSISTANT_WORKSPACE_ID`. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
+
+Release 1 learning vars are `LEARNING_BRAIN_ENABLED` and `LEARNING_RELEASE_ENFORCEMENT`. Both are literal `"false"` in production and staging. Release 1 is read-only and off by default; it cannot alter post content, images, schedules, status, or publishing behavior.
 
 ---
 

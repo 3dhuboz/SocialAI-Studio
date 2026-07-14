@@ -116,6 +116,11 @@ export type Env = {
   // This is a `[vars]` value in wrangler.toml, not a binding.
   ENVIRONMENT?: string;
 
+  // Customer Learning Brain rollout controls. Both are literal-string,
+  // off-by-default flags; workspace settings can only narrow behaviour.
+  LEARNING_BRAIN_ENABLED?: string;
+  LEARNING_RELEASE_ENFORCEMENT?: string;
+
   // ── Postproxy integration (schema_v22, 2026-05) ─────────────────────────
   // Hosted publishing layer replacing direct FB Graph publishing. See
   // docs/POSTPROXY_INTEGRATION_PLAN.md + workers/api/src/lib/postproxy.ts.

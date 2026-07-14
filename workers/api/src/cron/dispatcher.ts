@@ -27,6 +27,7 @@ import { cronPublishMissedPosts } from './publish-missed';
 import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
+import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -77,6 +78,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // up to 20 imgs/tick = $0.80/tick = $9.60/hr if it ran here).
     await trackCron(env, 'prewarm_images', () => cronPrewarmImages(env));
     await trackCron(env, 'prewarm_videos', () => cronPrewarmVideos(env));
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_shadow', () => cronEvaluateLearningShadow(env));
+    }
     await trackCron(env, 'publish', () => cronPublishMissedPosts(env));
     // Poll FB Reel uploads kicked off by the publish cron. Audit P0 fix
     // (2026-05) — Phase 3 (status poll) + Phase 4 (finish) of the reel

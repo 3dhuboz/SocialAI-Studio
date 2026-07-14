@@ -21,6 +21,7 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../env';
+import { deleteLearningWorkspaceData } from '../lib/learning/deletion';
 import { requireAuth } from '../middleware/auth';
 
 const uuid = () => crypto.randomUUID();
@@ -135,6 +136,8 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
     // child rows under a deleted client used to orphan and — if the
     // client UUID was ever reused — re-attach to the wrong owner.
     // Mirrors the user-delete pattern in routes/user.ts.
+    await deleteLearningWorkspaceData(c.env.DB, uid, clientId);
+
     const purges: Array<{ name: string; sql: string; binds: unknown[] }> = [
       { name: 'posts',               sql: `DELETE FROM posts WHERE user_id = ? AND client_id = ?`,               binds: [uid, clientId] },
       { name: 'campaigns',           sql: `DELETE FROM campaigns WHERE user_id = ? AND client_id = ?`,           binds: [uid, clientId] },
