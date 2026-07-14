@@ -29,6 +29,7 @@ import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
 import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
+import { cronLearnStrategies } from './learn-strategies';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -146,6 +147,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // and the fallback chain ran instead, double-firing prewarm + publish at
   // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
   if (cron === '0 21 * * SUN') {
+    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
+    }
     await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
     return;
   }

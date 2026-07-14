@@ -25,7 +25,7 @@
 - Create: `workers/api/schema_v39_learning_outcomes.sql`
 - Create: `workers/api/src/__tests__/learning-outcome-schema.test.ts`
 
-- [ ] **Step 1: Write the failing schema test**
+- [x] **Step 1: Write the failing schema test**
 
 ```ts
 it('creates publication, outcome, strategy, experiment, aggregate, and tracking tables', () => {
@@ -42,13 +42,13 @@ it('creates publication, outcome, strategy, experiment, aggregate, and tracking 
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `cd workers/api; npm test -- learning-outcome-schema.test.ts`
 
 Expected: FAIL because v39 does not exist.
 
-- [ ] **Step 3: Create the migration**
+- [x] **Step 3: Create the migration**
 
 ```sql
 PRAGMA foreign_keys = ON;
@@ -160,7 +160,7 @@ CREATE INDEX IF NOT EXISTS idx_learning_release_evidence_policy ON learning_rele
 CREATE INDEX IF NOT EXISTS idx_learning_release_readiness_latest ON learning_release_readiness(policy_version,evaluated_at DESC);
 ```
 
-- [ ] **Step 4: Run the test and commit**
+- [x] **Step 4: Run the test and commit**
 
 Run: `cd workers/api; npm test -- learning-outcome-schema.test.ts`
 
@@ -177,7 +177,7 @@ git commit -m "feat: add outcome and learning schema"
 - Create: `workers/api/src/lib/learning/outcome-score.ts`
 - Create: `workers/api/src/__tests__/learning-outcome-score.test.ts`
 
-- [ ] **Step 1: Write exact weighting tests**
+- [x] **Step 1: Write exact weighting tests**
 
 ```ts
 it('uses 40/25/15/15/5 when all categories exist', () => {
@@ -207,7 +207,7 @@ it('uses within-workspace percentile rank once history is sufficient', () => {
 });
 ```
 
-- [ ] **Step 2: Implement the pure scorer**
+- [x] **Step 2: Implement the pure scorer**
 
 ```ts
 export type OutcomeCategory = 'conversion'|'lead'|'tracked_action'|'meaningful_engagement'|'reach';
@@ -227,7 +227,7 @@ export function scoreOutcome(values: Partial<Record<OutcomeCategory, number>>) {
 }
 ```
 
-- [ ] **Step 3: Add per-workspace percentile normalisation**
+- [x] **Step 3: Add per-workspace percentile normalisation**
 
 ```ts
 export function normaliseSignal(raw: number, history: number[]) {
@@ -244,7 +244,7 @@ export function normaliseSignal(raw: number, history: number[]) {
 
 Load `history` only from the same `user_id/workspace_key` and the rolling 90-day window. Never compare raw scores across workspaces.
 
-- [ ] **Step 4: Run tests and commit**
+- [x] **Step 4: Run tests and commit**
 
 Run: `cd workers/api; npm test -- learning-outcome-score.test.ts; npm run typecheck`
 
@@ -269,7 +269,7 @@ git commit -m "feat: score blended business outcomes"
 - Modify: `workers/api/src/routes/postproxy.ts`
 - Modify: the existing focused publish-cron test file that covers successful publish retries
 
-- [ ] **Step 1: Write idempotency and missing-data tests**
+- [x] **Step 1: Write idempotency and missing-data tests**
 
 ```ts
 it('uses one idempotency key per post and platform', async () => {
@@ -313,7 +313,7 @@ it('marks a failed Facebook fetch unavailable instead of zero', async () => {
 
 Define `publication` as a persisted user-owned Facebook event with `ownerKind='user'`, `ownerId=userId`, and `workspaceKey='__owner__'`. Add a Shopify event fixture and assert the recording bind uses the sentinel user plus `shop:<canonical-domain>`. Import `makeRecordingD1` from the Release 1 helper. In the existing publish-cron regression suite, add a fixture where remote publish succeeds but `recordPublicationEvent` throws: assert the post remains `Published`, a second cron run makes zero remote publish calls, and reconciliation later writes the missing event.
 
-- [ ] **Step 2: Implement idempotent publication recording**
+- [x] **Step 2: Implement idempotent publication recording**
 
 ```ts
 export interface PublicationEventInput {
@@ -342,11 +342,11 @@ export async function recordPublicationEvent(db: D1Database, input: PublicationE
 
 Import the single Release 1 `normalizeWorkspaceIdentity` helper; callers may not supply an independent tenant key, and inconsistent ownership must fail before SQL is prepared.
 
-- [ ] **Step 3: Wire every successful publish branch**
+- [x] **Step 3: Wire every successful publish branch**
 
 After direct Facebook/Instagram success and the post status is persisted as Published/Posted, the shared publish orchestrator calls `recordPublicationEvent`. Record one event per actual remote destination using canonical `facebook` or `instagram`; never persist a synthetic `both` platform event. For asynchronous Postproxy, call it only from the signed webhook/reconciliation path that confirms platform publication; for Graph reels, call it only when `poll-pending-reels` confirms finish. The call is idempotent and later reconciliation may backfill remote, permalink, decision, or Reach Plan identifiers. If it fails, log and alert but do not republish the remote post; the collector reconciles missing events from Published/Posted posts and stored remote IDs.
 
-- [ ] **Step 4: Implement the collector**
+- [x] **Step 4: Implement the collector**
 
 Implement `collectOutcomeWindows` behind an injected repository/fetch boundary matching the test above:
 
@@ -384,7 +384,7 @@ export async function collectOutcomeWindows(
 
 Use the immutable publication-event ID, not `postId`, as `hasOutcome`'s first argument. Select only due publication events with missing windows. Load matching `client_facts` for user/client ownership or `shopify_facts` for shop ownership, plus tracking-link aggregates and conversion feedback by `user_id/workspace_key/post_id`. Calculate category percentiles and write one immutable outcome row per window. Network/fact failure writes `source_status='unavailable'` with `normalized_score=NULL`; never turn a missing source into numeric zero. Add a shop test proving no `client_facts` query occurs for `ownerKind='shop'`.
 
-- [ ] **Step 5: Add collector to the six-hour lane**
+- [x] **Step 5: Add collector to the six-hour lane**
 
 In the `0 */6 * * *` dispatcher branch:
 
@@ -392,7 +392,7 @@ In the `0 */6 * * *` dispatcher branch:
 await trackCron(env, 'learning_outcomes', () => cronCollectLearningOutcomes(env));
 ```
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `cd workers/api; npm test -- learning-outcome-collector.test.ts; npm run typecheck`
 
@@ -412,7 +412,7 @@ git commit -m "feat: collect immutable outcome windows"
 - Create: `workers/api/src/__tests__/learning-strategy.test.ts`
 - Modify: `workers/api/src/cron/dispatcher.ts`
 
-- [ ] **Step 1: Write threshold, cap, decay, and exploration tests**
+- [x] **Step 1: Write threshold, cap, decay, and exploration tests**
 
 ```ts
 const now = new Date('2026-07-14T00:00:00.000Z');
@@ -453,7 +453,7 @@ it('never allows an experiment to change more than one variable', () => {
 });
 ```
 
-- [ ] **Step 2: Implement bounded updates**
+- [x] **Step 2: Implement bounded updates**
 
 ```ts
 export function decayEffect(effect: number, ageDays: number): number {
@@ -472,7 +472,7 @@ export function nextSignal(current: LearningSignal, evidence: SignalEvidence, no
 }
 ```
 
-- [ ] **Step 3: Implement deterministic experiment selection**
+- [x] **Step 3: Implement deterministic experiment selection**
 
 ```ts
 function hashUnit(value: string): number {
@@ -494,11 +494,11 @@ When `shouldExplore` is true, choose the least-tested eligible variable and call
 
 Every signal, profile, and experiment insert copies the validated `user_id`, canonical `workspace_key`, `owner_kind`, and `owner_id` from its publication/reach record. Repository methods require all four values and reject inconsistent client or Shopify identities.
 
-- [ ] **Step 4: Run learning before the existing weekly review**
+- [x] **Step 4: Run learning before the existing weekly review**
 
 In the `0 21 * * SUN` branch, call `cronLearnStrategies` before `cronWeeklyReview`. A learning failure is isolated by `trackCron` and cannot suppress the weekly email.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `cd workers/api; npm test -- learning-strategy.test.ts; npm run typecheck`
 
