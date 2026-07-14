@@ -120,6 +120,8 @@ export type Env = {
   // off-by-default flags; workspace settings can only narrow behaviour.
   LEARNING_BRAIN_ENABLED?: string;
   LEARNING_RELEASE_ENFORCEMENT?: string;
+  ORGANIC_REACH_ENABLED?: string;
+  ORGANIC_REACH_APPLY_ENABLED?: string;
 
   // ── Postproxy integration (schema_v22, 2026-05) ─────────────────────────
   // Hosted publishing layer replacing direct FB Graph publishing. See
