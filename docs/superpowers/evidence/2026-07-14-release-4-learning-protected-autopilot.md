@@ -178,3 +178,74 @@ may satisfy that promotion requirement.
 The operational lane is live, but no workspace was enrolled and no draft was
 validated during deployment. Those actions require the authenticated admin UI
 and remain subject to independent adjudication and the 168-hour outcome gate.
+
+## 2026-07-15 Metric-Window Hardening Continuation
+
+### Production Finding
+
+The first live outcome reconciliation created 34 publication events and all
+three due windows for each event. All 102 outcome rows were correctly marked
+`source_status='unavailable'`, `completeness='none'`, with no numeric score.
+None was linked to a release decision and none belonged to Hugheseys Que.
+
+The root cause was temporal rather than publishing-related:
+
+- `client_facts` and `shopify_facts` are current scrape caches. Each refresh
+  wipes and replaces the previous rows, so they cannot represent distinct
+  24-hour, 72-hour, and 168-hour measurements.
+- The collector required a fact with `verified_at` at or before the exact
+  window boundary, then persisted the first unavailable result permanently.
+- This created a deterministic blind spot when the daily fact refresh landed
+  just after a window, and no bounded retry could recover it.
+
+### Implemented Repair
+
+PR `#172` merged to `main` as
+`2e5cb859d18255246ca2b2687c869d6051fa72fe` after GitHub
+`typecheck-and-build` passed.
+
+The repair adds:
+
+- Append-only, tenant-scoped `platform_metric_snapshots` captured by D1
+  triggers whenever normal or Shopify `own_post` facts are refreshed.
+- Nearest-snapshot selection within a bounded 18-hour tolerance and
+  same-window historical normalization.
+- `learning_outcome_attempts` with 6-hour, 12-hour, and 24-hour retry delays;
+  only the fourth unavailable attempt finalizes an immutable unknown outcome.
+- Explicit snapshot and retry-receipt deletion during workspace, account, and
+  Shopify teardown.
+
+Verification completed before promotion:
+
+- Worker: 88 test files, 1,110 tests passed; strict TypeScript passed.
+- Frontend: 15 test files, 175 tests passed; strict TypeScript and production
+  Vite build passed.
+- The v40 migration and both triggers executed against an isolated local D1.
+- The exact nearest-snapshot and same-window history SQL returned the expected
+  24-hour current and historical rows in local SQLite.
+
+### Production Split State
+
+- Pre-migration Time Travel bookmark:
+  `00004fae-00000000-000050a8-f91d747005dd2a5ea079d0efb40afa57`.
+- Migration SHA-256:
+  `d1170a5a7cb0f6520d61af1908361cd9367aa20460f79160eb527d85ff448f4c`.
+- v40 applied successfully through Cloudflare's D1 query API. Production now
+  contains both tables, both indexes, both triggers, and 90 seeded snapshots:
+  47 from normal client facts and 43 from Shopify facts.
+- Post-migration verification remained dormant: zero retry rows, workspace
+  settings, protected rows, autopublish consents, release decisions, and
+  scheduled posts. Hugheseys Que remained `status='on_hold'`.
+- The Wrangler credential rejected D1 export, file import, Time Travel lookup,
+  and Worker upload with Cloudflare error `10000`. The authenticated Cloudflare
+  connector supplied the recovery bookmark and applied/verified the additive
+  migration.
+- The Worker upload failed before a new version was created. Production remains
+  on Worker version `31e50ba6-8295-4df7-b362-02b24ae89b0c`; direct Worker and
+  same-domain health both returned 200.
+
+The v40 schema is safe with the previous Worker because it is additive and the
+new triggers only copy refreshed facts into new tables. The snapshot-aware
+collector is not live until a valid Worker-write credential deploys merged
+`main` and a new version is independently verified. Release enforcement,
+reach application, and Protected Autopilot must remain disabled throughout.
