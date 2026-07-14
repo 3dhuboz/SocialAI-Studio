@@ -31,6 +31,7 @@ import {
   type SocialStatus,
   type FacebookPageOption,
 } from '../api';
+import { OrganicReachCard } from '../components/OrganicReachCard';
 import { initFB, loginFB } from '../fb-sdk';
 import './settings.css';
 
@@ -251,6 +252,8 @@ export default function Settings() {
       )}
 
       <BrandSafetyCard />
+
+      <OrganicReachCard />
 
       <WhatWePublishCard />
     </BlockStack>

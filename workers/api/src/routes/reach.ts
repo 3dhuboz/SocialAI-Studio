@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import { proposeAudienceSegments } from '../lib/reach/audience-model';
 import {
   confirmAudienceSegment,
+  listReachAudienceSegments,
   listReachPlans,
   reachScope,
   reachWorkspaceKey,
@@ -97,7 +98,11 @@ export function registerReachRoutes(app: App, deps: ReachRoutesDeps = defaultDep
     if (!uid) return c.json({ error: 'Unauthorized' }, 401);
     const scope = reachScope(uid, optionalClientId(c.req.query('clientId')));
     try {
-      return c.json({ profile: await deps.getProfile(c.env.DB, scope) });
+      const profile = await deps.getProfile(c.env.DB, scope);
+      const segments = profile
+        ? await listReachAudienceSegments(c.env.DB, profile)
+        : [];
+      return c.json({ profile, segments });
     } catch (error) {
       const failure = routeError(error);
       return c.json({ error: failure.message }, failure.status);

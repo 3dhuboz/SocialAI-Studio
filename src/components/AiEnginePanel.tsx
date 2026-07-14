@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Brain, Image, Video, RefreshCw, Zap, Activity, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
+import { ReachProfilePanel } from './ReachProfilePanel';
 
 const AI_WORKER = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -69,7 +70,10 @@ const fmt = (n: number | null | undefined, prefix = '$') => {
   return `${prefix}${n.toFixed(4)}`;
 };
 
-export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmin }) => {
+export const AiEnginePanel: React.FC<{
+  isSuperAdmin: boolean;
+  clientId?: string | null;
+}> = ({ isSuperAdmin, clientId = null }) => {
   const [stats, setStats] = useState<OpenRouterStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
@@ -161,6 +165,8 @@ export const AiEnginePanel: React.FC<{ isSuperAdmin: boolean }> = ({ isSuperAdmi
       </div>
 
       {/* ── Live OpenRouter Stats (super-admin only) ── */}
+      <ReachProfilePanel clientId={clientId} />
+
       {isSuperAdmin && (
         <div className="glass-card border border-white/[0.08] rounded-2xl overflow-hidden">
           {/* Header */}

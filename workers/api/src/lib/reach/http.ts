@@ -1,6 +1,7 @@
 import { normalizeWorkspaceIdentity } from '../learning/types';
 import type {
   OrganicPlatform,
+  ReachProfile,
   ReachProfileDraft,
   ReachWorkspaceScope,
 } from './types';
@@ -21,6 +22,17 @@ type ReachPlanRow = Record<string, unknown> & {
   hashtag_json?: string | null;
   media_json?: string | null;
   experiment_json?: string | null;
+  audience_label?: string | null;
+  audience_needs_json?: string | null;
+};
+
+type AudienceSegmentRow = {
+  id: string;
+  label: string;
+  needs_json: string;
+  evidence_json: string;
+  confidence: number;
+  status: 'predicted' | 'confirmed' | 'disabled';
 };
 
 function requireObject(value: unknown, field: string): Record<string, unknown> {
@@ -143,6 +155,44 @@ export async function confirmAudienceSegment(
   }
 }
 
+export async function listReachAudienceSegments(
+  db: D1Database,
+  profile: ReachProfile,
+): Promise<Record<string, unknown>[]> {
+  const result = await db.prepare(`
+    SELECT id, label, needs_json, evidence_json, confidence, status
+    FROM audience_segments
+    WHERE user_id = ? AND workspace_key = ? AND reach_profile_id = ?
+      AND owner_kind = ? AND owner_id = ?
+    ORDER BY CASE status WHEN 'confirmed' THEN 0 WHEN 'predicted' THEN 1 ELSE 2 END,
+      confidence DESC, created_at ASC
+  `).bind(
+    profile.userId,
+    profile.workspaceKey,
+    profile.id,
+    profile.ownerKind,
+    profile.ownerId,
+  ).all<AudienceSegmentRow>();
+
+  return (result.results ?? []).map((row) => {
+    const needs = parseJson<{
+      needs?: string[];
+      messageAngles?: string[];
+      suitableOffers?: string[];
+    }>(row.needs_json, {});
+    return {
+      id: row.id,
+      label: row.label,
+      needs: needs.needs ?? [],
+      messageAngles: needs.messageAngles ?? [],
+      suitableOffers: needs.suitableOffers ?? [],
+      evidence: parseJson<string[]>(row.evidence_json, []),
+      confidence: Number(row.confidence),
+      status: row.status,
+    };
+  });
+}
+
 export async function listReachPlans(
   db: D1Database,
   userId: string,
@@ -150,9 +200,15 @@ export async function listReachPlans(
   postId: string,
 ): Promise<Record<string, unknown>[]> {
   const result = await db.prepare(`
-    SELECT * FROM reach_plans
-    WHERE user_id = ? AND workspace_key = ? AND post_id = ?
-    ORDER BY created_at DESC
+    SELECT rp.*, audience.label AS audience_label,
+      audience.needs_json AS audience_needs_json
+    FROM reach_plans rp
+    LEFT JOIN audience_segments audience
+      ON audience.id = rp.audience_segment_id
+      AND audience.user_id = rp.user_id
+      AND audience.workspace_key = rp.workspace_key
+    WHERE rp.user_id = ? AND rp.workspace_key = ? AND rp.post_id = ?
+    ORDER BY rp.created_at DESC
     LIMIT 20
   `).bind(userId, workspaceKey, postId).all<ReachPlanRow>();
 
@@ -164,6 +220,12 @@ export async function listReachPlans(
       reachProfileVersion: row.reach_profile_version ?? null,
       objective: row.objective ?? null,
       audienceSegmentId: row.audience_segment_id ?? null,
+      audience: row.audience_label
+        ? {
+            label: row.audience_label,
+            needs: parseJson<{ needs?: string[] }>(row.audience_needs_json, {}).needs ?? [],
+          }
+        : null,
       status: row.status,
       createdAt: row.created_at ?? null,
       geographicFocus: parseJson<string[]>(row.geographic_focus_json, []),

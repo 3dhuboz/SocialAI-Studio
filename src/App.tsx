@@ -5989,7 +5989,7 @@ const Dashboard: React.FC = () => {
                 {/* AI Engine Panel — owner-only; the three model cards
                     (Gemini / FLUX / Kling) leak infra detail to non-owner
                     admins, so the whole panel hides for them. */}
-                <AiEnginePanel isSuperAdmin={isSuperAdmin} />
+                <AiEnginePanel isSuperAdmin={isSuperAdmin} clientId={activeClientId} />
               </>
             )}
 

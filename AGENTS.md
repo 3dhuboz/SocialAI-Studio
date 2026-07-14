@@ -71,6 +71,8 @@ GitHub repo
 | `PostShowcase.tsx` | Featured post display |
 | `PosterManager.tsx` (`src/pages/`) | AI poster/graphic builder |
 | `AiEnginePanel.tsx` | AI settings panel |
+| `ReachProfilePanel.tsx` | One-time organic reach geography/profile confirmation and protected audience review |
+| `OrganicReachCard.tsx` (`shopify-app/src/components/`) | Signed-session Shopify mirror of the one-time organic reach setup |
 | `AccountPanel.tsx` | Account/billing settings |
 | `AuthScreen.tsx` | Login/signup screen |
 | `CinematicTour.tsx` | Feature tour overlay |
@@ -151,6 +153,8 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
 | `routes/learning.ts` | Authenticated, tenant-scoped inspection of Customer Learning Brain decision receipts and critic verdicts |
+| `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
+| `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
@@ -173,6 +177,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `paypal.ts` | PayPal API helpers |
 | `lib/learning/` | Tenant-scoped critic context, independent critic council, bounded repair, Release Judge, hash-addressed decision receipts, and release preflight |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
+| `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 
 ### Cron (`src/cron/`)
 | File | Schedule | Purpose |

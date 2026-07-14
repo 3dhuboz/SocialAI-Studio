@@ -103,3 +103,81 @@ describe('learning decision client', () => {
     expect(decisions).toEqual([{ id: 'decision_1', verdicts: [] }]);
   });
 });
+
+describe('organic reach client', () => {
+  it('keeps profile and plan reads in the selected client scope', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      return new Response(JSON.stringify(
+        url.includes('/plans/')
+          ? { plans: [{ id: 'plan_1', postId: 'post_1', status: 'shadow' }] }
+          : { profile: { id: 'reach_1' }, segments: [{ id: 'segment_1' }] },
+      ), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const db = createDb(async () => 'token');
+
+    const setup = await db.getReachProfile('client 1');
+    const plans = await db.getReachPlans('post 1', 'client 1');
+
+    expect(setup.profile).toEqual({ id: 'reach_1' });
+    expect(setup.segments).toEqual([{ id: 'segment_1' }]);
+    expect(plans).toEqual([{ id: 'plan_1', postId: 'post_1', status: 'shadow' }]);
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      '/api/reach/profile?clientId=client%201',
+    );
+    expect(String(fetchMock.mock.calls[1][0])).toContain(
+      '/api/reach/plans/post%201?clientId=client%201',
+    );
+  });
+
+  it('sends only reviewed reach data and the selected client id to mutations', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      const body = url.includes('/segments/propose')
+        ? { segments: [{ id: 'segment_1' }] }
+        : url.includes('/segments/confirm')
+          ? { segmentId: 'segment_1', status: 'confirmed' }
+          : { profile: { id: 'reach_1' } };
+      return new Response(JSON.stringify(body), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const db = createDb(async () => 'token');
+
+    await db.proposeReachProfile({
+      clientId: 'client_1',
+      timezone: 'Australia/Brisbane',
+      baseLocation: { country: 'Australia', region: 'Queensland', locality: 'Gladstone' },
+      serviceArea: { radiusKm: 40, included: ['Gladstone'] },
+      excludedLocations: ['Rockhampton'],
+      platforms: ['facebook', 'instagram'],
+    });
+    await db.confirmReachProfile('reach_1', 'client_1');
+    await db.proposeReachSegments('client_1');
+    await db.confirmReachSegment('segment_1', 'client_1');
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url: String(url),
+      method: (init as RequestInit | undefined)?.method,
+      body: JSON.parse(String((init as RequestInit | undefined)?.body ?? '{}')),
+    }));
+    expect(calls[0]).toEqual(expect.objectContaining({
+      url: expect.stringContaining('/api/reach/profile/propose'),
+      method: 'POST',
+      body: expect.objectContaining({ clientId: 'client_1', timezone: 'Australia/Brisbane' }),
+    }));
+    expect(calls[0].body).not.toHaveProperty('userId');
+    expect(calls[0].body).not.toHaveProperty('ownerId');
+    expect(calls[1]).toEqual(expect.objectContaining({
+      method: 'PUT', body: { profileId: 'reach_1', clientId: 'client_1' },
+    }));
+    expect(calls[2]).toEqual(expect.objectContaining({
+      method: 'POST', body: { clientId: 'client_1' },
+    }));
+    expect(calls[3]).toEqual(expect.objectContaining({
+      method: 'PUT', body: { segmentId: 'segment_1', clientId: 'client_1' },
+    }));
+  });
+});

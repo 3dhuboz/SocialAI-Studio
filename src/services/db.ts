@@ -159,6 +159,85 @@ export interface LearningDecision {
   verdicts: LearningCriticVerdict[];
 }
 
+export type OrganicReachPlatform = 'facebook' | 'instagram';
+
+export interface ReachProfile {
+  id: string;
+  version: number;
+  confirmationStatus: 'proposed' | 'confirmed';
+  timezone: string;
+  baseLocation: { country: string; region: string; locality: string };
+  serviceArea: { radiusKm: number | null; included: string[] };
+  excludedLocations: string[];
+  platforms: OrganicReachPlatform[];
+  cadence?: Record<string, unknown>;
+  confirmedAt?: string | null;
+}
+
+export interface ReachProfileDraft {
+  timezone: string;
+  baseLocation: ReachProfile['baseLocation'];
+  serviceArea: ReachProfile['serviceArea'];
+  excludedLocations?: string[];
+  platforms?: OrganicReachPlatform[];
+  cadence?: Record<string, unknown>;
+}
+
+export interface ReachAudienceSegment {
+  id: string;
+  label: string;
+  needs: string[];
+  messageAngles: string[];
+  suitableOffers: string[];
+  evidence: string[];
+  confidence: number;
+  status: 'predicted' | 'confirmed' | 'disabled';
+}
+
+export interface ReachTimingWindow {
+  weekday: number;
+  startHour: number;
+  endHour: number;
+  platform: OrganicReachPlatform;
+  mediaType: string;
+  expectedScore: number;
+  confidence: number;
+  sampleSize: number;
+  source: 'account' | 'archetype';
+}
+
+export interface ReachPlan {
+  id: string;
+  postId: string;
+  reachProfileId: string | null;
+  reachProfileVersion: number | null;
+  objective: string | null;
+  audienceSegmentId: string | null;
+  audience: { label: string; needs: string[] } | null;
+  status: 'shadow' | 'selected' | 'invalidated';
+  createdAt: string | null;
+  geographicFocus: string[];
+  platformPlan: Partial<Record<OrganicReachPlatform, {
+    caption?: string;
+    hashtags?: string[];
+  }>>;
+  timing: ReachTimingWindow[];
+  language: Record<string, unknown>;
+  hashtags: {
+    localKeywords?: string[];
+    facebookTags?: string[];
+    instagramTags?: string[];
+    evidence?: string[];
+  };
+  media: Partial<Record<OrganicReachPlatform, {
+    source?: 'approved_asset' | 'generated';
+    assetId?: string | null;
+    format?: string;
+    generate?: boolean;
+  }>> & { generatedUrl?: string | null };
+  experiment: Record<string, unknown>;
+}
+
 /** Maps a `DbPost` row (snake_case from D1) to the front-end `SocialPost`
  *  (camelCase). Three near-identical inline copies of this shape used to
  *  live in App.tsx — extracted here so any new field added to `posts` is a
@@ -298,6 +377,74 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       );
       const data = await res.json() as { decisions: LearningDecision[] };
       return data.decisions ?? [];
+    },
+
+    async getReachProfile(clientId?: string | null): Promise<{
+      profile: ReachProfile | null;
+      segments: ReachAudienceSegment[];
+    }> {
+      const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(`/api/reach/profile${query}`);
+      const data = await res.json() as {
+        profile: ReachProfile | null;
+        segments: ReachAudienceSegment[];
+      };
+      return { profile: data.profile ?? null, segments: data.segments ?? [] };
+    },
+
+    async proposeReachProfile(
+      input: ReachProfileDraft & { clientId?: string | null },
+    ): Promise<ReachProfile> {
+      const res = await f('/api/reach/profile/propose', j({
+        ...input,
+        clientId: input.clientId ?? null,
+      }));
+      const data = await res.json() as { profile: ReachProfile };
+      return data.profile;
+    },
+
+    async confirmReachProfile(
+      profileId: string,
+      clientId?: string | null,
+    ): Promise<ReachProfile> {
+      const res = await f('/api/reach/profile/confirm', put({
+        profileId,
+        clientId: clientId ?? null,
+      }));
+      const data = await res.json() as { profile: ReachProfile };
+      return data.profile;
+    },
+
+    async proposeReachSegments(
+      clientId?: string | null,
+    ): Promise<ReachAudienceSegment[]> {
+      const res = await f('/api/reach/segments/propose', j({
+        clientId: clientId ?? null,
+      }));
+      const data = await res.json() as { segments: ReachAudienceSegment[] };
+      return data.segments ?? [];
+    },
+
+    async confirmReachSegment(
+      segmentId: string,
+      clientId?: string | null,
+    ): Promise<void> {
+      await f('/api/reach/segments/confirm', put({
+        segmentId,
+        clientId: clientId ?? null,
+      }));
+    },
+
+    async getReachPlans(
+      postId: string,
+      clientId?: string | null,
+    ): Promise<ReachPlan[]> {
+      const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : '';
+      const res = await f(
+        `/api/reach/plans/${encodeURIComponent(postId)}${query}`,
+      );
+      const data = await res.json() as { plans: ReachPlan[] };
+      return data.plans ?? [];
     },
 
     async createPost(post: Omit<DbPost, 'id'> & { clientId?: string | null }): Promise<string> {

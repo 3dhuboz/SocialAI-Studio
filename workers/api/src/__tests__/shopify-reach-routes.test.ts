@@ -99,7 +99,13 @@ describe('Shopify reach routes', () => {
   });
 
   it('mirrors profile and segment confirmation under the signed shop scope', async () => {
-    const { db } = makeRecordingD1();
+    const { db } = makeRecordingD1({
+      'FROM audience_segments': [{
+        id: 'segment_shop', label: 'Local gift buyers',
+        needs_json: '{"needs":["same-day gifts"]}', evidence_json: '[]',
+        confidence: 0.7, status: 'confirmed',
+      }],
+    });
     const routeDeps = deps();
     const { app, env } = makeApp({
       DB: db, SHOPIFY_API_KEY: 'key', SHOPIFY_API_SECRET: 'secret',
@@ -120,6 +126,11 @@ describe('Shopify reach routes', () => {
     expect(get.status).toBe(200);
     expect(confirmProfile.status).toBe(200);
     expect(propose.status).toBe(200);
+    await expect(get.json()).resolves.toEqual(expect.objectContaining({
+      segments: [expect.objectContaining({
+        id: 'segment_shop', label: 'Local gift buyers', status: 'confirmed',
+      })],
+    }));
     expect(routeDeps.getProfile).toHaveBeenCalledWith(db, expect.objectContaining({
       ownerKind: 'shop', ownerId: 'store.myshopify.com',
     }));

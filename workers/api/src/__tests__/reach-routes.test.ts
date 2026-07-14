@@ -101,7 +101,15 @@ describe('organic reach routes', () => {
   });
 
   it('covers profile read and immutable confirmation', async () => {
-    const { db } = makeRecordingD1();
+    const { db } = makeRecordingD1({
+      'FROM audience_segments': [{
+        id: 'segment_1', label: 'Local families planning dinner',
+        needs_json: '{"needs":["easy dinner"],"messageAngles":["local pickup"],"suitableOffers":["family pack"]}',
+        evidence_json: '["confirmed service area"]', confidence: 0.82,
+        status: 'predicted',
+        user_id: 'owner_1', workspace_key: '__owner__', owner_id: 'owner_1',
+      }],
+    });
     const deps = makeDeps();
     const { app, env } = makeApp({ DB: db } as Env, deps);
 
@@ -116,6 +124,15 @@ describe('organic reach routes', () => {
 
     expect(getResponse.status).toBe(200);
     expect(confirmResponse.status).toBe(200);
+    const getBody = await getResponse.json() as {
+      segments: Array<Record<string, unknown>>;
+    };
+    expect(getBody.segments).toEqual([expect.objectContaining({
+      id: 'segment_1', label: 'Local families planning dinner',
+      needs: ['easy dinner'], status: 'predicted',
+    })]);
+    expect(getBody.segments[0]).not.toHaveProperty('user_id');
+    expect(getBody.segments[0]).not.toHaveProperty('workspace_key');
     expect(deps.getProfile).toHaveBeenCalledWith(db, {
       userId: 'owner_1', clientId: null, ownerKind: 'user', ownerId: 'owner_1',
     });
@@ -155,6 +172,8 @@ describe('organic reach routes', () => {
     const planRow = {
       id: 'plan_1', post_id: 'post_1', status: 'shadow',
       user_id: 'owner_1', workspace_key: 'client_1', owner_id: 'client_1',
+      audience_label: 'Local BBQ buyers',
+      audience_needs_json: '{"needs":["weekend catering"]}',
       geographic_focus_json: '["Gladstone"]',
       platform_plan_json: '{}', timing_json: '[]', language_json: '{}',
       hashtag_json: '{}', media_json: '{}', experiment_json: '{}',
@@ -179,6 +198,7 @@ describe('organic reach routes', () => {
     expect(body).toEqual({
       plans: [expect.objectContaining({
         id: 'plan_1', postId: 'post_1', geographicFocus: ['Gladstone'],
+        audience: { label: 'Local BBQ buyers', needs: ['weekend catering'] },
       })],
     });
     expect(body.plans[0]).not.toHaveProperty('user_id');

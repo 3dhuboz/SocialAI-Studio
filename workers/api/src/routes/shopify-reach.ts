@@ -4,6 +4,7 @@ import type { Env } from '../env';
 import { proposeAudienceSegments } from '../lib/reach/audience-model';
 import {
   confirmAudienceSegment,
+  listReachAudienceSegments,
   listReachPlans,
   reachWorkspaceKey,
   readReachProfileDraft,
@@ -94,7 +95,11 @@ export function registerShopifyReachRoutes(
     if (!session) return c.json({ error: 'Unauthorized' }, 401);
     const scope = shopReachScope(session.shopDomain);
     try {
-      return c.json({ profile: await deps.getProfile(c.env.DB, scope) });
+      const profile = await deps.getProfile(c.env.DB, scope);
+      const segments = profile
+        ? await listReachAudienceSegments(c.env.DB, profile)
+        : [];
+      return c.json({ profile, segments });
     } catch (error) {
       const failure = routeError(error);
       return c.json({ error: failure.message }, failure.status);

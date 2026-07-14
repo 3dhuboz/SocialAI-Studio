@@ -7,7 +7,7 @@ import {
 import { SocialPost } from '../types';
 import { AnimatedReelPreview } from './AnimatedReelPreview';
 import { useDb } from '../hooks/useDb';
-import type { LearningDecision, ViralityScore } from '../services/db';
+import type { LearningDecision, ReachPlan, ViralityScore } from '../services/db';
 
 interface Props {
   post: SocialPost;
@@ -125,6 +125,114 @@ export const LearningSafetyReport: React.FC<{
   );
 };
 
+const REACH_WEEKDAYS = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+];
+
+function reachHour(hour: number): string {
+  const normalized = ((hour % 24) + 24) % 24;
+  const suffix = normalized >= 12 ? 'pm' : 'am';
+  const display = normalized % 12 || 12;
+  return `${display}:00 ${suffix}`;
+}
+
+export const ReachPlanRationale: React.FC<{
+  plan: ReachPlan | null;
+  loading: boolean;
+  platform: SocialPost['platform'];
+}> = ({ plan, loading, platform }) => {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-[11px] text-white/35">
+        <Loader2 size={11} className="animate-spin text-emerald-400/60" />
+        Loading organic reach rationale...
+      </div>
+    );
+  }
+  if (!plan) return null;
+
+  const platformKey = platform.toLowerCase() as 'facebook' | 'instagram';
+  const treatment = plan.platformPlan[platformKey];
+  const timing = plan.timing.find((window) => window.platform === platformKey)
+    ?? plan.timing[0];
+  const hashtags = platformKey === 'facebook'
+    ? plan.hashtags.facebookTags ?? []
+    : plan.hashtags.instagramTags ?? [];
+  const media = plan.media[platformKey];
+  const mediaLabel = media?.source === 'approved_asset'
+    ? `Approved ${media.format ?? 'media'}`
+    : media?.source === 'generated'
+      ? `Guarded generated ${media.format ?? 'media'}`
+      : 'Media direction pending';
+
+  return (
+    <details className="group overflow-hidden rounded-xl border border-emerald-400/15 bg-emerald-500/[0.035]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
+        <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-emerald-100/60">
+          <TrendingUp size={12} className="text-emerald-300" />
+          Organic reach rationale
+        </span>
+        <span className="rounded-full border border-sky-400/20 bg-sky-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-sky-300">
+          Shadow advice only
+        </span>
+      </summary>
+      <div className="grid gap-2 border-t border-white/[0.06] bg-black/15 p-3 sm:grid-cols-2">
+        <RationaleFact
+          label="Intended audience"
+          value={plan.audience?.label ?? 'Broad commercial audience pending'}
+          detail={plan.audience?.needs.join(', ') || undefined}
+        />
+        <RationaleFact
+          label="Geographic focus"
+          value={plan.geographicFocus.join(', ') || 'Confirmed service area'}
+        />
+        <RationaleFact
+          label="Platform treatment"
+          value={`${platform}-specific caption`}
+          detail={`${treatment?.hashtags?.length ?? 0} platform hashtags`}
+        />
+        <RationaleFact
+          label="Recommended timing"
+          value={timing
+            ? `${REACH_WEEKDAYS[timing.weekday] ?? 'Local day'}, ${reachHour(timing.startHour)}-${reachHour(timing.endHour)}`
+            : 'Not enough account history yet'}
+          detail={timing
+            ? `${Math.round(timing.confidence * 100)}% confidence from ${timing.source} evidence`
+            : 'Archetype fallback only'}
+        />
+        <RationaleFact
+          label="Local keywords"
+          value={(plan.hashtags.localKeywords ?? []).join(', ') || 'None selected'}
+        />
+        <RationaleFact
+          label="Hashtags"
+          value={hashtags.join(' ') || 'No hashtags selected'}
+        />
+        <RationaleFact label="Media source" value={mediaLabel} />
+        <RationaleFact
+          label="Objective"
+          value={plan.objective || 'Organic local relevance'}
+        />
+        <p className="sm:col-span-2 text-[10px] leading-relaxed text-white/25">
+          This plan is explanatory only. It has not changed the caption, media, schedule, or publish state.
+        </p>
+      </div>
+    </details>
+  );
+};
+
+const RationaleFact: React.FC<{
+  label: string;
+  value: string;
+  detail?: string;
+}> = ({ label, value, detail }) => (
+  <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5">
+    <p className="text-[9px] font-bold uppercase tracking-wider text-white/25">{label}</p>
+    <p className="mt-1 text-[11px] font-semibold leading-relaxed text-white/65">{value}</p>
+    {detail && <p className="mt-0.5 text-[9px] leading-relaxed text-white/30">{detail}</p>}
+  </div>
+);
+
 export const PostModal: React.FC<Props> = ({
   post, image, isGeneratingImage, fbConnected, hasApiKey,
   onClose, onPublish, onDelete, onSave, onRegenImage, onUpload, onRetryReel,
@@ -216,6 +324,8 @@ export const PostModal: React.FC<Props> = ({
   const [isSendingFeedback, setIsSendingFeedback] = useState(false);
   const [learningDecisions, setLearningDecisions] = useState<LearningDecision[]>([]);
   const [isLoadingSafetyReport, setIsLoadingSafetyReport] = useState(true);
+  const [reachPlans, setReachPlans] = useState<ReachPlan[]>([]);
+  const [isLoadingReachPlans, setIsLoadingReachPlans] = useState(true);
   type FeedbackReason = NonNullable<SocialPost['qaFeedbackReason']>;
   type FeedbackTarget = NonNullable<SocialPost['qaFeedbackTarget']>;
   const markFeedback = async (target: FeedbackTarget, reason: FeedbackReason) => {
@@ -244,6 +354,24 @@ export const PostModal: React.FC<Props> = ({
       })
       .finally(() => {
         if (!cancelled) setIsLoadingSafetyReport(false);
+      });
+    return () => { cancelled = true; };
+  }, [db, post.id, post.clientId]);
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingReachPlans(true);
+    db.getReachPlans(post.id, post.clientId)
+      .then((plans) => {
+        if (!cancelled) setReachPlans(plans);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setReachPlans([]);
+          console.warn('[reach-plans]', error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingReachPlans(false);
       });
     return () => { cancelled = true; };
   }, [db, post.id, post.clientId]);
@@ -491,6 +619,12 @@ export const PostModal: React.FC<Props> = ({
             <LearningSafetyReport
               decision={learningDecisions[0] ?? null}
               loading={isLoadingSafetyReport}
+            />
+
+            <ReachPlanRationale
+              plan={reachPlans[0] ?? null}
+              loading={isLoadingReachPlans}
+              platform={post.platform}
             />
 
             {/* ── Virality Score (Tier 3 wow feature) ──

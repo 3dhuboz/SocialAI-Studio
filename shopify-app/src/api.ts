@@ -70,6 +70,115 @@ export async function apiFetch<T = unknown>(path: string, init?: RequestInit): P
 
 // ── Domain endpoints ───────────────────────────────────────────────────
 
+// Organic reach setup. The worker derives the shop exclusively from the
+// signed App Bridge session; these payloads intentionally contain no shop,
+// user, client, or owner identifiers.
+export type ShopifyReachPlatform = 'facebook' | 'instagram';
+
+export interface ShopifyReachProfile {
+  id: string;
+  version: number;
+  confirmationStatus: 'proposed' | 'confirmed';
+  timezone: string;
+  baseLocation: { country: string; region: string; locality: string };
+  serviceArea: { radiusKm: number | null; included: string[] };
+  excludedLocations: string[];
+  platforms: ShopifyReachPlatform[];
+  cadence?: Record<string, unknown>;
+  confirmedAt?: string | null;
+}
+
+export interface ShopifyReachProfileDraft {
+  timezone: string;
+  baseLocation: ShopifyReachProfile['baseLocation'];
+  serviceArea: ShopifyReachProfile['serviceArea'];
+  excludedLocations?: string[];
+  platforms?: ShopifyReachPlatform[];
+  cadence?: Record<string, unknown>;
+}
+
+export interface ShopifyReachAudienceSegment {
+  id: string;
+  label: string;
+  needs: string[];
+  messageAngles: string[];
+  suitableOffers: string[];
+  evidence: string[];
+  confidence: number;
+  status: 'predicted' | 'confirmed' | 'disabled';
+}
+
+export interface ShopifyReachPlan {
+  id: string;
+  postId: string;
+  status: 'shadow' | 'selected' | 'invalidated';
+  geographicFocus: string[];
+  audience: { label: string; needs: string[] } | null;
+  platformPlan: Record<string, unknown>;
+  timing: unknown[];
+  hashtags: Record<string, unknown>;
+  media: Record<string, unknown>;
+}
+
+export async function getShopifyReachProfile(signal?: AbortSignal) {
+  return apiFetch<{
+    profile: ShopifyReachProfile | null;
+    segments: ShopifyReachAudienceSegment[];
+  }>('/api/shopify/reach/profile', { signal });
+}
+
+export async function proposeShopifyReachProfile(
+  draft: ShopifyReachProfileDraft,
+  signal?: AbortSignal,
+) {
+  const result = await apiFetch<{ profile: ShopifyReachProfile }>(
+    '/api/shopify/reach/profile/propose',
+    { method: 'POST', body: JSON.stringify(draft), signal },
+  );
+  return result.profile;
+}
+
+export async function confirmShopifyReachProfile(
+  profileId: string,
+  signal?: AbortSignal,
+) {
+  const result = await apiFetch<{ profile: ShopifyReachProfile }>(
+    '/api/shopify/reach/profile/confirm',
+    { method: 'PUT', body: JSON.stringify({ profileId }), signal },
+  );
+  return result.profile;
+}
+
+export async function proposeShopifyReachSegments(signal?: AbortSignal) {
+  const result = await apiFetch<{ segments: ShopifyReachAudienceSegment[] }>(
+    '/api/shopify/reach/segments/propose',
+    { method: 'POST', body: '{}', signal },
+  );
+  return result.segments ?? [];
+}
+
+export async function confirmShopifyReachSegment(
+  segmentId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await apiFetch('/api/shopify/reach/segments/confirm', {
+    method: 'PUT',
+    body: JSON.stringify({ segmentId }),
+    signal,
+  });
+}
+
+export async function getShopifyReachPlans(
+  postId: string,
+  signal?: AbortSignal,
+) {
+  const result = await apiFetch<{ plans: ShopifyReachPlan[] }>(
+    `/api/shopify/reach/plans/${encodeURIComponent(postId)}`,
+    { signal },
+  );
+  return result.plans ?? [];
+}
+
 export interface ShopInfo {
   shop: string;
   shop_name: string | null;
