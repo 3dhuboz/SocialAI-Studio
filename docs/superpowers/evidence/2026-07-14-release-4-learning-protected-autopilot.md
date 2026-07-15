@@ -661,3 +661,60 @@ Runtime controls remain dormant:
 This repair strengthens shadow receipts and future fail-closed enforcement. It
 does not change a post, schedule, consent, customer status, or current
 publishing decision.
+
+## 2026-07-15 Bounded Release Evidence Freshness
+
+### Completion-Audit Finding And Repair
+
+The readiness evaluator treated a release-evidence row with no expiry as
+permanently valid. The authenticated admin route defaulted new evidence to a
+seven-day lifetime but accepted a caller-supplied expiry with no upper bound.
+An old or accidentally long-lived staging, red-team, kill-switch, or publishing
+proof could therefore outlive the live system state it was intended to attest.
+
+PR `#194` established one shared maximum release-evidence lifetime of seven
+days. Readiness now fails closed when a proof has no expiry, malformed times, a
+future `recorded_at`, an expiry at or before its recording time, or a lifetime
+over seven days. The admin route rejects requested expiries beyond the same
+limit while retaining the existing seven-day default.
+
+The new tests were observed failing before implementation: null-expiry evidence
+returned a passing kill-switch proof and the route accepted an expiry in 2100.
+Verification after repair:
+
+- Focused readiness and route verification: 71 tests passed.
+- Worker verification: 89 test files and 1,128 tests passed.
+- Strict Worker TypeScript verification passed.
+- Wrangler production packaging dry run passed.
+- GitHub `typecheck-and-build` passed before merge.
+
+PR `#194` merged to `main` as
+`9ee83bef5ff203d9dda1f4b071f096ff23770d47`. The tested branch and merged
+commit had the same Git tree. Worker version
+`8f7583cb-ca8e-465d-a3f0-94d6fee6c548` was deployed from that tree. Direct
+Worker, same-domain API, Hugheseys Que portal, and Hugheseys Que API health all
+returned 200. An unauthenticated evidence write returned 401.
+
+Production contained zero release-evidence rows, including zero null-expiry,
+malformed, future-dated, or overlong rows. The first natural 15-minute readiness
+evaluation after deployment wrote receipt
+`757a1724-984b-429d-87d9-4bd2f1d1b77a` at
+`2026-07-15T07:00:45.379Z`. It remained `ready=0`, with replay/red-team and
+publish-regression proof absent as required.
+
+The post-deploy read-only D1 recount matched the pre-deploy baseline: one
+owner-only pilot enrollment, zero client enrollments, five release decisions,
+zero adjudications, zero stored autopublish consents, zero Protected Autopilot
+workspaces, and latest readiness `ready=0`. Hugheseys Que remains
+`status='on_hold'` with no learning setting. Every verification query reported
+`changed_db=false` and `rows_written=0`.
+
+Runtime controls remain dormant:
+
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+This repair strengthens live readiness monitoring only. It does not create or
+change a post, schedule, pilot enrollment, adjudication, consent, customer
+status, Protected Autopilot setting, or current publishing decision.
