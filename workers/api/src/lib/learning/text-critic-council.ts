@@ -19,7 +19,7 @@ const VERDICTS = new Set(['pass', 'warn_repairable', 'block', 'unavailable']);
 const SEVERITIES = new Set(['advisory', 'release_critical']);
 
 export const STRICT_CRITIC_SCHEMA_INSTRUCTIONS =
-  'Each requested critic value must contain kind, verdict, severity, confidence, evidence, and repairs. Kind must exactly match its JSON object key. Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable". Severity must be exactly one of "advisory" or "release_critical". Confidence must be a number from 0 to 1. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair.';
+  'Each requested critic value must contain verdict, severity, confidence, evidence, and repairs. The JSON object key is the canonical critic kind. Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable". Severity must be exactly one of "advisory" or "release_critical". Confidence must be a number from 0 to 1. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair.';
 
 function strictCriticStrings(
   value: unknown,
@@ -60,7 +60,6 @@ export function parseCriticResult(
     throw new Error(`Missing ${expectedKind} result`);
   }
   const row = value as Record<string, unknown>;
-  if (row.kind !== expectedKind) throw new Error(`Invalid ${expectedKind} kind`);
   if (!VERDICTS.has(String(row.verdict))) {
     throw new Error(`Invalid ${expectedKind} verdict`);
   }
