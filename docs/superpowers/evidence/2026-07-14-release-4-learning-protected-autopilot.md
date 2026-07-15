@@ -718,3 +718,87 @@ Runtime controls remain dormant:
 This repair strengthens live readiness monitoring only. It does not create or
 change a post, schedule, pilot enrollment, adjudication, consent, customer
 status, Protected Autopilot setting, or current publishing decision.
+
+## 2026-07-16 Smart Schedule Automatic Safety Repair
+
+### Production Finding
+
+Penny Wise I.T Smart Schedule could remain at 96 percent while it ran one
+semantic judge and up to three nested regeneration attempts for each post.
+The same path treated all scraped Facebook rows as verified facts even though
+the 34 stored signals included historical posts, photo captions, and a stale
+follower count. This caused both unnecessary latency and false review warnings
+against owner-declared services such as AI websites and white-label software.
+
+The previous `_needsReview` state was also display-only. `Accept All` did not
+exclude flagged drafts from calendar writes, so a warning was not a sufficient
+release boundary.
+
+### Repair And Verification
+
+PR `#196` establishes one bounded safety-editor pass per ten drafts. The editor
+automatically repairs unsupported claims in the same response. Owner-entered
+business identity, services, products, positioning, audience, and location are
+authoritative; historical posts and photo captions remain voice signals only.
+Dynamic scraped follower, reach, engagement, impression, and like counts are
+removed from factual context.
+
+Incomplete or unavailable critic results fail closed as held drafts. Both
+calendar acceptance paths filter those drafts before any `db.createPost` call,
+and preview image generation skips them. Preview images now use bounded
+concurrency of two. The progress display exposes research, writing, and
+automatic safety repair rather than parking at a misleading 96 percent. Draft
+schema version 6 invalidates the unsafe pre-release browser draft on reload.
+
+Verification before promotion:
+
+- Focused generation and safety verification: 109 tests passed.
+- Full frontend verification: 15 test files and 180 tests passed.
+- Strict frontend TypeScript verification passed.
+- Production Vite build passed with 1,923 modules transformed.
+- The Penny Wise regression proves one batch editor request for three posts,
+  repairs the unsupported five-hours claim, accepts profile-supported services,
+  and excludes stale or historical claims from critic evidence.
+- A separate malformed-editor regression proves an incomplete batch result is
+  held and fails `isSmartPostSafetyCleared`.
+- GitHub `typecheck-and-build` run `29458904543` passed all frontend, Worker,
+  Shopify, on-hold, and publish-egress guards.
+
+PR `#196` merged to `main` as
+`2d8bd2790883e6c9657bf73661fb9d5c83df603e`. This was a frontend-only
+deployment; no Worker code, D1 schema, runtime variable, post, schedule, or
+publishing path was changed.
+
+### Production Promotion And Safety State
+
+All five Cloudflare Pages production checks completed successfully:
+
+- SocialAI Studio: `91ac46a2-3c86-4080-9b5b-a4a49a61f649`.
+- Hugheseys Que: `d9f03282-e314-45b6-b228-411b3f701d53`.
+- Pickle Nick: `0a228dc5-3aa6-47fc-9c31-e83d15ff6435`.
+- Reloaded: `88150372-6447-4e44-a76f-45bf040eab91`.
+- Street Meats: `b98e830a-2807-4539-b3a6-f3e8ec509338`.
+
+`https://socialaistudio.au` serves `assets/index-Dwbq_T5g.js`, SHA-256
+`f3c0c6b183803d2390b69fd04bd4df6e108031fd7783944a3f39305e0da41900`.
+`https://social.hugheseysque.au` serves `assets/index-CtEH4_on.js`, SHA-256
+`f75961586bcf59eb55f9e69d2a1f59108efedff3e48929b6cef6fc33c999d50d`.
+Both live bundles contain the batch safety editor, automatic hold boundary,
+and corrected historical-caption provenance rule. Both page and asset requests
+returned 200. Direct Worker health remained 200.
+
+Read-only production D1 verification reported `changed_db=false`,
+`rows_written=0`, zero Protected Autopilot workspaces, zero stored autopublish
+consents, latest readiness `ready=0`, and no Hugheseys Que learning setting.
+Hugheseys Que remains `status='on_hold'`.
+
+Runtime controls remain dormant:
+
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+No authenticated customer generation was submitted during deployment proof,
+and no draft was accepted, scheduled, or published. The production bundles and
+fail-closed behavior are verified; the next customer generation will exercise
+the corrected path without requiring routine per-post human approval.
