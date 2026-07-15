@@ -391,8 +391,8 @@ export async function collectLearningReadiness(
      AND pen.owner_id = d.owner_id
      AND pen.policy_version = ?
      AND pen.record_only = 1
-     AND d.created_at >= pen.enrolled_at
-     AND pen.consent_confirmed_at <= d.created_at
+     AND unixepoch(d.created_at) >= unixepoch(pen.enrolled_at)
+     AND unixepoch(pen.consent_confirmed_at) <= unixepoch(d.created_at)
      AND (
        (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
        OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')

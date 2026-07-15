@@ -354,7 +354,14 @@ describe('learning release readiness', () => {
     expect(pilotCall.sql).toContain('LIMIT 30');
     expect(pilotCall.sql).toContain("d.mode = 'approval'");
     expect(pilotCall.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
-    expect(pilotCall.sql).toContain('d.created_at >= pen.enrolled_at');
+    expect(pilotCall.sql).toContain(
+      'unixepoch(d.created_at) >= unixepoch(pen.enrolled_at)',
+    );
+    expect(pilotCall.sql).toContain(
+      'unixepoch(pen.consent_confirmed_at) <= unixepoch(d.created_at)',
+    );
+    expect(pilotCall.sql).not.toContain('AND d.created_at >= pen.enrolled_at');
+    expect(pilotCall.sql).not.toContain('AND pen.consent_confirmed_at <= d.created_at');
     expect(pilotCall.sql).toContain("pen.consent_basis = 'customer_attested'");
     expect(pilotCall.sql).not.toContain("w.mode = 'approval'");
     expect(pilotCall.binds).toEqual([AUTOPILOT_POLICY_VERSION]);
