@@ -156,6 +156,7 @@ describe('callIndependentJson', () => {
     const deps: IndependentJsonDeps = {
       callAnthropic: async (options) => {
         calls.anthropic += 1;
+        expect(options.maxTokens).toBe(2400);
         expect(options.metering).toMatchObject({
           operation: 'learning_text_council',
           userId: 'u1',
@@ -164,8 +165,9 @@ describe('callIndependentJson', () => {
         });
         throw new Error('anthropic unavailable');
       },
-      callOpenRouter: async (_key, _system, _prompt, _temperature, _tokens, options) => {
+      callOpenRouter: async (_key, _system, _prompt, _temperature, tokens, options) => {
         calls.openrouter += 1;
+        expect(tokens).toBe(2400);
         expect(options.metering).toMatchObject({
           operation: 'learning_text_council',
           userId: 'u1',
@@ -268,6 +270,7 @@ describe('independent model critics', () => {
     expect(prompt).toContain('"verdict":"pass|warn_repairable|block|unavailable"');
     expect(prompt).toContain('"severity":"advisory|release_critical"');
     expect(prompt).toContain('at least one concrete repair');
+    expect(prompt).toContain('at most 3 strings of at most 240 characters each');
   });
 
   it('retries one schema-invalid council response before returning verdicts', async () => {
@@ -358,6 +361,18 @@ describe('independent model critics', () => {
         'fact',
       ),
     ).toThrow('Missing fact repair');
+  });
+
+  it('rejects oversized critic evidence and repair payloads', () => {
+    expect(() => parseCriticResult({
+      ...critic('fact'),
+      evidence: ['one', 'two', 'three', 'four'],
+    }, 'fact')).toThrow('Invalid fact evidence');
+    expect(() => parseCriticResult({
+      ...critic('fact'),
+      verdict: 'warn_repairable',
+      repairs: ['x'.repeat(241)],
+    }, 'fact')).toThrow('Invalid fact repairs');
   });
 
   it('keeps generator reasoning out of the adversarial harm prompt', async () => {
