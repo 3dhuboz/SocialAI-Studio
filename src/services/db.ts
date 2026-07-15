@@ -296,6 +296,18 @@ export interface LearningAdjudicationInput {
   note: string;
 }
 
+export interface LearningAdjudicationEvidence {
+  content: string;
+  platform: string;
+  hashtags: string[];
+  mediaKind: 'none' | 'image' | 'video';
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+  videoScript: string | null;
+  videoShots: string[];
+  contentHash: string;
+}
+
 export interface AdminLearningWorkspace {
   userId: string;
   workspaceKey: string;
@@ -318,7 +330,8 @@ export interface AdminLearningWorkspace {
   updatedAt: string;
   sampleDecisionId?: string | null;
   samplePostId?: string | null;
-  sampleReleaseState?: LearningDecision['release_state'] | null;
+  sampleEvidenceStatus?: 'verified' | 'missing' | 'stale' | null;
+  sampleEvidence?: LearningAdjudicationEvidence | null;
 }
 
 export interface AdminLearningOperations {

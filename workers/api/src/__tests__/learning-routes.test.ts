@@ -7,15 +7,56 @@ vi.mock('../auth', () => ({
   getAuthUserId: async (request: Request) => request.headers.get('X-Test-Uid') || null,
 }));
 
-vi.mock('../lib/learning/release-preflight', () => ({
-  runAndPersistReleasePipeline: vi.fn(),
-}));
+vi.mock('../lib/learning/release-preflight', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/learning/release-preflight')>();
+  return { ...actual, runAndPersistReleasePipeline: vi.fn() };
+});
 
 import { registerLearningRoutes } from '../routes/learning';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
-import { runAndPersistReleasePipeline } from '../lib/learning/release-preflight';
+import {
+  buildReleaseContentHash,
+  runAndPersistReleasePipeline,
+  type PublishablePost,
+} from '../lib/learning/release-preflight';
 
 const runPilotPipeline = vi.mocked(runAndPersistReleasePipeline);
+
+const adjudicationPost: PublishablePost = {
+  id: 'post-sample-1',
+  user_id: 'owner-2',
+  client_id: 'client-2',
+  owner_kind: 'client',
+  owner_id: 'client-2',
+  content: 'Fresh brisket, smoked low and slow in Gladstone.',
+  platform: 'facebook',
+  hashtags: '["#GladstoneEats","#LowAndSlow"]',
+  image_url: 'https://cdn.example.test/brisket.jpg',
+  post_type: 'image',
+  video_url: null,
+  video_status: null,
+  video_script: null,
+  video_shots: null,
+  archetype_slug: 'bbq-restaurant',
+};
+
+async function adjudicationSourceFields(
+  post: PublishablePost = adjudicationPost,
+): Promise<Record<string, unknown>> {
+  return {
+    review_content_hash: await buildReleaseContentHash(post),
+    review_content: post.content,
+    review_platform: post.platform,
+    review_hashtags: post.hashtags,
+    review_image_url: post.image_url,
+    review_post_type: post.post_type,
+    review_video_url: post.video_url,
+    review_video_status: post.video_status,
+    review_video_script: post.video_script,
+    review_video_shots: post.video_shots,
+    review_archetype_slug: post.archetype_slug,
+  };
+}
 
 function makeApp(env: Env) {
   const app = new Hono<{ Bindings: Env }>();
@@ -685,6 +726,8 @@ describe('learning settings and release evidence routes', () => {
     const decision = {
       id: 'decision-1', user_id: 'owner-2', workspace_key: 'client-2',
       client_id: 'client-2', owner_kind: 'client', owner_id: 'client-2',
+      sample_post_id: adjudicationPost.id,
+      ...await adjudicationSourceFields(),
     };
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
@@ -708,6 +751,39 @@ describe('learning settings and release evidence routes', () => {
     ]);
     expect(write.binds).not.toContain('forged-owner');
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+    const sourceRead = calls.find((call) => call.sql.includes('FROM learning_decisions'))!;
+    expect(sourceRead.sql).toContain('INNER JOIN learning_pilot_enrollments');
+    expect(sourceRead.sql).toContain('pen.policy_version = ?');
+    expect(sourceRead.sql).toContain('LEFT JOIN posts p');
+    expect(sourceRead.binds).toEqual([AUTOPILOT_POLICY_VERSION, 'decision-1']);
+  });
+
+  it('rejects an adjudication when the current source no longer matches the receipt hash', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM learning_decisions': [{
+        id: 'decision-stale', user_id: 'owner-2', workspace_key: 'client-2',
+        client_id: 'client-2', owner_kind: 'client', owner_id: 'client-2',
+        sample_post_id: adjudicationPost.id,
+        ...await adjudicationSourceFields(),
+        review_content_hash: '0'.repeat(64),
+      }],
+    });
+    const env = { DB: db } as Env;
+    const { app } = makeApp(env);
+    const response = await app.request('/api/learning/decisions/decision-stale/adjudicate', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        expectedState: 'pass_green', severity: 'advisory', note: 'Source is safe',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Decision source evidence is unavailable or has changed; create a fresh receipt before adjudication',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_adjudications'))).toBe(false);
   });
 
   it('rejects forged readiness results and validates immutable evidence hashes', async () => {
@@ -867,6 +943,7 @@ describe('learning settings and release evidence routes', () => {
 
   it('returns bounded admin operational metrics from immutable release evidence', async () => {
     const evaluatedAt = new Date().toISOString();
+    const sourceFields = await adjudicationSourceFields();
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'FROM learning_release_readiness': [{
@@ -882,7 +959,7 @@ describe('learning settings and release evidence routes', () => {
         false_hold_count: 1, severe_false_passes: 0,
         critic_total: 100, critic_available: 99, judge_available: 20,
         sample_decision_id: 'decision-sample-1', sample_post_id: 'post-sample-1',
-        sample_release_state: 'hold_amber',
+        ...sourceFields,
       }],
     });
     const env = {
@@ -899,7 +976,8 @@ describe('learning settings and release evidence routes', () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const payload = await response.json() as Record<string, any>;
+    expect(payload).toMatchObject({
       readiness: {
         ready: false,
         checks: { pilot: false },
@@ -917,9 +995,19 @@ describe('learning settings and release evidence routes', () => {
         judgeAvailability: 1, severeFalsePasses: 0,
         adjudicationCoverage: 0.5, globalKillSwitchEnabled: false,
         sampleDecisionId: 'decision-sample-1', samplePostId: 'post-sample-1',
-        sampleReleaseState: 'hold_amber',
+        sampleEvidenceStatus: 'verified',
+        sampleEvidence: {
+          content: adjudicationPost.content,
+          platform: 'facebook',
+          hashtags: ['#GladstoneEats', '#LowAndSlow'],
+          mediaKind: 'image',
+          mediaUrl: adjudicationPost.image_url,
+          thumbnailUrl: null,
+          contentHash: sourceFields.review_content_hash,
+        },
       }],
     });
+    expect(payload.workspaces[0]).not.toHaveProperty('sampleReleaseState');
     const operations = calls.find((call) => call.sql.includes('WITH recent AS'))!;
     expect(operations.sql).toContain('ROW_NUMBER() OVER');
     expect(operations.sql).toContain('r.rn <= 30');
@@ -927,6 +1015,10 @@ describe('learning settings and release evidence routes', () => {
     expect(operations.sql).toContain("w.owner_kind = 'shop'");
     expect(operations.sql).toContain('a.id IS NULL');
     expect(operations.sql).toContain('sample_rank = 1');
-    expect(operations.binds).toEqual([10]);
+    expect(operations.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
+    expect(operations.sql).toContain('pen.policy_version = ?');
+    expect(operations.sql).toContain('LEFT JOIN posts p');
+    expect(operations.sql).not.toContain('sample_release_state');
+    expect(operations.binds).toEqual([AUTOPILOT_POLICY_VERSION, 10]);
   });
 });

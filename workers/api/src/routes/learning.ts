@@ -10,6 +10,7 @@ import {
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
 import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
+  buildReleaseContentHash,
   runAndPersistReleasePipeline,
   type PublishablePost,
 } from '../lib/learning/release-preflight';
@@ -89,7 +90,26 @@ type BackfillWorkspaceRow = {
   owner_id: string;
 };
 
-type AdminOperationsRow = {
+type AdjudicationEvidenceSourceRow = {
+  user_id: string;
+  client_id: string | null;
+  owner_kind: string;
+  owner_id: string;
+  sample_post_id: string | null;
+  review_content_hash: string | null;
+  review_content: string | null;
+  review_platform: string | null;
+  review_hashtags: string | null;
+  review_image_url: string | null;
+  review_post_type: string | null;
+  review_video_url: string | null;
+  review_video_status: string | null;
+  review_video_script: string | null;
+  review_video_shots: string | null;
+  review_archetype_slug: string | null;
+};
+
+type AdminOperationsRow = AdjudicationEvidenceSourceRow & {
   user_id: string;
   workspace_key: string;
   client_id: string | null;
@@ -113,8 +133,6 @@ type AdminOperationsRow = {
   critic_available: number | string | null;
   judge_available: number | string | null;
   sample_decision_id: string | null;
-  sample_post_id: string | null;
-  sample_release_state: string | null;
 };
 
 function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
@@ -140,6 +158,115 @@ function parseJsonStrings(value: string | null | undefined): string[] {
     return [];
   }
 }
+
+type AdjudicationEvidence = {
+  content: string;
+  platform: string;
+  hashtags: string[];
+  mediaKind: 'none' | 'image' | 'video';
+  mediaUrl: string | null;
+  thumbnailUrl: string | null;
+  videoScript: string | null;
+  videoShots: string[];
+  contentHash: string;
+};
+
+type AdjudicationEvidenceResult = {
+  status: 'verified' | 'missing' | 'stale';
+  evidence: AdjudicationEvidence | null;
+};
+
+async function verifyAdjudicationEvidence(
+  row: AdjudicationEvidenceSourceRow,
+): Promise<AdjudicationEvidenceResult> {
+  const ownerKind = releaseOwnerKind(row.owner_kind);
+  if (
+    !ownerKind
+    || !row.sample_post_id
+    || !row.review_content_hash
+    || row.review_content == null
+  ) {
+    return { status: 'missing', evidence: null };
+  }
+  const post: PublishablePost = {
+    id: row.sample_post_id,
+    user_id: row.user_id,
+    client_id: row.client_id,
+    owner_kind: ownerKind,
+    owner_id: row.owner_id,
+    content: row.review_content,
+    platform: row.review_platform?.trim() || 'facebook',
+    hashtags: row.review_hashtags,
+    image_url: row.review_image_url,
+    post_type: row.review_post_type,
+    video_url: row.review_video_url,
+    video_status: row.review_video_status,
+    video_script: row.review_video_script,
+    video_shots: row.review_video_shots,
+    archetype_slug: row.review_archetype_slug,
+  };
+  try {
+    const currentHash = await buildReleaseContentHash(post);
+    if (currentHash !== row.review_content_hash) {
+      return { status: 'stale', evidence: null };
+    }
+  } catch {
+    return { status: 'missing', evidence: null };
+  }
+  const mediaKind = post.video_url ? 'video' : post.image_url ? 'image' : 'none';
+  return {
+    status: 'verified',
+    evidence: {
+      content: post.content,
+      platform: post.platform,
+      hashtags: parseJsonStrings(post.hashtags),
+      mediaKind,
+      mediaUrl: post.video_url ?? post.image_url,
+      thumbnailUrl: post.video_url ? post.image_url : null,
+      videoScript: post.video_script ?? null,
+      videoShots: parseJsonStrings(post.video_shots),
+      contentHash: row.review_content_hash,
+    },
+  };
+}
+
+const CURRENT_POLICY_PILOT_COHORT_SQL = `
+  SELECT d.*
+  FROM learning_decisions d
+  INNER JOIN learning_pilot_enrollments pen
+    ON pen.user_id = d.user_id
+   AND pen.workspace_key = d.workspace_key
+   AND pen.client_id IS d.client_id
+   AND pen.owner_kind = d.owner_kind
+   AND pen.owner_id = d.owner_id
+   AND pen.policy_version = ?
+   AND pen.record_only = 1
+   AND unixepoch(d.created_at) >= unixepoch(pen.enrolled_at)
+   AND unixepoch(pen.consent_confirmed_at) <= unixepoch(d.created_at)
+   AND (
+     (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
+     OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
+   )
+  LEFT JOIN users pilot_user
+    ON d.owner_kind = 'user' AND pilot_user.id = d.user_id
+  LEFT JOIN clients pilot_client
+    ON d.owner_kind = 'client'
+   AND pilot_client.id = d.client_id
+   AND pilot_client.user_id = d.user_id
+  WHERE d.stage = 'release'
+    AND d.mode = 'approval'
+    AND d.owner_kind IN ('user','client')
+    AND (
+      (d.owner_kind = 'user' AND pilot_user.id IS NOT NULL)
+      OR (
+        d.owner_kind = 'client'
+        AND pilot_client.id IS NOT NULL
+        AND COALESCE(LOWER(TRIM(pilot_client.status)), 'active') <> 'on_hold'
+      )
+    )
+  ORDER BY d.created_at DESC, d.id DESC
+  LIMIT 30
+`;
 
 async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -934,17 +1061,42 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       if (!note || note.length > 2000) return c.json({ error: 'note is required' }, 400);
       const decisionId = c.req.param('decisionId');
       const decision = await c.env.DB.prepare(`
-        SELECT id,user_id,workspace_key,client_id,owner_kind,owner_id
-        FROM learning_decisions
-        WHERE id = ? AND stage = 'release'
+        WITH pilot_cohort AS (${CURRENT_POLICY_PILOT_COHORT_SQL})
+        SELECT
+          d.id,d.user_id,d.workspace_key,d.client_id,d.owner_kind,d.owner_id,
+          d.post_id AS sample_post_id,d.content_hash AS review_content_hash,
+          p.content AS review_content,
+          COALESCE(p.platform, 'facebook') AS review_platform,
+          p.hashtags AS review_hashtags,p.image_url AS review_image_url,
+          p.post_type AS review_post_type,p.video_url AS review_video_url,
+          p.video_status AS review_video_status,p.video_script AS review_video_script,
+          p.video_shots AS review_video_shots,
+          COALESCE(sample_client.archetype_slug, sample_user.archetype_slug)
+            AS review_archetype_slug
+        FROM pilot_cohort d
+        LEFT JOIN posts p
+          ON p.id = d.post_id
+         AND TRIM(p.user_id) = d.user_id
+         AND p.client_id IS d.client_id
+         AND COALESCE(
+           NULLIF(TRIM(p.owner_kind), ''),
+           CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+         ) = d.owner_kind
+         AND CASE
+           WHEN d.owner_kind = 'client' THEN TRIM(COALESCE(p.owner_id, p.client_id))
+           ELSE TRIM(COALESCE(p.owner_id, p.user_id))
+         END = d.owner_id
+        LEFT JOIN clients sample_client
+          ON d.owner_kind = 'client'
+         AND sample_client.id = d.client_id
+         AND sample_client.user_id = d.user_id
+        LEFT JOIN users sample_user
+          ON d.owner_kind = 'user' AND sample_user.id = d.user_id
+        WHERE d.id = ?
         LIMIT 1
-      `).bind(decisionId).first<{
+      `).bind(AUTOPILOT_POLICY_VERSION, decisionId).first<AdjudicationEvidenceSourceRow & {
         id: string;
-        user_id: string;
         workspace_key: string;
-        client_id: string | null;
-        owner_kind: string;
-        owner_id: string;
       }>();
       const kind = decision && releaseOwnerKind(decision.owner_kind);
       if (!decision || !kind) return c.json({ error: 'Not found' }, 404);
@@ -956,6 +1108,12 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       );
       if (identity.workspaceKey !== decision.workspace_key) {
         return c.json({ error: 'Not found' }, 404);
+      }
+      const source = await verifyAdjudicationEvidence(decision);
+      if (source.status !== 'verified') {
+        return c.json({
+          error: 'Decision source evidence is unavailable or has changed; create a fresh receipt before adjudication',
+        }, 409);
       }
       const id = crypto.randomUUID();
       await c.env.DB.prepare(`
@@ -1066,6 +1224,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
                ) AS rn
           FROM learning_decisions d
          WHERE d.stage = 'release'
+      ), pilot_cohort AS (
+        ${CURRENT_POLICY_PILOT_COHORT_SQL}
       ), decision_metrics AS (
         SELECT r.user_id, r.workspace_key,
                COUNT(*) AS decision_count,
@@ -1102,16 +1262,43 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       ), sample_candidates AS (
         SELECT r.user_id, r.workspace_key, r.owner_kind, r.owner_id,
                r.id AS sample_decision_id, r.post_id AS sample_post_id,
-               r.release_state AS sample_release_state,
+               r.content_hash AS review_content_hash,
+               p.content AS review_content,
+               COALESCE(p.platform, 'facebook') AS review_platform,
+               p.hashtags AS review_hashtags,p.image_url AS review_image_url,
+               p.post_type AS review_post_type,p.video_url AS review_video_url,
+               p.video_status AS review_video_status,
+               p.video_script AS review_video_script,
+               p.video_shots AS review_video_shots,
+               COALESCE(sample_client.archetype_slug, sample_user.archetype_slug)
+                 AS review_archetype_slug,
                ROW_NUMBER() OVER (
                  PARTITION BY r.user_id, r.workspace_key, r.owner_kind, r.owner_id
                  ORDER BY r.updated_at DESC, r.id DESC
                ) AS sample_rank
-          FROM recent r
+          FROM pilot_cohort r
           LEFT JOIN learning_adjudications a ON a.decision_id = r.id
            AND a.user_id = r.user_id AND a.workspace_key = r.workspace_key
            AND a.owner_kind = r.owner_kind AND a.owner_id = r.owner_id
-         WHERE r.rn <= 30 AND a.id IS NULL
+          LEFT JOIN posts p
+            ON p.id = r.post_id
+           AND TRIM(p.user_id) = r.user_id
+           AND p.client_id IS r.client_id
+           AND COALESCE(
+             NULLIF(TRIM(p.owner_kind), ''),
+             CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+           ) = r.owner_kind
+           AND CASE
+             WHEN r.owner_kind = 'client' THEN TRIM(COALESCE(p.owner_id, p.client_id))
+             ELSE TRIM(COALESCE(p.owner_id, p.user_id))
+           END = r.owner_id
+          LEFT JOIN clients sample_client
+            ON r.owner_kind = 'client'
+           AND sample_client.id = r.client_id
+           AND sample_client.user_id = r.user_id
+          LEFT JOIN users sample_user
+            ON r.owner_kind = 'user' AND sample_user.id = r.user_id
+         WHERE a.id IS NULL
       )
       SELECT w.user_id, w.workspace_key, w.client_id, w.owner_kind, w.owner_id,
              w.mode, w.autopublish_consent_at, w.autopublish_policy_version,
@@ -1119,9 +1306,13 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
              c.status AS client_status, s.shop_domain,
              s.uninstalled_at AS shop_uninstalled_at,
              dm.decision_count, dm.hold_count, dm.adjudicated_count,
-             dm.false_hold_count, dm.severe_false_passes,
-             vm.critic_total, vm.critic_available, dm.judge_available,
-             sc.sample_decision_id, sc.sample_post_id, sc.sample_release_state
+              dm.false_hold_count, dm.severe_false_passes,
+              vm.critic_total, vm.critic_available, dm.judge_available,
+              sc.sample_decision_id, sc.sample_post_id,
+              sc.review_content_hash,sc.review_content,sc.review_platform,
+              sc.review_hashtags,sc.review_image_url,sc.review_post_type,
+              sc.review_video_url,sc.review_video_status,sc.review_video_script,
+              sc.review_video_shots,sc.review_archetype_slug
         FROM workspace_learning_settings w
         LEFT JOIN users u ON w.owner_kind = 'user' AND u.id = w.user_id
         LEFT JOIN clients c ON w.owner_kind = 'client'
@@ -1138,7 +1329,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
          AND sc.sample_rank = 1
        ORDER BY w.updated_at DESC, w.user_id, w.workspace_key
        LIMIT ?
-    `).bind(limit).all<AdminOperationsRow>();
+    `).bind(AUTOPILOT_POLICY_VERSION, limit).all<AdminOperationsRow>();
     const readinessRow = await latestReadiness(c.env.DB);
     const readinessAgeMs = readinessRow
       ? Date.now() - Date.parse(readinessRow.evaluated_at)
@@ -1148,7 +1339,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       releaseEnforcement: c.env.LEARNING_RELEASE_ENFORCEMENT === 'true',
       protectedAutopilot: c.env.LEARNING_AUTOPILOT_ENABLED === 'true',
     };
-    const workspaces = (rows.results ?? []).map((row) => {
+    const workspaces = await Promise.all((rows.results ?? []).map(async (row) => {
       const decisionCount = countValue(row.decision_count);
       const holdCount = countValue(row.hold_count);
       const adjudicatedCount = countValue(row.adjudicated_count);
@@ -1161,6 +1352,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       const active = row.owner_kind === 'user' ? row.user_exists != null
         : row.owner_kind === 'client' ? row.client_id_found != null && !onHold
           : row.shop_domain != null && row.shop_uninstalled_at == null;
+      const sample = row.sample_decision_id
+        ? await verifyAdjudicationEvidence(row)
+        : null;
       return {
         userId: row.user_id,
         workspaceKey: row.workspace_key,
@@ -1182,10 +1376,11 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         globalKillSwitchEnabled: globalSwitches.protectedAutopilot,
         sampleDecisionId: row.sample_decision_id ?? null,
         samplePostId: row.sample_post_id ?? null,
-        sampleReleaseState: row.sample_release_state ?? null,
+        sampleEvidenceStatus: sample?.status ?? null,
+        sampleEvidence: sample?.evidence ?? null,
         updatedAt: row.updated_at,
       };
-    });
+    }));
     return c.json({
       policyVersion: AUTOPILOT_POLICY_VERSION,
       globalSwitches,
