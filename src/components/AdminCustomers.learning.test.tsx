@@ -72,7 +72,7 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('50.0%');
   });
 
-  it('allows only an audit label on a server-selected unadjudicated receipt', () => {
+  it('keeps the server-selected receipt blind until an independent audit label is chosen', () => {
     const html = renderToStaticMarkup(
       <LearningOperationsCard
         operations={operations}
@@ -84,8 +84,10 @@ describe('LearningOperationsCard', () => {
 
     expect(html).toContain('Sample receipt decision_1');
     expect(html).toContain('Post post_1');
-    expect(html).toContain('Observed hold amber');
+    expect(html).not.toContain('Observed hold amber');
+    expect(html).toContain('Observed release state is hidden until this label is saved');
     expect(html).toContain('Expected release state');
+    expect(html).toContain('<option value="" disabled="" selected="">Choose independently</option>');
     expect(html).toContain('Audit severity');
     expect(html).toContain('Required audit note');
     expect(html).toContain('Save audit label');
