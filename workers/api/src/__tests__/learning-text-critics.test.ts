@@ -270,6 +270,7 @@ describe('independent model critics', () => {
     expect(prompt).toContain('Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable"');
     expect(prompt).toContain('Severity must be exactly one of "advisory" or "release_critical"');
     expect(prompt).not.toContain('"verdict":"pass|warn_repairable');
+    expect(prompt).not.toContain('Kind must exactly match');
     expect(prompt).toContain('at least one concrete repair');
     expect(prompt).toContain('at most 3 strings of at most 240 characters each');
   });
@@ -364,10 +365,10 @@ describe('independent model critics', () => {
     ).toThrow('Missing fact repair');
   });
 
-  it('identifies the exact invalid critic enum field', () => {
-    expect(() => parseCriticResult({
+  it('uses the canonical requested kind and identifies the remaining enum fields', () => {
+    expect(parseCriticResult({
       ...critic('fact'), kind: 'facts',
-    }, 'fact')).toThrow('Invalid fact kind');
+    }, 'fact').kind).toBe('fact');
     expect(() => parseCriticResult({
       ...critic('fact'), verdict: 'warning',
     }, 'fact')).toThrow('Invalid fact verdict');
@@ -412,6 +413,22 @@ describe('independent model critics', () => {
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
     expect(prompt).toContain('at least one concrete repair');
     expect(prompt).toContain('Verdict must be exactly one of');
+  });
+
+  it('derives business-harm kind from the exact outer critic key', async () => {
+    const result = await runBusinessHarmCritic(input, context, async () => ({
+      text: JSON.stringify({
+        business_harm: {
+          ...critic('business_harm'),
+          kind: 'business-harm',
+        },
+      }),
+      provider: 'test',
+      model: 'test',
+    }));
+
+    expect(result.kind).toBe('business_harm');
+    expect(result.verdict).toBe('pass');
   });
 
   it('retries one repairless business-harm warning before accepting a strict result', async () => {
