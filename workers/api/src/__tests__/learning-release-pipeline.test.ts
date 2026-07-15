@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import type { CriticKind, CriticResult } from '../lib/learning/critic-types';
-import { runMediaCritic } from '../lib/learning/media-critic';
+import {
+  inspectFinalVideoUrl,
+  runMediaCritic,
+} from '../lib/learning/media-critic';
 import { runReleaseJudge } from '../lib/learning/release-judge';
 import {
   runReleasePipeline,
@@ -195,6 +198,72 @@ describe('runReleasePipeline', () => {
 
     expect(mediaKind).toBe('image');
     expect(result.state).toBe('pass_green');
+  });
+});
+
+describe('inspectFinalVideoUrl', () => {
+  it('rejects unsafe video URLs before making a network request', async () => {
+    const fetchMock = vi.fn();
+
+    await expect(
+      inspectFinalVideoUrl('http://cdn.example/final.mp4', fetchMock as typeof fetch),
+    ).rejects.toThrow('Final video URL must use HTTPS');
+    await expect(
+      inspectFinalVideoUrl(
+        'https://user:password@cdn.example/final.mp4',
+        fetchMock as typeof fetch,
+      ),
+    ).rejects.toThrow('Final video URL must not include credentials');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses bounded timeout signals and retries one transient inspection failure', async () => {
+    const timeoutSignal = new AbortController().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutSignal);
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new DOMException('timed out', 'TimeoutError'))
+      .mockResolvedValueOnce(new Response(null, {
+        status: 200,
+        headers: {
+          'content-type': 'video/mp4',
+          'content-length': '4096',
+        },
+      }));
+
+    try {
+      await expect(
+        inspectFinalVideoUrl(
+          'https://cdn.example/final.mp4',
+          fetchMock as typeof fetch,
+        ),
+      ).resolves.toEqual({ contentType: 'video/mp4', contentLength: 4096 });
+      expect(timeoutSpy).toHaveBeenCalledTimes(2);
+      expect(timeoutSpy).toHaveBeenNthCalledWith(1, 10_000);
+      expect(timeoutSpy).toHaveBeenNthCalledWith(2, 10_000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://cdn.example/final.mp4',
+      expect.objectContaining({ method: 'HEAD', signal: timeoutSignal }),
+    );
+  });
+
+  it('stops after two failed inspection attempts', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('upstream unavailable'));
+
+    await expect(
+      inspectFinalVideoUrl(
+        'https://cdn.example/final.mp4',
+        fetchMock as typeof fetch,
+      ),
+    ).rejects.toThrow('Final video inspection failed after 2 attempts');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -13,7 +13,7 @@ import {
 } from './decision-repository';
 import { runDeterministicCritics } from './deterministic-critics';
 import { callIndependentJson } from './independent-json';
-import { runMediaCritic } from './media-critic';
+import { inspectFinalVideoUrl, runMediaCritic } from './media-critic';
 import {
   runReleasePipeline,
   type CandidateInput,
@@ -367,15 +367,7 @@ async function executeReleasePipeline(
     runMediaCritic: (input, releaseContext) =>
       runMediaCritic(env, input, releaseContext, {
         critiqueImage: critiqueImageInternal,
-        inspectVideo: async (url) => {
-          const response = await fetch(url, { method: 'HEAD' });
-          if (!response.ok) throw new Error(`Media HEAD returned ${response.status}`);
-          const length = response.headers.get('content-length');
-          return {
-            contentType: response.headers.get('content-type'),
-            contentLength: length ? Number(length) : null,
-          };
-        },
+        inspectVideo: inspectFinalVideoUrl,
         reviewVideoText: (videoInput, videoContext) =>
           reviewVideoText(env, videoInput, videoContext),
       }),
