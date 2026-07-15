@@ -7,9 +7,73 @@ import type {
   ReleaseContext,
 } from './release-pipeline';
 
-interface VideoInspection {
+export interface VideoInspection {
   contentType: string | null;
   contentLength: number | null;
+}
+
+const VIDEO_INSPECTION_TIMEOUT_MS = 10_000;
+const VIDEO_INSPECTION_ATTEMPTS = 2;
+
+function validatedFinalVideoUrl(value: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('Final video URL is invalid');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Final video URL must use HTTPS');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Final video URL must not include credentials');
+  }
+  return parsed;
+}
+
+function retryableInspectionStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+export async function inspectFinalVideoUrl(
+  value: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<VideoInspection> {
+  const url = validatedFinalVideoUrl(value).toString();
+  let lastError = 'unknown failure';
+
+  for (let attempt = 1; attempt <= VIDEO_INSPECTION_ATTEMPTS; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(VIDEO_INSPECTION_TIMEOUT_MS),
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (attempt < VIDEO_INSPECTION_ATTEMPTS) continue;
+      break;
+    }
+
+    if (!response.ok) {
+      lastError = `Media HEAD returned ${response.status}`;
+      if (attempt < VIDEO_INSPECTION_ATTEMPTS && retryableInspectionStatus(response.status)) {
+        continue;
+      }
+      throw new Error(lastError);
+    }
+    if (response.url) validatedFinalVideoUrl(response.url);
+
+    const rawLength = response.headers.get('content-length');
+    return {
+      contentType: response.headers.get('content-type'),
+      contentLength: rawLength ? Number(rawLength) : null,
+    };
+  }
+
+  throw new Error(
+    `Final video inspection failed after ${VIDEO_INSPECTION_ATTEMPTS} attempts: ${lastError}`,
+  );
 }
 
 export interface MediaCriticDeps {
@@ -23,15 +87,7 @@ export interface MediaCriticDeps {
 
 const defaultDeps: MediaCriticDeps = {
   critiqueImage: critiqueImageInternal,
-  inspectVideo: async (url) => {
-    const response = await fetch(url, { method: 'HEAD' });
-    if (!response.ok) throw new Error(`Media HEAD returned ${response.status}`);
-    const rawLength = response.headers.get('content-length');
-    return {
-      contentType: response.headers.get('content-type'),
-      contentLength: rawLength ? Number(rawLength) : null,
-    };
-  },
+  inspectVideo: inspectFinalVideoUrl,
   reviewVideoText: async () => unavailable(
     'video_manifest',
     'Video script critic unavailable',
