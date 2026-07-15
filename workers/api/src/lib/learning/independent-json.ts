@@ -24,6 +24,12 @@ const defaultDeps: IndependentJsonDeps = {
   callOpenRouter,
 };
 
+function normalizeJsonText(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  return (fenced?.[1] ?? trimmed).trim();
+}
+
 export async function callIndependentJson(
   env: Env,
   systemPrompt: string,
@@ -77,9 +83,10 @@ export async function callIndependentJson(
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         const response = await provider.call();
-        if (!response.text.trim()) throw new Error('empty response');
+        const text = normalizeJsonText(response.text);
+        if (!text) throw new Error('empty response');
         return {
-          text: response.text,
+          text,
           provider: provider.provider,
           model: provider.model,
         };
