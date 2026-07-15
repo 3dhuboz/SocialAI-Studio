@@ -299,3 +299,80 @@ PR `#176` introduces a policy-versioned, record-only cohort boundary:
   unique index, the update-blocking trigger, and zero enrollment rows.
 - No workspace was enrolled and no draft was validated during migration. The
   Worker remains on the prior version until PR `#176` is merged and deployed.
+
+## 2026-07-15 Authenticated Owner Pilot and Critic Repair
+
+### Promotion and Enrollment
+
+- PR `#176` merged to `main` as
+  `e34e60e45caf2d77ee2953817d53403a9baa1842` after CI passed.
+- Production Pages deployment
+  `cc851d6d-f84e-428f-9d61-c38f6396ce50` was built from that exact merge.
+- The authenticated admin enrolled only the Penny Wise I.T owner workspace.
+  Receipt `fff91780-fbda-4ede-81a1-0e1a222ff041` is record-only, policy
+  `2026-07-14-v1`, owner-self consent, approval mode, and a 500-cent monthly
+  AI ceiling.
+- Production still has zero client pilot enrollments, zero stored autopublish
+  consents, and zero Protected Autopilot workspaces. Hugheseys Que remains
+  `status='on_hold'` and was never enrolled or evaluated.
+
+### Production Findings and Repairs
+
+The first authenticated draft validation failed before the guarded release
+pipeline because its query selected nonexistent `posts.archetype_slug`.
+Remote D1 reproduced `SQLITE_ERROR: no such column: p.archetype_slug`. No
+decision, post mutation, schedule, or publish occurred. PR `#177`, merged as
+`657819f37fb6f36ee040b1a659c5baded4cb583c`, now derives the archetype from
+the canonical client/user rows.
+
+Subsequent record-only decisions exposed three independent-critic contract
+defects without allowing a false pass:
+
+- Markdown-fenced JSON was rejected. PR `#178`, merge
+  `fe76ca8be12fa584974833cac9e1470c4ff94b18`, normalizes one complete provider
+  fence while preserving strict downstream parsing.
+- The prompt omitted exact severity choices and repair requirements. PR `#179`,
+  merge `358b48a71a29368d877a381c3e928f37fe55c6a2`, adds explicit schemas and one
+  bounded correction retry; a second invalid response remains release-critical
+  unavailable.
+- Both business-harm attempts reached the exact 1,400-token output ceiling.
+  PR `#180`, merge `7f70e413feb9c71c30e2d1fb097daa51ab09850d`, raises structured-output
+  headroom to 2,400 tokens while accepting at most three 240-character evidence
+  and repair entries.
+- Pipe-delimited pseudo-enums remained ambiguous. PR `#181`, merge
+  `c94d75da18eb4c5e596aa793e671bde7f5ba67c7`, replaces them with explicit
+  exactly-one-of instructions and field-specific diagnostics.
+- The final live residual was an invalid redundant inner `kind` while the exact
+  outer `business_harm` key had already passed validation. PR `#182`, merge
+  `32eb1bfcce2b37ffc7a93b135868287c88fa4940`, derives kind from the
+  server-requested outer key and keeps verdict, severity, confidence, evidence,
+  and repair validation strict.
+
+Each repair had a red-to-green regression, the full Worker suite, strict
+TypeScript, passing GitHub CI, an exact merged-tree check, and a separate Worker
+deployment. Final verification is 89 test files and 1,121 tests passed. Current
+production Worker version `932baecf-e552-442a-a304-0efee67e275c` receives 100
+percent traffic; same-domain health returns 200. Runtime controls remain
+`LEARNING_RELEASE_ENFORCEMENT=false`, `LEARNING_AUTOPILOT_ENABLED=false`, and
+`ORGANIC_REACH_APPLY_ENABLED=false`.
+
+### Record-Only Audit State
+
+- Five genuine owner drafts produced five immutable approval release decisions,
+  each with ten stored critic verdicts. All five decisions were `block_red`;
+  the image critic independently scored the generic creative below threshold.
+- All five source posts remain `Draft`; the audit found five still-draft rows
+  and zero status mutations.
+- Pilot AI usage totals 18 metered calls and USD 0.131127, below the USD 5.00
+  workspace ceiling.
+- Adjudications remain zero. No customer was enrolled and no customer content
+  was evaluated by this pilot.
+
+All five existing owner drafts now have immutable receipts. The canonical-key
+repair is unit-, full-suite-, CI-, and deployment-proven, but its final live
+zero-unavailable re-proof must use the next naturally created owner draft; no
+receipt was deleted and no synthetic production draft was fabricated. Release
+enforcement, reach application, and Protected Autopilot remain disabled until
+that proof, one explicitly consenting active client, 30 real decisions, 30
+independent adjudications, complete 168-hour outcomes, and every existing
+readiness gate pass.
