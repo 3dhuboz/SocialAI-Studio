@@ -19,7 +19,26 @@ const VERDICTS = new Set(['pass', 'warn_repairable', 'block', 'unavailable']);
 const SEVERITIES = new Set(['advisory', 'release_critical']);
 
 export const STRICT_CRITIC_SCHEMA_INSTRUCTIONS =
-  'Each requested critic value must use exactly {"kind":"<matching key>","verdict":"pass|warn_repairable|block|unavailable","severity":"advisory|release_critical","confidence":0..1,"evidence":["..."],"repairs":["..."]}. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair.';
+  'Each requested critic value must use exactly {"kind":"<matching key>","verdict":"pass|warn_repairable|block|unavailable","severity":"advisory|release_critical","confidence":0..1,"evidence":["..."],"repairs":["..."]}. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair.';
+
+function strictCriticStrings(
+  value: unknown,
+  expectedKind: CriticKind,
+  field: 'evidence' | 'repairs',
+): string[] {
+  if (
+    !Array.isArray(value)
+    || value.length > 3
+    || value.some((item) => (
+      typeof item !== 'string'
+      || !item.trim()
+      || item.trim().length > 240
+    ))
+  ) {
+    throw new Error(`Invalid ${expectedKind} ${field}`);
+  }
+  return value.map((item) => (item as string).trim());
+}
 
 export interface CriticJsonResponse {
   text: string;
@@ -49,12 +68,8 @@ export function parseCriticResult(
     throw new Error(`Invalid ${expectedKind} enum`);
   }
   const confidence = Number(row.confidence);
-  const evidence = Array.isArray(row.evidence)
-    ? row.evidence.filter((item): item is string => typeof item === 'string')
-    : [];
-  const repairs = Array.isArray(row.repairs)
-    ? row.repairs.filter((item): item is string => typeof item === 'string')
-    : [];
+  const evidence = strictCriticStrings(row.evidence, expectedKind, 'evidence');
+  const repairs = strictCriticStrings(row.repairs, expectedKind, 'repairs');
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
     throw new Error(`Invalid ${expectedKind} confidence`);
   }

@@ -23,6 +23,7 @@ const defaultDeps: IndependentJsonDeps = {
   callAnthropic: callAnthropicDirect,
   callOpenRouter,
 };
+const INDEPENDENT_JSON_MAX_TOKENS = 2400;
 
 function normalizeJsonText(text: string): string {
   const trimmed = text.trim();
@@ -53,7 +54,7 @@ export async function callIndependentJson(
         systemPrompt,
         prompt,
         temperature: 0,
-        maxTokens: 1400,
+        maxTokens: INDEPENDENT_JSON_MAX_TOKENS,
         responseFormat: 'json',
         metering: { env, ...context },
       }),
@@ -69,7 +70,7 @@ export async function callIndependentJson(
         systemPrompt,
         prompt,
         0,
-        1400,
+        INDEPENDENT_JSON_MAX_TOKENS,
         {
           responseFormat: 'json',
           metering: { env, ...context },
