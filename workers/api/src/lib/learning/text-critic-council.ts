@@ -18,6 +18,9 @@ const TEXT_CRITIC_KINDS = [
 const VERDICTS = new Set(['pass', 'warn_repairable', 'block', 'unavailable']);
 const SEVERITIES = new Set(['advisory', 'release_critical']);
 
+export const STRICT_CRITIC_SCHEMA_INSTRUCTIONS =
+  'Each requested critic value must use exactly {"kind":"<matching key>","verdict":"pass|warn_repairable|block|unavailable","severity":"advisory|release_critical","confidence":0..1,"evidence":["..."],"repairs":["..."]}. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair.';
+
 export interface CriticJsonResponse {
   text: string;
   provider?: string;
@@ -109,22 +112,22 @@ export async function runTextCriticCouncil(
     wrapUntrusted(context.verifiedFacts.join('\n'), 'verified_facts', { maxLen: 8_000 }),
     wrapUntrusted(context.forbiddenSubjects.join('\n'), 'forbidden_subjects'),
     wrapUntrusted(context.recentPostDigests.join('\n'), 'recent_posts', { maxLen: 8_000 }),
-    'Return exactly one JSON object keyed by brand, fact, repetition, and platform. Each value must contain kind, verdict, severity, confidence, evidence, and repairs.',
+    `Return exactly one JSON object keyed by brand, fact, repetition, and platform. ${STRICT_CRITIC_SCHEMA_INSTRUCTIONS}`,
   ].join('\n\n');
 
   try {
-    const response = await call(systemPrompt, prompt, {
-      operation: 'learning_text_council',
-      userId: input.userId,
-      clientId: input.clientId,
-      postId: input.postId,
-    });
-    const parsed = exactObjectKeys(JSON.parse(response.text), TEXT_CRITIC_KINDS);
-    return TEXT_CRITIC_KINDS.map((kind) => ({
-      ...parseCriticResult(parsed[kind], kind),
-      provider: response.provider ?? 'unknown',
-      model: response.model ?? 'unknown',
-    }));
+    return await callStrictCritics(
+      call,
+      systemPrompt,
+      prompt,
+      {
+        operation: 'learning_text_council',
+        userId: input.userId,
+        clientId: input.clientId,
+        postId: input.postId,
+      },
+      TEXT_CRITIC_KINDS,
+    );
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return TEXT_CRITIC_KINDS.map((kind) => unavailable(kind, reason));
@@ -136,6 +139,33 @@ export function parseExactCriticObject(
   expectedKinds: readonly CriticKind[],
 ): Record<string, unknown> {
   return exactObjectKeys(JSON.parse(text), expectedKinds);
+}
+
+export async function callStrictCritics(
+  call: CriticJsonCaller,
+  systemPrompt: string,
+  prompt: string,
+  context: Parameters<CriticJsonCaller>[2],
+  expectedKinds: readonly CriticKind[],
+): Promise<CriticResult[]> {
+  let validationError: unknown = new Error('Critic response failed strict validation');
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const attemptPrompt = attempt === 0
+      ? prompt
+      : `${prompt}\n\nThe previous output failed strict schema validation. Return the complete corrected JSON object only.`;
+    const response = await call(systemPrompt, attemptPrompt, context);
+    try {
+      const parsed = parseExactCriticObject(response.text, expectedKinds);
+      return expectedKinds.map((kind) => ({
+        ...parseCriticResult(parsed[kind], kind),
+        provider: response.provider ?? 'unknown',
+        model: response.model ?? 'unknown',
+      }));
+    } catch (error) {
+      validationError = error;
+    }
+  }
+  throw validationError;
 }
 
 export function unavailableCritic(kind: CriticKind, reason: string): CriticResult {

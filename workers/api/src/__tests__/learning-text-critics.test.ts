@@ -265,6 +265,63 @@ describe('independent model critics', () => {
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_VERIFIED_FACTS>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_RECENT_POSTS>>');
+    expect(prompt).toContain('"verdict":"pass|warn_repairable|block|unavailable"');
+    expect(prompt).toContain('"severity":"advisory|release_critical"');
+    expect(prompt).toContain('at least one concrete repair');
+  });
+
+  it('retries one schema-invalid council response before returning verdicts', async () => {
+    let calls = 0;
+    const results = await runTextCriticCouncil(input, context, async (_system, prompt) => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          text: JSON.stringify({
+            brand: { ...critic('brand'), severity: 'medium' },
+            fact: critic('fact'),
+            repetition: critic('repetition'),
+            platform: critic('platform'),
+          }),
+          provider: 'test',
+          model: 'test',
+        };
+      }
+      expect(prompt).toContain('previous output failed strict schema validation');
+      return {
+        text: JSON.stringify({
+          brand: critic('brand'),
+          fact: critic('fact'),
+          repetition: critic('repetition'),
+          platform: critic('platform'),
+        }),
+        provider: 'test',
+        model: 'test',
+      };
+    });
+
+    expect(calls).toBe(2);
+    expect(results.every((result) => result.verdict === 'pass')).toBe(true);
+  });
+
+  it('stops after one schema correction and fails closed', async () => {
+    let calls = 0;
+    const results = await runTextCriticCouncil(input, context, async () => {
+      calls += 1;
+      return {
+        text: JSON.stringify({
+          brand: { ...critic('brand'), severity: 'medium' },
+          fact: critic('fact'),
+          repetition: critic('repetition'),
+          platform: critic('platform'),
+        }),
+        provider: 'test',
+        model: 'test',
+      };
+    });
+
+    expect(calls).toBe(2);
+    expect(results.every((result) => result.verdict === 'unavailable')).toBe(true);
+    expect(results.every((result) => result.severity === 'release_critical')).toBe(true);
   });
 
   it('returns unavailable instead of passing malformed model output', async () => {
@@ -325,5 +382,35 @@ describe('independent model critics', () => {
     expect(result.verdict).toBe('pass');
     expect(prompt).not.toContain('SECRET_CHAIN');
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
+    expect(prompt).toContain('at least one concrete repair');
+  });
+
+  it('retries one repairless business-harm warning before accepting a strict result', async () => {
+    let calls = 0;
+    const result = await runBusinessHarmCritic(input, context, async (_system, prompt) => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          text: JSON.stringify({
+            business_harm: {
+              ...critic('business_harm'),
+              verdict: 'warn_repairable',
+              repairs: [],
+            },
+          }),
+          provider: 'test',
+          model: 'test',
+        };
+      }
+      expect(prompt).toContain('previous output failed strict schema validation');
+      return {
+        text: JSON.stringify({ business_harm: critic('business_harm') }),
+        provider: 'test',
+        model: 'test',
+      };
+    });
+
+    expect(calls).toBe(2);
+    expect(result.verdict).toBe('pass');
   });
 });
