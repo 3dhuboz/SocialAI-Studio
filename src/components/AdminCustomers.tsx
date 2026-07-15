@@ -9,7 +9,8 @@ import { useDb } from '../hooks/useDb';
 import type {
   AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons, AdminPrewarmReadiness,
   AdminPostFeedback,
-  AdminLearningOperations, LearningAdjudicationInput, LearningPilotCustomerConsent,
+  AdminLearningOperations, LearningAdjudicationEvidence, LearningAdjudicationInput,
+  LearningPilotCustomerConsent,
   LearningPilotQueue,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
@@ -374,19 +375,33 @@ export const AdminCustomers: React.FC = () => {
 
 const fmtRate = (value: number | null) => value == null ? 'No sample' : `${(value * 100).toFixed(1)}%`;
 
+const safeReviewMediaUrl = (value: string | null): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
 const SampleAdjudicationForm: React.FC<{
   decisionId: string;
   postId: string | null;
+  evidenceStatus: 'verified' | 'missing' | 'stale' | null;
+  evidence: LearningAdjudicationEvidence | null;
   saving: boolean;
   onAdjudicate: (decisionId: string, input: LearningAdjudicationInput) => Promise<void>;
-}> = ({ decisionId, postId, saving, onAdjudicate }) => {
+}> = ({ decisionId, postId, evidenceStatus, evidence, saving, onAdjudicate }) => {
   const [expectedState, setExpectedState] = useState<LearningAdjudicationInput['expectedState'] | ''>('');
   const [severity, setSeverity] = useState<LearningAdjudicationInput['severity']>('advisory');
   const [note, setNote] = useState('');
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!expectedState || !note.trim()) return;
+    if (!evidence || evidenceStatus !== 'verified' || !expectedState || !note.trim()) return;
     try {
       await onAdjudicate(decisionId, {
         expectedState,
@@ -399,6 +414,22 @@ const SampleAdjudicationForm: React.FC<{
       // The parent displays the API error without losing the operator's note.
     }
   };
+
+  if (!evidence || evidenceStatus !== 'verified') {
+    return (
+      <div className="mt-3 rounded-xl border border-amber-400/15 bg-amber-500/[0.035] p-3.5">
+        <p className="text-[10px] font-bold text-amber-200/80">Sample receipt {decisionId}</p>
+        <p className="mt-0.5 text-[9px] text-white/30">Post {postId ?? 'unavailable'} - Review unavailable</p>
+        <p className="mt-2 text-[10px] font-bold text-amber-100/70">Source evidence changed or is unavailable</p>
+        <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+          Create a fresh receipt before independent review. This receipt cannot be labelled.
+        </p>
+      </div>
+    );
+  }
+
+  const mediaUrl = safeReviewMediaUrl(evidence.mediaUrl);
+  const thumbnailUrl = safeReviewMediaUrl(evidence.thumbnailUrl);
 
   return (
     <form onSubmit={submit} className="mt-3 rounded-xl border border-sky-400/15 bg-sky-500/[0.035] p-3.5">
@@ -415,6 +446,39 @@ const SampleAdjudicationForm: React.FC<{
         <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1 text-[9px] font-bold text-white/35">
           Unadjudicated
         </span>
+      </div>
+      <div className="mt-3 overflow-hidden rounded-xl border border-emerald-400/15 bg-black/20">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2">
+          <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-200/75">
+            Receipt source verified
+          </span>
+          <span className="text-[9px] text-white/35">{evidence.platform}</span>
+        </div>
+        {evidence.mediaKind === 'image' && mediaUrl ? (
+          <img
+            src={mediaUrl}
+            alt="Post media under independent review"
+            className="max-h-72 w-full bg-black/30 object-contain"
+          />
+        ) : evidence.mediaKind === 'video' && mediaUrl ? (
+          <video
+            src={mediaUrl}
+            poster={thumbnailUrl ?? undefined}
+            controls
+            preload="metadata"
+            className="max-h-72 w-full bg-black/30 object-contain"
+          />
+        ) : null}
+        <div className="space-y-2 p-3">
+          <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-white/70">{evidence.content}</p>
+          {evidence.hashtags.length > 0 && (
+            <p className="text-[10px] leading-relaxed text-sky-200/60">{evidence.hashtags.join(' ')}</p>
+          )}
+          {evidence.videoScript && (
+            <p className="whitespace-pre-wrap text-[10px] leading-relaxed text-white/45">{evidence.videoScript}</p>
+          )}
+          <p className="font-mono text-[8px] text-white/20">Receipt hash {evidence.contentHash.slice(0, 12)}</p>
+        </div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <label className="text-[10px] font-bold text-white/45">
@@ -461,7 +525,7 @@ const SampleAdjudicationForm: React.FC<{
         </p>
         <button
           type="submit"
-          disabled={saving || !expectedState || !note.trim()}
+          disabled={saving || !evidence || !expectedState || !note.trim()}
           className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/20 bg-sky-500/10 px-3 py-1.5 text-[10px] font-bold text-sky-200 transition hover:bg-sky-500/15 disabled:opacity-40"
         >
           {saving ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
@@ -751,6 +815,8 @@ export const LearningOperationsCard: React.FC<{
                   <SampleAdjudicationForm
                     decisionId={workspace.sampleDecisionId}
                     postId={workspace.samplePostId ?? null}
+                    evidenceStatus={workspace.sampleEvidenceStatus ?? null}
+                    evidence={workspace.sampleEvidence ?? null}
                     saving={savingDecisionId === workspace.sampleDecisionId}
                     onAdjudicate={onAdjudicate}
                   />

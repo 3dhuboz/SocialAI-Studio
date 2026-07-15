@@ -22,7 +22,18 @@ const operations: AdminLearningOperations = {
     severeFalsePasses: 0, adjudicationCoverage: 0.5,
     globalKillSwitchEnabled: false, updatedAt: '2026-07-14T08:00:00.000Z',
     sampleDecisionId: 'decision_1', samplePostId: 'post_1',
-    sampleReleaseState: 'hold_amber',
+    sampleEvidenceStatus: 'verified',
+    sampleEvidence: {
+      content: 'Fresh brisket, smoked low and slow in Gladstone.',
+      platform: 'facebook',
+      hashtags: ['#GladstoneEats', '#LowAndSlow'],
+      mediaKind: 'image',
+      mediaUrl: 'https://cdn.example.test/brisket.jpg',
+      thumbnailUrl: null,
+      videoScript: null,
+      videoShots: [],
+      contentHash: 'a'.repeat(64),
+    },
   }],
 };
 
@@ -86,6 +97,10 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('Post post_1');
     expect(html).not.toContain('Observed hold amber');
     expect(html).toContain('Observed release state is hidden until this label is saved');
+    expect(html).toContain('Receipt source verified');
+    expect(html).toContain('Fresh brisket, smoked low and slow in Gladstone.');
+    expect(html).toContain('#GladstoneEats');
+    expect(html).toContain('https://cdn.example.test/brisket.jpg');
     expect(html).toContain('Expected release state');
     expect(html).toContain('<option value="" disabled="" selected="">Choose independently</option>');
     expect(html).toContain('Audit severity');
@@ -95,6 +110,30 @@ describe('LearningOperationsCard', () => {
     expect(html).not.toContain('Approve post');
     expect(html).not.toContain('Schedule post');
     expect(html).not.toContain('Publish post');
+  });
+
+  it('does not offer an audit label when receipt source evidence is stale', () => {
+    const staleOperations: AdminLearningOperations = {
+      ...operations,
+      workspaces: operations.workspaces.map((workspace) => ({
+        ...workspace,
+        sampleEvidenceStatus: 'stale',
+        sampleEvidence: null,
+      })),
+    };
+    const html = renderToStaticMarkup(
+      <LearningOperationsCard
+        operations={staleOperations}
+        loading={false}
+        savingDecisionId={null}
+        onAdjudicate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('Source evidence changed or is unavailable');
+    expect(html).toContain('Create a fresh receipt before independent review');
+    expect(html).not.toContain('Expected release state');
+    expect(html).not.toContain('Save audit label');
   });
 
   it('shows a record-only pilot queue with explicit enrollment and single-draft validation actions', () => {
