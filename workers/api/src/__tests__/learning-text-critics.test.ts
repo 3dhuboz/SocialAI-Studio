@@ -200,6 +200,28 @@ describe('callIndependentJson', () => {
     });
   });
 
+  it('unwraps one complete Markdown JSON fence from an independent provider', async () => {
+    const result = await callIndependentJson(
+      { ANTHROPIC_API_KEY: 'anthropic-key' } as Env,
+      'system',
+      'prompt',
+      {
+        operation: 'learning_text_council',
+        userId: 'u1',
+        clientId: null,
+        postId: 'p1',
+      },
+      {
+        callAnthropic: async () => ({ text: '```json\n{"ok":true}\n```' }),
+        callOpenRouter: async () => {
+          throw new Error('unexpected fallback');
+        },
+      },
+    );
+
+    expect(result.text).toBe('{"ok":true}');
+  });
+
   it('fails closed when no independent provider is configured', async () => {
     await expect(
       callIndependentJson({} as Env, 'system', 'prompt', {
