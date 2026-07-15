@@ -88,6 +88,7 @@ async function deleteOutcomeWorkspaceData(
     'learning_profiles',
     'learning_signals',
     'learning_adjudications',
+    'learning_pilot_enrollments',
   ]) {
     await db.prepare(`
       DELETE FROM ${table}
@@ -121,6 +122,7 @@ async function deleteOutcomeUserData(
     'learning_profiles',
     'learning_signals',
     'learning_adjudications',
+    'learning_pilot_enrollments',
   ]) {
     await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`)
       .bind(userId).run();

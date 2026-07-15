@@ -305,7 +305,10 @@ describe('learning decision client', () => {
     const db = createDb(async () => 'token');
 
     const queue = await db.getLearningPilotCandidates();
-    const enrolled = await db.enrollLearningPilotWorkspace('client_1', 500);
+    const enrolled = await db.enrollLearningPilotWorkspace('client_1', 500, {
+      confirmed: true,
+      note: 'Customer confirmed record-only pilot participation by phone.',
+    });
     const validated = await db.validateLearningPilotDraft('draft 1');
 
     expect(queue.recordOnly).toBe(true);
@@ -322,7 +325,12 @@ describe('learning decision client', () => {
       {
         url: expect.stringContaining('/api/learning/pilot/enroll'),
         method: 'POST',
-        body: { clientId: 'client_1', monthlyAiBudgetUsdCents: 500 },
+        body: {
+          clientId: 'client_1',
+          monthlyAiBudgetUsdCents: 500,
+          customerConsentConfirmed: true,
+          customerConsentNote: 'Customer confirmed record-only pilot participation by phone.',
+        },
       },
       {
         url: expect.stringContaining('/api/learning/pilot/validate/draft%201'),

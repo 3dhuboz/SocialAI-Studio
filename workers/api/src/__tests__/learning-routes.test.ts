@@ -387,6 +387,7 @@ describe('learning settings and release evidence routes', () => {
         autopublish_policy_version: null, experiment_rate: 0,
         monthly_ai_budget_usd_cents: 500, disabled_reason: null,
       }],
+      'SELECT id FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-1' }],
     });
     runPilotPipeline.mockResolvedValue({ id: 'decision-pilot-1', state: 'pass_green' });
     const env = {
@@ -416,6 +417,43 @@ describe('learning settings and release evidence routes', () => {
     );
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
     expect(calls.some((call) => /INSERT\s+INTO\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('refuses pilot validation when approval settings exist without an enrollment receipt', async () => {
+    const { db } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [{
+        id: 'draft-without-receipt', user_id: 'owner_1', client_id: null,
+        owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+        content: 'Owner draft', platform: 'Facebook', hashtags: '[]',
+        image_url: null, post_type: 'text', video_url: null, video_status: null,
+        video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 500, disabled_reason: null,
+      }],
+      'SELECT id FROM learning_pilot_enrollments': [],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/validate/draft-without-receipt', {
+      method: 'POST', headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Workspace has no current-policy pilot enrollment receipt',
+    });
+    expect(runPilotPipeline).not.toHaveBeenCalled();
   });
 
   it('refuses pilot validation for an on-hold client before running critics', async () => {
@@ -456,6 +494,57 @@ describe('learning settings and release evidence routes', () => {
       'SELECT status FROM clients': [{ status: 'active' }],
       'COUNT(*) AS draft_count': [{ draft_count: 4 }],
       'COUNT(*) AS approval_count': [{ approval_count: 0 }],
+      'SELECT id, enrolled_at': [{
+        id: 'pilot-enrollment-1', enrolled_at: '2026-07-15T00:00:00.000Z',
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enroll', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-1',
+        monthlyAiBudgetUsdCents: 500,
+        customerConsentConfirmed: true,
+        customerConsentNote: 'Customer confirmed record-only pilot participation by phone.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      workspaceKey: 'client-1', ownerKind: 'client', ownerId: 'client-1',
+      mode: 'approval', monthlyAiBudgetUsdCents: 500,
+      autopublishConsentAt: null, recordOnly: true,
+      pilotEnrollmentId: 'pilot-enrollment-1',
+      pilotPolicyVersion: AUTOPILOT_POLICY_VERSION,
+      enrolledAt: '2026-07-15T00:00:00.000Z',
+    });
+    const write = calls.find((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))!;
+    expect(write.binds.slice(1, 11)).toEqual([
+      'owner_1', 'client-1', 'client-1', 'client', 'client-1',
+      'approval', null, null, 0, 500,
+    ]);
+    const enrollmentWrite = calls.find((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO learning_pilot_enrollments'))!;
+    expect(enrollmentWrite.binds).toEqual([
+      expect.any(String), 'owner_1', 'client-1', 'client-1', 'client', 'client-1',
+      AUTOPILOT_POLICY_VERSION, 'owner_1', expect.any(String), 1,
+      'customer_attested', expect.any(String),
+      'Customer confirmed record-only pilot participation by phone.',
+    ]);
+    expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('requires an explicit customer consent attestation before enrolling a client pilot', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT status FROM clients': [{ status: 'active' }],
     });
     const env = {
       DB: db,
@@ -470,18 +559,12 @@ describe('learning settings and release evidence routes', () => {
       body: JSON.stringify({ clientId: 'client-1', monthlyAiBudgetUsdCents: 500 }),
     }, env);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      workspaceKey: 'client-1', ownerKind: 'client', ownerId: 'client-1',
-      mode: 'approval', monthlyAiBudgetUsdCents: 500,
-      autopublishConsentAt: null, recordOnly: true,
+      error: 'Client pilot enrollment requires a customer consent attestation and note',
     });
-    const write = calls.find((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))!;
-    expect(write.binds.slice(1, 11)).toEqual([
-      'owner_1', 'client-1', 'client-1', 'client', 'client-1',
-      'approval', null, null, 0, 500,
-    ]);
-    expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+    expect(calls.some((call) => call.sql.includes('workspace_learning_settings'))).toBe(false);
+    expect(calls.some((call) => call.sql.includes('learning_pilot_enrollments'))).toBe(false);
   });
 
   it('refuses to enroll an on-hold client or exceed one client pilot workspace', async () => {
@@ -498,7 +581,11 @@ describe('learning settings and release evidence routes', () => {
     const heldApp = makeApp(heldEnv);
     const held = await heldApp.app.request('/api/learning/pilot/enroll', {
       method: 'POST', headers: adminHeaders,
-      body: JSON.stringify({ clientId: 'hughesq-001', monthlyAiBudgetUsdCents: 500 }),
+      body: JSON.stringify({
+        clientId: 'hughesq-001', monthlyAiBudgetUsdCents: 500,
+        customerConsentConfirmed: true,
+        customerConsentNote: 'Customer confirmed record-only pilot participation.',
+      }),
     }, heldEnv);
     expect(held.status).toBe(409);
     expect(heldDb.calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
@@ -513,12 +600,22 @@ describe('learning settings and release evidence routes', () => {
     const cappedApp = makeApp(cappedEnv);
     const capped = await cappedApp.app.request('/api/learning/pilot/enroll', {
       method: 'POST', headers: adminHeaders,
-      body: JSON.stringify({ clientId: 'client-2', monthlyAiBudgetUsdCents: 500 }),
+      body: JSON.stringify({
+        clientId: 'client-2', monthlyAiBudgetUsdCents: 500,
+        customerConsentConfirmed: true,
+        customerConsentNote: 'Customer confirmed record-only pilot participation.',
+      }),
     }, cappedEnv);
     expect(capped.status).toBe(409);
     await expect(capped.json()).resolves.toEqual({
       error: 'Only one client workspace may be enrolled in the approval pilot',
     });
+    const cohortCap = cappedDb.calls.find((call) =>
+      call.sql.includes('COUNT(*) AS approval_count'))!;
+    expect(cohortCap.binds).toEqual([
+      AUTOPILOT_POLICY_VERSION, 'client', 'owner_1', 'client-2',
+    ]);
+    expect(cohortCap.sql).toContain('NOT (user_id = ? AND workspace_key = ?)');
     expect(cappedDb.calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
@@ -569,7 +666,9 @@ describe('learning settings and release evidence routes', () => {
       ],
     });
     const query = calls.find((call) => call.sql.includes('FROM posts p'))!;
-    expect(query.binds).toEqual(['owner_1']);
+    expect(query.binds).toEqual([AUTOPILOT_POLICY_VERSION, 'owner_1']);
+    expect(query.sql).toContain('LEFT JOIN learning_pilot_enrollments pen');
+    expect(query.sql).toContain('pen.policy_version = ?');
     expect(query.sql).toContain("p.status = 'Draft'");
     expect(query.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");
     expect(query.sql).toContain('NOT EXISTS');

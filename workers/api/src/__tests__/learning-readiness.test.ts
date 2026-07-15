@@ -75,6 +75,9 @@ function modeEnv(options: ModeOptions = {}): Env {
 
 const readyMetrics: ReadinessMetrics = {
   pilotDecisions: 30,
+  pilotWorkspaceCount: 2,
+  pilotUserDecisions: 15,
+  pilotClientDecisions: 15,
   adjudicatedDecisions: 30,
   severeFalsePasses: 0,
   falseHoldRate: 0.033,
@@ -93,6 +96,10 @@ describe('learning release readiness', () => {
     expect(evaluateReadiness(readyMetrics).ready).toBe(true);
     for (const patch of [
       { pilotDecisions: 29 },
+      { pilotWorkspaceCount: 1 },
+      { pilotWorkspaceCount: 3 },
+      { pilotUserDecisions: 0 },
+      { pilotClientDecisions: 0 },
       { adjudicatedDecisions: 29 },
       { severeFalsePasses: 1 },
       { falseHoldRate: 0.05 },
@@ -170,24 +177,27 @@ describe('learning release readiness', () => {
   });
 
   it('builds green metrics only from complete, labelled, available and costed pilot receipts', () => {
-    const decisions: PilotDecisionRow[] = Array.from({ length: 30 }, (_, index) => ({
-      id: `decision-${index}`,
-      user_id: 'owner-1',
-      workspace_key: '__owner__',
-      client_id: null,
-      owner_kind: 'user',
-      owner_id: 'owner-1',
-      mode: 'shadow',
-      release_state: 'pass_green',
-      summary_json: JSON.stringify({
-        persistenceState: 'complete',
-        predictedOutcomeScore: index + 1,
-      }),
-      publication_event_id: `publication-${index}`,
-      normalized_score: index + 1,
-      expected_state: 'pass_green',
-      adjudication_severity: 'advisory',
-    }));
+    const decisions: PilotDecisionRow[] = Array.from({ length: 30 }, (_, index) => {
+      const clientPilot = index >= 15;
+      return {
+        id: `decision-${index}`,
+        user_id: 'owner-1',
+        workspace_key: clientPilot ? 'client-1' : '__owner__',
+        client_id: clientPilot ? 'client-1' : null,
+        owner_kind: clientPilot ? 'client' : 'user',
+        owner_id: clientPilot ? 'client-1' : 'owner-1',
+        mode: 'approval',
+        release_state: 'pass_green',
+        summary_json: JSON.stringify({
+          persistenceState: 'complete',
+          predictedOutcomeScore: (index % 15) + 1,
+        }),
+        publication_event_id: `publication-${index}`,
+        normalized_score: (index % 15) + 1,
+        expected_state: 'pass_green',
+        adjudication_severity: 'advisory',
+      };
+    });
     const requiredKinds = ['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const;
     const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
       requiredKinds.map((criticKind) => ({
@@ -196,17 +206,29 @@ describe('learning release readiness', () => {
         verdict: 'pass',
         attempt: 0,
       })));
-    const costs: WorkspaceCostTelemetry[] = [{
-      userId: 'owner-1',
-      workspaceKey: '__owner__',
-      budgetUsdCents: 1000,
-      spendUsd: 1,
-      telemetryCount: 30,
-    }];
+    const costs: WorkspaceCostTelemetry[] = [
+      {
+        userId: 'owner-1',
+        workspaceKey: '__owner__',
+        budgetUsdCents: 1000,
+        spendUsd: 1,
+        telemetryCount: 15,
+      },
+      {
+        userId: 'owner-1',
+        workspaceKey: 'client-1',
+        budgetUsdCents: 1000,
+        spendUsd: 1,
+        telemetryCount: 15,
+      },
+    ];
 
     const metrics = buildReadinessMetrics(decisions, verdicts, costs);
     expect(metrics).toMatchObject({
       pilotDecisions: 30,
+      pilotWorkspaceCount: 2,
+      pilotUserDecisions: 15,
+      pilotClientDecisions: 15,
       adjudicatedDecisions: 30,
       severeFalsePasses: 0,
       falseHoldRate: 0,
@@ -219,6 +241,34 @@ describe('learning release readiness', () => {
     expect(metrics.predictionLift).toBeGreaterThan(0.15);
     expect(evaluateReadiness({ ...metrics, publishingRegressions: 0, killSwitchTested: true }).ready)
       .toBe(true);
+  });
+
+  it('does not count shadow or protected decisions as approval pilot evidence', () => {
+    const decisions: PilotDecisionRow[] = (['shadow', 'protected_autopilot'] as const).map(
+      (mode, index) => ({
+        id: `non-pilot-${index}`,
+        user_id: 'owner-1',
+        workspace_key: '__owner__',
+        client_id: null,
+        owner_kind: 'user',
+        owner_id: 'owner-1',
+        mode,
+        release_state: 'pass_green',
+        summary_json: JSON.stringify({ persistenceState: 'complete' }),
+        publication_event_id: null,
+        normalized_score: null,
+        expected_state: 'pass_green',
+        adjudication_severity: 'advisory',
+      }),
+    );
+
+    expect(buildReadinessMetrics(decisions, [], [])).toMatchObject({
+      pilotDecisions: 0,
+      pilotWorkspaceCount: 0,
+      pilotUserDecisions: 0,
+      pilotClientDecisions: 0,
+      adjudicatedDecisions: 0,
+    });
   });
 
   it('treats latest unavailable critics, incomplete receipts, bypasses and missing cost as unsafe', () => {
@@ -250,23 +300,26 @@ describe('learning release readiness', () => {
   });
 
   it('collects a strict consecutive pilot window and current evidence from D1', async () => {
-    const decisions: PilotDecisionRow[] = Array.from({ length: 30 }, (_, index) => ({
-      id: `decision-${index}`,
-      user_id: 'owner-1',
-      workspace_key: '__owner__',
-      client_id: null,
-      owner_kind: 'user',
-      owner_id: 'owner-1',
-      mode: 'shadow',
-      release_state: 'pass_green',
-      summary_json: JSON.stringify({
-        persistenceState: 'complete', predictedOutcomeScore: index + 1,
-      }),
-      publication_event_id: `publication-${index}`,
-      normalized_score: index + 1,
-      expected_state: 'pass_green',
-      adjudication_severity: 'advisory',
-    }));
+    const decisions: PilotDecisionRow[] = Array.from({ length: 30 }, (_, index) => {
+      const clientPilot = index >= 15;
+      return {
+        id: `decision-${index}`,
+        user_id: 'owner-1',
+        workspace_key: clientPilot ? 'client-1' : '__owner__',
+        client_id: clientPilot ? 'client-1' : null,
+        owner_kind: clientPilot ? 'client' : 'user',
+        owner_id: clientPilot ? 'client-1' : 'owner-1',
+        mode: 'approval',
+        release_state: 'pass_green',
+        summary_json: JSON.stringify({
+          persistenceState: 'complete', predictedOutcomeScore: (index % 15) + 1,
+        }),
+        publication_event_id: `publication-${index}`,
+        normalized_score: (index % 15) + 1,
+        expected_state: 'pass_green',
+        adjudication_severity: 'advisory',
+      };
+    });
     const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
       (['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const).map((criticKind) => ({
         decision_id: decision.id, critic_kind: criticKind, verdict: 'pass', attempt: 0,
@@ -299,6 +352,14 @@ describe('learning release readiness', () => {
     expect(snapshot.checks.tenancyProofs).toEqual({ user: true, client: true, shop: true });
     const pilotCall = calls.find((call) => call.sql.includes('FROM learning_decisions d'))!;
     expect(pilotCall.sql).toContain('LIMIT 30');
+    expect(pilotCall.sql).toContain("d.mode = 'approval'");
+    expect(pilotCall.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
+    expect(pilotCall.sql).toContain('d.created_at >= pen.enrolled_at');
+    expect(pilotCall.sql).toContain("pen.consent_basis = 'customer_attested'");
+    expect(pilotCall.sql).not.toContain("w.mode = 'approval'");
+    expect(pilotCall.binds).toEqual([AUTOPILOT_POLICY_VERSION]);
+    expect(pilotCall.sql).toContain("d.owner_kind IN ('user','client')");
+    expect(pilotCall.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
     expect(pilotCall.sql).toContain('a.user_id = d.user_id');
     expect(pilotCall.sql).toContain('pe.owner_id = d.owner_id');
   });

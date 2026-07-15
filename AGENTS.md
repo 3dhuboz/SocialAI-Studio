@@ -154,7 +154,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
-| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
+| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, consent-attested record-only pilot enrollment/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
 | `tracking.ts` | Public HTTPS-only short-link redirects with aggregate, bot-filtered click counts and no personal tracking |
 | `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
 | `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
@@ -212,6 +212,10 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Current production schema version:** v40
 
+Next additive migration: `workers/api/schema_v41_learning_pilot_enrollments.sql`.
+It adds append-only pilot enrollment receipts, preserves scoped privacy erasure,
+and does not change posts or publishing behavior.
+
 Metric-window hardening migration: `workers/api/schema_v40_learning_metric_snapshots.sql`.
 The migration is live. Deploy Worker source from `main` at merge `2e5cb85` or
 later before expecting the collector to consume snapshot/retry rows.
@@ -267,6 +271,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `tracking_links` | Tenant-scoped organic action and conversion tracking links |
 | `conversion_feedback` | Owner-recorded calls, messages, leads, bookings, sales, and order value |
 | `learning_adjudications` | Admin pilot labels for sampled immutable release decisions |
+| `learning_pilot_enrollments` | Policy-versioned record-only pilot cohort and consent receipts; update-blocked but privacy-deletable |
 | `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
 | `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
 

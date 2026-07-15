@@ -32,12 +32,12 @@ const pilotQueue: LearningPilotQueue = {
     {
       clientId: null, ownerKind: 'user', ownerId: 'owner_1',
       workspaceKey: '__owner__', label: 'My workspace', eligibleDraftCount: 5,
-      samplePostId: 'draft_owner', enrolled: false, monthlyAiBudgetUsdCents: null,
+      samplePostId: 'draft_owner', enrolled: true, monthlyAiBudgetUsdCents: 500,
     },
     {
       clientId: 'client_2', ownerKind: 'client', ownerId: 'client_2',
       workspaceKey: 'client_2', label: 'Active Client', eligibleDraftCount: 4,
-      samplePostId: 'draft_client', enrolled: true, monthlyAiBudgetUsdCents: 500,
+      samplePostId: 'draft_client', enrolled: false, monthlyAiBudgetUsdCents: null,
     },
   ],
 };
@@ -118,5 +118,8 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('Validate next real draft');
     expect(html).toContain('Draft content, status, schedule, and publishing stay unchanged');
     expect(html).toContain('No autopublish consent is recorded');
+    expect(html).toContain('Customer pilot consent attestation');
+    expect(html).toContain('Consent evidence note');
+    expect(html).toContain('Client enrollment stays disabled until both are complete');
   });
 });
