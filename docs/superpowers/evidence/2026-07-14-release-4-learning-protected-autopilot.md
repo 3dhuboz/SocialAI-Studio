@@ -425,3 +425,54 @@ next naturally created owner draft, one explicitly consenting active client,
 30 real pilot decisions, 30 independent adjudications, complete 168-hour
 outcomes, and every documented readiness proof. No synthetic draft or evidence
 row was created to accelerate the rollout.
+
+## 2026-07-15 Frontend Publish-Egress Closure
+
+### Completion-Audit Finding
+
+The Worker publish orchestrator already guarded every active manual and cron
+publish path, but `src/services/facebookService.ts` still exposed five unused
+browser-side publishing helpers. One helper used Facebook
+`scheduled_publish_time`, which is explicitly banned because it can create an
+uncancellable remote post outside D1 control. A repository-wide reference
+search found zero runtime callers, and the existing Postproxy integration plan
+explicitly required all five helpers to be deleted.
+
+PR `#186` removed `postToPageDirect`, `postToPageWithImageUrl`,
+`postToPageScheduled`, `postToInstagram`, and `postReelToInstagram`. It also
+added a permanent source-contract regression that rejects those helpers,
+`scheduled_publish_time`, or an Instagram `media_publish` call in the frontend
+service. OAuth, page discovery, page statistics, and recent-post reads remain
+unchanged. PR `#186` merged to `main` as
+`7640db9fcdc1d92f7a320c6b210c72cb2c595971` after CI passed.
+
+Verification before promotion:
+
+- The regression was observed failing before deletion and passing afterward.
+- Focused publish-egress verification: 16 tests passed.
+- Frontend verification: 15 test files and 175 tests passed.
+- Frontend production build passed.
+- Worker verification: 89 test files and 1,122 tests passed.
+- Strict Worker TypeScript verification passed.
+
+### Production Promotion
+
+The Git-triggered `socialai-studio` Pages row for source `7640db9` remained
+`Idle`, its immutable hostname returned 404 for five minutes, and the custom
+domain continued serving `assets/index-9aTgtfWJ.js` with all five forbidden
+helper names. Earlier Git-triggered rows for `b2eeecc` and `d769c55` showed the
+same `Idle`/404 behavior. No success claim was made from those rows.
+
+The exact reviewed merged tree was rebuilt locally and directly uploaded to the
+existing production project without changing Worker code or D1. Cloudflare
+completed deployment `https://9c8e8626.socialai-studio.pages.dev`. The
+immutable deployment and `https://socialaistudio.au` now serve the same
+`assets/index-r6y7HK1-.js` with SHA-256
+`655cd1a0beb1d18eabf1f248775339c6b4d9aebc73b02810c405adb0aa16287b`.
+The served bundle contains none of the five helper names and no
+`scheduled_publish_time`. Direct Worker and same-domain health both return 200
+with Worker JSON.
+
+This closes a latent future bypass; it does not activate release enforcement,
+reach-plan application, or Protected Autopilot. The real pilot evidence gates
+remain unchanged.
