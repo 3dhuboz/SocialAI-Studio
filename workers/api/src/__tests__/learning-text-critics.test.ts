@@ -267,8 +267,9 @@ describe('independent model critics', () => {
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_VERIFIED_FACTS>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_RECENT_POSTS>>');
-    expect(prompt).toContain('"verdict":"pass|warn_repairable|block|unavailable"');
-    expect(prompt).toContain('"severity":"advisory|release_critical"');
+    expect(prompt).toContain('Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable"');
+    expect(prompt).toContain('Severity must be exactly one of "advisory" or "release_critical"');
+    expect(prompt).not.toContain('"verdict":"pass|warn_repairable');
     expect(prompt).toContain('at least one concrete repair');
     expect(prompt).toContain('at most 3 strings of at most 240 characters each');
   });
@@ -363,6 +364,18 @@ describe('independent model critics', () => {
     ).toThrow('Missing fact repair');
   });
 
+  it('identifies the exact invalid critic enum field', () => {
+    expect(() => parseCriticResult({
+      ...critic('fact'), kind: 'facts',
+    }, 'fact')).toThrow('Invalid fact kind');
+    expect(() => parseCriticResult({
+      ...critic('fact'), verdict: 'warning',
+    }, 'fact')).toThrow('Invalid fact verdict');
+    expect(() => parseCriticResult({
+      ...critic('fact'), severity: 'critical',
+    }, 'fact')).toThrow('Invalid fact severity');
+  });
+
   it('rejects oversized critic evidence and repair payloads', () => {
     expect(() => parseCriticResult({
       ...critic('fact'),
@@ -398,6 +411,7 @@ describe('independent model critics', () => {
     expect(prompt).not.toContain('SECRET_CHAIN');
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
     expect(prompt).toContain('at least one concrete repair');
+    expect(prompt).toContain('Verdict must be exactly one of');
   });
 
   it('retries one repairless business-harm warning before accepting a strict result', async () => {
