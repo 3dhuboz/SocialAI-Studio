@@ -376,3 +376,52 @@ enforcement, reach application, and Protected Autopilot remain disabled until
 that proof, one explicitly consenting active client, 30 real decisions, 30
 independent adjudications, complete 168-hour outcomes, and every existing
 readiness gate pass.
+
+## 2026-07-15 Readiness Timestamp Normalization
+
+### Production Finding
+
+The five immutable owner decisions were present, but the readiness evaluator
+reported zero pilot decisions. Enrollment and consent receipts use JavaScript
+ISO timestamps such as `2026-07-15T00:43:35.266Z`, while D1 decision defaults
+use SQLite timestamps such as `2026-07-15 02:01:06`. The readiness query
+compared those values as raw text, so valid same-day decisions sorted before
+the `T` separator and were incorrectly excluded.
+
+This defect affected readiness evidence counting only. It did not create,
+modify, schedule, approve, or publish a post. A read-only production proof
+returned `0` for the raw text comparison and `1` after both values were
+normalized with SQLite `unixepoch(...)`. The exact normalized cohort query
+returned all five owner receipts.
+
+### Repair And Verification
+
+PR `#184` merged to `main` as
+`b2eeeccea57cd4540d55d7311ae8bed8a8f7d65e` after the independent
+`typecheck-and-build` check passed. The repair normalizes both the enrollment
+boundary and consent boundary in the readiness query and adds a regression
+that rejects the previous raw comparisons.
+
+- Focused readiness verification: 17 tests passed.
+- Full Worker verification: 89 test files and 1,121 tests passed.
+- Strict Worker TypeScript verification passed.
+- Production Worker version:
+  `045fdf83-ba94-41f6-8e2d-a35c369a6cd6`, at 100 percent traffic.
+- Direct Worker and same-domain health both returned 200 with Worker JSON.
+
+The first normal 15-minute production cron after deployment wrote readiness
+receipt `345e03ed-d199-4ac2-a3a0-1bb2a67b9292` at
+`2026-07-15T02:45:02.464Z`. It correctly reports five pilot decisions, zero
+adjudicated decisions, and `ready=0`.
+
+Post-deploy safety verification found all five source posts still `Draft`,
+zero client pilot enrollments, zero stored autopublish consents, and Hugheseys
+Que still `status='on_hold'`. Runtime controls remain dormant:
+`LEARNING_RELEASE_ENFORCEMENT=false`, `LEARNING_AUTOPILOT_ENABLED=false`, and
+`ORGANIC_REACH_APPLY_ENABLED=false`.
+
+The remaining gates are unchanged: live zero-unavailable critic proof on the
+next naturally created owner draft, one explicitly consenting active client,
+30 real pilot decisions, 30 independent adjudications, complete 168-hour
+outcomes, and every documented readiness proof. No synthetic draft or evidence
+row was created to accelerate the rollout.
