@@ -605,3 +605,59 @@ No synthetic label, customer consent, post mutation, customer status change,
 or unattended publishing activation was introduced. Genuine independent
 labels, outcomes, and explicit customer consent are still required before any
 Protected Autopilot rollout gate can pass.
+
+## 2026-07-15 Bounded Final Video Inspection
+
+### Completion-Audit Finding And Repair
+
+The paid Anthropic and OpenRouter critic transports already used tested
+45-second abort signals, bounded retries, provider fallback, and fail-closed
+`unavailable` verdicts. The remaining media seam did not: final video
+verification issued a server-side `HEAD` without a timeout in both the media
+critic default and release-preflight wiring. A stalled endpoint could therefore
+consume the request instead of allowing the critic to emit a release-critical
+unavailable verdict and durable receipt.
+
+PR `#192` centralized final-video inspection in the media critic. The shared
+chokepoint now:
+
+- Rejects invalid, non-HTTPS, and credential-bearing URLs before network use.
+- Uses a 10-second abort signal for every request.
+- Retries one transient network failure, timeout, 408, 425, 429, or 5xx result.
+- Stops after two attempts and throws into the existing fail-closed media
+  critic boundary.
+- Validates the final response URL and preserves the existing MIME and content
+  length checks.
+- Replaces the duplicate unbounded release-preflight fetch.
+
+The new tests were observed failing before implementation because the shared
+inspector did not exist. Verification after repair:
+
+- Focused final-media and release verification: 19 tests passed.
+- Adjacent release-preflight and publish-egress verification: 47 tests passed.
+- Worker verification: 89 test files and 1,126 tests passed.
+- Strict Worker TypeScript verification passed.
+- Wrangler production packaging dry run passed.
+- GitHub `typecheck-and-build` passed before merge.
+
+PR `#192` merged to `main` as
+`50e6163beb613be6bf3e353fde0aed6e9e3c93ae`. The tested branch and merged
+commit had the same Git tree. Worker version
+`cbb8a343-a3a6-4014-80cb-8226f50a2a7e` was deployed from that tree. Direct
+Worker and same-domain health both return 200 with Worker JSON.
+
+The post-deploy read-only D1 recount reported one owner-only pilot enrollment,
+zero client enrollments, five release decisions, zero adjudications, zero
+stored autopublish consents, zero Protected Autopilot workspaces, and latest
+readiness `ready=0`. Hugheseys Que remains `status='on_hold'` with no learning
+setting. D1 reported `changed_db=false` and `rows_written=0`.
+
+Runtime controls remain dormant:
+
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+This repair strengthens shadow receipts and future fail-closed enforcement. It
+does not change a post, schedule, consent, customer status, or current
+publishing decision.
