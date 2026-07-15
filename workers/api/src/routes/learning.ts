@@ -7,7 +7,10 @@ import {
   type WorkspaceIdentity,
   type WorkspaceOwnerKind,
 } from '../lib/learning/types';
-import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import {
+  AUTOPILOT_POLICY_VERSION,
+  RELEASE_EVIDENCE_MAX_TTL_MS,
+} from '../lib/learning/readiness';
 import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
   buildReleaseContentHash,
@@ -1174,12 +1177,17 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       const note = typeof body.note === 'string' ? body.note.trim() : '';
       if (!note || note.length > 2000) return c.json({ error: 'note is required' }, 400);
       const now = new Date();
-      const defaultExpiry = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const defaultExpiry = new Date(now.getTime() + RELEASE_EVIDENCE_MAX_TTL_MS);
       const expiresAt = body.expiresAt === undefined
         ? defaultExpiry
         : new Date(String(body.expiresAt));
       if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= now) {
         return c.json({ error: 'expiresAt must be in the future' }, 400);
+      }
+      if (expiresAt.getTime() - now.getTime() > RELEASE_EVIDENCE_MAX_TTL_MS) {
+        return c.json({
+          error: 'expiresAt cannot be more than seven days in the future',
+        }, 400);
       }
       const id = crypto.randomUUID();
       await c.env.DB.prepare(`

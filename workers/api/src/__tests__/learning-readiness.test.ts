@@ -162,6 +162,33 @@ describe('learning release readiness', () => {
     expect(result.tenancyProofs).toEqual({ user: false, client: false, shop: false });
   });
 
+  it('fails closed for missing, malformed, future-dated, or overlong release evidence', () => {
+    const now = new Date('2026-07-14T01:00:00.000Z');
+    const row: ReleaseEvidenceRow = {
+      evidence_kind: 'kill_switch',
+      owner_kind: null,
+      passed: 1,
+      recorded_at: '2026-07-14T00:00:00.000Z',
+      expires_at: null,
+    };
+
+    expect(evaluateReleaseEvidence([row], now).killSwitch).toBe(false);
+    expect(evaluateReleaseEvidence([{
+      ...row,
+      expires_at: '2026-07-22T00:00:00.001Z',
+    }], now).killSwitch).toBe(false);
+    expect(evaluateReleaseEvidence([{
+      ...row,
+      recorded_at: '2026-07-14T02:00:00.000Z',
+      expires_at: '2026-07-21T02:00:00.000Z',
+    }], now).killSwitch).toBe(false);
+    expect(evaluateReleaseEvidence([{
+      ...row,
+      recorded_at: 'not-a-date',
+      expires_at: '2026-07-21T00:00:00.000Z',
+    }], now).killSwitch).toBe(false);
+  });
+
   it('scores prediction quality inside each workspace rather than across tenants', () => {
     const samples = [
       ...[1, 2, 3, 4].map((value) => ({

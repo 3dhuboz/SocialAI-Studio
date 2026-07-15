@@ -835,6 +835,28 @@ describe('learning settings and release evidence routes', () => {
     expect(write.binds).toContain('owner_1');
   });
 
+  it('rejects release evidence whose requested lifetime exceeds seven days', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const env = { DB: db } as Env;
+    const { app } = makeApp(env);
+    const response = await app.request('/api/learning/readiness/evidence', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({
+        evidenceKind: 'kill_switch', passed: true,
+        artifactHash: 'c'.repeat(64), note: 'Fresh kill-switch exercise',
+        expiresAt: '2100-01-01T00:00:00.000Z',
+      }),
+    }, env);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'expiresAt cannot be more than seven days in the future',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_release_evidence'))).toBe(false);
+  });
+
   it('keeps the settings backfill admin-only and dry-run by default', async () => {
     const candidates = [
       {

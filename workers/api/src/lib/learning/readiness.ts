@@ -7,6 +7,7 @@ import {
 import { BASE_REQUIRED_CRITICS, type CriticKind } from './critic-types';
 
 export const AUTOPILOT_POLICY_VERSION = '2026-07-14-v1';
+export const RELEASE_EVIDENCE_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type ReleaseEvidenceKind =
   | 'replay_red_team'
@@ -345,9 +346,15 @@ export function evaluateReleaseEvidence(
   const passes = (kind: ReleaseEvidenceKind, ownerKind: WorkspaceOwnerKind | null) => {
     const row = latest.get(evidenceKey(kind, ownerKind));
     if (!row || row.passed !== 1) return false;
-    if (!row.expires_at) return true;
+    if (!row.expires_at) return false;
+    const recordedAt = Date.parse(row.recorded_at);
     const expiresAt = Date.parse(row.expires_at);
-    return Number.isFinite(expiresAt) && expiresAt > nowMs;
+    return Number.isFinite(recordedAt)
+      && Number.isFinite(expiresAt)
+      && recordedAt <= nowMs
+      && expiresAt > nowMs
+      && expiresAt > recordedAt
+      && expiresAt - recordedAt <= RELEASE_EVIDENCE_MAX_TTL_MS;
   };
 
   const tenancyProofs = Object.fromEntries(
