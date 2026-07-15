@@ -210,11 +210,13 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current production schema version:** v40
+**Current production schema version:** v41
 
-Next additive migration: `workers/api/schema_v41_learning_pilot_enrollments.sql`.
+Pilot cohort migration: `workers/api/schema_v41_learning_pilot_enrollments.sql`.
 It adds append-only pilot enrollment receipts, preserves scoped privacy erasure,
-and does not change posts or publishing behavior.
+and does not change posts or publishing behavior. The migration is live; the
+Worker/UI code must still be deployed from the merge containing this migration
+before using the pilot enrollment controls.
 
 Metric-window hardening migration: `workers/api/schema_v40_learning_metric_snapshots.sql`.
 The migration is live. Deploy Worker source from `main` at merge `2e5cb85` or
