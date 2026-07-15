@@ -386,6 +386,25 @@ describe('publish egress source contracts', () => {
     expect(source).toContain('postproxyService.publishNow');
   });
 
+  it('removes every frontend direct-publish helper and banned Facebook scheduling path', () => {
+    const source = readFileSync(
+      resolve(repoRoot, 'src/services/facebookService.ts'),
+      'utf8',
+    );
+
+    for (const helper of [
+      'postToPageDirect',
+      'postToPageWithImageUrl',
+      'postToPageScheduled',
+      'postToInstagram',
+      'postReelToInstagram',
+    ]) {
+      expect(source).not.toContain(`${helper}: async`);
+    }
+    expect(source).not.toContain('scheduled_publish_time');
+    expect(source).not.toContain('/media_publish');
+  });
+
   it('records preflight receipts after final image and ready-video persistence', () => {
     const imageSource = readFileSync(
       resolve(repoRoot, 'workers/api/src/cron/prewarm-images.ts'),
