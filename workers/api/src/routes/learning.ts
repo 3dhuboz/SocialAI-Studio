@@ -678,10 +678,12 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       SELECT
         p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
         p.content,p.platform,p.hashtags,p.image_url,p.post_type,
-        p.video_url,p.video_status,p.video_script,p.video_shots,p.archetype_slug,
+        p.video_url,p.video_status,p.video_script,p.video_shots,
+        COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
         c.status AS client_status
       FROM posts p
       LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+      LEFT JOIN users u ON u.id = p.user_id
       WHERE p.id = ? AND p.user_id = ?
       LIMIT 1
     `).bind(postId, adminId).first<PilotDraftRow>();
