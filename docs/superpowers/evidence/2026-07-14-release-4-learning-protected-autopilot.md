@@ -531,3 +531,77 @@ readiness `ready=0`. The single Hugheseys Que match remains
 `status='on_hold'`. D1 reported `changed_db=false` and `rows_written=0` for the
 verification queries. No post, consent, learning setting, rollout flag, or
 customer status was changed by this repair.
+
+## 2026-07-15 Verified Blind Adjudication Evidence
+
+### Root Cause And Repair
+
+The earlier browser-only blind-review repair was not sufficient. The admin
+operations API still returned the model's release verdict, while the reviewer
+was not shown the caption or media needed to make an independent decision. The
+adjudication write route also accepted an admin-known decision without proving
+that it belonged to the current policy pilot cohort or that its source post
+still matched the immutable receipt hash.
+
+PR `#190` removed the model verdict from the browser contract, exposes only
+hash-verified current caption and media evidence, and refuses to offer a label
+for missing or stale evidence. The server now limits both sampling and writes
+to the latest current-policy, consented, record-only approval pilot cohort. It
+re-derives the complete tenant tuple, joins the current post on that identity,
+recomputes the canonical release content hash, and returns `409` before any
+label write when the source is unavailable or changed. Adjudication remains an
+audit-only insert and cannot approve, schedule, edit, or publish a post.
+
+PR `#190` merged to `main` as
+`22f881f5e37cdb53be63552ecaff322f93ef6308` after CI passed. The tested branch
+and merged commit had the same Git tree,
+`3e7db6c4de96d2bde44ed82fc0b91d7c9ce95c1a`.
+
+Verification before promotion:
+
+- Focused frontend adjudication verification: 4 tests passed.
+- Focused Worker learning-route verification: 29 tests passed.
+- Frontend verification: 15 test files and 176 tests passed.
+- Worker verification: 89 test files and 1,123 tests passed.
+- Strict frontend and Worker TypeScript verification passed.
+- Frontend production build passed with 1,923 modules transformed.
+- GitHub `typecheck-and-build` passed before merge.
+
+### Production Promotion And Safety State
+
+Worker version `d4c272b8-7cb8-42dc-8a49-a427eda0e1b3` was deployed from the
+tested tree. Direct Worker and same-domain health both return 200 with Worker
+JSON. Both unauthenticated admin operations requests return 401. The exact new
+admin operations and adjudication-source SQL were extracted from the route and
+executed against production D1 through read-only wrappers; both reported
+`rows_written=0`.
+
+Cloudflare Pages deployment `3530bdcd-bcfc-4a1e-b2d6-6e7d4c222f82` serves the
+merged `main` commit. `https://socialaistudio.au` and
+`https://3530bdcd.socialai-studio.pages.dev` serve identical production
+assets:
+
+- Entry asset `assets/index-Biq4eof0.js`, SHA-256
+  `4d0b200e57262324cf2d7cfce183bc0876a5da22493a027e04904857ff0fbf2b`.
+- Admin asset `assets/AdminCustomers-BqFdMI1U.js`, SHA-256
+  `70ca28c841ff2f208aafb3ec1cf673970dc8ec50cfa70994baa1c821f0488a82`.
+- The admin asset contains the verified-source and stale-evidence block copy,
+  retains the blind-review notice, and contains no `sampleReleaseState` field.
+
+The final read-only D1 recount reported one owner-only pilot enrollment, zero
+client enrollments, five release decisions, zero adjudications, zero stored
+autopublish consents, zero Protected Autopilot workspaces, and latest readiness
+`ready=0`. Hugheseys Que remains `status='on_hold'` with no learning setting,
+consent, or Protected Autopilot row. The final query reported
+`changed_db=false` and `rows_written=0`.
+
+Runtime controls remain dormant:
+
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+No synthetic label, customer consent, post mutation, customer status change,
+or unattended publishing activation was introduced. Genuine independent
+labels, outcomes, and explicit customer consent are still required before any
+Protected Autopilot rollout gate can pass.
