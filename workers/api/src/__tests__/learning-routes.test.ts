@@ -415,6 +415,12 @@ describe('learning settings and release evidence routes', () => {
       }),
       'approval',
     );
+    const postRead = calls.find((call) => call.sql.includes('FROM posts p'))!;
+    expect(postRead.sql).not.toContain('p.archetype_slug');
+    expect(postRead.sql).toContain(
+      'COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug',
+    );
+    expect(postRead.sql).toContain('LEFT JOIN users u ON u.id = p.user_id');
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
     expect(calls.some((call) => /INSERT\s+INTO\s+posts/i.test(call.sql))).toBe(false);
   });
