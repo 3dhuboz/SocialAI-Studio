@@ -476,3 +476,58 @@ with Worker JSON.
 This closes a latent future bypass; it does not activate release enforcement,
 reach-plan application, or Protected Autopilot. The real pilot evidence gates
 remain unchanged.
+
+## 2026-07-15 Blind Independent Adjudication
+
+### Completion-Audit Finding
+
+The sampled admin adjudication form exposed each model release verdict as
+`Observed ...` and initialized the human label to that same value. A reviewer
+could therefore save an anchored answer rather than make the independent
+assessment required by the 30-adjudication readiness gate. The API write path
+was already correctly isolated: it stores an audit label only and cannot
+approve, schedule, modify, or publish a post.
+
+PR `#188` removed the observed verdict from the form, starts every receipt with
+no expected state selected, requires the reviewer to choose independently, and
+resets that choice after a successful label. The regression was observed
+failing against rendered markup that selected `hold_amber`, then passing after
+the repair. PR `#188` merged to `main` as
+`feac260db465f76b859d2bee1c8dcce4eb83f266` after CI passed.
+
+Verification before promotion:
+
+- Focused adjudication verification: 3 tests passed.
+- Frontend verification: 15 test files and 175 tests passed.
+- Strict frontend TypeScript verification passed.
+- Frontend production build passed.
+- Worker verification: 89 test files and 1,122 tests passed.
+- Strict Worker TypeScript verification passed.
+
+### Production Promotion And Safety State
+
+Cloudflare initially listed Git deployment `695ecbca` as active while its
+immutable hostname still returned 404. The exact merged tree was therefore
+uploaded through the documented recovery path as deployment `f42ca164`. During
+verification, the Git deployment completed and became the deployment served by
+the custom domain.
+
+`https://socialaistudio.au` and
+`https://695ecbca.socialai-studio.pages.dev` serve identical production
+assets:
+
+- Entry asset `assets/index-D9PSB0nb.js`, SHA-256
+  `370d2e59eca4a6a99ae6a3b48e4274d424dee64de819ffedf78d2a4d924baf80`.
+- Admin asset `assets/AdminCustomers-Dbkudw8J.js`, SHA-256
+  `c4b19b6c007d73b1bb9a6396b6a6b971da95fee918b0a3d3206627fe357e25f7`.
+- The admin asset contains the blind-review notice and independent-choice
+  placeholder, and does not contain `Observed hold amber`.
+- Direct Worker and same-domain health both return 200 with Worker JSON.
+
+Read-only post-deploy D1 checks reported one owner-only pilot enrollment, zero
+client enrollments, five release decisions, zero adjudications, zero
+autopublish consents, zero Protected Autopilot workspaces, and latest
+readiness `ready=0`. The single Hugheseys Que match remains
+`status='on_hold'`. D1 reported `changed_db=false` and `rows_written=0` for the
+verification queries. No post, consent, learning setting, rollout flag, or
+customer status was changed by this repair.
