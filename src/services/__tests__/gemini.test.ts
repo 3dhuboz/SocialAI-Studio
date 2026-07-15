@@ -30,6 +30,8 @@ import {
   setActiveArchetype,
   setGeminiAuth,
   clearFactsCache,
+  buildGroundTruthBlock,
+  isSmartPostSafetyCleared,
   generateSmartSchedule,
   SAFE_FALLBACK_SCENES as SAFE_FALLBACK_SCENES_FRONTEND,
   ARCHETYPE_IMAGE_GUARDRAILS as ARCHETYPE_IMAGE_GUARDRAILS_FRONTEND,
@@ -415,6 +417,43 @@ describe('timezone detection', () => {
   });
 });
 
+describe('Facebook evidence provenance', () => {
+  it('keeps unresolved drafts out of automatic scheduling', () => {
+    expect(isSmartPostSafetyCleared({})).toBe(true);
+    expect(isSmartPostSafetyCleared({ _needsReview: false })).toBe(true);
+    expect(isSmartPostSafetyCleared({ _needsReview: true })).toBe(false);
+  });
+
+  it('keeps historical captions as voice signals instead of factual proof', () => {
+    const block = buildGroundTruthBlock([
+      {
+        fact_type: 'about',
+        content: 'Page: Penny Wise I.T\nFollowers: 11535',
+        metadata: { source: 'postproxy' },
+        engagement_score: 0,
+      },
+      {
+        fact_type: 'own_post',
+        content: 'A past caption claimed a 3,735% ROI without source evidence.',
+        metadata: { likes: 12 },
+        engagement_score: 12,
+      },
+      {
+        fact_type: 'photo',
+        content: 'An old photo caption claimed five hours saved every week.',
+        metadata: {},
+        engagement_score: 0,
+      },
+    ]);
+
+    expect(block).toContain('VOICE AND PERFORMANCE SIGNALS');
+    expect(block).toContain('not factual evidence');
+    expect(block).not.toContain('These are the ONLY facts you may cite');
+    expect(block).not.toContain('old photo caption claimed five hours');
+    expect(block).not.toContain('11535');
+  });
+});
+
 describe('generateSmartSchedule campaign research grounding', () => {
   beforeEach(() => {
     clearFactsCache();
@@ -537,6 +576,216 @@ describe('generateSmartSchedule campaign research grounding', () => {
     expect(finalPrompt).not.toMatch(/weekly content planner|corkboard filled with printed content cards|closed notebook centred/i);
     expect(finalPrompt).toContain('treat that website as the SALES CHANNEL');
     expect(finalPrompt).toContain('NEVER depict a laptop, website screen, browser, desk, office planner');
+  });
+});
+
+describe('generateSmartSchedule safety review', () => {
+  beforeEach(() => {
+    clearFactsCache();
+    setActiveArchetype(null);
+    vi.restoreAllMocks();
+  });
+
+  it('batch-repairs unsupported claims without treating old captions as proof', async () => {
+    const aiPrompts: string[] = [];
+    const unsafePosts = [
+      {
+        platform: 'Facebook',
+        postType: 'image',
+        scheduledFor: '2026-07-20T09:00:00',
+        topic: 'workflow automation',
+        content: 'Copying data five times a week means five hours gone. Workflow automation fixes it.',
+        hashtags: ['#WorkflowAutomation'],
+        imagePrompt: 'notebook beside a keyboard in daylight',
+        reasoning: 'weekday slot',
+        pillar: 'Tactical SMB Tip (no product mention)',
+      },
+      {
+        platform: 'Facebook',
+        postType: 'image',
+        scheduledFor: '2026-07-21T09:00:00',
+        topic: 'AI websites',
+        content: 'AI websites start with understanding the business before the build begins.',
+        hashtags: ['#WebsiteDesign'],
+        imagePrompt: 'website planning notes in daylight',
+        reasoning: 'weekday slot',
+        pillar: 'Service Education',
+      },
+      {
+        platform: 'Facebook',
+        postType: 'image',
+        scheduledFor: '2026-07-22T09:00:00',
+        topic: 'white-label software',
+        content: 'White-label software can give an agency a branded client tool without starting from zero.',
+        hashtags: ['#AgencyTools'],
+        imagePrompt: 'brand planning cards on a table',
+        reasoning: 'weekday slot',
+        pillar: 'Service Education',
+      },
+    ];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const href = String(url);
+      if (href.includes('/api/db/facts')) {
+        return new Response(JSON.stringify({
+          facts: [
+            {
+              fact_type: 'photo',
+              content: 'An old generated caption claimed a 3,735% ROI and five hours saved.',
+              metadata: {},
+              engagement_score: 100,
+            },
+            {
+              fact_type: 'own_post',
+              content: 'A historical caption repeated an unsupported customer result.',
+              metadata: { likes: 8 },
+              engagement_score: 8,
+            },
+            {
+              fact_type: 'about',
+              content: 'Page: Penny Wise I.T\nFollowers: 11535',
+              metadata: { source: 'postproxy' },
+              engagement_score: 0,
+            },
+          ],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (href.includes('/api/ai/generate')) {
+        const body = JSON.parse(String(init?.body || '{}')) as { prompt?: string };
+        const prompt = body.prompt || '';
+        aiPrompts.push(prompt);
+        let text: string;
+        if (aiPrompts.length === 1) {
+          text = JSON.stringify({
+            bestPostingTimes: ['09:00'],
+            bestDays: ['Monday'],
+            contentPillars: ['Tactical SMB Tip (no product mention)', 'Service Education'],
+            platformSplit: { facebook: 100, instagram: 0 },
+          });
+        } else if (aiPrompts.length === 2) {
+          text = JSON.stringify({ strategy: 'grounded strategy', posts: unsafePosts });
+        } else if (prompt.includes('BATCH SAFETY EDITOR')) {
+          text = JSON.stringify({
+            posts: [
+              {
+                index: 0,
+                status: 'repaired',
+                reason: 'Removed unsupported frequency and time-saving claims.',
+                content: 'Repeated copy-and-paste work can drain attention. Map one recurring handoff, then automate that step first.',
+              },
+              { index: 1, status: 'pass', reason: '', content: unsafePosts[1].content },
+              { index: 2, status: 'pass', reason: '', content: unsafePosts[2].content },
+            ],
+          });
+        } else if (prompt.includes('You are a strict editor')) {
+          text = JSON.stringify({
+            specifics_grounded: 0,
+            no_invented_testimonials: 1,
+            no_invented_stats: 0,
+            no_fake_urgency: 1,
+            reason: 'Unsupported claim.',
+          });
+        } else {
+          text = JSON.stringify({
+            content: 'A safe generic replacement.',
+            hashtags: ['#SmallBusiness'],
+            imagePrompt: 'notebook in daylight',
+          });
+        }
+        return new Response(JSON.stringify({ text }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({}), { status: 404, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    const result = await generateSmartSchedule(
+      'Penny Wise I.T',
+      'web hosting, custom app development and workflow automation',
+      'Friendly & professional',
+      { followers: 75, engagement: 5.3, reach: 0, postsLast30Days: 29 },
+      3,
+      'Australia',
+      { facebook: true, instagram: false },
+      false,
+      {
+        description: 'Penny Wise I.T helps Australian small businesses with custom websites, apps and workflow automation.',
+        productsServices: 'AI websites, custom app development, workflow automation, white-label SaaS',
+        targetAudience: 'Australian small business owners and agencies',
+      },
+      false,
+      'smart',
+    );
+
+    const safetyPrompts = aiPrompts.filter((prompt) => prompt.includes('BATCH SAFETY EDITOR'));
+    expect(safetyPrompts).toHaveLength(1);
+    expect(safetyPrompts[0]).toContain('Historical posts and photo captions are not factual evidence');
+    expect(safetyPrompts[0]).not.toContain('3,735% ROI');
+    expect(safetyPrompts[0]).not.toContain('11535');
+    expect(aiPrompts.length).toBeLessThanOrEqual(4);
+    expect(result.posts[0].content).not.toContain('five hours');
+    expect(result.posts.every((post) => !post._needsReview)).toBe(true);
+  });
+
+  it('holds every draft whose batch safety result is incomplete', async () => {
+    let aiCall = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const href = String(url);
+      if (href.includes('/api/db/facts')) {
+        return new Response(JSON.stringify({ facts: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (href.includes('/api/ai/generate')) {
+        aiCall += 1;
+        const text = aiCall === 1
+          ? JSON.stringify({
+              bestPostingTimes: ['09:00'],
+              bestDays: ['Monday'],
+              contentPillars: ['Service Education'],
+              platformSplit: { facebook: 100, instagram: 0 },
+            })
+          : aiCall === 2
+            ? JSON.stringify({
+                strategy: 'safe strategy',
+                posts: [{
+                  platform: 'Facebook',
+                  postType: 'image',
+                  scheduledFor: '2026-07-20T09:00:00',
+                  topic: 'workflow automation',
+                  content: 'Workflow automation can reduce repeated copying between business systems.',
+                  hashtags: ['#WorkflowAutomation'],
+                  imagePrompt: 'workflow planning cards in daylight',
+                  reasoning: 'weekday slot',
+                  pillar: 'Service Education',
+                }],
+              })
+            : JSON.stringify({ posts: [] });
+        return new Response(JSON.stringify({ text }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({}), { status: 404 });
+    });
+
+    const result = await generateSmartSchedule(
+      'Penny Wise I.T',
+      'web design & development',
+      'Friendly & professional',
+      { followers: 75, engagement: 5.3, reach: 0, postsLast30Days: 29 },
+      1,
+      'Australia',
+      { facebook: true, instagram: false },
+      false,
+      { productsServices: 'Custom websites and workflow automation' },
+      false,
+      'smart',
+    );
+
+    expect(result.posts).toHaveLength(1);
+    expect(result.posts[0]._needsReview).toBe(true);
+    expect(result.posts[0]._reviewReason).toMatch(/incomplete/i);
+    expect(isSmartPostSafetyCleared(result.posts[0])).toBe(false);
   });
 });
 

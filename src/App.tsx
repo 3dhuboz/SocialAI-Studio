@@ -26,7 +26,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { AnimatedReelPreview } from './components/AnimatedReelPreview';
 // OnboardingWizard is modal-gated (only mounted when showOnboarding is true).
 const OnboardingWizard = lazy(() => import('./components/OnboardingWizard').then(m => ({ default: m.OnboardingWizard })));
-import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, repairSmartScheduleImagePromptForArchetype, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
+import { generateSocialPost, generateMarketingImage, generateMarketingImageUrl, analyzePostTimes, generateRecommendations, generateSmartSchedule, rewritePost, generateInsightReport, generateInsightReportFromPosts, generateVideoScript, setActiveArchetype, repairSmartScheduleImagePromptForArchetype, isSmartPostSafetyCleared, InsightReport, SmartScheduledPost, VideoScript } from './services/gemini';
 import { FacebookService } from './services/facebookService';
 import { FalService } from './services/falService';
 import { addAudioToVideo, trackUrlForMood } from './services/videoAudioService';
@@ -568,7 +568,7 @@ const getQuickStarts = (businessType: string, businessName: string) => {
 
 // ── Autopilot draft persistence ─────────────────────────
 const DRAFT_KEY_PREFIX = 'sai_autopilot_draft';
-const DRAFT_SCHEMA_VERSION = 5;
+const DRAFT_SCHEMA_VERSION = 6;
 const DRAFT_MAX_AGE_MS = 48 * 60 * 60 * 1000; // 48 hours
 // One-time migration: nuke ALL old drafts that were generated with corrupted profile data
 // This version flag ensures it only runs once per browser
@@ -1529,6 +1529,8 @@ const Dashboard: React.FC = () => {
   // Smart Schedule State — restored from localStorage draft if browser crashed before accepting
   const [_initialDraft] = useState(() => readDraft(null)); // reads localStorage exactly once (own workspace draft)
   const [smartPosts, setSmartPosts] = useState<SmartScheduledPost[]>(_initialDraft?.posts ?? []);
+  const safeSmartPostCount = smartPosts.filter(isSmartPostSafetyCleared).length;
+  const heldSmartPostCount = smartPosts.length - safeSmartPostCount;
   const [smartStrategy, setSmartStrategy] = useState(_initialDraft?.strategy ?? '');
   const [draftRestoredAt, setDraftRestoredAt] = useState<number | null>(_initialDraft?.savedAt ?? null);
   const [isSmartGenerating, setIsSmartGenerating] = useState(false);
@@ -1537,7 +1539,7 @@ const Dashboard: React.FC = () => {
   const [smartCount, setSmartCount] = useState(7);
   const [includeVideos, setIncludeVideos] = useState(false);
   const [autopilotPlatform, setAutopilotPlatform] = useState<'both' | 'facebook' | 'instagram'>('both');
-  const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | null>(null);
+  const [smartGenPhase, setSmartGenPhase] = useState<'researching' | 'writing' | 'reviewing' | null>(null);
 
   // ── FB-scraped knowledge state — shows facts count + manual refresh ──
   const [factCount, setFactCount] = useState<number | null>(null);
@@ -1574,7 +1576,7 @@ const Dashboard: React.FC = () => {
       const res = await fetch(`${(import.meta.env as any).VITE_AI_WORKER_URL || 'https://socialai-api.steve-700.workers.dev'}${path}`, { method: 'POST', headers });
       const data = await res.json();
       if (res.ok) {
-        toast(`Refreshed ${data.inserted} facts from Facebook${data.errors?.length ? ` (${data.errors.length} warnings)` : ''}`, 'success');
+        toast(`Refreshed ${data.inserted} Facebook signals${data.errors?.length ? ` (${data.errors.length} warnings)` : ''}`, 'success');
         clearFactsCache();
         await loadFactsStatus();
       } else {
@@ -1610,7 +1612,6 @@ const Dashboard: React.FC = () => {
   // Smart post image generation
   const [smartPostImages, setSmartPostImages] = useState<Record<number, string>>({});
   const [autoGenSet, setAutoGenSet] = useState<Set<number>>(new Set());
-  const [currentGenIdx, setCurrentGenIdx] = useState<number | null>(null);
   const [imgGenDone, setImgGenDone] = useState(0);
   const uploadFileRef = useRef<HTMLInputElement>(null);
   const [uploadTargetIdx, setUploadTargetIdx] = useState<number | null>(null);
@@ -1678,6 +1679,9 @@ const Dashboard: React.FC = () => {
     }, 2800);
     return () => clearInterval(id);
   }, [isSmartGenerating]);
+  const activeGenerationStep = smartGenPhase === 'reviewing'
+    ? { label: 'Safety-checking and automatically repairing every post...', pct: 92 }
+    : TICKER_STEPS[tickerIdx];
 
   // Insights State
   const [recommendations, setRecommendations] = useState('');
@@ -2132,36 +2136,43 @@ const Dashboard: React.FC = () => {
 
   // ── Auto-generate images for all smart posts ──
   const autoGenerateAllImages = async (posts: SmartScheduledPost[]) => {
-    const allIdxs = new Set(posts.map((_, i) => i));
-    setAutoGenSet(allIdxs);
+    const candidates = posts
+      .map((post, index) => ({ post, index }))
+      .filter(({ post }) => isSmartPostSafetyCleared(post));
+    setAutoGenSet(new Set(candidates.map(({ index }) => index)));
     setImgGenDone(0);
-    for (let i = 0; i < posts.length; i++) {
-      const rawPrompt = posts[i].imagePrompt || posts[i].topic;
-      const prompt = guardSmartImagePrompt({ ...posts[i], imagePrompt: rawPrompt });
-      setCurrentGenIdx(i);
-      if (!prompt) {
-        setAutoGenSet(prev => { const s = new Set(prev); s.delete(i); return s; });
-        setImgGenDone(d => d + 1);
-        continue;
+    let cursor = 0;
+    const generateNext = async () => {
+      while (cursor < candidates.length) {
+        const candidate = candidates[cursor];
+        cursor += 1;
+        const { post, index } = candidate;
+        const rawPrompt = post.imagePrompt || post.topic;
+        const prompt = guardSmartImagePrompt({ ...post, imagePrompt: rawPrompt });
+        try {
+          if (!prompt) continue;
+          if (prompt !== rawPrompt) {
+            setSmartPosts(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, imagePrompt: prompt } : item));
+            setSmartPostImages(prev => {
+              const next = { ...prev };
+              delete next[index];
+              return next;
+            });
+          }
+          const seedHint = `smart-auto:${index}:${post.scheduledFor}:${post.pillar || ''}:${post.topic || ''}`;
+          const img = await generateImage(prompt, post.content, seedHint);
+          if (img) setSmartPostImages(prev => ({ ...prev, [index]: img }));
+        } catch { /* the publish prewarmer remains the automatic fallback */ }
+        finally {
+          setAutoGenSet(prev => { const next = new Set(prev); next.delete(index); return next; });
+          setImgGenDone(done => done + 1);
+        }
       }
-      if (prompt !== rawPrompt) {
-        posts[i] = { ...posts[i], imagePrompt: prompt };
-        setSmartPosts(prev => prev.map((p, idx) => idx === i ? { ...p, imagePrompt: prompt } : p));
-        setSmartPostImages(prev => {
-          const next = { ...prev };
-          delete next[i];
-          return next;
-        });
-      }
-      try {
-        const seedHint = `smart-auto:${i}:${posts[i].scheduledFor}:${posts[i].pillar || ''}:${posts[i].topic || ''}`;
-        const img = await generateImage(prompt, posts[i].content, seedHint);
-        if (img) setSmartPostImages(prev => ({ ...prev, [i]: img }));
-      } catch { /* silently skip */ }
-      setAutoGenSet(prev => { const s = new Set(prev); s.delete(i); return s; });
-      setImgGenDone(d => d + 1);
-    }
-    setCurrentGenIdx(null);
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(2, candidates.length) },
+      () => generateNext(),
+    ));
   };
 
   const handleUploadImage = (idx: number) => {
@@ -2508,7 +2519,16 @@ const Dashboard: React.FC = () => {
       acceptInFlight.current = false;
       return;
     }
-    const total = smartPosts.length;
+    const publishableEntries = smartPosts
+      .map((post, index) => ({ post, index }))
+      .filter(({ post }) => isSmartPostSafetyCleared(post));
+    const heldCount = smartPosts.length - publishableEntries.length;
+    if (publishableEntries.length === 0) {
+      toast('No safety-cleared posts are available. Generate a fresh calendar and the app will auto-repair it.', 'warning');
+      acceptInFlight.current = false;
+      return;
+    }
+    const total = publishableEntries.length;
     setIsAccepting(true);
     setAcceptProgress(0);
     setAcceptSaved(0);
@@ -2522,7 +2542,7 @@ const Dashboard: React.FC = () => {
     let imageGenFailures = 0;
     try {
       const results = await Promise.all(
-        smartPosts.map(async (sp, i) => {
+        publishableEntries.map(async ({ post: sp, index: i }) => {
           // Persist image as a public URL using the same smart prompt logic
           // (business-type aware, anti-generic, no people/faces)
           const rawImagePrompt = sp.imagePrompt || sp.topic || '';
@@ -2584,6 +2604,9 @@ const Dashboard: React.FC = () => {
       } else {
         toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
       }
+      if (heldCount > 0) {
+        toast(`${heldCount} unresolved draft${heldCount === 1 ? ' was' : 's were'} held automatically and not scheduled.`, 'warning');
+      }
 
       // v5 — debit reel credits for any video posts in this batch. Single
       // workspace-level UPDATE keeps the DB and local state in sync. Server
@@ -2630,7 +2653,6 @@ const Dashboard: React.FC = () => {
       setSmartStrategy('');
       setSmartPostImages({});
       setAutoGenSet(new Set());
-      setCurrentGenIdx(null);
       setActiveTab('calendar');
     } catch (e: any) {
       // 409 NOT_CONNECTED on any post in the batch (Promise.all rejects on
@@ -4685,15 +4707,15 @@ const Dashboard: React.FC = () => {
                       {factCount === null ? (
                         <span className="text-white/30">Checking AI knowledge…</span>
                       ) : factCount === 0 ? (
-                        <span className="text-amber-400">⚠️ No real data yet — AI may invent</span>
+                        <span className="text-amber-400">No Facebook history yet — using your business profile</span>
                       ) : (
-                        <span className="text-emerald-400">✓ {factCount} facts from Facebook ready</span>
+                        <span className="text-emerald-400">✓ Profile + {factCount} Facebook signals ready</span>
                       )}
                       <button
                         onClick={refreshFactsFromFacebook}
                         disabled={factsRefreshing}
                         className="text-[11px] text-blue-300 hover:text-blue-200 underline underline-offset-2 disabled:opacity-50"
-                        title="Pull the latest posts, comments, about info, photos and events from this workspace's connected Facebook Page so the AI writes from real data instead of inventing details."
+                        title="Refresh Facebook voice, engagement, page-info and event signals. Historical captions guide style only and are never treated as proof of a factual claim."
                       >
                         {factsRefreshing ? 'Refreshing…' : factCount === 0 ? 'Pull from Facebook now' : 'Refresh'}
                       </button>
@@ -4721,26 +4743,36 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                      smartGenPhase === 'writing' ? 'bg-purple-500/15' : 'bg-amber-500/15'
+                      smartGenPhase === 'reviewing'
+                        ? 'bg-emerald-500/15'
+                        : smartGenPhase === 'writing' ? 'bg-purple-500/15' : 'bg-amber-500/15'
                     }`}>
                       <Loader2 size={16} className={`animate-spin ${
-                        smartGenPhase === 'writing' ? 'text-purple-400' : 'text-amber-400'
+                        smartGenPhase === 'reviewing'
+                          ? 'text-emerald-400'
+                          : smartGenPhase === 'writing' ? 'text-purple-400' : 'text-amber-400'
                       }`} />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-amber-300">{TICKER_STEPS[tickerIdx]?.label}</p>
+                        <p className="text-sm font-semibold text-amber-300">{activeGenerationStep?.label}</p>
                         {smartGenPhase && (
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            smartGenPhase === 'writing'
-                              ? 'bg-purple-500/20 text-purple-300'
-                              : 'bg-amber-500/20 text-amber-300'
+                            smartGenPhase === 'reviewing'
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : smartGenPhase === 'writing'
+                                ? 'bg-purple-500/20 text-purple-300'
+                                : 'bg-amber-500/20 text-amber-300'
                           }`}>
-                            {smartGenPhase === 'researching' ? 'Phase 1: Researching' : 'Phase 2: Writing posts'}
+                            {smartGenPhase === 'researching'
+                              ? 'Phase 1: Researching'
+                              : smartGenPhase === 'writing'
+                                ? 'Phase 2: Writing posts'
+                                : 'Phase 3: Auto safety repair'}
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-white/25 mt-0.5">This can take 30–60 seconds — two AI calls for research + content</p>
+                      <p className="text-xs text-white/25 mt-0.5">One batch safety pass repairs issues automatically — no per-post approval required</p>
                     </div>
                   </div>
                   <button
@@ -4754,14 +4786,16 @@ const Dashboard: React.FC = () => {
                 <div className="w-full bg-white/8 rounded-full h-2">
                   <div
                     className={`h-2 rounded-full transition-all duration-700 ${
-                      smartGenPhase === 'writing'
-                        ? 'bg-gradient-to-r from-purple-400 to-pink-500'
-                        : 'bg-gradient-to-r from-amber-400 to-orange-500'
+                      smartGenPhase === 'reviewing'
+                        ? 'bg-gradient-to-r from-emerald-400 to-teal-400'
+                        : smartGenPhase === 'writing'
+                          ? 'bg-gradient-to-r from-purple-400 to-pink-500'
+                          : 'bg-gradient-to-r from-amber-400 to-orange-500'
                     }`}
-                    style={{ width: `${TICKER_STEPS[tickerIdx]?.pct ?? 0}%` }}
+                    style={{ width: `${activeGenerationStep?.pct ?? 0}%` }}
                   />
                 </div>
-                <p className="text-xs text-white/20 text-right">{TICKER_STEPS[tickerIdx]?.pct ?? 0}% complete</p>
+                <p className="text-xs text-white/20 text-right">{activeGenerationStep?.pct ?? 0}% complete</p>
               </div>
             )}
 
@@ -4784,20 +4818,20 @@ const Dashboard: React.FC = () => {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-extrabold text-amber-300 tracking-wide">Unsaved drafts from your last session</p>
                         <p className="text-xs text-white/50 mt-0.5">
-                          {smartPosts.length} post{smartPosts.length !== 1 ? 's' : ''} waiting — publish them to your calendar or discard to start fresh.
+                          {safeSmartPostCount} safety-cleared post{safeSmartPostCount === 1 ? '' : 's'} waiting{heldSmartPostCount > 0 ? `; ${heldSmartPostCount} unresolved held out automatically` : ''}.
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2.5">
                       <button
                         onClick={handleAcceptSmartPosts}
-                        disabled={isAccepting || autoGenSet.size > 0}
+                        disabled={isAccepting || autoGenSet.size > 0 || safeSmartPostCount === 0}
                         className="flex-1 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 text-sm shadow-md shadow-green-900/30 transition"
                       >
                         {isAccepting ? (
                           <><Loader2 size={14} className="animate-spin" /> Saving…</>
                         ) : (
-                          <><CalendarPlus size={14} /> Publish all {smartPosts.length} posts</>
+                          <><CalendarPlus size={14} /> Add {safeSmartPostCount} safe post{safeSmartPostCount === 1 ? '' : 's'}</>
                         )}
                       </button>
                       <button
@@ -4813,28 +4847,30 @@ const Dashboard: React.FC = () => {
                 {/* Accept All bar */}
                 <div className="sticky z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl" style={{ top: 'calc(env(safe-area-inset-top) + 72px)' }}>
                   <div>
-                    <p className="text-sm font-bold text-white">{smartPosts.length} posts ready</p>
+                    <p className="text-sm font-bold text-white">{safeSmartPostCount} safety-checked post{safeSmartPostCount === 1 ? '' : 's'} ready</p>
                     {autoGenSet.size > 0 ? (
                       <p className="text-xs text-amber-400 flex items-center gap-1">
-                        <Loader2 size={10} className="animate-spin" /> Generating images… {imgGenDone}/{smartPosts.length} — Accept disabled until done
+                        <Loader2 size={10} className="animate-spin" /> Generating images two at a time… {imgGenDone}/{safeSmartPostCount}
                       </p>
                     ) : (
-                      <p className="text-xs text-white/30">Review below, then add all to your calendar</p>
+                      <p className="text-xs text-white/30">
+                        Safety review completed automatically{heldSmartPostCount > 0 ? ` — ${heldSmartPostCount} unresolved held out` : ''}
+                      </p>
                     )}
                   </div>
                   <div className="flex flex-col items-end gap-1.5">
                     <button
                       onClick={handleAcceptSmartPosts}
-                      disabled={isAccepting || autoGenSet.size > 0}
-                      title={autoGenSet.size > 0 ? `Wait for image generation to finish (${imgGenDone}/${smartPosts.length})` : ''}
+                      disabled={isAccepting || autoGenSet.size > 0 || safeSmartPostCount === 0}
+                      title={autoGenSet.size > 0 ? `Wait for image generation to finish (${imgGenDone}/${safeSmartPostCount})` : ''}
                       className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black px-6 py-3 rounded-xl flex items-center gap-2 text-sm shadow-lg shadow-green-900/30 transition-all min-w-[220px] justify-center press"
                     >
                       {isAccepting ? (
-                        <><Loader2 size={16} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
+                        <><Loader2 size={16} className="animate-spin" /> Saving {acceptSaved} of {safeSmartPostCount}…</>
                       ) : autoGenSet.size > 0 ? (
-                        <><Loader2 size={16} className="animate-spin" /> Waiting for images ({imgGenDone}/{smartPosts.length})</>
+                        <><Loader2 size={16} className="animate-spin" /> Waiting for images ({imgGenDone}/{safeSmartPostCount})</>
                       ) : (
-                        <><CheckCircle size={16} /> Accept All & Add to Calendar</>
+                        <><CheckCircle size={16} /> Add {safeSmartPostCount} Safe Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
                       )}
                     </button>
                     {isAccepting && (
@@ -4936,15 +4972,15 @@ const Dashboard: React.FC = () => {
                               </span>
                             </>
                           )}
-                          {(sp as any)._needsReview && (
-                            <span title={(sp as any)._reviewReason || 'AI may have invented details — please review'} className="text-[10px] bg-red-900/50 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-bold">
-                              ⚠️ Needs review
+                          {sp._needsReview && (
+                            <span title={sp._reviewReason || 'Automatic safety repair could not clear this draft'} className="text-[10px] bg-red-900/50 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-bold">
+                              Held automatically
                             </span>
                           )}
                         </div>
-                        {(sp as any)._needsReview && (
+                        {sp._needsReview && (
                           <div className="text-[11px] text-red-300 bg-red-950/30 border border-red-500/20 rounded-lg px-3 py-2">
-                            <strong>Possible fabrication:</strong> {(sp as any)._reviewReason}. Edit or regenerate before accepting.
+                            <strong>Not scheduled:</strong> {sp._reviewReason}. The safety gate has excluded this draft automatically.
                           </div>
                         )}
                         <p className="text-sm text-white/80 leading-relaxed">{sp.content}</p>
@@ -5023,13 +5059,13 @@ const Dashboard: React.FC = () => {
                   })()}
                   <button
                     onClick={handleAcceptSmartPosts}
-                    disabled={isAccepting}
+                    disabled={isAccepting || autoGenSet.size > 0 || safeSmartPostCount === 0}
                     className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:opacity-90 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 text-base shadow-xl shadow-green-900/20 transition-all press"
                   >
                     {isAccepting ? (
-                      <><Loader2 size={18} className="animate-spin" /> Saving {acceptSaved} of {smartPosts.length}…</>
+                      <><Loader2 size={18} className="animate-spin" /> Saving {acceptSaved} of {safeSmartPostCount}…</>
                     ) : (
-                      <><CheckCircle size={18} /> Accept All {smartPosts.length} Posts & Add to Calendar</>
+                      <><CheckCircle size={18} /> Add {safeSmartPostCount} Safe Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
                     )}
                   </button>
                   {isAccepting && (
