@@ -377,28 +377,23 @@ const fmtRate = (value: number | null) => value == null ? 'No sample' : `${(valu
 const SampleAdjudicationForm: React.FC<{
   decisionId: string;
   postId: string | null;
-  observedState: string | null;
   saving: boolean;
   onAdjudicate: (decisionId: string, input: LearningAdjudicationInput) => Promise<void>;
-}> = ({ decisionId, postId, observedState, saving, onAdjudicate }) => {
-  const canonicalObserved = observedState === 'pass_green'
-    || observedState === 'hold_amber'
-    || observedState === 'block_red'
-    ? observedState
-    : 'pass_green';
-  const [expectedState, setExpectedState] = useState<LearningAdjudicationInput['expectedState']>(canonicalObserved);
+}> = ({ decisionId, postId, saving, onAdjudicate }) => {
+  const [expectedState, setExpectedState] = useState<LearningAdjudicationInput['expectedState'] | ''>('');
   const [severity, setSeverity] = useState<LearningAdjudicationInput['severity']>('advisory');
   const [note, setNote] = useState('');
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!note.trim()) return;
+    if (!expectedState || !note.trim()) return;
     try {
       await onAdjudicate(decisionId, {
         expectedState,
         severity,
         note: note.trim(),
       });
+      setExpectedState('');
       setNote('');
     } catch {
       // The parent displays the API error without losing the operator's note.
@@ -411,7 +406,10 @@ const SampleAdjudicationForm: React.FC<{
         <div>
           <p className="text-[10px] font-bold text-sky-200/75">Sample receipt {decisionId}</p>
           <p className="mt-0.5 text-[9px] text-white/30">
-            Post {postId ?? 'unavailable'} - Observed {(observedState ?? 'unknown').replace(/_/g, ' ')}
+            Post {postId ?? 'unavailable'} - Blind review
+          </p>
+          <p className="mt-1 text-[9px] text-sky-100/35">
+            Observed release state is hidden until this label is saved.
           </p>
         </div>
         <span className="rounded-full border border-white/10 bg-black/15 px-2 py-1 text-[9px] font-bold text-white/35">
@@ -427,6 +425,7 @@ const SampleAdjudicationForm: React.FC<{
             disabled={saving}
             className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] text-white outline-none"
           >
+            <option value="" disabled>Choose independently</option>
             <option value="pass_green">Pass green</option>
             <option value="hold_amber">Hold amber</option>
             <option value="block_red">Block red</option>
@@ -462,7 +461,7 @@ const SampleAdjudicationForm: React.FC<{
         </p>
         <button
           type="submit"
-          disabled={saving || !note.trim()}
+          disabled={saving || !expectedState || !note.trim()}
           className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/20 bg-sky-500/10 px-3 py-1.5 text-[10px] font-bold text-sky-200 transition hover:bg-sky-500/15 disabled:opacity-40"
         >
           {saving ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
@@ -752,7 +751,6 @@ export const LearningOperationsCard: React.FC<{
                   <SampleAdjudicationForm
                     decisionId={workspace.sampleDecisionId}
                     postId={workspace.samplePostId ?? null}
-                    observedState={workspace.sampleReleaseState ?? null}
                     saving={savingDecisionId === workspace.sampleDecisionId}
                     onAdjudicate={onAdjudicate}
                   />
