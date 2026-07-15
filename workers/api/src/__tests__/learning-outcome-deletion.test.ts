@@ -22,6 +22,7 @@ const EXPECTED_WORKSPACE_DELETE_ORDER = [
   'learning_profiles',
   'learning_signals',
   'learning_adjudications',
+  'learning_pilot_enrollments',
   'learning_critic_verdicts',
   'learning_decisions',
   'workspace_learning_settings',

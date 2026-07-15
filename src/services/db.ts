@@ -345,6 +345,11 @@ export interface LearningPilotQueue {
   candidates: LearningPilotCandidate[];
 }
 
+export interface LearningPilotCustomerConsent {
+  confirmed: true;
+  note: string;
+}
+
 export interface LearningPilotEnrollment {
   workspaceKey: string;
   ownerKind: 'user' | 'client';
@@ -353,6 +358,9 @@ export interface LearningPilotEnrollment {
   monthlyAiBudgetUsdCents: number;
   autopublishConsentAt: null;
   recordOnly: true;
+  pilotEnrollmentId: string;
+  pilotPolicyVersion: string;
+  enrolledAt: string;
 }
 
 export interface LearningPilotValidation {
@@ -653,10 +661,13 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     async enrollLearningPilotWorkspace(
       clientId: string | null,
       monthlyAiBudgetUsdCents: number,
+      customerConsent?: LearningPilotCustomerConsent,
     ): Promise<LearningPilotEnrollment> {
       const res = await f('/api/learning/pilot/enroll', j({
         clientId,
         monthlyAiBudgetUsdCents,
+        customerConsentConfirmed: customerConsent?.confirmed,
+        customerConsentNote: customerConsent?.note,
       }));
       return res.json() as Promise<LearningPilotEnrollment>;
     },

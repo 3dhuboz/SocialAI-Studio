@@ -25,6 +25,9 @@ export interface ReleaseEvidenceRow {
 
 export interface ReadinessMetrics {
   pilotDecisions: number;
+  pilotWorkspaceCount: number;
+  pilotUserDecisions: number;
+  pilotClientDecisions: number;
   adjudicatedDecisions: number;
   severeFalsePasses: number;
   falseHoldRate: number;
@@ -77,6 +80,7 @@ export interface PredictionSample {
 
 export interface ReadinessChecks {
   pilot: boolean;
+  pilotCohort: boolean;
   adjudications: boolean;
   severeFalsePasses: boolean;
   falseHolds: boolean;
@@ -108,6 +112,9 @@ export function evaluateReadiness(metrics: ReadinessMetrics): {
 } {
   const checks: ReadinessChecks = {
     pilot: metrics.pilotDecisions >= 30,
+    pilotCohort: metrics.pilotWorkspaceCount === 2
+      && metrics.pilotUserDecisions > 0
+      && metrics.pilotClientDecisions > 0,
     adjudications: metrics.adjudicatedDecisions >= 30,
     severeFalsePasses: metrics.severeFalsePasses === 0,
     falseHolds: metrics.falseHoldRate < 0.05,
@@ -217,6 +224,9 @@ export function buildReadinessMetrics(
   verdicts: PilotVerdictRow[],
   costs: WorkspaceCostTelemetry[],
 ): ReadinessMetrics {
+  const pilotDecisions = decisions.filter((decision) =>
+    decision.mode === 'approval'
+    && (decision.owner_kind === 'user' || decision.owner_kind === 'client'));
   const latestVerdicts = new Map<string, PilotVerdictRow>();
   for (const verdict of verdicts) {
     if (!BASE_REQUIRED_CRITICS.includes(verdict.critic_kind)) continue;
@@ -225,11 +235,11 @@ export function buildReadinessMetrics(
     if (!current || verdict.attempt > current.attempt) latestVerdicts.set(key, verdict);
   }
 
-  const expectedSlots = decisions.length * BASE_REQUIRED_CRITICS.length;
+  const expectedSlots = pilotDecisions.length * BASE_REQUIRED_CRITICS.length;
   let availableSlots = 0;
   let completeReceipts = 0;
   const predictionSamples: PredictionSample[] = [];
-  for (const decision of decisions) {
+  for (const decision of pilotDecisions) {
     const summary = parseSummary(decision.summary_json);
     const hasEveryCritic = BASE_REQUIRED_CRITICS.every((kind) =>
       latestVerdicts.has(`${decision.id}\u0000${kind}`));
@@ -253,7 +263,7 @@ export function buildReadinessMetrics(
     }
   }
 
-  const adjudicated = decisions.filter((decision) => decision.expected_state != null);
+  const adjudicated = pilotDecisions.filter((decision) => decision.expected_state != null);
   const severeFalsePasses = adjudicated.filter((decision) =>
     decision.release_state === 'pass_green'
     && decision.expected_state === 'block_red'
@@ -261,12 +271,12 @@ export function buildReadinessMetrics(
   const falseHolds = adjudicated.filter((decision) =>
     decision.expected_state === 'pass_green'
     && (decision.release_state === 'hold_amber' || decision.release_state === 'block_red')).length;
-  const criticalBypasses = decisions.filter((decision) =>
+  const criticalBypasses = pilotDecisions.filter((decision) =>
     (decision.mode === 'approval' || decision.mode === 'protected_autopilot')
     && decision.release_state !== 'pass_green'
     && decision.publication_event_id != null).length;
 
-  const workspaceKeys = new Set(decisions.map((decision) =>
+  const workspaceKeys = new Set(pilotDecisions.map((decision) =>
     workspaceTelemetryKey(decision.user_id, decision.workspace_key)));
   const costsByWorkspace = new Map(costs.map((cost) => [
     workspaceTelemetryKey(cost.userId, cost.workspaceKey),
@@ -285,16 +295,21 @@ export function buildReadinessMetrics(
     );
   });
 
-  const quality = predictionSamples.length === decisions.length && decisions.length >= 30
+  const quality = predictionSamples.length === pilotDecisions.length && pilotDecisions.length >= 30
     ? calculatePredictionQuality(predictionSamples)
     : { predictionLift: 0, rankCorrelation: 0 };
   return {
-    pilotDecisions: decisions.length,
+    pilotDecisions: pilotDecisions.length,
+    pilotWorkspaceCount: workspaceKeys.size,
+    pilotUserDecisions: pilotDecisions.filter((decision) => decision.owner_kind === 'user').length,
+    pilotClientDecisions: pilotDecisions.filter((decision) => decision.owner_kind === 'client').length,
     adjudicatedDecisions: adjudicated.length,
     severeFalsePasses,
     falseHoldRate: adjudicated.length === 0 ? 1 : falseHolds / adjudicated.length,
     requiredAvailability: expectedSlots === 0 ? 0 : availableSlots / expectedSlots,
-    decisionReceiptCoverage: decisions.length === 0 ? 0 : completeReceipts / decisions.length,
+    decisionReceiptCoverage: pilotDecisions.length === 0
+      ? 0
+      : completeReceipts / pilotDecisions.length,
     predictionLift: quality.predictionLift,
     rankCorrelation: quality.rankCorrelation,
     criticalBypasses,
@@ -368,6 +383,26 @@ export async function collectLearningReadiness(
       pe.id AS publication_event_id,
       lo.normalized_score
     FROM learning_decisions d
+    INNER JOIN learning_pilot_enrollments pen
+      ON pen.user_id = d.user_id
+     AND pen.workspace_key = d.workspace_key
+     AND pen.client_id IS d.client_id
+     AND pen.owner_kind = d.owner_kind
+     AND pen.owner_id = d.owner_id
+     AND pen.policy_version = ?
+     AND pen.record_only = 1
+     AND d.created_at >= pen.enrolled_at
+     AND pen.consent_confirmed_at <= d.created_at
+     AND (
+       (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
+       OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
+     )
+    LEFT JOIN users u
+      ON d.owner_kind = 'user' AND u.id = d.user_id
+    LEFT JOIN clients c
+      ON d.owner_kind = 'client'
+     AND c.id = d.client_id
+     AND c.user_id = d.user_id
     LEFT JOIN learning_adjudications a
       ON a.decision_id = d.id
      AND a.user_id = d.user_id
@@ -395,9 +430,19 @@ export async function collectLearningReadiness(
       ON lo.publication_event_id = pe.id
      AND lo.window_hours = 168
     WHERE d.stage = 'release'
+      AND d.mode = 'approval'
+      AND d.owner_kind IN ('user','client')
+      AND (
+        (d.owner_kind = 'user' AND u.id IS NOT NULL)
+        OR (
+          d.owner_kind = 'client'
+          AND c.id IS NOT NULL
+          AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+        )
+      )
     ORDER BY d.created_at DESC, d.id DESC
     LIMIT 30
-  `).all<PilotDecisionRow>();
+  `).bind(AUTOPILOT_POLICY_VERSION).all<PilotDecisionRow>();
   const decisions = pilot.results ?? [];
 
   let verdicts: PilotVerdictRow[] = [];

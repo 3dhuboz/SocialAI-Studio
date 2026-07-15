@@ -65,6 +65,11 @@ type PilotCandidateRow = {
   monthly_ai_budget_usd_cents: number | string | null;
 };
 
+type PilotEnrollmentRow = {
+  id: string;
+  enrolled_at: string;
+};
+
 type DecisionRow = Record<string, unknown> & {
   id: string;
   summary_json?: string | null;
@@ -459,6 +464,25 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         }
       }
 
+      let consentBasis: 'owner_self' | 'customer_attested' = 'owner_self';
+      let consentNote = 'Authenticated owner enrolled their own record-only pilot workspace.';
+      if (identity.ownerKind === 'client') {
+        const customerConsentNote = typeof body.customerConsentNote === 'string'
+          ? body.customerConsentNote.trim()
+          : '';
+        if (
+          body.customerConsentConfirmed !== true
+          || customerConsentNote.length < 10
+          || customerConsentNote.length > 500
+        ) {
+          return c.json({
+            error: 'Client pilot enrollment requires a customer consent attestation and note',
+          }, 400);
+        }
+        consentBasis = 'customer_attested';
+        consentNote = customerConsentNote;
+      }
+
       const drafts = await c.env.DB.prepare(`
         SELECT COUNT(*) AS draft_count
         FROM posts
@@ -475,12 +499,13 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
 
       const existing = await c.env.DB.prepare(`
         SELECT COUNT(*) AS approval_count
-        FROM workspace_learning_settings
-        WHERE user_id = ? AND owner_kind = ? AND mode = 'approval'
-          AND workspace_key != ?
+        FROM learning_pilot_enrollments
+        WHERE policy_version = ? AND owner_kind = ?
+          AND NOT (user_id = ? AND workspace_key = ?)
       `).bind(
-        identity.userId,
+        AUTOPILOT_POLICY_VERSION,
         identity.ownerKind,
+        identity.userId,
         identity.workspaceKey,
       ).first<{ approval_count: number | string | null }>();
       if (countValue(existing?.approval_count) > 0) {
@@ -497,6 +522,44 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         experimentRate: 0,
         monthlyAiBudgetUsdCents: budget,
       }, now);
+      const enrollmentId = crypto.randomUUID();
+      await c.env.DB.prepare(`
+        INSERT OR IGNORE INTO learning_pilot_enrollments (
+          id,user_id,workspace_key,client_id,owner_kind,owner_id,
+          policy_version,enrolled_by,enrolled_at,record_only,
+          consent_basis,consent_confirmed_at,consent_note
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).bind(
+        enrollmentId,
+        identity.userId,
+        identity.workspaceKey,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+        AUTOPILOT_POLICY_VERSION,
+        adminId,
+        now,
+        1,
+        consentBasis,
+        now,
+        consentNote,
+      ).run();
+      const enrollment = await c.env.DB.prepare(`
+        SELECT id, enrolled_at
+        FROM learning_pilot_enrollments
+        WHERE user_id = ? AND workspace_key = ?
+          AND client_id IS ? AND owner_kind = ? AND owner_id = ?
+          AND policy_version = ? AND record_only = 1
+        LIMIT 1
+      `).bind(
+        identity.userId,
+        identity.workspaceKey,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+        AUTOPILOT_POLICY_VERSION,
+      ).first<PilotEnrollmentRow>();
+      if (!enrollment) throw new Error('Pilot enrollment receipt could not be persisted');
       return c.json({
         workspaceKey: identity.workspaceKey,
         ownerKind: identity.ownerKind,
@@ -505,6 +568,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         monthlyAiBudgetUsdCents: budget,
         autopublishConsentAt: null,
         recordOnly: true,
+        pilotEnrollmentId: enrollment.id,
+        pilotPolicyVersion: AUTOPILOT_POLICY_VERSION,
+        enrolledAt: enrollment.enrolled_at,
       });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : 'Invalid request' }, 400);
@@ -533,7 +599,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
              ELSE COALESCE(NULLIF(TRIM(c.name), ''), 'Client workspace') END AS label,
         COUNT(*) AS eligible_draft_count,
         MIN(p.id) AS sample_post_id,
-        MAX(CASE WHEN w.mode = 'approval' THEN 1 ELSE 0 END) AS enrolled,
+        MAX(CASE WHEN pen.id IS NOT NULL AND w.mode = 'approval' THEN 1 ELSE 0 END) AS enrolled,
         MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents
       FROM posts p
       LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
@@ -544,6 +610,15 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
        AND w.client_id IS p.client_id
        AND w.owner_kind = CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
        AND w.owner_id = CASE WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+      LEFT JOIN learning_pilot_enrollments pen
+        ON pen.user_id = p.user_id
+       AND pen.workspace_key = CASE
+         WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+       AND pen.client_id IS p.client_id
+       AND pen.owner_kind = CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+       AND pen.owner_id = CASE WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+       AND pen.policy_version = ?
+       AND pen.record_only = 1
       WHERE p.user_id = ?
         AND p.status = 'Draft'
         AND (
@@ -567,7 +642,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       GROUP BY p.user_id,p.client_id
       ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
       LIMIT 50
-    `).bind(adminId).all<PilotCandidateRow>();
+    `).bind(AUTOPILOT_POLICY_VERSION, adminId).all<PilotCandidateRow>();
     return c.json({
       recordOnly: true,
       candidates: (rows.results ?? []).map((row) => ({
@@ -642,6 +717,23 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     );
     if (mode !== 'approval') {
       return c.json({ error: 'Workspace must be enrolled in approval-mode pilot validation' }, 409);
+    }
+    const enrollment = await c.env.DB.prepare(`
+      SELECT id FROM learning_pilot_enrollments
+      WHERE user_id = ? AND workspace_key = ?
+        AND client_id IS ? AND owner_kind = ? AND owner_id = ?
+        AND policy_version = ? AND record_only = 1
+      LIMIT 1
+    `).bind(
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      AUTOPILOT_POLICY_VERSION,
+    ).first<{ id: string }>();
+    if (!enrollment) {
+      return c.json({ error: 'Workspace has no current-policy pilot enrollment receipt' }, 409);
     }
 
     const post: PublishablePost = {

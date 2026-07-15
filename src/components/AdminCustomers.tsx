@@ -9,7 +9,8 @@ import { useDb } from '../hooks/useDb';
 import type {
   AdminStats, AdminCustomer, PaymentEvent, AdminUserAddons, AdminPrewarmReadiness,
   AdminPostFeedback,
-  AdminLearningOperations, LearningAdjudicationInput, LearningPilotQueue,
+  AdminLearningOperations, LearningAdjudicationInput, LearningPilotCustomerConsent,
+  LearningPilotQueue,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
 import { PaymentList } from './PaymentList';
@@ -151,12 +152,16 @@ export const AdminCustomers: React.FC = () => {
     setLearningPilotQueue(queue);
   };
 
-  const enrollLearningPilot = async (clientId: string | null, budgetCents: number) => {
+  const enrollLearningPilot = async (
+    clientId: string | null,
+    budgetCents: number,
+    customerConsent?: LearningPilotCustomerConsent,
+  ) => {
     const actionKey = `enroll:${clientId ?? '__owner__'}`;
     setLearningPilotActionKey(actionKey);
     setLearningError(null);
     try {
-      await db.enrollLearningPilotWorkspace(clientId, budgetCents);
+      await db.enrollLearningPilotWorkspace(clientId, budgetCents, customerConsent);
       await reloadLearningPanels();
     } catch (reason) {
       setLearningError(reason instanceof Error ? reason.message : 'Pilot enrollment could not be saved');
@@ -476,7 +481,11 @@ export const LearningOperationsCard: React.FC<{
   savingDecisionId: string | null;
   error?: string | null;
   onAdjudicate: (decisionId: string, input: LearningAdjudicationInput) => Promise<void>;
-  onPilotEnroll?: (clientId: string | null, budgetCents: number) => Promise<void>;
+  onPilotEnroll?: (
+    clientId: string | null,
+    budgetCents: number,
+    customerConsent?: LearningPilotCustomerConsent,
+  ) => Promise<void>;
   onPilotValidate?: (postId: string) => Promise<void>;
 }> = ({
   operations,
@@ -492,6 +501,8 @@ export const LearningOperationsCard: React.FC<{
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
   const killSwitchEngaged = operations?.globalSwitches.protectedAutopilot !== true;
   const [pilotBudgetDollars, setPilotBudgetDollars] = useState('5.00');
+  const [pilotCustomerConsentConfirmed, setPilotCustomerConsentConfirmed] = useState(false);
+  const [pilotCustomerConsentNote, setPilotCustomerConsentNote] = useState('');
   const budgetNumber = Number(pilotBudgetDollars);
   const pilotBudgetCents = Number.isFinite(budgetNumber)
     ? Math.round(budgetNumber * 100)
@@ -500,6 +511,13 @@ export const LearningOperationsCard: React.FC<{
   const pilotBudgetLabel = validPilotBudget
     ? `$${(pilotBudgetCents / 100).toFixed(2)}`
     : 'invalid cap';
+  const trimmedPilotConsentNote = pilotCustomerConsentNote.trim();
+  const validPilotCustomerConsent = pilotCustomerConsentConfirmed
+    && trimmedPilotConsentNote.length >= 10
+    && trimmedPilotConsentNote.length <= 500;
+  const hasUnenrolledClientPilot = pilotQueue?.candidates.some(
+    (candidate) => candidate.clientId !== null && !candidate.enrolled,
+  ) === true;
 
   return (
     <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${
@@ -584,6 +602,37 @@ export const LearningOperationsCard: React.FC<{
             </label>
           </div>
 
+          {hasUnenrolledClientPilot && (
+            <div className="mt-3 rounded-lg border border-amber-400/15 bg-amber-500/[0.035] p-3">
+              <p className="text-[10px] font-black text-amber-100/80">
+                Customer pilot consent attestation
+              </p>
+              <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
+                <input
+                  type="checkbox"
+                  checked={pilotCustomerConsentConfirmed}
+                  onChange={(event) => setPilotCustomerConsentConfirmed(event.target.checked)}
+                  className="mt-0.5 accent-amber-400"
+                />
+                I have confirmed this customer agreed to record-only AI critique of their draft posts.
+                This is not consent to publish.
+              </label>
+              <label className="mt-2 block text-[9px] font-bold uppercase tracking-wider text-white/35">
+                Consent evidence note
+                <textarea
+                  maxLength={500}
+                  value={pilotCustomerConsentNote}
+                  onChange={(event) => setPilotCustomerConsentNote(event.target.value)}
+                  placeholder="When and how the customer confirmed participation"
+                  className="mt-1 min-h-16 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
+                />
+              </label>
+              <p className="mt-1 text-[9px] text-white/30">
+                Client enrollment stays disabled until both are complete.
+              </p>
+            </div>
+          )}
+
           {pilotQueue.candidates.length === 0 ? (
             <p className="mt-3 text-[10px] text-white/30">No eligible unvalidated drafts are available.</p>
           ) : (
@@ -612,10 +661,23 @@ export const LearningOperationsCard: React.FC<{
                     </div>
                     <button
                       type="button"
-                      disabled={busy || (!candidate.enrolled && !validPilotBudget)}
+                      disabled={busy || (
+                        !candidate.enrolled
+                        && (
+                          !validPilotBudget
+                          || (candidate.clientId !== null && !validPilotCustomerConsent)
+                        )
+                      )}
                       onClick={() => candidate.enrolled
                         ? onPilotValidate?.(candidate.samplePostId)
-                        : onPilotEnroll?.(candidate.clientId, pilotBudgetCents)}
+                        : onPilotEnroll?.(
+                          candidate.clientId,
+                          pilotBudgetCents,
+                          candidate.clientId === null ? undefined : {
+                            confirmed: true,
+                            note: trimmedPilotConsentNote,
+                          },
+                        )}
                       className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
                     >
                       {busy ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}

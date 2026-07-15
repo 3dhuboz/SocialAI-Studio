@@ -258,3 +258,44 @@ previously recorded unavailable outcomes remain immutable historical evidence;
 they are not rewritten. Release enforcement, reach application, and Protected
 Autopilot remain disabled until authenticated pilot decisions, adjudications,
 outcomes, and readiness evidence satisfy the release gates.
+
+## 2026-07-15 Pilot Cohort Evidence Hardening
+
+### Pre-Enrollment Finding
+
+The readiness query previously treated the latest 30 global release decisions
+as pilot evidence and tied that evidence to each workspace's mutable current
+mode. That could count shadow decisions, omit the required owner/client cohort,
+or erase historical pilot proof after a workspace later changed mode.
+
+PR `#176` introduces a policy-versioned, record-only cohort boundary:
+
+- exactly one authenticated owner workspace and one consenting active client
+  may enroll for the current policy;
+- client enrollment requires an explicit admin attestation and evidence note;
+- only approval decisions created after the enrollment receipt count;
+- validation fails closed when settings exist without a current-policy receipt;
+- readiness requires exactly two participating workspaces with both owner and
+  client decisions; and
+- receipt updates are blocked while tenant-scoped privacy deletion remains
+  available through the existing erasure flow.
+
+### Verification Before Promotion
+
+- Worker: 89 test files and 1,114 tests passed; strict TypeScript passed.
+- Frontend: 15 test files and 175 tests passed; strict TypeScript and the
+  production Vite build passed.
+- GitHub PR `#176` was mergeable and its `typecheck-and-build` check passed.
+- An isolated D1 applied all v41 statements, rejected a receipt update with
+  `SQLITE_CONSTRAINT_TRIGGER`, and accepted the scoped privacy delete.
+
+### Production Migration State
+
+- Pre-migration Time Travel bookmark:
+  `00004fc7-00000000-000050a9-2267ca61addb9ee2157c42a3903b4624`.
+- v41 applied once with Wrangler 4.110.0; post-migration bookmark:
+  `00004fc8-00000006-000050a9-1d12776d2ef7a12b4bfd005986c92059`.
+- Remote verification found one pilot table with 13 columns, the exact-cohort
+  unique index, the update-blocking trigger, and zero enrollment rows.
+- No workspace was enrolled and no draft was validated during migration. The
+  Worker remains on the prior version until PR `#176` is merged and deployed.
