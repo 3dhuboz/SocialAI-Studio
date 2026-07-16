@@ -98,6 +98,7 @@ function makeEnv(rows?: Map<string, AlertRow>): Env {
   return {
     DB: makeD1(rows),
     FAL_API_KEY: 'fal_test',
+    FAL_ADMIN_API_KEY: 'fal_admin_test',
     RESEND_API_KEY: 're_test',
   } as unknown as Env;
 }
@@ -105,7 +106,7 @@ function makeEnv(rows?: Map<string, AlertRow>): Env {
 function mockFalAndResend(balances: number[]) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === 'https://api.fal.ai/v1/account/billing?expand=credits') {
-      expect(init?.headers).toEqual({ Authorization: 'Key fal_test' });
+      expect(init?.headers).toEqual({ Authorization: 'Key fal_admin_test' });
       const balance = balances.shift();
       return Response.json({
         username: 'socialai-studio',
@@ -166,5 +167,15 @@ describe('cronCheckFalCredits', () => {
     await expect(checkFalCreditsAlert(makeEnv())).rejects.toThrow(
       'fal.ai billing API returned an invalid response',
     );
+  });
+
+  it('checks credits with the admin key even when the generation key is absent', async () => {
+    const env = makeEnv();
+    env.FAL_API_KEY = undefined;
+    const fetchMock = mockFalAndResend([9]);
+
+    await cronCheckFalCredits(env);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

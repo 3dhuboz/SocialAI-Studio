@@ -21,7 +21,7 @@ interface FalCreditAlertRow {
 }
 
 export interface FalCreditAlertResult {
-  balance: unknown;
+  balance: number;
   alert: 'sent' | 'suppressed' | 'no_resend_key' | 'not_needed';
   threshold: number;
 }
@@ -61,7 +61,7 @@ export async function fetchFalCreditBalance(apiKey: string): Promise<FalCreditBa
 }
 
 export async function cronCheckFalCredits(env: Env) {
-  const apiKey = env.FAL_API_KEY;
+  const apiKey = env.FAL_ADMIN_API_KEY || env.FAL_API_KEY;
   const resendKey = env.RESEND_API_KEY;
   if (!apiKey || !resendKey) return;
 
@@ -80,7 +80,7 @@ export async function cronCheckFalCredits(env: Env) {
 }
 
 export async function checkFalCreditsAlert(env: Env): Promise<FalCreditAlertResult> {
-  const apiKey = env.FAL_API_KEY;
+  const apiKey = env.FAL_ADMIN_API_KEY || env.FAL_API_KEY;
   if (!apiKey) throw new Error('fal.ai API key not configured');
 
   const { balance } = await fetchFalCreditBalance(apiKey);
