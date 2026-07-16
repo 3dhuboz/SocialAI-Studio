@@ -212,12 +212,14 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Current source schema version:** v42
 
-**Current production schema version:** v41 until the v42 rollout is verified.
+**Current production schema version:** v42.
 
 Delivery uncertainty migration: `workers/api/schema_v42_delivery_uncertainty_receipts.sql`.
 It adds tenant-scoped, append-only shadow evidence around provider delivery
 attempts. It does not change retries, post status, release decisions, or
-publishing behavior.
+publishing behavior. The migration and Worker instrumentation are live; the
+first production receipt must come from a natural publish rather than a
+synthetic customer action.
 
 Pilot cohort migration: `workers/api/schema_v41_learning_pilot_enrollments.sql`.
 It adds append-only pilot enrollment receipts, preserves scoped privacy erasure,
@@ -242,6 +244,8 @@ Release 1 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-1-s
 Release 3 proof is recorded in `docs/superpowers/evidence/2026-07-14-release-3-organic-reach-shadow.md`.
 
 Release 4 dormant rollout proof is recorded in `docs/superpowers/evidence/2026-07-14-release-4-learning-protected-autopilot.md`.
+
+Delivery uncertainty rollout proof is recorded in `docs/superpowers/evidence/2026-07-16-delivery-uncertainty-shadow-receipts.md`.
 
 ### Migration process
 ```bash
