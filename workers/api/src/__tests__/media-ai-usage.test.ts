@@ -418,7 +418,7 @@ describe('media routes ai_usage telemetry', () => {
   it('returns the current balance from fal account billing', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe('https://api.fal.ai/v1/account/billing?expand=credits');
-      expect(init?.headers).toEqual({ Authorization: 'Key fal-test-key' });
+      expect(init?.headers).toEqual({ Authorization: 'Key fal-admin-key' });
       return Response.json({
         username: 'socialai-studio',
         credits: { current_balance: 12.34, currency: 'USD' },
@@ -430,7 +430,7 @@ describe('media routes ai_usage telemetry', () => {
 
     const res = await app.request('/api/fal-proxy?action=get-credits', {
       headers: { 'X-Test-Uid': 'user_1' },
-    }, makeRouteEnv([]));
+    }, makeRouteEnv([], { FAL_ADMIN_API_KEY: 'fal-admin-key' }));
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ balance: 12.34, currency: 'USD' });

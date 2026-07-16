@@ -297,7 +297,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
     }
     if (action === 'get-credits') {
       try {
-        return c.json(await fetchFalCreditBalance(apiKey));
+        return c.json(await fetchFalCreditBalance(c.env.FAL_ADMIN_API_KEY || apiKey));
       } catch (e: any) {
         return c.json({ error: e?.message || 'fal.ai credit check failed' }, 502);
       }

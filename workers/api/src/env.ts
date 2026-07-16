@@ -65,6 +65,9 @@ export type Env = {
   FACEBOOK_APP_ID?: string;
   FACEBOOK_APP_SECRET?: string;
   FAL_API_KEY?: string;
+  // Admin-scoped fal key used only for account billing checks. Keep separate
+  // from the generation key so model requests retain least privilege.
+  FAL_ADMIN_API_KEY?: string;
   // Controlled primary image-provider switch. Keep unset or set to
   // `flux-dev` for immediate rollback; set to `gpt-image-2` after the worker
   // and critic gate have passed production smoke checks.
