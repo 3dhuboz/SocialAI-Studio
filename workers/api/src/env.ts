@@ -65,6 +65,10 @@ export type Env = {
   FACEBOOK_APP_ID?: string;
   FACEBOOK_APP_SECRET?: string;
   FAL_API_KEY?: string;
+  // Controlled primary image-provider switch. Keep unset or set to
+  // `flux-dev` for immediate rollback; set to `gpt-image-2` after the worker
+  // and critic gate have passed production smoke checks.
+  IMAGE_GEN_PROVIDER?: string;
   // Optional future image-provider integration. Do not use a desktop/browser
   // Higgsfield CLI OAuth token here; production workers need a deploy-safe
   // server credential and a stable API base URL. See docs/higgsfield-production-gate.md.

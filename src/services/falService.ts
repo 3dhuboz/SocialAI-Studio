@@ -79,11 +79,10 @@ export const FalService = {
   },
 
   /**
-   * Generate a marketing image via fal.ai FLUX Dev. Returns a public image URL.
+   * Generate a reviewed marketing image. Returns a public image URL.
    *
    * Routes through the worker's fal-proxy which applies archetype guardrails,
-   * negative-prompt safety, and full FLUX-dev quality settings (square_hd,
-   * 35 inference steps, guidance_scale 7.0).
+   * the configured primary provider, retry logic, and the release critic.
    *
    * Optional clientId scopes archetype detection to a specific client
    * workspace — agency users get the correct per-client archetype guardrails.
@@ -103,7 +102,7 @@ export const FalService = {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Image generation failed');
     if (!data.imageUrl) throw new Error('No image URL returned from fal.ai');
-    return { url: data.imageUrl, model: data.model_used || 'flux-dev' };
+    return { url: data.imageUrl, model: data.model_used || 'configured-image-provider' };
   },
 
   isConfigured: () => true, // FAL_API_KEY is configured server-side in Cloudflare env

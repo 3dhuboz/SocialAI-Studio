@@ -52,6 +52,7 @@ function makeEnv(opts: {
   userArchetype?: string | null;
   clientArchetype?: string | null;
   photoUrls?: string[];
+  imageProvider?: string;
 } = {}): any {
   const userArchetype = opts.userArchetype ?? null;
   const clientArchetype = opts.clientArchetype === undefined ? null : opts.clientArchetype;
@@ -74,6 +75,7 @@ function makeEnv(opts: {
 
   return {
     FAL_API_KEY: 'fal-test-key',
+    IMAGE_GEN_PROVIDER: opts.imageProvider,
     DB: { prepare },
   };
 }
@@ -140,6 +142,43 @@ describe('generateImageWithGuardrails — happy path (no brand refs)', () => {
     const init = fetchMock.mock.calls[0][1];
     expect(init.headers.Authorization).toBe('Key fal-test-key');
     expect(init.headers['Content-Type']).toBe('application/json');
+  });
+});
+
+describe('generateImageWithGuardrails — GPT Image 2 rollout', () => {
+  it('uses GPT Image 2 medium without replacing a valid SaaS prompt with the generic fallback bank', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/gpt-image-2.webp' }] }), { status: 200 }),
+    );
+    const env = makeEnv({
+      imageProvider: 'gpt-image-2',
+      userArchetype: 'tech-saas-agency',
+      photoUrls: [],
+    });
+
+    const result = await generateImageWithGuardrails(env, 'user-1', null, {
+      prompt: 'small business owner reviewing a live automation workflow on an open laptop in a bright Australian office',
+      negativePrompt: 'food, plated meals, closed laptop, fake dashboard text',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://fal.run/fal-ai/gpt-image-2');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      image_size: 'square_hd',
+      quality: 'medium',
+      num_images: 1,
+      output_format: 'webp',
+    });
+    expect(body.prompt).toContain('live automation workflow');
+    expect(body.prompt).toContain('Hard exclusions:');
+    expect(body.prompt).toContain('fake dashboard text');
+    expect(body).not.toHaveProperty('negative_prompt');
+    expect(result).toMatchObject({
+      imageUrl: 'https://fal.cdn/gpt-image-2.webp',
+      modelUsed: 'gpt-image-2-medium',
+      archetypeSlug: 'tech-saas-agency',
+    });
   });
 });
 
