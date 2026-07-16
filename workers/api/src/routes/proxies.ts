@@ -32,7 +32,7 @@ import { logAiUsage } from '../lib/ai-usage';
 import { critiqueImageInternal } from '../lib/critique';
 import { buildCritiqueContextText } from '../lib/post-critique';
 import { loadForbiddenSubjects } from '../lib/profile-guards';
-import { checkFalCreditsAlert } from '../cron/check-fal-credits';
+import { checkFalCreditsAlert, fetchFalCreditBalance } from '../cron/check-fal-credits';
 import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 const NANO_BANANA_PRO_COST_USD = 0.15;
@@ -296,10 +296,11 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json(data, { status: res.status as any });
     }
     if (action === 'get-credits') {
-      const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
-      const data = await res.json() as any;
-      if (!res.ok) return c.json({ error: data?.message || `HTTP ${res.status}` }, res.status as any);
-      return c.json({ balance: data?.balance ?? data?.credits ?? null });
+      try {
+        return c.json(await fetchFalCreditBalance(apiKey));
+      } catch (e: any) {
+        return c.json({ error: e?.message || 'fal.ai credit check failed' }, 502);
+      }
     }
     if (action === 'check-credits-alert') {
       try {

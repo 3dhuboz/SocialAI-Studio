@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
-import { cronCheckFalCredits } from '../cron/check-fal-credits';
+import { checkFalCreditsAlert, cronCheckFalCredits } from '../cron/check-fal-credits';
 
 interface AlertRow {
   alert_key: string;
@@ -103,10 +103,14 @@ function makeEnv(rows?: Map<string, AlertRow>): Env {
 }
 
 function mockFalAndResend(balances: number[]) {
-  const fetchMock = vi.fn(async (url: string) => {
-    if (url === 'https://fal.ai/api/users/me') {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.fal.ai/v1/account/billing?expand=credits') {
+      expect(init?.headers).toEqual({ Authorization: 'Key fal_test' });
       const balance = balances.shift();
-      return Response.json({ balance });
+      return Response.json({
+        username: 'socialai-studio',
+        credits: { current_balance: balance, currency: 'USD' },
+      });
     }
     if (url === 'https://api.resend.com/emails') {
       return Response.json({ id: 'email_test' });
@@ -151,5 +155,16 @@ describe('cronCheckFalCredits', () => {
     expect(resendCalls(fetchMock)).toHaveLength(2);
     expect(rows.get('fal_credits_low')?.fire_count).toBe(2);
     expect(rows.get('fal_credits_low')?.last_resolved_at).toBeTruthy();
+  });
+
+  it('reports a controlled error when fal returns a non-JSON billing response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!DOCTYPE html><title>Retired</title>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    })));
+
+    await expect(checkFalCreditsAlert(makeEnv())).rejects.toThrow(
+      'fal.ai billing API returned an invalid response',
+    );
   });
 });

@@ -384,8 +384,11 @@ describe('media routes ai_usage telemetry', () => {
   it('suppresses duplicate low-credit emails from manual fal credit checks', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === 'https://fal.ai/api/users/me') {
-        return new Response(JSON.stringify({ balance: 2.5 }), { status: 200 });
+      if (url === 'https://api.fal.ai/v1/account/billing?expand=credits') {
+        return new Response(JSON.stringify({
+          username: 'socialai-studio',
+          credits: { current_balance: 2.5, currency: 'USD' },
+        }), { status: 200 });
       }
       if (url === 'https://api.resend.com/emails') {
         return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
@@ -410,6 +413,44 @@ describe('media routes ai_usage telemetry', () => {
     expect((await first.json()).alert).toBe('sent');
     expect((await second.json()).alert).toBe('suppressed');
     expect(fetchMock.mock.calls.filter(([url]) => url === 'https://api.resend.com/emails')).toHaveLength(1);
+  });
+
+  it('returns the current balance from fal account billing', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://api.fal.ai/v1/account/billing?expand=credits');
+      expect(init?.headers).toEqual({ Authorization: 'Key fal-test-key' });
+      return Response.json({
+        username: 'socialai-studio',
+        credits: { current_balance: 12.34, currency: 'USD' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+
+    const res = await app.request('/api/fal-proxy?action=get-credits', {
+      headers: { 'X-Test-Uid': 'user_1' },
+    }, makeRouteEnv([]));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ balance: 12.34, currency: 'USD' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a controlled gateway error for an invalid fal billing response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!DOCTYPE html><title>Retired</title>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' },
+    })));
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+
+    const res = await app.request('/api/fal-proxy?action=get-credits', {
+      headers: { 'X-Test-Uid': 'user_1' },
+    }, makeRouteEnv([]));
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: 'fal.ai billing API returned an invalid response' });
   });
 });
 
