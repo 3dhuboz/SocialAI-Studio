@@ -24,6 +24,7 @@ import {
   findForbiddenSubjectViolation,
   repairSmartScheduleImagePromptForArchetype,
   guardMarketingImagePromptForBusinessContext,
+  generateMarketingImage,
   generateMarketingImageUrl,
   generateInsightReport,
   buildArchetypeVoiceBlock,
@@ -451,6 +452,51 @@ describe('Facebook evidence provenance', () => {
     expect(block).not.toContain('These are the ONLY facts you may cite');
     expect(block).not.toContain('old photo caption claimed five hours');
     expect(block).not.toContain('11535');
+  });
+
+  it('reuses the approved public image URL without downloading or regenerating it', async () => {
+    vi.restoreAllMocks();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ imageUrl: 'https://cdn.example.test/approved.webp' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const image = await generateMarketingImage(
+      'fresh sourdough loaves on a timber bakery counter in bright morning light',
+      'local bakery',
+      'Fresh loaves are ready this morning.',
+      null,
+      'smart-auto:0',
+    );
+
+    expect(image).toBe('https://cdn.example.test/approved.webp');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not bypass a rejected reviewed image through an uncontrolled browser fallback', async () => {
+    vi.restoreAllMocks();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        error: 'Generated image did not pass safety and relevance review',
+        retryable: true,
+      }), {
+        status: 422,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const image = await generateMarketingImage(
+      'fresh sourdough loaves on a timber bakery counter in bright morning light',
+      'local bakery',
+      'Fresh loaves are ready this morning.',
+      null,
+      'smart-auto:1',
+    );
+
+    expect(image).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
