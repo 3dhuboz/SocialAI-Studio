@@ -113,6 +113,139 @@ describe('publishPersistedPost', () => {
     expect(calls).toEqual({ critic: 2, postproxy: 1, graph: 1 });
   });
 
+  it('appends tenant-scoped shadow receipts around an accepted provider request', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = safeDeps(calls);
+    (deps as any).recordDeliveryReceipt = async (
+      _db: D1Database,
+      input: Record<string, unknown>,
+    ) => {
+      receipts.push(input);
+    };
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      postproxyTarget,
+      deps,
+    )).resolves.toMatchObject({ backend: 'postproxy' });
+
+    expect(receipts).toHaveLength(2);
+    expect(receipts[0]).toMatchObject({
+      userId: 'u1',
+      clientId: null,
+      ownerKind: 'user',
+      ownerId: 'u1',
+      postId: 'p1',
+      backend: 'postproxy',
+      eventKind: 'attempt_started',
+    });
+    expect(receipts[1]).toMatchObject({
+      eventKind: 'provider_accepted',
+      remotePostId: 'postproxy-1',
+    });
+    expect(receipts[1].attemptId).toBe(receipts[0].attemptId);
+    expect(receipts[0].contentHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('classifies a provider timeout as ambiguous without changing the thrown error', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = safeDeps(calls);
+    const timeout = new Error('The operation was aborted after 30 seconds');
+    timeout.name = 'AbortError';
+    deps.createPost = async () => {
+      calls.postproxy += 1;
+      throw timeout;
+    };
+    (deps as any).recordDeliveryReceipt = async (
+      _db: D1Database,
+      input: Record<string, unknown>,
+    ) => {
+      receipts.push(input);
+    };
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      postproxyTarget,
+      deps,
+    )).rejects.toBe(timeout);
+
+    expect(receipts.map((receipt) => receipt.eventKind)).toEqual([
+      'attempt_started',
+      'ambiguous_failure',
+    ]);
+    expect(receipts[1]).toMatchObject({ errorClass: 'timeout' });
+  });
+
+  it('records an explicit Graph rejection while preserving the response for its caller', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = safeDeps(calls);
+    deps.graphFetch = async () => {
+      calls.graph += 1;
+      return new Response('{"error":{"message":"invalid token"}}', { status: 400 });
+    };
+    (deps as any).recordDeliveryReceipt = async (
+      _db: D1Database,
+      input: Record<string, unknown>,
+    ) => {
+      receipts.push(input);
+    };
+
+    const outcome = await publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      graphTarget,
+      deps,
+    );
+
+    expect(outcome.backend).toBe('graph');
+    if (outcome.backend === 'graph') {
+      expect(outcome.response.status).toBe(400);
+      expect(await outcome.response.json()).toEqual({ error: { message: 'invalid token' } });
+    }
+    expect(receipts.at(-1)).toMatchObject({
+      eventKind: 'definite_failure',
+      errorClass: 'provider_rejected',
+      httpStatus: 400,
+    });
+  });
+
+  it('never blocks delivery when shadow receipt storage is unavailable', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    (deps as any).recordDeliveryReceipt = async () => {
+      throw new Error('D1 shadow receipt unavailable');
+    };
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      postproxyTarget,
+      deps,
+    )).resolves.toMatchObject({ backend: 'postproxy' });
+    expect(calls.postproxy).toBe(1);
+  });
+
+  it('never blocks delivery when a shadow attempt id cannot be created', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    (deps as any).newAttemptId = () => {
+      throw new Error('random source unavailable');
+    };
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      fixturePost,
+      postproxyTarget,
+      deps,
+    )).resolves.toMatchObject({ backend: 'postproxy' });
+    expect(calls.postproxy).toBe(1);
+  });
+
   it('runs both Facebook reel kick requests only after one preflight pass', async () => {
     const calls = { critic: 0, postproxy: 0, graph: 0 };
     const deps = safeDeps(calls);
@@ -149,6 +282,46 @@ describe('publishPersistedPost', () => {
 
     expect(outcome).toMatchObject({ backend: 'graph_reel', videoId: 'video-1' });
     expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 2 });
+  });
+
+  it('classifies an explicit Facebook reel 400 as a definite rejection', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const receipts: Array<Record<string, unknown>> = [];
+    const deps = safeDeps(calls);
+    deps.graphFetch = async () => {
+      calls.graph += 1;
+      return new Response('{"error":{}}', { status: 400 });
+    };
+    (deps as any).recordDeliveryReceipt = async (
+      _db: D1Database,
+      input: Record<string, unknown>,
+    ) => {
+      receipts.push(input);
+    };
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      {
+        ...fixturePost,
+        post_type: 'video',
+        video_url: 'https://cdn.example/final.mp4',
+        video_status: 'ready',
+      },
+      {
+        backend: 'graph_reel',
+        pageId: 'page-1',
+        pageAccessToken: 'token-1',
+        description: 'Safe reel',
+        videoUrl: 'https://cdn.example/final.mp4',
+      },
+      deps,
+    )).rejects.toThrow('FB reel start: 400');
+
+    expect(receipts.at(-1)).toMatchObject({
+      eventKind: 'definite_failure',
+      errorClass: 'provider_rejected',
+      httpStatus: 400,
+    });
   });
 
   it('runs Instagram container and publish requests after one preflight pass', async () => {
@@ -331,6 +504,24 @@ describe('recordPublishedPostBestEffort', () => {
 describe('publish egress source contracts', () => {
   const workerRoot = resolve(process.cwd(), 'src');
   const repoRoot = resolve(process.cwd(), '../..');
+
+  it('defines additive, tenant-scoped, append-only v42 delivery shadow receipts', () => {
+    const migration = readFileSync(
+      resolve(repoRoot, 'workers/api/schema_v42_delivery_uncertainty_receipts.sql'),
+      'utf8',
+    );
+
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS publish_delivery_receipts');
+    expect(migration).toContain('user_id TEXT NOT NULL');
+    expect(migration).toContain('workspace_key TEXT NOT NULL');
+    expect(migration).toContain('owner_kind TEXT NOT NULL');
+    expect(migration).toContain('owner_id TEXT NOT NULL');
+    expect(migration).toContain('shadow_only INTEGER NOT NULL DEFAULT 1');
+    expect(migration).toContain('UNIQUE(attempt_id, event_kind)');
+    expect(migration).toContain('REFERENCES posts(id) ON DELETE CASCADE');
+    expect(migration).toContain('prevent_publish_delivery_receipt_update');
+    expect(migration).not.toMatch(/ALTER TABLE posts|UPDATE posts|INSERT INTO posts/);
+  });
 
   it('routes manual Postproxy publishing through the orchestrator', () => {
     const source = readFileSync(

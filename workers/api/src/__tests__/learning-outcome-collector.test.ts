@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import {
+  recordPublishDeliveryReceipt,
   recordPublicationEvent,
   type PersistedPublicationEvent,
   type PublicationEventInput,
@@ -73,6 +74,44 @@ afterEach(() => {
 });
 
 describe('publication repository', () => {
+  it('records canonical tenant-scoped delivery evidence while ignoring only duplicate events', async () => {
+    const { db, calls } = makeRecordingD1();
+
+    await recordPublishDeliveryReceipt(db, {
+      attemptId: ' attempt_1 ',
+      userId: ' owner_1 ',
+      clientId: ' client_1 ',
+      ownerKind: 'client',
+      ownerId: 'client_1',
+      postId: ' post_1 ',
+      platform: ' Facebook ',
+      backend: 'postproxy',
+      eventKind: 'provider_accepted',
+      contentHash: 'a'.repeat(64),
+      remotePostId: ' remote_1 ',
+      httpStatus: 201,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain(
+      'ON CONFLICT(attempt_id,event_kind) DO NOTHING',
+    );
+    expect(calls[0].sql).not.toContain('INSERT OR IGNORE');
+    expect(calls[0].binds).toEqual(expect.arrayContaining([
+      'attempt_1',
+      'owner_1',
+      'client_1',
+      'client',
+      'post_1',
+      'facebook',
+      'postproxy',
+      'provider_accepted',
+      'a'.repeat(64),
+      'remote_1',
+      201,
+    ]));
+  });
+
   it('records a canonical user publication idempotently without moving its first publication time', async () => {
     const { db, calls } = makeRecordingD1();
 
