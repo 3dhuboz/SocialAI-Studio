@@ -5,11 +5,16 @@ import {
 } from '../postproxy';
 import {
   evaluateReleasePreflight,
+  buildReleaseContentHash,
   type PreflightDecision,
   type PublishablePost,
 } from '../learning/release-preflight';
 import {
+  recordPublishDeliveryReceipt,
   recordPublicationEvent,
+  type PublishDeliveryBackend,
+  type PublishDeliveryEventKind,
+  type PublishDeliveryReceiptInput,
   type PublicationPlatform,
 } from '../learning/publication-repository';
 import { normalizeWorkspaceIdentity } from '../learning/types';
@@ -82,6 +87,9 @@ export interface PublishOrchestratorDeps {
   ): Promise<void>;
   createPost: typeof createPost;
   graphFetch: typeof fetch;
+  buildContentHash: typeof buildReleaseContentHash;
+  recordDeliveryReceipt: typeof recordPublishDeliveryReceipt;
+  newAttemptId(): string;
 }
 
 export interface PublishedPostDetails {
@@ -263,12 +271,193 @@ async function persistHold(
   ).run();
 }
 
+interface DeliveryAttemptContext {
+  attemptId: string;
+  userId: string;
+  clientId: string | null;
+  ownerKind: PersistedPublishPost['owner_kind'];
+  ownerId: string;
+  postId: string;
+  platform: string;
+  backend: PublishDeliveryBackend;
+  contentHash: string | null;
+}
+
+interface DeliveryFailureClassification {
+  eventKind: Extract<
+    PublishDeliveryEventKind,
+    'definite_failure' | 'ambiguous_failure'
+  >;
+  errorClass: string;
+  httpStatus: number | null;
+  errorMessage: string;
+}
+
+function statusFromErrorMessage(message: string): number | null {
+  const match = message.match(
+    /(?:->|status(?:\s+code)?|failed\s*\(|:)\s*(\d{3})\b/i,
+  );
+  if (!match) return null;
+  const status = Number(match[1]);
+  return Number.isInteger(status) && status >= 100 && status <= 599
+    ? status
+    : null;
+}
+
+function classifyDeliveryError(error: unknown): DeliveryFailureClassification {
+  const message = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : '';
+  const httpStatus = statusFromErrorMessage(message);
+
+  if (
+    name === 'AbortError'
+    || /\b(?:abort(?:ed)?|time(?:d)?\s*out|timeout)\b/i.test(message)
+  ) {
+    return {
+      eventKind: 'ambiguous_failure',
+      errorClass: 'timeout',
+      httpStatus,
+      errorMessage: message,
+    };
+  }
+  if (
+    error instanceof TypeError
+    || /\b(?:fetch failed|network|socket|connection reset|econnreset)\b/i.test(message)
+  ) {
+    return {
+      eventKind: 'ambiguous_failure',
+      errorClass: 'network',
+      httpStatus,
+      errorMessage: message,
+    };
+  }
+  if (httpStatus !== null) {
+    const ambiguous = httpStatus === 408 || httpStatus === 425 || httpStatus >= 500;
+    return {
+      eventKind: ambiguous ? 'ambiguous_failure' : 'definite_failure',
+      errorClass: ambiguous ? 'provider_ambiguous_status' : 'provider_rejected',
+      httpStatus,
+      errorMessage: message,
+    };
+  }
+  if (/non-JSON body|missing id in response|missing video_id|missing upload_url/i.test(message)) {
+    return {
+      eventKind: 'ambiguous_failure',
+      errorClass: 'invalid_provider_response',
+      httpStatus: null,
+      errorMessage: message,
+    };
+  }
+  if (/not configured|exceeds 2200|workspace inactive|profile missing|requires a connected/i.test(message)) {
+    return {
+      eventKind: 'definite_failure',
+      errorClass: 'local_validation',
+      httpStatus: null,
+      errorMessage: message,
+    };
+  }
+  return {
+    eventKind: 'ambiguous_failure',
+    errorClass: 'unknown_provider_outcome',
+    httpStatus: null,
+    errorMessage: message,
+  };
+}
+
+function classifyDeliveryResponse(response: Response): {
+  eventKind: Exclude<PublishDeliveryEventKind, 'attempt_started'>;
+  errorClass: string | null;
+} {
+  if (response.ok) return { eventKind: 'provider_accepted', errorClass: null };
+  const ambiguous = response.status === 408
+    || response.status === 425
+    || response.status >= 500;
+  return {
+    eventKind: ambiguous ? 'ambiguous_failure' : 'definite_failure',
+    errorClass: ambiguous ? 'provider_ambiguous_status' : 'provider_rejected',
+  };
+}
+
+async function recordDeliveryShadowEvent(
+  env: Env,
+  deps: PublishOrchestratorDeps,
+  attempt: DeliveryAttemptContext | null,
+  eventKind: PublishDeliveryEventKind,
+  details: Partial<Pick<
+    PublishDeliveryReceiptInput,
+    'remotePostId' | 'httpStatus' | 'errorClass' | 'errorMessage'
+  >> = {},
+): Promise<void> {
+  if (!env.DB || !attempt) return;
+  try {
+    await deps.recordDeliveryReceipt(env.DB, {
+      ...attempt,
+      eventKind,
+      ...details,
+    });
+  } catch (error) {
+    console.warn(
+      `[publishing] delivery shadow receipt unavailable for ${attempt.postId}/${attempt.attemptId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+async function beginDeliveryShadowAttempt(
+  env: Env,
+  deps: PublishOrchestratorDeps,
+  post: PersistedPublishPost,
+  backend: PublishDeliveryBackend,
+): Promise<DeliveryAttemptContext | null> {
+  if (!env.DB) return null;
+
+  let attemptId: string;
+  try {
+    attemptId = deps.newAttemptId();
+  } catch (error) {
+    console.warn(
+      `[publishing] delivery attempt id unavailable for ${post.id}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+
+  let contentHash: string | null = null;
+  try {
+    contentHash = await deps.buildContentHash(post);
+  } catch (error) {
+    console.warn(
+      `[publishing] delivery content hash unavailable for ${post.id}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const attempt: DeliveryAttemptContext = {
+    attemptId,
+    userId: post.user_id,
+    clientId: post.client_id,
+    ownerKind: post.owner_kind,
+    ownerId: post.owner_id,
+    postId: post.id,
+    platform: post.platform,
+    backend,
+    contentHash,
+  };
+  await recordDeliveryShadowEvent(env, deps, attempt, 'attempt_started');
+  return attempt;
+}
+
 const defaultDeps: PublishOrchestratorDeps = {
   validateWorkspace,
   evaluatePreflight: evaluateReleasePreflight,
   persistHold,
   createPost,
   graphFetch: fetch,
+  buildContentHash: buildReleaseContentHash,
+  recordDeliveryReceipt: recordPublishDeliveryReceipt,
+  newAttemptId: () => crypto.randomUUID(),
 };
 
 export async function publishPersistedPost(
@@ -287,121 +476,170 @@ export async function publishPersistedPost(
     );
   }
 
-  if (target.backend === 'postproxy') {
-    return {
-      backend: 'postproxy',
-      result: await deps.createPost(env, target.payload),
-      preflight,
-    };
-  }
-
-  if (target.backend === 'graph_reel') {
-    if (target.description.length > 2_200) {
-      throw new Error(
-        `FB reel description exceeds 2200 char limit (got ${target.description.length})`,
-      );
+  const attempt = await beginDeliveryShadowAttempt(
+    env,
+    deps,
+    post,
+    target.backend,
+  );
+  try {
+    if (target.backend === 'postproxy') {
+      const result = await deps.createPost(env, target.payload);
+      await recordDeliveryShadowEvent(env, deps, attempt, 'provider_accepted', {
+        remotePostId: result.id,
+      });
+      return {
+        backend: 'postproxy',
+        result,
+        preflight,
+      };
     }
-    const base = 'https://graph.facebook.com/v21.0';
-    const startResponse = await deps.graphFetch(
-      `${base}/${target.pageId}/video_reels`,
-      {
+
+    if (target.backend === 'graph_reel') {
+      if (target.description.length > 2_200) {
+        throw new Error(
+          `FB reel description exceeds 2200 char limit (got ${target.description.length})`,
+        );
+      }
+      const base = 'https://graph.facebook.com/v21.0';
+      const startResponse = await deps.graphFetch(
+        `${base}/${target.pageId}/video_reels`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            upload_phase: 'start',
+            access_token: target.pageAccessToken,
+          }),
+        },
+      );
+      const startData = await startResponse.json() as {
+        video_id?: string;
+        upload_url?: string;
+        error?: { message?: string };
+      };
+      if (!startResponse.ok || startData.error) {
+        throw new Error(
+          `FB reel start: ${startData.error?.message || startResponse.status}`,
+        );
+      }
+      if (!startData.video_id || !startData.upload_url) {
+        throw new Error('FB reel start: missing video_id or upload_url');
+      }
+
+      const transferResponse = await deps.graphFetch(startData.upload_url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          upload_phase: 'start',
-          access_token: target.pageAccessToken,
-        }),
+        headers: {
+          Authorization: `OAuth ${target.pageAccessToken}`,
+          file_url: target.videoUrl,
+        },
+      });
+      const transferData = await transferResponse.json() as {
+        success?: boolean;
+        error?: { message?: string };
+      };
+      if (
+        !transferResponse.ok
+        || transferData.error
+        || transferData.success === false
+      ) {
+        throw new Error(
+          `FB reel transfer: ${transferData.error?.message || transferResponse.status}`,
+        );
+      }
+      await recordDeliveryShadowEvent(env, deps, attempt, 'provider_accepted', {
+        remotePostId: startData.video_id,
+        httpStatus: transferResponse.status,
+      });
+      return {
+        backend: 'graph_reel',
+        videoId: startData.video_id,
+        preflight,
+      };
+    }
+
+    if (target.backend === 'graph_instagram') {
+      const base = 'https://graph.facebook.com/v21.0';
+      const containerResponse = await deps.graphFetch(
+        `${base}/${target.accountId}/media`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            image_url: target.imageUrl,
+            caption: target.caption,
+            access_token: target.pageAccessToken,
+          }),
+        },
+      );
+      const container = await containerResponse.json() as {
+        id?: string;
+        error?: { message?: string };
+      };
+      if (!containerResponse.ok || container.error || !container.id) {
+        throw new Error(
+          `IG container: ${container.error?.message || containerResponse.status}`,
+        );
+      }
+
+      const publishResponse = await deps.graphFetch(
+        `${base}/${target.accountId}/media_publish`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            creation_id: container.id,
+            access_token: target.pageAccessToken,
+          }),
+        },
+      );
+      const published = await publishResponse.json() as {
+        id?: string;
+        error?: { message?: string };
+      };
+      if (!publishResponse.ok || published.error || !published.id) {
+        throw new Error(
+          `IG publish: ${published.error?.message || publishResponse.status}`,
+        );
+      }
+      await recordDeliveryShadowEvent(env, deps, attempt, 'provider_accepted', {
+        remotePostId: published.id,
+        httpStatus: publishResponse.status,
+      });
+      return {
+        backend: 'graph_instagram',
+        mediaId: published.id,
+        preflight,
+      };
+    }
+
+    const response = await deps.graphFetch(target.url, target.init);
+    const responseClassification = classifyDeliveryResponse(response);
+    await recordDeliveryShadowEvent(
+      env,
+      deps,
+      attempt,
+      responseClassification.eventKind,
+      {
+        httpStatus: response.status,
+        errorClass: responseClassification.errorClass,
+        errorMessage: response.ok
+          ? null
+          : `Provider returned HTTP ${response.status}`,
       },
     );
-    const startData = await startResponse.json() as {
-      video_id?: string;
-      upload_url?: string;
-      error?: { message?: string };
+    return {
+      backend: 'graph',
+      response,
+      preflight,
     };
-    if (!startResponse.ok || startData.error) {
-      throw new Error(`FB reel start: ${startData.error?.message || startResponse.status}`);
-    }
-    if (!startData.video_id || !startData.upload_url) {
-      throw new Error('FB reel start: missing video_id or upload_url');
-    }
-
-    const transferResponse = await deps.graphFetch(startData.upload_url, {
-      method: 'POST',
-      headers: {
-        Authorization: `OAuth ${target.pageAccessToken}`,
-        file_url: target.videoUrl,
-      },
+  } catch (error) {
+    const failure = classifyDeliveryError(error);
+    await recordDeliveryShadowEvent(env, deps, attempt, failure.eventKind, {
+      httpStatus: failure.httpStatus,
+      errorClass: failure.errorClass,
+      errorMessage: failure.errorMessage,
     });
-    const transferData = await transferResponse.json() as {
-      success?: boolean;
-      error?: { message?: string };
-    };
-    if (!transferResponse.ok || transferData.error || transferData.success === false) {
-      throw new Error(
-        `FB reel transfer: ${transferData.error?.message || transferResponse.status}`,
-      );
-    }
-    return {
-      backend: 'graph_reel',
-      videoId: startData.video_id,
-      preflight,
-    };
+    throw error;
   }
-
-  if (target.backend === 'graph_instagram') {
-    const base = 'https://graph.facebook.com/v21.0';
-    const containerResponse = await deps.graphFetch(
-      `${base}/${target.accountId}/media`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_url: target.imageUrl,
-          caption: target.caption,
-          access_token: target.pageAccessToken,
-        }),
-      },
-    );
-    const container = await containerResponse.json() as {
-      id?: string;
-      error?: { message?: string };
-    };
-    if (!containerResponse.ok || container.error || !container.id) {
-      throw new Error(
-        `IG container: ${container.error?.message || containerResponse.status}`,
-      );
-    }
-
-    const publishResponse = await deps.graphFetch(
-      `${base}/${target.accountId}/media_publish`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          creation_id: container.id,
-          access_token: target.pageAccessToken,
-        }),
-      },
-    );
-    const published = await publishResponse.json() as {
-      id?: string;
-      error?: { message?: string };
-    };
-    if (!publishResponse.ok || published.error || !published.id) {
-      throw new Error(
-        `IG publish: ${published.error?.message || publishResponse.status}`,
-      );
-    }
-    return {
-      backend: 'graph_instagram',
-      mediaId: published.id,
-      preflight,
-    };
-  }
-
-  return {
-    backend: 'graph',
-    response: await deps.graphFetch(target.url, target.init),
-    preflight,
-  };
 }

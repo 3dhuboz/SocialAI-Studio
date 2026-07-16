@@ -210,7 +210,14 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current production schema version:** v41
+**Current source schema version:** v42
+
+**Current production schema version:** v41 until the v42 rollout is verified.
+
+Delivery uncertainty migration: `workers/api/schema_v42_delivery_uncertainty_receipts.sql`.
+It adds tenant-scoped, append-only shadow evidence around provider delivery
+attempts. It does not change retries, post status, release decisions, or
+publishing behavior.
 
 Pilot cohort migration: `workers/api/schema_v41_learning_pilot_enrollments.sql`.
 It adds append-only pilot enrollment receipts, preserves scoped privacy erasure,
@@ -262,6 +269,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `audience_segments` | Private predicted/confirmed audience needs scoped to one reach profile and workspace |
 | `approved_media_assets` | Tenant-scoped media with explicit usage-rights status and matching tags |
 | `reach_plans` | Immutable shadow/selected platform, timing, hashtag, media, and experiment treatments |
+| `publish_delivery_receipts` | Append-only, tenant-scoped shadow evidence for provider attempts and ambiguous delivery outcomes |
 | `publication_events` | Confirmed publication receipts and due outcome-window checkpoints |
 | `learning_outcomes` | Immutable 24/72/168-hour business and engagement outcome windows |
 | `platform_metric_snapshots` | Append-only, tenant-scoped Facebook metric scrapes used at exact outcome windows |

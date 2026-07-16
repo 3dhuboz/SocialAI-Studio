@@ -5,6 +5,35 @@ import {
 
 export type PublicationPlatform = 'facebook' | 'instagram';
 
+export type PublishDeliveryBackend =
+  | 'postproxy'
+  | 'graph'
+  | 'graph_reel'
+  | 'graph_instagram';
+
+export type PublishDeliveryEventKind =
+  | 'attempt_started'
+  | 'provider_accepted'
+  | 'definite_failure'
+  | 'ambiguous_failure';
+
+export interface PublishDeliveryReceiptInput {
+  attemptId: string;
+  userId: string;
+  clientId: string | null;
+  ownerKind: WorkspaceOwnerKind;
+  ownerId: string;
+  postId: string;
+  platform: string;
+  backend: PublishDeliveryBackend;
+  eventKind: PublishDeliveryEventKind;
+  contentHash: string | null;
+  remotePostId?: string | null;
+  httpStatus?: number | null;
+  errorClass?: string | null;
+  errorMessage?: string | null;
+}
+
 export interface PublicationEventInput {
   userId: string;
   clientId: string | null;
@@ -70,6 +99,63 @@ function requireTimestamp(value: string): string {
     throw new Error('Publication publishedAt must be a valid timestamp');
   }
   return parsed.toISOString();
+}
+
+function optionalBoundedText(
+  value: string | null | undefined,
+  maxLength: number,
+): string | null {
+  const normalized = value?.trim() ?? '';
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
+export async function recordPublishDeliveryReceipt(
+  db: D1Database,
+  input: PublishDeliveryReceiptInput,
+): Promise<void> {
+  const identity = normalizeWorkspaceIdentity(
+    input.userId,
+    input.clientId,
+    input.ownerKind,
+    input.ownerId,
+  );
+  const attemptId = requireNonEmpty(input.attemptId, 'attemptId');
+  const postId = requireNonEmpty(input.postId, 'postId');
+  const platform = normalizePublicationPlatform(input.platform);
+  const contentHash = optionalBoundedText(input.contentHash, 64);
+  if (contentHash && !/^[a-f0-9]{64}$/.test(contentHash)) {
+    throw new Error('Publication contentHash must be a lowercase SHA-256 value');
+  }
+  const httpStatus = input.httpStatus ?? null;
+  if (httpStatus !== null && (!Number.isInteger(httpStatus) || httpStatus < 100 || httpStatus > 599)) {
+    throw new Error('Publication httpStatus must be an HTTP status code');
+  }
+
+  await db.prepare(`
+    INSERT INTO publish_delivery_receipts (
+      id, attempt_id, user_id, workspace_key, client_id, owner_kind,
+      owner_id, post_id, platform, backend, event_kind, content_hash,
+      remote_post_id, http_status, error_class, error_message, shadow_only
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    ON CONFLICT(attempt_id,event_kind) DO NOTHING
+  `).bind(
+    crypto.randomUUID(),
+    attemptId,
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    postId,
+    platform,
+    input.backend,
+    input.eventKind,
+    contentHash,
+    optionalBoundedText(input.remotePostId, 240),
+    httpStatus,
+    optionalBoundedText(input.errorClass, 80),
+    optionalBoundedText(input.errorMessage, 500),
+  ).run();
 }
 
 export async function recordPublicationEvent(
