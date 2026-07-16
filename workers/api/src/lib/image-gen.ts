@@ -7,8 +7,9 @@
 //
 //   1. resolveArchetypeSlug → look up workspace's classified archetype
 //   2. applyArchetypeGuardrails (or forced fallback) → ensure subject
-//      matches archetype before sending to FLUX
-//   3. FLUX-dev (square_hd, 35 steps, guidance 7.0) → primary
+//      matches archetype before generation
+//   3. GPT Image 2 medium → controlled primary when IMAGE_GEN_PROVIDER is
+//      `gpt-image-2`; FLUX-dev remains the emergency rollback/fallback
 //
 // Why FLUX-dev and not FLUX Pro Kontext:
 //   Kontext is a multi-image EDITING model — it blends/edits the reference
@@ -41,6 +42,7 @@ import { logAiUsage } from './ai-usage';
 // for square_hd outputs at the steps/guidance defaults used here.
 const FLUX_DEV_COST_USD = 0.025;
 const NANO_BANANA_PRO_COST_USD = 0.15;
+const GPT_IMAGE_2_MEDIUM_COST_USD = 0.053;
 // tech-saas-agency posts are inherently abstract (no inventory to photograph,
 // no location, no people in action) so flux-dev at default 35 steps often
 // rolls a soft/blurry render. We bump steps to 50 and guidance to 8.0 for
@@ -93,6 +95,7 @@ export async function generateImageWithGuardrails(
   options: { forceFallback?: boolean; caption?: string | null; seedHint?: string | null } = {},
 ): Promise<{ imageUrl: string | null; modelUsed: string; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
+  const useGptImage2 = env.IMAGE_GEN_PROVIDER === 'gpt-image-2';
 
   const archetypeSlugRaw = await resolveArchetypeSlug(env, userId, clientId);
 
@@ -122,7 +125,13 @@ export async function generateImageWithGuardrails(
   // bank is pre-vetted photographable; caption injection keeps each scene
   // topically tied to the post.
   const FORCE_FALLBACK_ARCHETYPES = new Set(['tech-saas-agency']);
-  const archetypeForcesFallback = archetypeSlug !== null && FORCE_FALLBACK_ARCHETYPES.has(archetypeSlug);
+  // The forced SaaS scene bank was compensation for FLUX-dev's weak handling
+  // of abstract business prompts. GPT Image 2 follows those prompts better,
+  // so preserve a valid prompt and reserve the curated bank for explicit
+  // critic retries or actual forbidden-subject swaps.
+  const archetypeForcesFallback = !useGptImage2
+    && archetypeSlug !== null
+    && FORCE_FALLBACK_ARCHETYPES.has(archetypeSlug);
 
   // Positive-subject check (2026-05-22): for archetypes that have CONCRETE
   // inventory to photograph, ensure the LLM-generated image_prompt actually
@@ -229,7 +238,7 @@ export async function generateImageWithGuardrails(
       });
       if (imageUrl) return { imageUrl, modelUsed: 'nano-banana-pro-bbq-cut', archetypeSlug };
     } else {
-      console.warn(`[image-gen] nano-banana-pro-bbq-cut failed: ${nanoRes.status} ${falErrorMessage(nanoData, nanoText)}; falling back to flux-dev`);
+      console.warn(`[image-gen] nano-banana-pro-bbq-cut failed: ${nanoRes.status} ${falErrorMessage(nanoData, nanoText)}; falling back to configured primary`);
       await logAiUsage(env, {
         userId,
         clientId,
@@ -243,6 +252,37 @@ export async function generateImageWithGuardrails(
     }
   }
 
+  if (useGptImage2) {
+    const gptPrompt = `${guarded.prompt}. Hard exclusions: ${guarded.negativePrompt}. Do not add logos, watermarks, personal data, fake interface labels, or unrelated props. Do not render legible text unless the prompt explicitly requires it.`;
+    const gptRes = await fetch('https://fal.run/fal-ai/gpt-image-2', {
+      method: 'POST',
+      headers: authHeader,
+      body: JSON.stringify({
+        prompt: gptPrompt,
+        image_size: 'square_hd',
+        quality: 'medium',
+        num_images: 1,
+        output_format: 'webp',
+      }),
+    });
+    const { data: gptData, text: gptText } = await readFalResponse(gptRes);
+    const imageUrl = gptRes.ok ? gptData?.images?.[0]?.url || null : null;
+    await logAiUsage(env, {
+      userId,
+      clientId,
+      provider: 'fal',
+      model: 'gpt-image-2-medium',
+      operation: 'image-gen',
+      imagesGenerated: imageUrl ? 1 : 0,
+      estCostUsd: imageUrl ? GPT_IMAGE_2_MEDIUM_COST_USD : 0,
+      ok: !!imageUrl,
+    });
+    if (imageUrl) {
+      return { imageUrl, modelUsed: 'gpt-image-2-medium', archetypeSlug };
+    }
+    console.warn(`[image-gen] gpt-image-2-medium failed: ${gptRes.status} ${falErrorMessage(gptData, gptText)}; falling back to flux-dev`);
+  }
+
   // tech-saas-agency posts ship through this chokepoint with abstract,
   // people-less scenes that flux-dev underspecifies at default settings —
   // result is soft/blurry renders that look stocky. Bump steps + guidance
@@ -253,7 +293,8 @@ export async function generateImageWithGuardrails(
   const numSteps = isSaaS ? 50 : 35;
   const guidance = isSaaS ? 8.0 : 7.0;
   const costUsd = isSaaS ? FLUX_DEV_SAAS_COST_USD : FLUX_DEV_COST_USD;
-  const modelName = isSaaS ? 'flux-dev-hq' : 'flux-dev';
+  const fluxModelName = isSaaS ? 'flux-dev-hq' : 'flux-dev';
+  const modelName = useGptImage2 ? `${fluxModelName} (gpt-image-2-fallback)` : fluxModelName;
 
   const res = await fetch('https://fal.run/fal-ai/flux/dev', {
     method: 'POST', headers: authHeader,
@@ -276,7 +317,7 @@ export async function generateImageWithGuardrails(
       userId,
       clientId,
       provider: 'fal',
-      model: modelName,
+      model: fluxModelName,
       operation: 'image-gen',
       imagesGenerated: 0,
       estCostUsd: 0,
@@ -289,7 +330,7 @@ export async function generateImageWithGuardrails(
     userId,
     clientId,
     provider: 'fal',
-    model: modelName,
+    model: fluxModelName,
     operation: 'image-gen',
     imagesGenerated: imageUrl ? 1 : 0,
     estCostUsd: imageUrl ? costUsd : 0,

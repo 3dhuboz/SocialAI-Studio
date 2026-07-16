@@ -962,32 +962,6 @@ const callAI = async (
   return data.text || '';
 };
 
-const compressImage = (base64Str: string, maxWidth = 800, quality = 0.7): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.src = base64Str;
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
-      if (width > maxWidth) {
-        height = Math.round((height * maxWidth) / width);
-        width = maxWidth;
-      }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      } else {
-        resolve(base64Str);
-      }
-    };
-    img.onerror = () => resolve(base64Str);
-  });
-};
-
 export const generateSocialPost = async (
   topic: string,
   platform: 'Facebook' | 'Instagram',
@@ -1582,31 +1556,6 @@ export function scrubBannedPhrases(content: string): string {
 }
 
 export const generateMarketingImage = async (prompt: string, businessType: string = 'small business', caption?: string | null, clientId?: string | null, seedHint?: string | null): Promise<string | null> => {
-  // Helper: convert a remote image URL to a compressed data URL
-  const urlToDataUrl = async (imageUrl: string): Promise<string | null> => {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 30000);
-      const res = await fetch(imageUrl, { signal: ctrl.signal });
-      clearTimeout(t);
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      if (blob.size < 1000 || !blob.type.startsWith('image')) return null;
-      const dataUrl: string | null = await new Promise(r => {
-        const reader = new FileReader();
-        reader.onloadend = () => r(reader.result as string);
-        reader.onerror = () => r(null);
-        reader.readAsDataURL(blob);
-      });
-      // flux-dev outputs sharp 1024×1024 images. Bumped from 700/0.65 to
-      // 1024/0.88 — at 0.65 quality the calendar previews looked aggressively
-      // blurry to the point where users (Steve, 2026-05-20) called the image
-      // quality "horrid". The bumped settings still keep each preview under
-      // ~250KB so a 14-post week stays under ~3.5MB in React state.
-      return dataUrl ? await compressImage(dataUrl, 1024, 0.88) : null;
-    } catch { return null; }
-  };
-
   const guardedPrompt = guardMarketingImagePromptForBusinessContext(prompt, businessType, caption);
 
   // Single source of truth for the safety pipeline (validation + abstract-UI
@@ -1615,9 +1564,12 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   const safe = buildSafeImagePromptClient(guardedPrompt, businessType);
   if (!safe) return null;
 
-  // ── 1. fal.ai FLUX Dev — primary, high-quality, photorealistic ────
+  // The Worker is the only allowed image route: it applies archetype guards,
+  // runs the configured provider, retries once, and releases a URL only after
+  // the permanent image critic passes it. Reusing that URL also avoids a
+  // second paid generation when the calendar is accepted.
   try {
-    console.log('fal.ai FLUX →', guardedPrompt.substring(0, 80));
+    console.log('Reviewed image generation →', guardedPrompt.substring(0, 80));
     const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
       method: 'POST',
       headers: await aiAuthHeaders(),
@@ -1625,32 +1577,12 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
     });
     const data = await res.json() as { imageUrl?: string; error?: string };
     if (res.ok && data.imageUrl) {
-      console.log('fal.ai FLUX: success →', data.imageUrl.substring(0, 60));
-      const img = await urlToDataUrl(data.imageUrl);
-      if (img) return img;
+      console.log('Reviewed image approved →', data.imageUrl.substring(0, 60));
+      return data.imageUrl;
     } else {
-      console.warn('fal.ai FLUX failed:', data.error || res.status);
+      console.warn('Reviewed image rejected or unavailable:', data.error || res.status);
     }
-  } catch (e: any) { console.warn('fal.ai FLUX error:', e?.message); }
-
-  // ── 2. Pollinations.ai — free fallback ────────────────────────────
-  const pollinationsFetch = async (shortPrompt: string): Promise<string | null> => {
-    const encoded = encodeURIComponent(shortPrompt);
-    const url = `https://image.pollinations.ai/prompt/${encoded}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 100000)}&model=flux`;
-    console.log('Pollinations.ai fallback →', shortPrompt.substring(0, 80));
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 45000);
-    const res = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!res.ok) return null;
-    return await urlToDataUrl(url);
-  };
-
-  try {
-    const shortPrompt = guardedPrompt.substring(0, 120).trim();
-    const img = await pollinationsFetch(`${shortPrompt}, professional photography, sharp focus`);
-    if (img) return img;
-  } catch (e: any) { console.warn('Pollinations fallback:', e?.message); }
+  } catch (e: any) { console.warn('Reviewed image generation error:', e?.message); }
 
   return null;
 };

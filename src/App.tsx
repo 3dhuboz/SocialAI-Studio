@@ -2170,7 +2170,7 @@ const Dashboard: React.FC = () => {
       }
     };
     await Promise.all(Array.from(
-      { length: Math.min(2, candidates.length) },
+      { length: Math.min(4, candidates.length) },
       () => generateNext(),
     ));
   };
@@ -2524,7 +2524,7 @@ const Dashboard: React.FC = () => {
       .filter(({ post }) => isSmartPostSafetyCleared(post));
     const heldCount = smartPosts.length - publishableEntries.length;
     if (publishableEntries.length === 0) {
-      toast('No safety-cleared posts are available. Generate a fresh calendar and the app will auto-repair it.', 'warning');
+      toast('No caption-cleared posts are available. Generate a fresh calendar and the app will auto-repair it.', 'warning');
       acceptInFlight.current = false;
       return;
     }
@@ -4818,7 +4818,7 @@ const Dashboard: React.FC = () => {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-extrabold text-amber-300 tracking-wide">Unsaved drafts from your last session</p>
                         <p className="text-xs text-white/50 mt-0.5">
-                          {safeSmartPostCount} safety-cleared post{safeSmartPostCount === 1 ? '' : 's'} waiting{heldSmartPostCount > 0 ? `; ${heldSmartPostCount} unresolved held out automatically` : ''}.
+                          {safeSmartPostCount} caption-cleared post{safeSmartPostCount === 1 ? '' : 's'} waiting{heldSmartPostCount > 0 ? `; ${heldSmartPostCount} unresolved held out automatically` : ''}.
                         </p>
                       </div>
                     </div>
@@ -4831,7 +4831,7 @@ const Dashboard: React.FC = () => {
                         {isAccepting ? (
                           <><Loader2 size={14} className="animate-spin" /> Saving…</>
                         ) : (
-                          <><CalendarPlus size={14} /> Add {safeSmartPostCount} safe post{safeSmartPostCount === 1 ? '' : 's'}</>
+                          <><CalendarPlus size={14} /> Add {safeSmartPostCount} reviewed post{safeSmartPostCount === 1 ? '' : 's'}</>
                         )}
                       </button>
                       <button
@@ -4847,14 +4847,14 @@ const Dashboard: React.FC = () => {
                 {/* Accept All bar */}
                 <div className="sticky z-30 bg-[#0a0a0f]/90 backdrop-blur-xl border border-green-500/20 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 shadow-xl" style={{ top: 'calc(env(safe-area-inset-top) + 72px)' }}>
                   <div>
-                    <p className="text-sm font-bold text-white">{safeSmartPostCount} safety-checked post{safeSmartPostCount === 1 ? '' : 's'} ready</p>
+                    <p className="text-sm font-bold text-white">{safeSmartPostCount} caption-checked post{safeSmartPostCount === 1 ? '' : 's'} ready</p>
                     {autoGenSet.size > 0 ? (
                       <p className="text-xs text-amber-400 flex items-center gap-1">
-                        <Loader2 size={10} className="animate-spin" /> Generating images two at a time… {imgGenDone}/{safeSmartPostCount}
+                        <Loader2 size={10} className="animate-spin" /> Generating and reviewing images four at a time… {imgGenDone}/{safeSmartPostCount}
                       </p>
                     ) : (
                       <p className="text-xs text-white/30">
-                        Safety review completed automatically{heldSmartPostCount > 0 ? ` — ${heldSmartPostCount} unresolved held out` : ''}
+                        Caption review complete; every generated image passed a separate critic{heldSmartPostCount > 0 ? ` — ${heldSmartPostCount} unresolved held out` : ''}
                       </p>
                     )}
                   </div>
@@ -4870,7 +4870,7 @@ const Dashboard: React.FC = () => {
                       ) : autoGenSet.size > 0 ? (
                         <><Loader2 size={16} className="animate-spin" /> Waiting for images ({imgGenDone}/{safeSmartPostCount})</>
                       ) : (
-                        <><CheckCircle size={16} /> Add {safeSmartPostCount} Safe Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
+                        <><CheckCircle size={16} /> Add {safeSmartPostCount} Reviewed Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
                       )}
                     </button>
                     {isAccepting && (
@@ -5065,7 +5065,7 @@ const Dashboard: React.FC = () => {
                     {isAccepting ? (
                       <><Loader2 size={18} className="animate-spin" /> Saving {acceptSaved} of {safeSmartPostCount}…</>
                     ) : (
-                      <><CheckCircle size={18} /> Add {safeSmartPostCount} Safe Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
+                      <><CheckCircle size={18} /> Add {safeSmartPostCount} Reviewed Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
                     )}
                   </button>
                   {isAccepting && (

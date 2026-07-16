@@ -150,9 +150,13 @@ describe('media routes ai_usage telemetry', () => {
   });
 
   it('logs successful nano-banana-pro image generation in the fal proxy', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      images: [{ url: 'https://fal.cdn/nano.png' }],
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: 'https://fal.cdn/nano.png' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: '{"score":9,"match":"yes","reasoning":"brand-consistent image matches the post"}' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
     const usageCalls: UsageCall[] = [];
     const app = new Hono<{ Bindings: Env }>();
     registerProxyRoutes(app);
@@ -168,6 +172,9 @@ describe('media routes ai_usage telemetry', () => {
     }, makeRouteEnv(usageCalls));
 
     expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.imageUrl).toBe('https://fal.cdn/nano.png');
+    expect(data.critique_score).toBe(9);
     const usage = usageByOperation(usageCalls, 'image-gen-nano-banana-pro');
     expect(usage?.bindings[0]).toBe('user_1');
     expect(usage?.bindings[1]).toBe('client_1');
@@ -182,8 +189,14 @@ describe('media routes ai_usage telemetry', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).includes('fal.run/fal-ai/')) {
         falBodies.push(JSON.parse(String(init?.body || '{}')));
+        return new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/saas.png' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
-      return new Response(JSON.stringify({ images: [{ url: 'https://fal.cdn/saas.png' }] }), {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '{"score":8,"match":"yes","reasoning":"relevant small-business workflow image"}' } }],
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
@@ -249,6 +262,71 @@ describe('media routes ai_usage telemetry', () => {
     const retryFalBody = falBodies[1];
     expect(String(retryFalBody.prompt).toLowerCase()).toContain('overlapping slices');
     expect(String(retryFalBody.prompt).toLowerCase()).toContain('offset smoker');
+  });
+
+  it('rejects the generated image when both critic attempts score below the release threshold', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: 'https://fal.cdn/bad-first.png' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: '{"score":2,"match":"no","reasoning":"generic laptop image does not show the advertised workflow"}' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        images: [{ url: 'https://fal.cdn/bad-retry.png' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: '{"score":3,"match":"no","reasoning":"retry is still generic and unrelated to the caption"}' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const usageCalls: UsageCall[] = [];
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+
+    const res = await app.request('/api/fal-proxy?action=generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_1' },
+      body: JSON.stringify({
+        prompt: 'small business workflow automation in a bright office, candid iPhone photo',
+        caption: 'Automate invoicing and save time every week.',
+      }),
+    }, makeRouteEnv(usageCalls));
+
+    expect(res.status).toBe(422);
+    const data = await res.json() as any;
+    expect(data.imageUrl).toBeUndefined();
+    expect(data.error).toMatch(/did not pass/i);
+    expect(data.critique_score).toBe(3);
+    expect(data.retryable).toBe(true);
+  });
+
+  it('does not release an image when no critic provider is configured', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      images: [{ url: 'https://fal.cdn/unreviewed.png' }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    const usageCalls: UsageCall[] = [];
+    const app = new Hono<{ Bindings: Env }>();
+    registerProxyRoutes(app);
+
+    const res = await app.request('/api/fal-proxy?action=generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Test-Uid': 'user_1' },
+      body: JSON.stringify({
+        prompt: 'small business owner at work, candid iPhone photo',
+        caption: 'A practical automation tip for local businesses.',
+      }),
+    }, makeRouteEnv(usageCalls, {
+      OPENROUTER_API_KEY: '',
+      ANTHROPIC_API_KEY: undefined,
+    }));
+
+    expect(res.status).toBe(503);
+    const data = await res.json() as any;
+    expect(data.imageUrl).toBeUndefined();
+    expect(data.error).toMatch(/review unavailable/i);
+    expect(data.retryable).toBe(true);
   });
 
   it('logs Kling video starts and completed task results in the fal proxy', async () => {

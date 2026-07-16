@@ -89,6 +89,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       // because the lib/image-gen.ts helper doesn't support this model —
       // it's a premium-tier opt-in via forceModel, not the default route.
       // Falls back to the default delegation below if no refs are available.
+      let premiumResult: { imageUrl: string; modelUsed: string; archetypeSlug: string | null } | null = null;
       if (forceModel === 'nano-banana-pro') {
         let referenceImageUrls: string[] = [];
         try {
@@ -131,18 +132,23 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
                 estCostUsd: NANO_BANANA_PRO_COST_USD,
                 ok: true,
               });
-              return c.json({ imageUrl, model_used: 'nano-banana-pro' });
+              premiumResult = {
+                imageUrl,
+                modelUsed: 'nano-banana-pro',
+                archetypeSlug: null,
+              };
+            } else {
+              await logAiUsage(c.env, {
+                userId: uid,
+                clientId: clientId || null,
+                provider: 'fal',
+                model: 'nano-banana-pro',
+                operation: 'image-gen-nano-banana-pro',
+                imagesGenerated: 0,
+                estCostUsd: 0,
+                ok: false,
+              });
             }
-            await logAiUsage(c.env, {
-              userId: uid,
-              clientId: clientId || null,
-              provider: 'fal',
-              model: 'nano-banana-pro',
-              operation: 'image-gen-nano-banana-pro',
-              imagesGenerated: 0,
-              estCostUsd: 0,
-              ok: false,
-            });
           } else {
             console.warn(`[fal-proxy] nano-banana-pro failed (status ${res.status}), falling through to flux chain`);
             await logAiUsage(c.env, {
@@ -170,7 +176,7 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       const resolvedClientId = clientId || null;
       const resolvedSeedHint = seedHint || `${prompt}\n${captionText}`;
 
-      const result = await generateImageWithGuardrails(
+      const result = premiumResult || await generateImageWithGuardrails(
         c.env, uid, clientId || null,
         { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
         { caption: captionText || null, seedHint: resolvedSeedHint },
@@ -220,7 +226,21 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
       }
 
       if (!finalImageUrl) {
-        return c.json({ error: 'Image generation failed — flux-dev returned no image' }, 502);
+        return c.json({ error: 'Image generation failed — provider returned no image', retryable: true }, 502);
+      }
+      if (!finalCritique) {
+        return c.json({
+          error: 'Image review unavailable — no unreviewed image was released',
+          retryable: true,
+        }, 503);
+      }
+      if (finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+        return c.json({
+          error: 'Generated image did not pass safety and relevance review',
+          critique_score: finalCritique.score,
+          critique_reasoning: finalCritique.reasoning,
+          retryable: true,
+        }, 422);
       }
       return c.json({
         imageUrl: finalImageUrl,
