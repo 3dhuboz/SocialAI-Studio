@@ -2,7 +2,7 @@
 //
 // fal.ai charges per image/video and Steve's account is prepay. If the
 // balance hits zero, prewarm + JIT image gen silently fail and posts ship
-// text-only. This cron polls fal.ai's /api/users/me endpoint and emails
+// text-only. This cron polls fal.ai's account billing endpoint and emails
 // Steve via Resend when the balance drops below $5 so he can top up.
 //
 // Uses cron_alerts as an incident latch: one email while the balance remains
@@ -12,6 +12,7 @@ import type { Env } from '../env';
 
 const LOW_CREDIT_ALERT_KEY = 'fal_credits_low';
 const LOW_CREDIT_THRESHOLD = 5;
+const FAL_ACCOUNT_BILLING_URL = 'https://api.fal.ai/v1/account/billing?expand=credits';
 
 interface FalCreditAlertRow {
   alert_key: string;
@@ -23,6 +24,40 @@ export interface FalCreditAlertResult {
   balance: unknown;
   alert: 'sent' | 'suppressed' | 'no_resend_key' | 'not_needed';
   threshold: number;
+}
+
+export interface FalCreditBalance {
+  balance: number;
+  currency: string;
+}
+
+export async function fetchFalCreditBalance(apiKey: string): Promise<FalCreditBalance> {
+  const res = await fetch(FAL_ACCOUNT_BILLING_URL, {
+    headers: { Authorization: `Key ${apiKey}` },
+  });
+  const raw = await res.text();
+  let data: any;
+
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    if (!res.ok) throw new Error(`fal.ai billing API HTTP ${res.status}`);
+    throw new Error('fal.ai billing API returned an invalid response');
+  }
+
+  if (!res.ok) {
+    throw new Error(data?.error?.message || data?.message || `fal.ai billing API HTTP ${res.status}`);
+  }
+
+  const balance = Number(data?.credits?.current_balance);
+  if (!Number.isFinite(balance)) {
+    throw new Error('fal.ai billing API response did not include a valid credit balance');
+  }
+
+  return {
+    balance,
+    currency: typeof data?.credits?.currency === 'string' ? data.credits.currency : 'USD',
+  };
 }
 
 export async function cronCheckFalCredits(env: Env) {
@@ -48,12 +83,8 @@ export async function checkFalCreditsAlert(env: Env): Promise<FalCreditAlertResu
   const apiKey = env.FAL_API_KEY;
   if (!apiKey) throw new Error('fal.ai API key not configured');
 
-  const res = await fetch('https://fal.ai/api/users/me', { headers: { Authorization: `Key ${apiKey}` } });
-  const data = await res.json() as any;
-  if (!res.ok) throw new Error(data?.message || `fal.ai HTTP ${res.status}`);
-
-  const balance = data?.balance ?? data?.credits ?? null;
-  if (balance !== null && Number(balance) < LOW_CREDIT_THRESHOLD) {
+  const { balance } = await fetchFalCreditBalance(apiKey);
+  if (balance < LOW_CREDIT_THRESHOLD) {
     const resendKey = env.RESEND_API_KEY;
     if (!resendKey) {
       return { balance, alert: 'no_resend_key', threshold: LOW_CREDIT_THRESHOLD };
@@ -69,7 +100,7 @@ export async function checkFalCreditsAlert(env: Env): Promise<FalCreditAlertResu
     return { balance, alert: 'sent', threshold: LOW_CREDIT_THRESHOLD };
   }
 
-  if (balance !== null) await resolveLowCreditAlert(env);
+  await resolveLowCreditAlert(env);
   return { balance, alert: 'not_needed', threshold: LOW_CREDIT_THRESHOLD };
 }
 
@@ -115,7 +146,7 @@ async function sendLowCreditEmail(resendKey: string, balance: unknown): Promise<
       from: 'SocialAI Studio <noreply@socialaistudio.au>',
       to: 'steve@3dhub.au',
       subject: `fal.ai Credits Low - $${formattedBalance} remaining`,
-      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${formattedBalance}</strong></p><p>Image generation will stop when credits run out.</p><a href="https://fal.ai/dashboard/usage-billing/credits" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a></div>`,
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;"><h2 style="color:#f59e0b;">fal.ai Credit Alert</h2><p>Your fal.ai balance is <strong style="color:#ef4444;font-size:1.3em;">$${formattedBalance}</strong></p><p>Image generation will stop when credits run out.</p><a href="https://fal.ai/dashboard/billing" style="display:inline-block;background:#f59e0b;color:#000;font-weight:bold;padding:12px 24px;border-radius:8px;text-decoration:none;margin-top:10px;">Top Up Credits</a></div>`,
     }),
   });
 }
