@@ -1642,3 +1642,99 @@ This removes an avoidable source of inconsistent pilot holds and critic cost.
 It does not supply the missing genuine client cohort, unchanged green
 decisions, adjudications, outcome history, or promotion evidence. Production
 rollout therefore remains blocked.
+
+## 2026-07-17 Scheduled Pilot Context Gate And Counter Telemetry
+
+### Completion-Audit Finding And Repair
+
+The authenticated manual pilot route was fail-closed on missing business
+context, but the natural 15-minute collector still went directly from
+candidate selection to budget and critic evaluation. That separate scheduled
+path could therefore spend critic budget and create another ambiguous hold for
+the same incomplete workspace.
+
+The collector now loads the same tenant-scoped critic context and applies the
+same readiness contract before budget telemetry or critic execution. Its
+candidate pool is balanced at up to five owner and five client Drafts, with a
+ten-row scan ceiling and at most one ready workspace from each owner kind
+evaluated per run. A missing-context or exhausted-budget workspace no longer
+reserves its owner-kind slot and cannot starve a later ready workspace.
+
+Schema v43 adds a bounded `cron_runs.details_json` field. Only the following
+non-negative integer counters are serialized for `learning_pilot` receipts:
+`posts_processed`, `candidates_considered`, `evaluated`, `reused`,
+`claimed_elsewhere`, `budget_skipped`, `context_not_ready`,
+`invalid_skipped`, and `errors`. Arbitrary result properties, captions, and
+customer content are not persisted or returned by `/api/cron-health`.
+
+### Authenticated And Natural Staging Proof
+
+One clearly labelled synthetic staging fixture was created through the normal
+authenticated `POST /api/db/posts` route, not by inserting a proof row into
+D1. Fixture `bf848b80-b88d-4ff4-88b8-6ab0992e535f` was created as text-only
+`Draft` content with no client, schedule, image, video, or publish path.
+
+The authenticated manual validation route returned HTTP `409` with
+`code='pilot_context_not_ready'`, zero meaningful profile fields, zero
+verified facts, and no decision ID. The Clerk bearer token existed only inside
+the already authenticated page, was never output or written to disk, and the
+temporary browser tab was closed after verification.
+
+Cloudflare then invoked the real staging scheduler without a manual trigger.
+Natural receipt `6148`, at `2026-07-17 13:30:57` UTC, succeeded with:
+
+```json
+{
+  "posts_processed": 0,
+  "candidates_considered": 1,
+  "evaluated": 0,
+  "reused": 0,
+  "claimed_elsewhere": 0,
+  "budget_skipped": 0,
+  "context_not_ready": 1,
+  "invalid_skipped": 0,
+  "errors": 0
+}
+```
+
+The same receipt was independently visible through D1 and the public
+`/api/cron-health` read model. After both checks, the fixture remained an
+unscheduled, media-free Draft. It had zero decisions and zero publication
+events; total staging decisions remained five with the same latest timestamp;
+and the entire staging `ai_usage` ledger remained at zero rows and zero cost.
+The only intentional business-data write was the isolated QA Draft, and the
+only automatic proof write was the normal cron receipt.
+
+This synthetic fixture proves a safety branch only. It does not count as a
+pilot decision, customer consent, adjudication, outcome, publication, or
+promotion record.
+
+Credential-free evidence:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-pilot-context-collector-proof-2026-07-17T13-33-16-867Z.json`
+- SHA-256:
+  `759125F5778D63F175701872D04FCADD10CE84D48C30356EEFDAA97DA3D586C6`
+
+### Verification And Deployment Boundary
+
+The final implementation source before this evidence update is
+`0080588a4ed8ca1b9b095bebf8a473cf62abe857`. Focused collector and telemetry
+contracts passed, the complete Worker suite passed 93 files and 1,192 tests,
+strict Worker TypeScript passed, the frontend suite passed 17 files and 199
+tests, and the production frontend build passed. Draft PR `#209` remained
+mergeable with CI passing at that exact source commit.
+
+Only staging received schema v43 and Worker version
+`ea139d3d-a2be-4191-9c7d-6fd6c982bfa5`. Its behavior-changing flags remain
+disabled and it is bound only to `socialai-db-staging`.
+
+Production was not migrated or deployed. It remains on Worker version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, schema v42 has no
+`cron_runs.details_json` column, current readiness is `ready=0`, protected
+workspace count is zero, and autopublish consent count is zero. Read-only
+production checks wrote zero rows, and `hughesq-001` remains exactly
+`status='on_hold'`.
+
+The scheduled-path defect and its observability gap are closed in staging.
+Production promotion remains blocked until all genuine consent, client-cohort,
+adjudication, availability, cost, outcome, and release-readiness gates pass.

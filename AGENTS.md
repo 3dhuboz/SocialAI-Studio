@@ -211,9 +211,17 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v42
+**Current source schema version:** v43
 
 **Current production schema version:** v42.
+
+**Current staging schema version:** v43.
+
+Pilot cron telemetry migration: `workers/api/schema_v43_cron_run_details.sql`.
+It adds a bounded `details_json` field to `cron_runs`; application code writes
+only allowlisted numeric record-only pilot counters. The migration is live in
+staging only and must be applied before deploying the matching Worker code to
+another environment.
 
 Delivery uncertainty migration: `workers/api/schema_v42_delivery_uncertainty_receipts.sql`.
 It adds tenant-scoped, append-only shadow evidence around provider delivery
