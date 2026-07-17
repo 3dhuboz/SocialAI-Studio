@@ -102,6 +102,19 @@ describe('runDeterministicCritics', () => {
     });
   });
 
+  it('requests repair for an invented free offer', () => {
+    const results = runDeterministicCritics(
+      { ...input, content: 'Free brisket with every order today' },
+      context,
+    );
+
+    expect(results.find((result) => result.kind === 'fact')).toMatchObject({
+      verdict: 'warn_repairable',
+      severity: 'release_critical',
+      evidence: expect.arrayContaining([expect.stringMatching(/^free$/i)]),
+    });
+  });
+
   it('requests repair for near-duplicate recent copy', () => {
     const results = runDeterministicCritics(
       { ...input, content: 'Weekend brisket is ready now' },
