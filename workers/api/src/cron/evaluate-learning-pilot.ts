@@ -1,5 +1,10 @@
 import type { Env } from '../env';
 import {
+  assessCriticContextReadiness,
+  loadCriticContext,
+  type CriticContext,
+} from '../lib/learning/critic-context';
+import {
   getRecordOnlyPilotBudgetStatus,
   runClaimedPilotEvaluation,
   type ClaimedPilotEvaluationResult,
@@ -45,6 +50,7 @@ interface PilotCollectorDeps {
     budgetUsdCents: number,
     now: Date,
   ): Promise<PilotBudgetStatus>;
+  loadContext(env: Env, identity: WorkspaceIdentity): Promise<CriticContext>;
   runEvaluation(env: Env, post: PublishablePost): Promise<ClaimedPilotEvaluationResult>;
 }
 
@@ -55,9 +61,14 @@ export interface PilotCollectorResult {
   reused: number;
   claimed_elsewhere: number;
   budget_skipped: number;
+  context_not_ready: number;
   invalid_skipped: number;
   errors: number;
 }
+
+const PILOT_CANDIDATE_SCAN_LIMIT = 10;
+const PILOT_CANDIDATES_PER_OWNER_KIND = 5;
+const PILOT_OWNER_KIND_LIMIT = 2;
 
 async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateRow[]> {
   const rows = await env.DB.prepare(`
@@ -158,12 +169,25 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
                AS INTEGER
              ) > 0
         )
+    ),
+    balanced AS (
+      SELECT
+        ranked.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY owner_kind
+          ORDER BY workspace_key, user_id
+        ) AS owner_kind_rank
+      FROM ranked
+      WHERE workspace_rank = 1
     )
     SELECT *
-      FROM ranked
-     WHERE workspace_rank = 1
-     ORDER BY CASE owner_kind WHEN 'user' THEN 0 ELSE 1 END, workspace_key
-     LIMIT 2
+      FROM balanced
+     WHERE owner_kind_rank <= ${PILOT_CANDIDATES_PER_OWNER_KIND}
+     ORDER BY
+       owner_kind_rank,
+       CASE owner_kind WHEN 'user' THEN 0 ELSE 1 END,
+       workspace_key
+     LIMIT ${PILOT_CANDIDATE_SCAN_LIMIT}
   `).bind(
     AUTOPILOT_POLICY_VERSION,
     now.toISOString(),
@@ -174,6 +198,13 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
 const defaultDeps: PilotCollectorDeps = {
   loadCandidates: loadPilotCandidates,
   getBudgetStatus: getRecordOnlyPilotBudgetStatus,
+  loadContext: (env, identity) => loadCriticContext(
+    env,
+    identity.userId,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+  ),
   runEvaluation: runClaimedPilotEvaluation,
 };
 
@@ -263,6 +294,7 @@ export async function cronEvaluateLearningPilot(
     reused: 0,
     claimed_elsewhere: 0,
     budget_skipped: 0,
+    context_not_ready: 0,
     invalid_skipped: 0,
     errors: 0,
   };
@@ -274,7 +306,8 @@ export async function cronEvaluateLearningPilot(
   const seenWorkspaces = new Set<string>();
   const seenOwnerKinds = new Set<WorkspaceOwnerKind>();
 
-  for (const row of rows.slice(0, 2)) {
+  for (const row of rows) {
+    if (seenOwnerKinds.size >= PILOT_OWNER_KIND_LIMIT) break;
     const candidate = candidatePost(row, now);
     if (
       !candidate
@@ -284,10 +317,14 @@ export async function cronEvaluateLearningPilot(
       result.invalid_skipped += 1;
       continue;
     }
-    seenWorkspaces.add(row.workspace_key);
-    seenOwnerKinds.add(candidate.identity.ownerKind);
 
     try {
+      const context = await deps.loadContext(env, candidate.identity);
+      if (!assessCriticContextReadiness(context).ready) {
+        result.context_not_ready += 1;
+        continue;
+      }
+
       const budget = await deps.getBudgetStatus(
         env.DB,
         candidate.identity,
@@ -299,6 +336,8 @@ export async function cronEvaluateLearningPilot(
         else result.budget_skipped += 1;
         continue;
       }
+      seenWorkspaces.add(row.workspace_key);
+      seenOwnerKinds.add(candidate.identity.ownerKind);
 
       const evaluation = await deps.runEvaluation(env, candidate.post);
       if (evaluation.status === 'evaluated') {

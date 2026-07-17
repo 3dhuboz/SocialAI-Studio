@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import { cronEvaluateLearningPilot } from '../cron/evaluate-learning-pilot';
+import type { CriticContext } from '../lib/learning/critic-context';
 import {
   PILOT_EVALUATION_BUDGET_RESERVE_CENTS,
   getRecordOnlyPilotBudgetStatus,
@@ -34,6 +35,20 @@ const ownerIdentity: WorkspaceIdentity = {
   workspaceKey: '__owner__',
   ownerKind: 'user',
   ownerId: 'owner-1',
+};
+
+const readyContext: CriticContext = {
+  profile: { productsServices: 'Custom software and workflow automation' },
+  verifiedFacts: [],
+  recentPosts: [],
+  forbiddenSubjects: [],
+};
+
+const emptyContext: CriticContext = {
+  profile: { name: 'Metadata only', tone: 'Professional' },
+  verifiedFacts: [],
+  recentPosts: [],
+  forbiddenSubjects: [],
 };
 
 function ownerCandidate() {
@@ -244,13 +259,14 @@ describe('record-only pilot collector', () => {
       decisionId: crypto.randomUUID(),
       releaseState: 'pass_green' as const,
     }));
+    const loadContext = vi.fn(async () => readyContext);
 
     const result = await cronEvaluateLearningPilot({
       DB: db,
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
-    } as Env, { runEvaluation });
+    } as Env, { loadContext, runEvaluation });
 
     expect(result).toEqual({
       posts_processed: 2,
@@ -259,9 +275,11 @@ describe('record-only pilot collector', () => {
       reused: 0,
       claimed_elsewhere: 0,
       budget_skipped: 0,
+      context_not_ready: 0,
       invalid_skipped: 0,
       errors: 0,
     });
+    expect(loadContext).toHaveBeenCalledTimes(2);
     expect(runEvaluation).toHaveBeenCalledTimes(2);
     const candidateQuery = calls.find((call) =>
       call.sql.includes('FROM learning_pilot_enrollments pen'))!;
@@ -271,9 +289,138 @@ describe('record-only pilot collector', () => {
     expect(candidateQuery.sql).toContain("pen.consent_basis = 'customer_attested'");
     expect(candidateQuery.sql).toContain("w.mode = 'approval'");
     expect(candidateQuery.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");
-    expect(candidateQuery.sql).toMatch(/LIMIT\s+2/i);
+    expect(candidateQuery.sql).toContain('PARTITION BY owner_kind');
+    expect(candidateQuery.sql).toMatch(/owner_kind_rank\s+<=\s+5/i);
+    expect(candidateQuery.sql).toMatch(/LIMIT\s+10/i);
     expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
       .toBe(false);
+  });
+
+  it('skips empty context before budget checks without starving later ready workspaces', async () => {
+    const secondOwner = {
+      ...ownerCandidate(),
+      id: 'draft-owner-2',
+      user_id: 'owner-2',
+      owner_id: 'owner-2',
+      content: 'A second owner draft with real business context.',
+    };
+    const { db, calls } = makeRecordingD1();
+    const loadContext = vi.fn(async (_env: Env, identity: WorkspaceIdentity) =>
+      identity.ownerKind === 'user' && identity.userId === 'owner-1'
+        ? emptyContext
+        : readyContext);
+    const getBudgetStatus = vi.fn(async () => ({
+      allowed: true as const,
+      monthlyAiSpendUsdCents: 0,
+      monthlyAiBudgetUsdCents: 500,
+      telemetryCount: 0,
+      remainingUsdCents: 500,
+      reason: null,
+    }));
+    const runEvaluation = vi.fn(async () => ({
+      status: 'evaluated' as const,
+      decisionId: crypto.randomUUID(),
+      releaseState: 'pass_green' as const,
+    }));
+
+    const result = await cronEvaluateLearningPilot({
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env, {
+      loadCandidates: vi.fn(async () => [
+        ownerCandidate(),
+        secondOwner,
+        clientCandidate(),
+      ]),
+      loadContext,
+      getBudgetStatus,
+      runEvaluation,
+    });
+
+    expect(result).toEqual({
+      posts_processed: 2,
+      candidates_considered: 3,
+      evaluated: 2,
+      reused: 0,
+      claimed_elsewhere: 0,
+      budget_skipped: 0,
+      context_not_ready: 1,
+      invalid_skipped: 0,
+      errors: 0,
+    });
+    expect(loadContext).toHaveBeenCalledTimes(3);
+    expect(getBudgetStatus).toHaveBeenCalledTimes(2);
+    expect(runEvaluation).toHaveBeenCalledTimes(2);
+    expect(runEvaluation).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 'draft-owner-1' }),
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it('does not let an exhausted workspace budget starve a later ready workspace', async () => {
+    const secondOwner = {
+      ...ownerCandidate(),
+      id: 'draft-owner-budget-ready',
+      user_id: 'owner-budget-ready',
+      owner_id: 'owner-budget-ready',
+    };
+    const { db, calls } = makeRecordingD1();
+    const getBudgetStatus = vi.fn(
+      async (_db: D1Database, identity: WorkspaceIdentity) =>
+        identity.userId === 'owner-1'
+          ? {
+              allowed: false as const,
+              monthlyAiSpendUsdCents: 451,
+              monthlyAiBudgetUsdCents: 500,
+              telemetryCount: 30,
+              remainingUsdCents: 49,
+              reason: 'insufficient_reserve' as const,
+            }
+          : {
+              allowed: true as const,
+              monthlyAiSpendUsdCents: 0,
+              monthlyAiBudgetUsdCents: 500,
+              telemetryCount: 0,
+              remainingUsdCents: 500,
+              reason: null,
+            },
+    );
+    const runEvaluation = vi.fn(async () => ({
+      status: 'evaluated' as const,
+      decisionId: 'decision-budget-ready',
+      releaseState: 'pass_green' as const,
+    }));
+
+    const result = await cronEvaluateLearningPilot({
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env, {
+      loadCandidates: vi.fn(async () => [ownerCandidate(), secondOwner]),
+      loadContext: vi.fn(async () => readyContext),
+      getBudgetStatus,
+      runEvaluation,
+    });
+
+    expect(result).toMatchObject({
+      posts_processed: 1,
+      candidates_considered: 2,
+      evaluated: 1,
+      budget_skipped: 1,
+      context_not_ready: 0,
+      errors: 0,
+    });
+    expect(getBudgetStatus).toHaveBeenCalledTimes(2);
+    expect(runEvaluation).toHaveBeenCalledTimes(1);
+    expect(runEvaluation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 'draft-owner-budget-ready' }),
+    );
+    expect(calls).toEqual([]);
   });
 
   it('skips a held client defensively even if a malformed query adapter returns it', async () => {
