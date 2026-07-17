@@ -211,11 +211,19 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v44
+**Current source schema version:** v45
 
 **Current production schema version:** v42.
 
 **Current staging schema version:** v44.
+
+Pilot AI cost attribution migration:
+`workers/api/schema_v45_learning_ai_usage_attribution.sql`.
+It adds an immutable, tenant-and-post guarded decision scope to `ai_usage`.
+Record-only pilot calls fail closed if scoped metering cannot persist, and
+readiness requires exact coverage for every eligible pilot decision while the
+existing full-workspace monthly ledger remains the budget cap. The migration
+is not yet live and must precede matching Worker code in each environment.
 
 Pilot QA disqualification migration:
 `workers/api/schema_v44_learning_decision_disqualifications.sql`.
@@ -303,6 +311,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `conversion_feedback` | Owner-recorded calls, messages, leads, bookings, sales, and order value |
 | `learning_adjudications` | Admin pilot labels for sampled immutable release decisions |
 | `learning_decision_disqualifications` | Immutable staging QA exclusions that keep synthetic decisions out of readiness and adjudication |
+| `ai_usage` | Workspace-wide AI spend ledger with optional exact learning-decision attribution |
 | `learning_pilot_enrollments` | Policy-versioned record-only pilot cohort and consent receipts; update-blocked but privacy-deletable |
 | `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
 | `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |

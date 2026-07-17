@@ -1,6 +1,7 @@
 import type { Env } from '../../env';
 import { scanContentForTropes } from '../../../../../shared/fabrication-patterns';
 import { critiqueImageInternal } from '../critique';
+import { assertLearningDecisionUsageScopeComplete } from '../ai-usage';
 import {
   UNTRUSTED_CONTENT_DIRECTIVE,
   wrapUntrusted,
@@ -476,6 +477,7 @@ export async function runAndPersistReleasePipeline(
   };
   const decisionId = await deps.createReceipt(env.DB, receiptInput);
   await deps.replaceVerdicts(env.DB, decisionId, result.attempts);
+  assertLearningDecisionUsageScopeComplete(env, decisionId);
   const completedId = await deps.createReceipt(env.DB, {
     ...receiptInput,
     summary: { ...summary, persistenceState: 'complete' },

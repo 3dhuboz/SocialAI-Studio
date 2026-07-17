@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { logAiUsage } from '../lib/ai-usage';
 import { cronEvaluateLearningPilot } from '../cron/evaluate-learning-pilot';
 import type { CriticContext } from '../lib/learning/critic-context';
 import {
@@ -119,13 +120,23 @@ describe('record-only pilot evaluation lease', () => {
     const { db, calls } = makeRecordingD1({
       'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
     });
-    const runPipeline = vi.fn(async () => ({
-      id: 'decision-claim-1',
-      state: 'hold_amber' as const,
-    }));
+    const runPipeline = vi.fn(async (scopedEnv: Env) => {
+      await logAiUsage(scopedEnv, {
+        userId: 'owner-1',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        operation: 'learning_release_judge',
+        postId: ownerPost.id,
+        estCostUsd: 0.003,
+      });
+      return {
+        id: 'decision-claim-1',
+        state: 'hold_amber' as const,
+      };
+    });
 
     const result = await runClaimedPilotEvaluation(
-      { DB: db } as Env,
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
       ownerPost,
       {
         findFreshReceipt: vi.fn(async () => null),
@@ -163,6 +174,26 @@ describe('record-only pilot evaluation lease', () => {
     ]));
     expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
       .toBe(false);
+    const usage = calls.find((call) => call.sql.includes('INSERT INTO ai_usage'))!;
+    expect(usage.binds.at(-2)).toBe('decision-claim-1');
+  });
+
+  it('fails closed if the completed receipt differs from the claimed metering scope', async () => {
+    const { db } = makeRecordingD1({
+      'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
+    });
+
+    await expect(runClaimedPilotEvaluation(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      ownerPost,
+      {
+        findFreshReceipt: vi.fn(async () => null),
+        runPipeline: vi.fn(async () => ({
+          id: 'decision-other',
+          state: 'pass_green' as const,
+        })),
+      },
+    )).rejects.toThrow('different decision id');
   });
 
   it('does not run critics when another worker owns a non-stale claim', async () => {
@@ -192,7 +223,7 @@ describe('record-only pilot evaluation lease', () => {
 
 describe('record-only pilot budget', () => {
   it('treats an empty but valid monthly ledger as zero spend', async () => {
-    const { db } = makeRecordingD1({
+    const { db, calls } = makeRecordingD1({
       'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
     });
 
@@ -211,6 +242,9 @@ describe('record-only pilot budget', () => {
       remainingUsdCents: 500,
       reason: null,
     });
+    const usage = calls.find((call) => call.sql.includes('FROM ai_usage'))!;
+    expect(usage.sql).toContain('unixepoch(ts) >= unixepoch(?)');
+    expect(usage.sql).toContain('unixepoch(ts) < unixepoch(?)');
   });
 
   it('fails closed when the conservative evaluation reserve is unavailable', async () => {

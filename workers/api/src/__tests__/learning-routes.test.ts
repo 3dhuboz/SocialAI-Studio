@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { logAiUsage } from '../lib/ai-usage';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
 vi.mock('../auth', () => ({
@@ -439,7 +440,18 @@ describe('learning settings and release evidence routes', () => {
       'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
       'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
     });
-    runPilotPipeline.mockResolvedValue({ id: 'decision-pilot-1', state: 'pass_green' });
+    runPilotPipeline.mockImplementation(async (scopedEnv) => {
+      await logAiUsage(scopedEnv, {
+        userId: 'owner_1',
+        clientId: 'client-1',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        operation: 'learning_release_judge',
+        postId: 'draft-1',
+        estCostUsd: 0.003,
+      });
+      return { id: 'decision-claim-1', state: 'pass_green' };
+    });
     const env = {
       DB: db,
       LEARNING_BRAIN_ENABLED: 'true',
@@ -454,11 +466,16 @@ describe('learning settings and release evidence routes', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      decisionId: 'decision-pilot-1', releaseState: 'pass_green',
+      decisionId: 'decision-claim-1', releaseState: 'pass_green',
       postId: 'draft-1', sourceStatus: 'Draft', postMutated: false,
     });
     expect(runPilotPipeline).toHaveBeenCalledWith(
-      env,
+      expect.objectContaining({
+        DB: db,
+        LEARNING_BRAIN_ENABLED: 'true',
+        LEARNING_RELEASE_ENFORCEMENT: 'false',
+        LEARNING_AUTOPILOT_ENABLED: 'false',
+      }),
       expect.objectContaining({
         id: 'draft-1', user_id: 'owner_1', client_id: 'client-1',
         owner_kind: 'client', owner_id: 'client-1', content: 'Real customer draft',

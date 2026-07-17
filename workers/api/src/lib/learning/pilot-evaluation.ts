@@ -1,5 +1,9 @@
 import type { Env } from '../../env';
 import {
+  assertLearningDecisionUsageScopeComplete,
+  withLearningDecisionUsageScope,
+} from '../ai-usage';
+import {
   buildReleaseContentHash,
   runAndPersistReleasePipeline,
   type PublishablePost,
@@ -69,10 +73,12 @@ export async function getRecordOnlyPilotBudgetStatus(
   const sql = identity.clientId === null
     ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
          FROM ai_usage
-        WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
+        WHERE user_id = ? AND client_id IS NULL
+          AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`
     : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
          FROM ai_usage
-        WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
+        WHERE user_id = ? AND client_id = ?
+          AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`;
   const bindings = identity.clientId === null
     ? [identity.userId, monthStart, monthEnd]
     : [identity.userId, identity.clientId, monthStart, monthEnd];
@@ -269,7 +275,12 @@ export async function runClaimedPilotEvaluation(
         };
   }
 
-  const result = await deps.runPipeline(env, post, 'approval');
+  const meteredEnv = withLearningDecisionUsageScope(env, claimId);
+  const result = await deps.runPipeline(meteredEnv, post, 'approval');
+  if (result.id !== claimId) {
+    throw new Error('Pilot pipeline completed under a different decision id');
+  }
+  assertLearningDecisionUsageScopeComplete(meteredEnv, claimId);
   return {
     status: 'evaluated',
     decisionId: result.id,

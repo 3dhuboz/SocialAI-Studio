@@ -80,6 +80,11 @@ export interface WorkspaceCostTelemetry {
   budgetUsdCents: number | null;
   spendUsd: number;
   telemetryCount: number;
+  invalidTelemetryCount: number;
+  pilotSpendUsd: number;
+  pilotTelemetryCount: number;
+  pilotInvalidTelemetryCount: number;
+  meteredPilotDecisionCount: number;
 }
 
 export interface PredictionSample {
@@ -413,19 +418,38 @@ export function buildReadinessMetrics(
 
   const workspaceKeys = new Set(pilotDecisions.map((decision) =>
     workspaceTelemetryKey(decision.user_id, decision.workspace_key)));
+  const pilotDecisionCounts = new Map<string, number>();
+  for (const decision of pilotDecisions) {
+    const key = workspaceTelemetryKey(decision.user_id, decision.workspace_key);
+    pilotDecisionCounts.set(key, (pilotDecisionCounts.get(key) ?? 0) + 1);
+  }
   const costsByWorkspace = new Map(costs.map((cost) => [
     workspaceTelemetryKey(cost.userId, cost.workspaceKey),
     cost,
   ]));
   const costWithinBudget = workspaceKeys.size > 0 && [...workspaceKeys].every((key) => {
     const cost = costsByWorkspace.get(key);
+    const expectedDecisionCount = pilotDecisionCounts.get(key) ?? 0;
     return Boolean(
       cost
       && Number.isSafeInteger(cost.budgetUsdCents)
       && Number(cost.budgetUsdCents) > 0
       && Number.isFinite(cost.spendUsd)
+      && cost.spendUsd >= 0
       && Number.isSafeInteger(cost.telemetryCount)
       && cost.telemetryCount > 0
+      && Number.isSafeInteger(cost.invalidTelemetryCount)
+      && cost.invalidTelemetryCount === 0
+      && Number.isFinite(cost.pilotSpendUsd)
+      && cost.pilotSpendUsd > 0
+      && cost.pilotSpendUsd <= cost.spendUsd + 1e-9
+      && Number.isSafeInteger(cost.pilotTelemetryCount)
+      && cost.pilotTelemetryCount >= expectedDecisionCount
+      && cost.pilotTelemetryCount <= cost.telemetryCount
+      && Number.isSafeInteger(cost.pilotInvalidTelemetryCount)
+      && cost.pilotInvalidTelemetryCount === 0
+      && Number.isSafeInteger(cost.meteredPilotDecisionCount)
+      && cost.meteredPilotDecisionCount === expectedDecisionCount
       && cost.spendUsd * 100 < Number(cost.budgetUsdCents),
     );
   });
@@ -636,6 +660,11 @@ export async function collectLearningReadiness(
   const [monthStart, monthEnd] = utcMonthBounds(now);
   const costs: WorkspaceCostTelemetry[] = [];
   for (const identity of identities.values()) {
+    const workspaceDecisionIds = decisions
+      .filter((decision) =>
+        decision.user_id === identity.userId
+        && decision.workspace_key === identity.workspaceKey)
+      .map((decision) => decision.id);
     const setting = await db.prepare(`
       SELECT monthly_ai_budget_usd_cents
       FROM workspace_learning_settings
@@ -650,25 +679,88 @@ export async function collectLearningReadiness(
       identity.ownerId,
     ).first<{ monthly_ai_budget_usd_cents: number | null }>();
     const costSql = identity.clientId === null
-      ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+      ? `SELECT
+           COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+           COUNT(*) AS telemetry_count,
+           SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS invalid_telemetry_count
            FROM ai_usage
-          WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
-      : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+          WHERE user_id = ? AND client_id IS NULL
+            AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`
+      : `SELECT
+           COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+           COUNT(*) AS telemetry_count,
+           SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS invalid_telemetry_count
            FROM ai_usage
-          WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
+          WHERE user_id = ? AND client_id = ?
+            AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`;
     const bindings = identity.clientId === null
       ? [identity.userId, monthStart, monthEnd]
       : [identity.userId, identity.clientId, monthStart, monthEnd];
     const usage = await db.prepare(costSql).bind(...bindings).first<{
       spend_usd: number | null;
       telemetry_count: number;
+      invalid_telemetry_count: number;
     }>();
+    const decisionPlaceholders = workspaceDecisionIds.map(() => '?').join(',');
+    const attributedCostSql = identity.clientId === null
+      ? `SELECT
+           COALESCE(SUM(u.est_cost_usd), 0) AS pilot_spend_usd,
+           COUNT(*) AS pilot_telemetry_count,
+           SUM(CASE WHEN u.est_cost_usd IS NULL OR u.est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS pilot_invalid_telemetry_count,
+           COUNT(DISTINCT u.learning_decision_id) AS metered_decision_count
+         FROM ai_usage u
+         INNER JOIN learning_decisions usage_decision
+           ON usage_decision.id = u.learning_decision_id
+          AND usage_decision.user_id = u.user_id
+          AND usage_decision.client_id IS u.client_id
+          AND usage_decision.post_id = u.post_id
+         WHERE u.user_id = ? AND u.client_id IS NULL
+           AND u.learning_decision_id IN (${decisionPlaceholders})
+           AND unixepoch(u.ts) >= unixepoch(?)
+           AND unixepoch(u.ts) < unixepoch(?)`
+      : `SELECT
+           COALESCE(SUM(u.est_cost_usd), 0) AS pilot_spend_usd,
+           COUNT(*) AS pilot_telemetry_count,
+           SUM(CASE WHEN u.est_cost_usd IS NULL OR u.est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS pilot_invalid_telemetry_count,
+           COUNT(DISTINCT u.learning_decision_id) AS metered_decision_count
+         FROM ai_usage u
+         INNER JOIN learning_decisions usage_decision
+           ON usage_decision.id = u.learning_decision_id
+          AND usage_decision.user_id = u.user_id
+          AND usage_decision.client_id IS u.client_id
+          AND usage_decision.post_id = u.post_id
+         WHERE u.user_id = ? AND u.client_id = ?
+           AND u.learning_decision_id IN (${decisionPlaceholders})
+           AND unixepoch(u.ts) >= unixepoch(?)
+           AND unixepoch(u.ts) < unixepoch(?)`;
+    const attributedBindings = identity.clientId === null
+      ? [identity.userId, ...workspaceDecisionIds, monthStart, monthEnd]
+      : [identity.userId, identity.clientId, ...workspaceDecisionIds, monthStart, monthEnd];
+    const attributedUsage = await db.prepare(attributedCostSql)
+      .bind(...attributedBindings)
+      .first<{
+        pilot_spend_usd: number | null;
+        pilot_telemetry_count: number;
+        pilot_invalid_telemetry_count: number;
+        metered_decision_count: number;
+      }>();
     costs.push({
       userId: identity.userId,
       workspaceKey: identity.workspaceKey,
       budgetUsdCents: setting?.monthly_ai_budget_usd_cents ?? null,
       spendUsd: Number(usage?.spend_usd ?? Number.NaN),
       telemetryCount: Number(usage?.telemetry_count ?? 0),
+      invalidTelemetryCount: Number(usage?.invalid_telemetry_count ?? 0),
+      pilotSpendUsd: Number(attributedUsage?.pilot_spend_usd ?? Number.NaN),
+      pilotTelemetryCount: Number(attributedUsage?.pilot_telemetry_count ?? 0),
+      pilotInvalidTelemetryCount: Number(
+        attributedUsage?.pilot_invalid_telemetry_count ?? 0,
+      ),
+      meteredPilotDecisionCount: Number(attributedUsage?.metered_decision_count ?? 0),
     });
   }
 

@@ -269,14 +269,24 @@ describe('learning release readiness', () => {
         workspaceKey: '__owner__',
         budgetUsdCents: 1000,
         spendUsd: 1,
-        telemetryCount: 15,
+        telemetryCount: 30,
+        invalidTelemetryCount: 0,
+        pilotSpendUsd: 0.5,
+        pilotTelemetryCount: 30,
+        pilotInvalidTelemetryCount: 0,
+        meteredPilotDecisionCount: 15,
       },
       {
         userId: 'owner-1',
         workspaceKey: 'client-1',
         budgetUsdCents: 1000,
         spendUsd: 1,
-        telemetryCount: 15,
+        telemetryCount: 30,
+        invalidTelemetryCount: 0,
+        pilotSpendUsd: 0.5,
+        pilotTelemetryCount: 30,
+        pilotInvalidTelemetryCount: 0,
+        meteredPilotDecisionCount: 15,
       },
     ];
 
@@ -301,6 +311,79 @@ describe('learning release readiness', () => {
     expect(metrics.predictionLift).toBeGreaterThan(0.15);
     expect(evaluateReadiness({ ...metrics, publishingRegressions: 0, killSwitchTested: true }).ready)
       .toBe(true);
+  });
+
+  it('fails cost readiness when generic usage is not attributed to every pilot decision', () => {
+    const decisions: PilotDecisionRow[] = Array.from({ length: 2 }, (_, index) => ({
+      id: `decision-${index}`,
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    }));
+    const genericOnly: WorkspaceCostTelemetry[] = [{
+      userId: 'owner-1',
+      workspaceKey: '__owner__',
+      budgetUsdCents: 1000,
+      spendUsd: 2,
+      telemetryCount: 100,
+      invalidTelemetryCount: 0,
+      pilotSpendUsd: 0.1,
+      pilotTelemetryCount: 1,
+      pilotInvalidTelemetryCount: 0,
+      meteredPilotDecisionCount: 1,
+    }];
+
+    expect(buildReadinessMetrics(decisions, [], genericOnly).costWithinBudget).toBe(false);
+  });
+
+  it('fails cost readiness when any workspace or pilot estimate is missing or negative', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-1',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const completeCost: WorkspaceCostTelemetry = {
+      userId: 'owner-1',
+      workspaceKey: '__owner__',
+      budgetUsdCents: 1000,
+      spendUsd: 1,
+      telemetryCount: 3,
+      invalidTelemetryCount: 0,
+      pilotSpendUsd: 0.5,
+      pilotTelemetryCount: 3,
+      pilotInvalidTelemetryCount: 0,
+      meteredPilotDecisionCount: 1,
+    };
+
+    expect(buildReadinessMetrics(
+      [decision],
+      [],
+      [{ ...completeCost, invalidTelemetryCount: 1 }],
+    ).costWithinBudget).toBe(false);
+    expect(buildReadinessMetrics(
+      [decision],
+      [],
+      [{ ...completeCost, pilotInvalidTelemetryCount: 1 }],
+    ).costWithinBudget).toBe(false);
   });
 
   it('does not count shadow or protected decisions as approval pilot evidence', () => {
@@ -634,7 +717,17 @@ describe('learning release readiness', () => {
       'FROM learning_critic_verdicts': verdicts,
       'FROM learning_release_evidence': evidence,
       'FROM workspace_learning_settings': [{ monthly_ai_budget_usd_cents: 1000 }],
-      'FROM ai_usage': [{ spend_usd: 1, telemetry_count: 30 }],
+      'INNER JOIN learning_decisions usage_decision': [{
+        pilot_spend_usd: 0.5,
+        pilot_telemetry_count: 30,
+        pilot_invalid_telemetry_count: 0,
+        metered_decision_count: 15,
+      }],
+      'FROM ai_usage': [{
+        spend_usd: 1,
+        telemetry_count: 30,
+        invalid_telemetry_count: 0,
+      }],
     });
 
     const snapshot = await collectLearningReadiness(
@@ -666,6 +759,15 @@ describe('learning release readiness', () => {
     expect(pilotCall.sql).toContain('disq.id IS NULL');
     expect(pilotCall.sql).toContain('a.user_id = d.user_id');
     expect(pilotCall.sql).toContain('pe.owner_id = d.owner_id');
+    const attributedCalls = calls.filter((call) =>
+      call.sql.includes('INNER JOIN learning_decisions usage_decision'));
+    expect(attributedCalls).toHaveLength(2);
+    for (const call of attributedCalls) {
+      expect(call.sql).toContain('u.learning_decision_id IN (');
+      expect(call.sql).toContain('usage_decision.user_id = u.user_id');
+      expect(call.sql).toContain('usage_decision.client_id IS u.client_id');
+      expect(call.sql).toContain('usage_decision.post_id = u.post_id');
+    }
   });
 });
 

@@ -161,6 +161,46 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning release readiness collects a strict consecutive pilot window and current evidence from D1',
   },
   {
+    id: 'pilot_cost_attribution_schema',
+    suite: 'src/__tests__/learning-ai-usage-attribution-schema.test.ts',
+    assertion: 'learning AI usage attribution schema adds immutable tenant-and-post scoped decision attribution',
+  },
+  {
+    id: 'pilot_cost_staging_metering',
+    suite: 'src/lib/__tests__/ai-cost.test.ts',
+    assertion: 'AI-cost regression — logAiUsage writes in staging so release cost evidence can be proven',
+  },
+  {
+    id: 'pilot_cost_decision_scope',
+    suite: 'src/lib/__tests__/ai-cost.test.ts',
+    assertion: 'AI-cost regression — logAiUsage attributes a scoped call without leaking the decision to the parent env',
+  },
+  {
+    id: 'pilot_cost_fail_closed',
+    suite: 'src/lib/__tests__/ai-cost.test.ts',
+    assertion: 'AI-cost regression — logAiUsage fails a scoped pilot closed when its attribution row cannot persist',
+  },
+  {
+    id: 'pilot_cost_no_partial_completion',
+    suite: 'src/__tests__/learning-release-preflight.test.ts',
+    assertion: 'runAndPersistReleasePipeline refuses to mark a scoped decision complete after any metering write fails',
+  },
+  {
+    id: 'pilot_cost_claim_identity',
+    suite: 'src/__tests__/learning-pilot-collector.test.ts',
+    assertion: 'record-only pilot evaluation lease fails closed if the completed receipt differs from the claimed metering scope',
+  },
+  {
+    id: 'pilot_cost_readiness_coverage',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness fails cost readiness when generic usage is not attributed to every pilot decision',
+  },
+  {
+    id: 'pilot_cost_estimate_integrity',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness fails cost readiness when any workspace or pilot estimate is missing or negative',
+  },
+  {
     id: 'readiness_pilot_thresholds',
     suite: 'src/__tests__/learning-readiness.test.ts',
     assertion: 'learning release readiness requires enough adjudicated pilot evidence and every safety threshold',

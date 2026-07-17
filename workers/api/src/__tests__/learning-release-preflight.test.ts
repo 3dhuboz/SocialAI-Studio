@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { logAiUsage, withLearningDecisionUsageScope } from '../lib/ai-usage';
 import {
   assertSafeIndependentRepair,
   buildReleaseContentHash,
@@ -278,6 +279,78 @@ describe('runAndPersistReleasePipeline', () => {
 
     expect(result).toEqual({ id: 'cached', state: 'hold_amber' });
     expect(expensiveCalls).toBe(0);
+  });
+
+  it('refuses to mark a scoped decision complete after any metering write fails', async () => {
+    let usageWrites = 0;
+    const baseEnv = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            run: async () => {
+              usageWrites += 1;
+              if (usageWrites === 2) throw new Error('D1 unavailable');
+              return { success: true };
+            },
+          }),
+        }),
+      } as unknown as D1Database,
+      ENVIRONMENT: 'staging',
+    } as Env;
+    const scopedEnv = withLearningDecisionUsageScope(baseEnv, 'decision-metered');
+    const receipts: Array<Record<string, any>> = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* swallow */ });
+
+    await expect(runAndPersistReleasePipeline(
+      scopedEnv,
+      post,
+      'approval',
+      {
+        findFreshReceipt: async () => null,
+        loadContext: async () => ({
+          profile: {}, verifiedFacts: [], forbiddenSubjects: [], recentPostDigests: [],
+        }),
+        executePipeline: async (env, candidate) => {
+          await logAiUsage(env, {
+            userId: post.user_id,
+            provider: 'anthropic',
+            model: 'claude-haiku-4-5',
+            operation: 'learning_text_council',
+            postId: post.id,
+            estCostUsd: 0.001,
+          });
+          try {
+            await logAiUsage(env, {
+              userId: post.user_id,
+              provider: 'anthropic',
+              model: 'claude-haiku-4-5',
+              operation: 'learning_release_judge',
+              postId: post.id,
+              estCostUsd: 0.001,
+            });
+          } catch {
+            // Mirrors a critic/provider fallback that catches a metering error.
+          }
+          return {
+            state: 'pass_green',
+            candidate,
+            attempts: [[verdict]],
+            repairHistory: [],
+            judgeStatus: 'available',
+          };
+        },
+        createReceipt: async (_db, input) => {
+          receipts.push(input as unknown as Record<string, any>);
+          return 'decision-metered';
+        },
+        replaceVerdicts: async () => {},
+      },
+    )).rejects.toThrow('Learning AI usage attribution is incomplete');
+
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].summary).toMatchObject({ persistenceState: 'writing' });
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
   });
 
   it('never marks an unapplied repaired candidate green', async () => {
