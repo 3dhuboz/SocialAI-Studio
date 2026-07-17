@@ -286,6 +286,7 @@ describe('independent model critics', () => {
     expect(prompt).not.toContain('Kind must exactly match');
     expect(prompt).toContain('at least one concrete repair');
     expect(prompt).toContain('at most 3 strings of at most 240 characters each');
+    expect(prompt).toContain('No factual claims to verify means pass, not unavailable');
   });
 
   it('retries one schema-invalid council response before returning verdicts', async () => {
@@ -342,6 +343,55 @@ describe('independent model critics', () => {
     expect(results.every((result) => result.severity === 'release_critical')).toBe(true);
   });
 
+  it('retries a contradictory advisory unavailable fact verdict with the exact failure', async () => {
+    let calls = 0;
+    const results = await runTextCriticCouncil(
+      { ...input, content: 'What part of your weekly workflow takes the most time?' },
+      context,
+      async (_system, prompt) => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            text: JSON.stringify({
+              brand: critic('brand'),
+              fact: {
+                ...critic('fact'),
+                verdict: 'unavailable',
+                severity: 'advisory',
+                confidence: 0.95,
+                evidence: ['Caption contains only a question, no factual claims to verify'],
+              },
+              repetition: critic('repetition'),
+              platform: critic('platform'),
+            }),
+            provider: 'test',
+            model: 'test',
+          };
+        }
+        expect(prompt).toContain('Invalid fact unavailable severity');
+        return {
+          text: JSON.stringify({
+            brand: critic('brand'),
+            fact: {
+              ...critic('fact'),
+              evidence: ['No factual claims require verification'],
+            },
+            repetition: critic('repetition'),
+            platform: critic('platform'),
+          }),
+          provider: 'test',
+          model: 'test',
+        };
+      },
+    );
+
+    expect(calls).toBe(2);
+    expect(results.find((result) => result.kind === 'fact')).toMatchObject({
+      verdict: 'pass',
+      severity: 'advisory',
+    });
+  });
+
   it('returns unavailable instead of passing malformed model output', async () => {
     const results = await runTextCriticCouncil(input, context, async () => ({
       text: 'not-json',
@@ -376,6 +426,32 @@ describe('independent model critics', () => {
         'fact',
       ),
     ).toThrow('Missing fact repair');
+  });
+
+  it('reserves unavailable for release-critical zero-confidence failures', () => {
+    expect(() => parseCriticResult({
+      ...critic('fact'),
+      verdict: 'unavailable',
+      severity: 'advisory',
+      confidence: 0,
+    }, 'fact')).toThrow('Invalid fact unavailable severity');
+    expect(() => parseCriticResult({
+      ...critic('fact'),
+      verdict: 'unavailable',
+      severity: 'release_critical',
+      confidence: 0.5,
+    }, 'fact')).toThrow('Invalid fact unavailable confidence');
+    expect(parseCriticResult({
+      ...critic('fact'),
+      verdict: 'unavailable',
+      severity: 'release_critical',
+      confidence: 0,
+      evidence: ['Fact critic provider unavailable'],
+    }, 'fact')).toMatchObject({
+      verdict: 'unavailable',
+      severity: 'release_critical',
+      confidence: 0,
+    });
   });
 
   it('uses the canonical requested kind and identifies the remaining enum fields', () => {
