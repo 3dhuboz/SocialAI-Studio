@@ -802,3 +802,85 @@ No authenticated customer generation was submitted during deployment proof,
 and no draft was accepted, scheduled, or published. The production bundles and
 fail-closed behavior are verified; the next customer generation will exercise
 the corrected path without requiring routine per-post human approval.
+
+## 2026-07-17 Record-Only Pilot Collector Staging Gate
+
+### Operational Gap And Bounded Repair
+
+The counted approval-mode pilot still depended on an admin manually validating
+each new Draft. The permanent release pipeline and critics were present, but a
+new genuine owner or consented-client Draft could remain outside the measured
+pilot until an operator clicked the validation button.
+
+Draft PR `#209` now adds a record-only collector to the isolated 15-minute
+non-publishing lane. It is deliberately dormant unless the learning brain is
+on while release enforcement and Protected Autopilot are both off. Each tick:
+
+- selects at most one Draft from one owner workspace and one explicitly
+  customer-attested client workspace;
+- revalidates the current policy enrollment, approval mode, consent timestamp,
+  positive monthly budget, and client hold state;
+- reserves 50 cents of remaining monthly budget before starting critics;
+- atomically leases the immutable release-decision key so a concurrent admin
+  click cannot duplicate critic spend;
+- retries only a stale incomplete claim after 20 minutes; and
+- never updates, accepts, schedules, publishes, or deletes the source post.
+
+The admin validation route now uses the same lease and budget boundary. A
+complete existing receipt is reused, a concurrent run returns a safe conflict,
+and unavailable cost telemetry fails closed before any critic call.
+
+### Verification And Staging Proof
+
+The implementation was observed failing its new tests before the collector
+modules existed. Verification after implementation:
+
+- Focused pilot, route, and wiring verification: 43 tests passed.
+- Worker verification: 90 test files and 1,160 tests passed.
+- Frontend verification: 17 test files and 195 tests passed.
+- Strict Worker and frontend TypeScript verification passed.
+- Production Vite build passed.
+- GitHub CI run `29557936943` passed frontend, Worker, Shopify, on-hold,
+  Facebook scheduling, and route-registration guards.
+
+Verified Worker source tip `9f8616502dba0b1e5e71789a2c6501ec2d08a5eb`
+remains on draft PR `#209`; it has not been merged. Staging Worker version
+`69ef85f7-4bb9-4243-b842-f39a55c7bd0e` was deployed with:
+
+- `LEARNING_BRAIN_ENABLED=true`
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+The natural `2026-07-17 05:45:20` staging trigger wrote successful cron receipt
+`5551` for `learning_pilot`, processed zero posts, and reported no error.
+Before and after the trigger, staging contained zero posts, workspace learning
+settings, pilot enrollments, learning decisions, and critic verdicts. The real
+D1 candidate query executed successfully. An `EXPLAIN` of the exact lease
+upsert also succeeded with `changed_db=false`, `changes=0`, and
+`rows_written=0`.
+
+Credential-free evidence:
+
+- Artifact:
+  `D:\GitHubBackup\SocialAi\release-evidence\staging-learning-pilot-collector-proof-2026-07-17T05-48-25-302Z.json`
+- Artifact SHA-256:
+  `108D2DC6B33A4394B1B8D33A6D3BBDE199F86F79BF010A796257498D55334B52`
+- Canonical payload SHA-256:
+  `BE64CB2A948DF59D4792A7D9401B9800D1779FA8BF75B476A02FB50EE584AD0E`
+
+### Production Remains Unchanged And Not Ready
+
+No production deploy or production mutation was performed. Production remains
+on Worker version `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; direct health is
+200, release enforcement is off, Protected Autopilot is off, and organic reach
+apply is off. Hugheseys Que remains exactly `status='on_hold'`; the read-only
+verification reported `rows_written=0`.
+
+The latest current-policy production snapshot remains `ready=0` with one owner
+workspace, five completed owner decisions, zero client decisions, zero
+adjudications, and zero current-policy release-evidence rows. This staging
+proof does not count toward promotion. Promotion still requires an explicitly
+consented active client, 30 genuine two-workspace decisions, 30 independent
+adjudications, complete 168-hour real publication outcomes, and all documented
+replay, regression, tenancy, and kill-switch evidence.
