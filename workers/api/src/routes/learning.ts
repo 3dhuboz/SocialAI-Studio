@@ -731,13 +731,6 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       }
 
       const now = new Date().toISOString();
-      await saveWorkspaceLearningSettings(c.env.DB, identity, {
-        mode: 'approval',
-        autopublishConsentAt: null,
-        autopublishPolicyVersion: null,
-        experimentRate: 0,
-        monthlyAiBudgetUsdCents: budget,
-      }, now);
       const enrollmentId = crypto.randomUUID();
       await c.env.DB.prepare(`
         INSERT OR IGNORE INTO learning_pilot_enrollments (
@@ -775,7 +768,21 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         identity.ownerId,
         AUTOPILOT_POLICY_VERSION,
       ).first<PilotEnrollmentRow>();
-      if (!enrollment) throw new Error('Pilot enrollment receipt could not be persisted');
+      if (!enrollment) {
+        return c.json({
+          error: `Only one ${identity.ownerKind} workspace may be enrolled in the approval pilot`,
+        }, 409);
+      }
+      // The unique policy+owner-kind index is the final cohort lock. Only
+      // create approval settings after this exact workspace owns the immutable
+      // enrollment receipt, so a concurrent losing request leaves no stray mode.
+      await saveWorkspaceLearningSettings(c.env.DB, identity, {
+        mode: 'approval',
+        autopublishConsentAt: null,
+        autopublishPolicyVersion: null,
+        experimentRate: 0,
+        monthlyAiBudgetUsdCents: budget,
+      }, now);
       return c.json({
         workspaceKey: identity.workspaceKey,
         ownerKind: identity.ownerKind,

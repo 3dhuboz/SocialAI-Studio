@@ -601,8 +601,9 @@ export const LearningOperationsCard: React.FC<{
     nextExpiryAt: null,
   };
   const [pilotBudgetDollars, setPilotBudgetDollars] = useState('5.00');
-  const [pilotCustomerConsentConfirmed, setPilotCustomerConsentConfirmed] = useState(false);
-  const [pilotCustomerConsentNote, setPilotCustomerConsentNote] = useState('');
+  const [pilotCustomerConsentByWorkspace, setPilotCustomerConsentByWorkspace] = useState<
+    Record<string, { confirmed: boolean; note: string }>
+  >({});
   const budgetNumber = Number(pilotBudgetDollars);
   const pilotBudgetCents = Number.isFinite(budgetNumber)
     ? Math.round(budgetNumber * 100)
@@ -611,13 +612,6 @@ export const LearningOperationsCard: React.FC<{
   const pilotBudgetLabel = validPilotBudget
     ? `$${(pilotBudgetCents / 100).toFixed(2)}`
     : 'invalid cap';
-  const trimmedPilotConsentNote = pilotCustomerConsentNote.trim();
-  const validPilotCustomerConsent = pilotCustomerConsentConfirmed
-    && trimmedPilotConsentNote.length >= 10
-    && trimmedPilotConsentNote.length <= 500;
-  const hasUnenrolledClientPilot = pilotQueue?.candidates.some(
-    (candidate) => candidate.clientId !== null && !candidate.enrolled,
-  ) === true;
 
   return (
     <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${
@@ -779,37 +773,6 @@ export const LearningOperationsCard: React.FC<{
             </label>
           </div>
 
-          {hasUnenrolledClientPilot && (
-            <div className="mt-3 rounded-lg border border-amber-400/15 bg-amber-500/[0.035] p-3">
-              <p className="text-[10px] font-black text-amber-100/80">
-                Customer pilot consent attestation
-              </p>
-              <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
-                <input
-                  type="checkbox"
-                  checked={pilotCustomerConsentConfirmed}
-                  onChange={(event) => setPilotCustomerConsentConfirmed(event.target.checked)}
-                  className="mt-0.5 accent-amber-400"
-                />
-                I have confirmed this customer agreed to record-only AI critique of their draft posts.
-                This is not consent to publish.
-              </label>
-              <label className="mt-2 block text-[9px] font-bold uppercase tracking-wider text-white/35">
-                Consent evidence note
-                <textarea
-                  maxLength={500}
-                  value={pilotCustomerConsentNote}
-                  onChange={(event) => setPilotCustomerConsentNote(event.target.value)}
-                  placeholder="When and how the customer confirmed participation"
-                  className="mt-1 min-h-16 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
-                />
-              </label>
-              <p className="mt-1 text-[9px] text-white/30">
-                Client enrollment stays disabled until both are complete.
-              </p>
-            </div>
-          )}
-
           {pilotQueue.candidates.length === 0 ? (
             <p className="mt-3 text-[10px] text-white/30">No eligible unvalidated drafts are available.</p>
           ) : (
@@ -819,6 +782,13 @@ export const LearningOperationsCard: React.FC<{
                   ? `validate:${candidate.samplePostId}`
                   : `enroll:${candidate.clientId ?? '__owner__'}`;
                 const busy = pilotActionKey === actionKey;
+                const customerConsent = pilotCustomerConsentByWorkspace[candidate.workspaceKey]
+                  ?? { confirmed: false, note: '' };
+                const trimmedCustomerConsentNote = customerConsent.note.trim();
+                const validCustomerConsent = customerConsent.confirmed
+                  && trimmedCustomerConsentNote.length >= 10
+                  && trimmedCustomerConsentNote.length <= 500;
+                const needsCustomerConsent = !candidate.enrolled && candidate.clientId !== null;
                 return (
                   <div key={candidate.workspaceKey} className="rounded-lg border border-white/[0.07] bg-black/20 p-3">
                     <div className="flex items-start justify-between gap-2">
@@ -836,13 +806,59 @@ export const LearningOperationsCard: React.FC<{
                         {candidate.enrolled ? 'Approval enrolled' : 'Not enrolled'}
                       </span>
                     </div>
+                    {needsCustomerConsent && (
+                      <div className="mt-2.5 rounded-lg border border-amber-400/15 bg-amber-500/[0.035] p-2.5">
+                        <p className="text-[10px] font-black text-amber-100/80">
+                          Customer pilot consent attestation: {candidate.label}
+                        </p>
+                        <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
+                          <input
+                            type="checkbox"
+                            checked={customerConsent.confirmed}
+                            onChange={(event) => setPilotCustomerConsentByWorkspace((current) => ({
+                              ...current,
+                              [candidate.workspaceKey]: {
+                                ...(current[candidate.workspaceKey]
+                                  ?? { confirmed: false, note: '' }),
+                                confirmed: event.target.checked,
+                              },
+                            }))}
+                            className="mt-0.5 accent-amber-400"
+                            aria-label={`Confirm record-only consent for ${candidate.label}`}
+                          />
+                          I have confirmed {candidate.label} agreed to record-only AI critique of
+                          their draft posts. This is not consent to publish.
+                        </label>
+                        <label className="mt-2 block text-[9px] font-bold uppercase tracking-wider text-white/35">
+                          Consent evidence note
+                          <textarea
+                            maxLength={500}
+                            value={customerConsent.note}
+                            onChange={(event) => setPilotCustomerConsentByWorkspace((current) => ({
+                              ...current,
+                              [candidate.workspaceKey]: {
+                                ...(current[candidate.workspaceKey]
+                                  ?? { confirmed: false, note: '' }),
+                                note: event.target.value,
+                              },
+                            }))}
+                            placeholder={`When and how ${candidate.label} confirmed participation`}
+                            className="mt-1 min-h-16 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
+                            aria-label={`Consent evidence note for ${candidate.label}`}
+                          />
+                        </label>
+                        <p className="mt-1 text-[9px] text-white/30">
+                          {candidate.label} enrollment stays disabled until both are complete.
+                        </p>
+                      </div>
+                    )}
                     <button
                       type="button"
-                      disabled={busy || (
+                      disabled={pilotActionKey !== null || (
                         !candidate.enrolled
                         && (
                           !validPilotBudget
-                          || (candidate.clientId !== null && !validPilotCustomerConsent)
+                          || (candidate.clientId !== null && !validCustomerConsent)
                         )
                       )}
                       onClick={() => candidate.enrolled
@@ -852,7 +868,7 @@ export const LearningOperationsCard: React.FC<{
                           pilotBudgetCents,
                           candidate.clientId === null ? undefined : {
                             confirmed: true,
-                            note: trimmedPilotConsentNote,
+                            note: trimmedCustomerConsentNote,
                           },
                         )}
                       className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"

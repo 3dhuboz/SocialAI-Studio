@@ -638,7 +638,46 @@ describe('learning settings and release evidence routes', () => {
       'customer_attested', expect.any(String),
       'Customer confirmed record-only pilot participation by phone.',
     ]);
+    const enrollmentWriteIndex = calls.indexOf(enrollmentWrite);
+    const settingsWriteIndex = calls.indexOf(write);
+    expect(settingsWriteIndex).toBeGreaterThan(enrollmentWriteIndex);
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('leaves no approval settings when another request wins the unique client pilot slot', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT status FROM clients': [{ status: 'active' }],
+      'COUNT(*) AS draft_count': [{ draft_count: 3 }],
+      'COUNT(*) AS approval_count': [{ approval_count: 0 }],
+      'SELECT id, enrolled_at': [],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enroll', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-race-loser',
+        monthlyAiBudgetUsdCents: 500,
+        customerConsentConfirmed: true,
+        customerConsentNote: 'Customer confirmed record-only pilot participation in writing.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Only one client workspace may be enrolled in the approval pilot',
+    });
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO learning_pilot_enrollments'))).toBe(true);
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
   it('requires an explicit customer consent attestation before enrolling a client pilot', async () => {

@@ -219,8 +219,43 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('Validate next real draft');
     expect(html).toContain('Draft content, status, schedule, and publishing stay unchanged');
     expect(html).toContain('No autopublish consent is recorded');
-    expect(html).toContain('Customer pilot consent attestation');
-    expect(html).toContain('Consent evidence note');
-    expect(html).toContain('Client enrollment stays disabled until both are complete');
+    expect(html).toContain('Customer pilot consent attestation: Active Client');
+    expect(html).toContain('aria-label="Confirm record-only consent for Active Client"');
+    expect(html).toContain('aria-label="Consent evidence note for Active Client"');
+    expect(html).toContain('Active Client enrollment stays disabled until both are complete');
+  });
+
+  it('binds consent controls to each exact client workspace instead of sharing one attestation', () => {
+    const queueWithTwoClients: LearningPilotQueue = {
+      ...pilotQueue,
+      candidates: [
+        ...pilotQueue.candidates,
+        {
+          clientId: 'client_two', ownerKind: 'client', ownerId: 'client_two',
+          workspaceKey: 'client_two', label: 'Second Client', eligibleDraftCount: 2,
+          samplePostId: 'draft_client_two', enrolled: false,
+          monthlyAiBudgetUsdCents: null,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <LearningOperationsCard
+        operations={operations}
+        pilotQueue={queueWithTwoClients}
+        pilotActionKey={null}
+        loading={false}
+        savingDecisionId={null}
+        onAdjudicate={async () => undefined}
+        onPilotEnroll={async () => undefined}
+        onPilotValidate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('Customer pilot consent attestation: Active Client');
+    expect(html).toContain('Customer pilot consent attestation: Second Client');
+    expect(html).toContain('aria-label="Confirm record-only consent for Active Client"');
+    expect(html).toContain('aria-label="Confirm record-only consent for Second Client"');
+    expect(html).toContain('aria-label="Consent evidence note for Active Client"');
+    expect(html).toContain('aria-label="Consent evidence note for Second Client"');
   });
 });
