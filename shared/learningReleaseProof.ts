@@ -136,6 +136,16 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'record-only pilot collector evaluates at most one draft from each of two consented workspaces',
   },
   {
+    id: 'pilot_context_before_enrollment',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes refuses pilot enrollment before recording consent when business context is incomplete',
+  },
+  {
+    id: 'pilot_context_candidate_diagnostics',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes returns a server-selected queue of eligible non-held drafts and their enrollment state',
+  },
+  {
     id: 'pilot_synthetic_exclusion_schema',
     suite: 'src/__tests__/learning-pilot-disqualification-schema.test.ts',
     assertion: 'learning pilot disqualification schema creates immutable tenant-scoped synthetic QA receipts only',

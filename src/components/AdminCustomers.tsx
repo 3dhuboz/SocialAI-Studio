@@ -789,6 +789,14 @@ export const LearningOperationsCard: React.FC<{
                   && trimmedCustomerConsentNote.length >= 10
                   && trimmedCustomerConsentNote.length <= 500;
                 const needsCustomerConsent = !candidate.enrolled && candidate.clientId !== null;
+                const contextReady = candidate.contextReady === true;
+                const contextLabel = candidate.contextReason === 'verified_facts'
+                  ? `${candidate.verifiedFactCount} verified fact${
+                    candidate.verifiedFactCount === 1 ? '' : 's'
+                  }`
+                  : `${candidate.meaningfulProfileFieldCount} business profile field${
+                    candidate.meaningfulProfileFieldCount === 1 ? '' : 's'
+                  }`;
                 return (
                   <div key={candidate.workspaceKey} className="rounded-lg border border-white/[0.07] bg-black/20 p-3">
                     <div className="flex items-start justify-between gap-2">
@@ -798,13 +806,38 @@ export const LearningOperationsCard: React.FC<{
                           {candidate.eligibleDraftCount} eligible real draft{candidate.eligibleDraftCount === 1 ? '' : 's'}
                         </p>
                       </div>
-                      <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
-                        candidate.enrolled
-                          ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
-                          : 'border-white/10 bg-white/5 text-white/35'
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
+                          candidate.enrolled
+                            ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+                            : 'border-white/10 bg-white/5 text-white/35'
+                        }`}>
+                          {candidate.enrolled ? 'Approval enrolled' : 'Not enrolled'}
+                        </span>
+                        <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
+                          contextReady
+                            ? 'border-cyan-400/20 bg-cyan-500/10 text-cyan-100'
+                            : 'border-amber-400/20 bg-amber-500/10 text-amber-100'
+                        }`}>
+                          {contextReady ? 'Context ready' : 'Context required'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className={`mt-2.5 rounded-lg border p-2.5 ${
+                      contextReady
+                        ? 'border-cyan-400/15 bg-cyan-500/[0.03]'
+                        : 'border-amber-400/15 bg-amber-500/[0.035]'
+                    }`}>
+                      <p className={`text-[10px] font-black ${
+                        contextReady ? 'text-cyan-100/80' : 'text-amber-100/80'
                       }`}>
-                        {candidate.enrolled ? 'Approval enrolled' : 'Not enrolled'}
-                      </span>
+                        {contextReady ? `Critic context ready: ${contextLabel}` : 'Business context is incomplete'}
+                      </p>
+                      <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                        {contextReady
+                          ? 'Only aggregate readiness is shown here; profile contents and verified facts stay private.'
+                          : 'Complete this workspace business profile or add a verified fact. Critics and AI spend remain blocked.'}
+                      </p>
                     </div>
                     {needsCustomerConsent && (
                       <div className="mt-2.5 rounded-lg border border-amber-400/15 bg-amber-500/[0.035] p-2.5">
@@ -855,10 +888,13 @@ export const LearningOperationsCard: React.FC<{
                     <button
                       type="button"
                       disabled={pilotActionKey !== null || (
-                        !candidate.enrolled
-                        && (
-                          !validPilotBudget
-                          || (candidate.clientId !== null && !validCustomerConsent)
+                        !contextReady
+                        || (
+                          !candidate.enrolled
+                          && (
+                            !validPilotBudget
+                            || (candidate.clientId !== null && !validCustomerConsent)
+                          )
                         )
                       )}
                       onClick={() => candidate.enrolled
@@ -874,9 +910,11 @@ export const LearningOperationsCard: React.FC<{
                       className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
                     >
                       {busy ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
-                      {candidate.enrolled
-                        ? 'Validate next real draft'
-                        : `Enroll with ${pilotBudgetLabel} cap`}
+                      {!contextReady
+                        ? 'Business context required'
+                        : candidate.enrolled
+                          ? 'Validate next real draft'
+                          : `Enroll with ${pilotBudgetLabel} cap`}
                     </button>
                   </div>
                 );

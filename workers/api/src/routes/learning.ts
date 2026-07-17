@@ -79,6 +79,8 @@ type PilotCandidateRow = {
   sample_post_id: string;
   enrolled: number | string | null;
   monthly_ai_budget_usd_cents: number | string | null;
+  profile_json: string | null;
+  verified_fact_contents_json: string | null;
 };
 
 type PilotEnrollmentRow = {
@@ -265,6 +267,21 @@ function parseJsonStrings(value: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+function pilotCandidateContextReadiness(row: PilotCandidateRow) {
+  const verifiedFacts = parseJsonStrings(row.verified_fact_contents_json).map((content) => ({
+    ownerKind: row.owner_kind,
+    ownerId: row.owner_id,
+    clientId: row.client_id,
+    factType: 'candidate_readiness',
+    content,
+    verifiedAt: null,
+  }));
+  return assessCriticContextReadiness({
+    profile: parseJsonObject(row.profile_json),
+    verifiedFacts,
+  });
 }
 
 type AdjudicationEvidence = {
@@ -765,6 +782,37 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         return c.json({ error: 'Workspace has no eligible Draft posts for pilot validation' }, 409);
       }
 
+      let contextReadiness;
+      try {
+        const criticContext = await loadCriticContext(
+          c.env,
+          identity.userId,
+          identity.clientId,
+          identity.ownerKind,
+          identity.ownerId,
+        );
+        contextReadiness = assessCriticContextReadiness(criticContext);
+      } catch (error) {
+        console.warn('[learning-pilot] enrollment context unavailable', {
+          workspaceKey: identity.workspaceKey,
+          reason: error instanceof Error ? error.message : 'unknown error',
+        });
+        return c.json({
+          error: 'Pilot business context could not be loaded; enrollment was not recorded',
+          code: 'pilot_context_unavailable',
+        }, 503);
+      }
+      if (!contextReadiness.ready) {
+        return c.json({
+          error: 'Pilot business context is incomplete; complete the business profile or add a verified fact before enrollment',
+          code: 'pilot_context_not_ready',
+          readiness: {
+            meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
+            verifiedFactCount: contextReadiness.verifiedFactCount,
+          },
+        }, 409);
+      }
+
       const existing = await c.env.DB.prepare(`
         SELECT COUNT(*) AS approval_count
         FROM learning_pilot_enrollments
@@ -875,8 +923,21 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         COUNT(*) AS eligible_draft_count,
         MIN(p.id) AS sample_post_id,
         MAX(CASE WHEN pen.id IS NOT NULL AND w.mode = 'approval' THEN 1 ELSE 0 END) AS enrolled,
-        MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents
+        MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents,
+        CASE WHEN p.client_id IS NULL THEN u.profile ELSE c.profile END AS profile_json,
+        (
+          SELECT json_group_array(f.content)
+          FROM (
+            SELECT cf.content
+            FROM client_facts cf
+            WHERE cf.user_id = p.user_id
+              AND cf.client_id IS p.client_id
+            ORDER BY cf.verified_at DESC
+            LIMIT 80
+          ) f
+        ) AS verified_fact_contents_json
       FROM posts p
+      LEFT JOIN users u ON u.id = p.user_id
       LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
       LEFT JOIN workspace_learning_settings w
         ON w.user_id = p.user_id
@@ -931,9 +992,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
       LIMIT 50
     `).bind(AUTOPILOT_POLICY_VERSION, adminId).all<PilotCandidateRow>();
-    return c.json({
-      recordOnly: true,
-      candidates: (rows.results ?? []).map((row) => ({
+    const candidates = (rows.results ?? []).map((row) => {
+      const contextReadiness = pilotCandidateContextReadiness(row);
+      return {
         clientId: row.client_id,
         ownerKind: row.owner_kind,
         ownerId: row.owner_id,
@@ -945,7 +1006,15 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         monthlyAiBudgetUsdCents: row.monthly_ai_budget_usd_cents == null
           ? null
           : countValue(row.monthly_ai_budget_usd_cents),
-      })),
+        contextReady: contextReadiness.ready,
+        contextReason: contextReadiness.reason,
+        meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
+        verifiedFactCount: contextReadiness.verifiedFactCount,
+      };
+    });
+    return c.json({
+      recordOnly: true,
+      candidates,
     });
   });
 

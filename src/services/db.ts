@@ -369,6 +369,10 @@ export interface LearningPilotCandidate {
   samplePostId: string;
   enrolled: boolean;
   monthlyAiBudgetUsdCents: number | null;
+  contextReady: boolean;
+  contextReason: 'business_profile' | 'verified_facts' | 'missing_business_context';
+  meaningfulProfileFieldCount: number;
+  verifiedFactCount: number;
 }
 
 export interface LearningPilotQueue {

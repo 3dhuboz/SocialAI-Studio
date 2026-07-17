@@ -889,6 +889,9 @@ describe('learning settings and release evidence routes', () => {
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'SELECT status FROM clients': [{ status: 'active' }],
+      'SELECT profile FROM clients': [{
+        profile: '{"description":"Active client with verified business context."}',
+      }],
       'COUNT(*) AS draft_count': [{ draft_count: 4 }],
       'COUNT(*) AS approval_count': [{ approval_count: 0 }],
       'SELECT id, enrolled_at': [{
@@ -945,6 +948,9 @@ describe('learning settings and release evidence routes', () => {
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'SELECT status FROM clients': [{ status: 'active' }],
+      'SELECT profile FROM clients': [{
+        profile: '{"description":"Consented client business context."}',
+      }],
       'COUNT(*) AS draft_count': [{ draft_count: 3 }],
       'COUNT(*) AS approval_count': [{ approval_count: 0 }],
       'SELECT id, enrolled_at': [],
@@ -1003,6 +1009,46 @@ describe('learning settings and release evidence routes', () => {
     expect(calls.some((call) => call.sql.includes('learning_pilot_enrollments'))).toBe(false);
   });
 
+  it('refuses pilot enrollment before recording consent when business context is incomplete', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT status FROM clients': [{ status: 'active' }],
+      'SELECT profile FROM clients': [{ profile: '{}' }],
+      'COUNT(*) AS draft_count': [{ draft_count: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enroll', {
+      method: 'POST', headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-without-context',
+        monthlyAiBudgetUsdCents: 500,
+        customerConsentConfirmed: true,
+        customerConsentNote: 'Customer confirmed record-only pilot participation in writing.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Pilot business context is incomplete; complete the business profile or add a verified fact before enrollment',
+      code: 'pilot_context_not_ready',
+      readiness: {
+        meaningfulProfileFieldCount: 0,
+        verifiedFactCount: 0,
+      },
+    });
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO learning_pilot_enrollments'))).toBe(false);
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
   it('refuses to enroll an on-hold client or exceed one client pilot workspace', async () => {
     const heldDb = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
@@ -1029,6 +1075,9 @@ describe('learning settings and release evidence routes', () => {
     const cappedDb = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'SELECT status FROM clients': [{ status: 'active' }],
+      'SELECT profile FROM clients': [{
+        profile: '{"description":"Second active client business context."}',
+      }],
       'COUNT(*) AS draft_count': [{ draft_count: 2 }],
       'COUNT(*) AS approval_count': [{ approval_count: 1 }],
     });
@@ -1064,12 +1113,16 @@ describe('learning settings and release evidence routes', () => {
           owner_id: 'owner_1', workspace_key: '__owner__', label: 'My workspace',
           eligible_draft_count: 5, sample_post_id: 'draft-owner',
           enrolled: 1, monthly_ai_budget_usd_cents: 500,
+          profile_json: '{"description":"Owner business context."}',
+          verified_fact_contents_json: '[]',
         },
         {
           user_id: 'owner_1', client_id: 'client-1', owner_kind: 'client',
           owner_id: 'client-1', workspace_key: 'client-1', label: 'Active Client',
           eligible_draft_count: 4, sample_post_id: 'draft-client',
           enrolled: 0, monthly_ai_budget_usd_cents: null,
+          profile_json: '{}',
+          verified_fact_contents_json: '["Verified trading location."]',
         },
       ],
     });
@@ -1093,11 +1146,15 @@ describe('learning settings and release evidence routes', () => {
           clientId: null, ownerKind: 'user', ownerId: 'owner_1',
           workspaceKey: '__owner__', label: 'My workspace', eligibleDraftCount: 5,
           samplePostId: 'draft-owner', enrolled: true, monthlyAiBudgetUsdCents: 500,
+          contextReady: true, contextReason: 'business_profile',
+          meaningfulProfileFieldCount: 1, verifiedFactCount: 0,
         },
         {
           clientId: 'client-1', ownerKind: 'client', ownerId: 'client-1',
           workspaceKey: 'client-1', label: 'Active Client', eligibleDraftCount: 4,
           samplePostId: 'draft-client', enrolled: false, monthlyAiBudgetUsdCents: null,
+          contextReady: true, contextReason: 'verified_facts',
+          meaningfulProfileFieldCount: 0, verifiedFactCount: 1,
         },
       ],
     });
@@ -1111,6 +1168,8 @@ describe('learning settings and release evidence routes', () => {
     expect(query.sql).toContain("d.stage = 'release'");
     expect(query.sql).toContain("d.release_state IN ('pass_green','hold_amber','block_red')");
     expect(query.sql).toContain("$.verdictCount");
+    expect(query.sql).toContain('CASE WHEN p.client_id IS NULL THEN u.profile ELSE c.profile END');
+    expect(query.sql).toContain('json_group_array(f.content)');
   });
 
   it('lets only an admin adjudicate a release decision and derives its tenant tuple', async () => {

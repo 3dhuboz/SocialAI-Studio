@@ -52,11 +52,15 @@ const pilotQueue: LearningPilotQueue = {
       clientId: null, ownerKind: 'user', ownerId: 'owner_1',
       workspaceKey: '__owner__', label: 'My workspace', eligibleDraftCount: 5,
       samplePostId: 'draft_owner', enrolled: true, monthlyAiBudgetUsdCents: 500,
+      contextReady: true, contextReason: 'business_profile',
+      meaningfulProfileFieldCount: 2, verifiedFactCount: 0,
     },
     {
       clientId: 'client_2', ownerKind: 'client', ownerId: 'client_2',
       workspaceKey: 'client_2', label: 'Active Client', eligibleDraftCount: 4,
       samplePostId: 'draft_client', enrolled: false, monthlyAiBudgetUsdCents: null,
+      contextReady: true, contextReason: 'verified_facts',
+      meaningfulProfileFieldCount: 0, verifiedFactCount: 3,
     },
   ],
 };
@@ -218,6 +222,10 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('4 eligible real drafts');
     expect(html).toContain('Enroll with $5.00 cap');
     expect(html).toContain('Validate next real draft');
+    expect(html).toContain('Context ready');
+    expect(html).toContain('Critic context ready: 2 business profile fields');
+    expect(html).toContain('Critic context ready: 3 verified facts');
+    expect(html).toContain('profile contents and verified facts stay private');
     expect(html).toContain('Draft content, status, schedule, and publishing stay unchanged');
     expect(html).toContain('No autopublish consent is recorded');
     expect(html).toContain('Customer pilot consent attestation: Active Client');
@@ -236,6 +244,8 @@ describe('LearningOperationsCard', () => {
           workspaceKey: 'client_two', label: 'Second Client', eligibleDraftCount: 2,
           samplePostId: 'draft_client_two', enrolled: false,
           monthlyAiBudgetUsdCents: null,
+          contextReady: true, contextReason: 'business_profile',
+          meaningfulProfileFieldCount: 1, verifiedFactCount: 0,
         },
       ],
     };
@@ -258,5 +268,37 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('aria-label="Confirm record-only consent for Second Client"');
     expect(html).toContain('aria-label="Consent evidence note for Active Client"');
     expect(html).toContain('aria-label="Consent evidence note for Second Client"');
+  });
+
+  it('blocks pilot actions before spend when canonical business context is incomplete', () => {
+    const contextBlockedQueue: LearningPilotQueue = {
+      recordOnly: true,
+      candidates: [{
+        ...pilotQueue.candidates[0],
+        contextReady: false,
+        contextReason: 'missing_business_context',
+        meaningfulProfileFieldCount: 0,
+        verifiedFactCount: 0,
+      }],
+    };
+    const html = renderToStaticMarkup(
+      <LearningOperationsCard
+        operations={operations}
+        pilotQueue={contextBlockedQueue}
+        pilotActionKey={null}
+        loading={false}
+        savingDecisionId={null}
+        onAdjudicate={async () => undefined}
+        onPilotEnroll={async () => undefined}
+        onPilotValidate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('Context required');
+    expect(html).toContain('Business context is incomplete');
+    expect(html).toContain('Critics and AI spend remain blocked');
+    expect(html).toContain('<button type="button" disabled=""');
+    expect(html).toContain('Business context required</button>');
+    expect(html).not.toContain('Validate next real draft');
   });
 });
