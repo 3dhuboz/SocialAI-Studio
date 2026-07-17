@@ -384,8 +384,20 @@ describe('Shopify learning settings and readiness', () => {
         monthly_ai_budget_usd_cents: 1200, disabled_reason: null,
       }],
       'FROM learning_release_readiness': [{
-        id: 'ready-1', ready: 0, metrics_json: '{}',
-        checks_json: '{"pilot":false}', evaluated_by: 'cron', evaluated_at: evaluatedAt,
+        id: 'ready-1',
+        ready: 0,
+        metrics_json: JSON.stringify({
+          releaseJudgeAvailability: 0.997,
+          releaseJudgeTelemetryCoverage: 1,
+          releaseJudgeInvocations: 30,
+        }),
+        checks_json: JSON.stringify({
+          pilot: false,
+          releaseJudgeAvailability: true,
+          releaseJudgeTelemetry: true,
+        }),
+        evaluated_by: 'cron',
+        evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 3.5, telemetry_count: 2 }],
     });
@@ -401,7 +413,16 @@ describe('Shopify learning settings and readiness', () => {
       policyVersion: AUTOPILOT_POLICY_VERSION,
       ready: false,
       effectiveMode: 'approval',
-      checks: { pilot: false },
+      checks: {
+        pilot: false,
+        releaseJudgeAvailability: true,
+        releaseJudgeTelemetry: true,
+      },
+      metrics: {
+        releaseJudgeAvailability: 0.997,
+        releaseJudgeTelemetryCoverage: 1,
+        releaseJudgeInvocations: 30,
+      },
       cost: {
         monthlyAiSpendUsdCents: 350,
         monthlyAiBudgetUsdCents: 1200,

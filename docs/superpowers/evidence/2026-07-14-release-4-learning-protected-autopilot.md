@@ -1188,6 +1188,9 @@ Shopify checklist was observed failing before the repair and passing after it.
 - Frontend: 17 test files and 198 tests passed.
 - Worker: 90 test files and 1,169 tests passed.
 - Focused Protected Autopilot parity: 7 tests passed.
+- Signed Shopify learning route: 23 tests passed; the authenticated readiness
+  response preserved both Judge checks plus availability, telemetry coverage,
+  and invocation metrics from the durable receipt.
 - Strict frontend, Worker, and Shopify TypeScript verification passed.
 - Main production build passed with 1,924 modules transformed.
 - The 70-check image/content safety smoke suite passed.
