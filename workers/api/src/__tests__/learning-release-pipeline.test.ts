@@ -324,6 +324,50 @@ describe('runMediaCritic', () => {
     });
   });
 
+  it('blocks the Macca surreal-BBQ anatomy regression before release', async () => {
+    const result = await runMediaCritic(
+      {} as Env,
+      {
+        ...candidate,
+        content: 'What makes a brisket actually perfect?',
+        media: {
+          kind: 'image',
+          url: 'https://cdn.example/surreal-brisket.jpg',
+          thumbnailUrl: null,
+          archetypeSlug: 'bbq-smokehouse',
+        },
+      },
+      {
+        ...context,
+        forbiddenSubjects: [
+          ...context.forbiddenSubjects,
+          'surreal meat anatomy',
+          'citrus-shaped brisket',
+        ],
+      },
+      {
+        critiqueImage: async () => ({
+          score: 1,
+          match: 'no',
+          reasoning: 'Anatomically impossible citrus-shaped raw meat does not depict smoked brisket',
+        }),
+        inspectVideo: async () => ({ contentType: 'video/mp4', contentLength: 100 }),
+        reviewVideoText: async () => verdict('video_manifest'),
+      },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'image',
+      verdict: 'block',
+      severity: 'release_critical',
+      provider: 'vision_critic',
+    });
+    expect(result.evidence.join(' ')).toContain('Anatomically impossible');
+    expect(result.repairs).toContain(
+      'Regenerate the image against the caption and brand exclusions',
+    );
+  });
+
   it('returns unavailable when final media is missing', async () => {
     const result = await runMediaCritic(
       {} as Env,
