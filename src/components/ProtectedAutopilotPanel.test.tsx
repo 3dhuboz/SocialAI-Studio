@@ -19,7 +19,7 @@ const readiness: LearningReadinessResponse = {
   policyVersion: '2026-07-14-v1', ready: false, stale: false,
   effectiveMode: 'approval', evaluatedAt: '2026-07-14T08:00:00.000Z',
   checks: {
-    pilot: false, adjudications: false, severeFalsePasses: true,
+    pilot: false, pilotCohort: false, adjudications: false, severeFalsePasses: true,
     falseHolds: true, availability: true,
     releaseJudgeAvailability: true, releaseJudgeTelemetry: true, receipts: true,
     predictionLift: false, rankCorrelation: false, criticalBypasses: true,
@@ -28,7 +28,9 @@ const readiness: LearningReadinessResponse = {
     tenancyProofs: { user: true, client: true, shop: true },
   },
   metrics: {
-    pilotDecisions: 0, adjudicatedDecisions: 0, severeFalsePasses: 0,
+    pilotDecisions: 5, pilotWorkspaceCount: 1,
+    pilotUserDecisions: 5, pilotClientDecisions: 0,
+    adjudicatedDecisions: 0, severeFalsePasses: 0,
     falseHoldRate: 0, requiredAvailability: 1,
     releaseJudgeAvailability: 1, releaseJudgeTelemetryCoverage: 1,
     releaseJudgeInvocations: 12, decisionReceiptCoverage: 1,
@@ -62,7 +64,9 @@ describe('ProtectedAutopilotControl', () => {
     expect(html).toContain('Protected Autopilot is globally disabled');
     expect(html).toContain('Release enforcement is not enabled');
     expect(html).toContain('Pilot decisions');
-    expect(html).toContain('0 of 30');
+    expect(html).toContain('5 of 30');
+    expect(html).toContain('Owner + client pilot cohort');
+    expect(html).toContain('1 of 2 workspaces; owner 5 / client 0');
     expect(html).toContain('Adjudicated decisions');
     expect(html).toContain('Required critic and media availability');
     expect(html).toContain('Release Judge availability');
@@ -213,12 +217,21 @@ describe('Shopify Protected Autopilot parity', () => {
     ), 'utf8');
 
     for (const field of [
+      'pilotCohort',
       'releaseJudgeAvailability',
       'releaseJudgeTelemetry',
     ]) {
       expect(api).toContain(`${field}: boolean`);
       expect(settings).toContain(`readiness.checks.${field} === true`);
     }
+    for (const metric of [
+      'pilotWorkspaceCount',
+      'pilotUserDecisions',
+      'pilotClientDecisions',
+    ]) {
+      expect(api).toContain(`${metric}: number`);
+    }
+    expect(settings).toContain("['Owner + client pilot cohort'");
     expect(settings).toContain("['Release Judge availability'");
     expect(settings).toContain("['Release Judge telemetry coverage'");
   });

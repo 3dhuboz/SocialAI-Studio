@@ -270,6 +270,7 @@ export interface ShopifyLearningSettingsResponse {
 
 export interface ShopifyLearningReadinessChecks {
   pilot: boolean;
+  pilotCohort: boolean;
   adjudications: boolean;
   severeFalsePasses: boolean;
   falseHolds: boolean;
@@ -294,6 +295,9 @@ export interface ShopifyLearningReadinessChecks {
 
 export interface ShopifyLearningReadinessMetrics {
   pilotDecisions: number;
+  pilotWorkspaceCount: number;
+  pilotUserDecisions: number;
+  pilotClientDecisions: number;
   adjudicatedDecisions: number;
   severeFalsePasses: number;
   falseHoldRate: number;

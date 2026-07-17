@@ -1220,3 +1220,66 @@ This increment creates no consent, enrollment, post, schedule, adjudication,
 outcome, or publication and does not count toward promotion. Protected
 Autopilot and reach-plan application remain disabled until every documented
 gate is satisfied by genuine evidence.
+
+## 2026-07-17 Two-Workspace Pilot Cohort Readiness Parity
+
+### Completion-Audit Finding And Repair
+
+The Worker already required exactly two pilot workspaces, at least one genuine
+owner decision, and at least one genuine client decision before its
+`pilotCohort` readiness check could pass. The main dashboard already received
+the three supporting metrics but omitted the check from its type and gate
+list. The Shopify dashboard omitted the check, its supporting metrics, and the
+corresponding gate row.
+
+This was an operator-visibility gap rather than a publication bypass: the
+server continued to fail closed. Both dashboards now expose an
+`Owner + client pilot cohort` gate. The main dashboard shows the exact
+workspace, owner-decision, and client-decision counts. The Shopify API contract
+now strongly types the same check and all three metrics. Both surfaces require
+the check to be exactly `true`, so missing data remains visibly failed during a
+staggered deployment.
+
+The focused frontend contract was observed failing in two places before the
+repair: the main rendered output had no cohort row, and the Shopify API
+contract had no `pilotCohort` field. The same seven-test contract passed after
+the repair. The signed Shopify route test also proves that the authenticated
+readiness response preserves `pilotCohort`, `pilotWorkspaceCount`,
+`pilotUserDecisions`, and `pilotClientDecisions` from the immutable readiness
+receipt.
+
+### Verification
+
+- Frontend: 17 test files and 198 tests passed.
+- Worker: 90 test files and 1,169 tests passed.
+- Focused Protected Autopilot parity: 7 tests passed.
+- Signed Shopify learning route: 23 tests passed.
+- Strict frontend, Worker, and Shopify TypeScript verification passed.
+- Main production build passed with 1,924 modules transformed.
+- The 70-check image/content safety smoke suite passed.
+- Shopify production build passed with 1,124 modules transformed.
+- Shopify build verification found no unresolved Vite placeholders.
+
+The Shopify build used the public committed `client_id` from
+`shopify.app.toml` only in the build process. No env file or secret was
+created. This repair changes display and TypeScript contracts only; it does not
+change the readiness calculation, learning pipeline, release enforcement, or
+publication path.
+
+### Production Remains Unchanged And Gate-Closed
+
+No production Worker deployment was performed. Production remains on version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, and direct health returned `200`.
+The latest current-policy readiness evaluation at
+`2026-07-17T11:00:59.337Z` remains `ready=0`: five total owner decisions, one
+pilot workspace, zero client decisions, and `pilotCohort=false`.
+
+Read-only D1 verification returned `hughesq-001` as exactly
+`status='on_hold'`. Both statements reported `changed_db=false`,
+`changes=0`, and `rows_written=0`.
+
+This increment creates no consent, enrollment, post, schedule, adjudication,
+outcome, publication, or customer-status mutation and does not count toward
+promotion. The rollout remains in approval mode until a genuinely consented
+active client contributes real pilot evidence and every other documented gate
+passes.

@@ -387,12 +387,16 @@ describe('Shopify learning settings and readiness', () => {
         id: 'ready-1',
         ready: 0,
         metrics_json: JSON.stringify({
+          pilotWorkspaceCount: 1,
+          pilotUserDecisions: 5,
+          pilotClientDecisions: 0,
           releaseJudgeAvailability: 0.997,
           releaseJudgeTelemetryCoverage: 1,
           releaseJudgeInvocations: 30,
         }),
         checks_json: JSON.stringify({
           pilot: false,
+          pilotCohort: false,
           releaseJudgeAvailability: true,
           releaseJudgeTelemetry: true,
         }),
@@ -415,10 +419,14 @@ describe('Shopify learning settings and readiness', () => {
       effectiveMode: 'approval',
       checks: {
         pilot: false,
+        pilotCohort: false,
         releaseJudgeAvailability: true,
         releaseJudgeTelemetry: true,
       },
       metrics: {
+        pilotWorkspaceCount: 1,
+        pilotUserDecisions: 5,
+        pilotClientDecisions: 0,
         releaseJudgeAvailability: 0.997,
         releaseJudgeTelemetryCoverage: 1,
         releaseJudgeInvocations: 30,

@@ -226,6 +226,7 @@ export interface LearningSettingsUpdate {
 
 export interface LearningReadinessChecks {
   pilot?: boolean;
+  pilotCohort?: boolean;
   adjudications?: boolean;
   severeFalsePasses?: boolean;
   falseHolds?: boolean;

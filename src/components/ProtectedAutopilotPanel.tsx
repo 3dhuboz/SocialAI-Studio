@@ -56,6 +56,11 @@ function gateRows(readiness: LearningReadinessResponse): Array<{
   const metrics = readiness.metrics;
   const rows: Array<[BooleanCheckKey, string, string]> = [
     ['pilot', 'Pilot decisions', `${metrics.pilotDecisions ?? 0} of 30`],
+    [
+      'pilotCohort',
+      'Owner + client pilot cohort',
+      `${metrics.pilotWorkspaceCount ?? 0} of 2 workspaces; owner ${metrics.pilotUserDecisions ?? 0} / client ${metrics.pilotClientDecisions ?? 0}`,
+    ],
     ['adjudications', 'Adjudicated decisions', `${metrics.adjudicatedDecisions ?? 0} of 30`],
     ['severeFalsePasses', 'Severe false passes', `${metrics.severeFalsePasses ?? 0} recorded`],
     ['falseHolds', 'Sampled false holds', `${formatPercent(metrics.falseHoldRate)} (must stay below 5%)`],

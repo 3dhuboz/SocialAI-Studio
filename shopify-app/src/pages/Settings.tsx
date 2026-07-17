@@ -688,6 +688,7 @@ function ProtectedAutopilotSettingsCard() {
     && tenancy.user === true && tenancy.client === true && tenancy.shop === true;
   const gates = [
     ['Pilot decisions', readiness.checks.pilot === true],
+    ['Owner + client pilot cohort', readiness.checks.pilotCohort === true],
     ['Adjudicated decisions', readiness.checks.adjudications === true],
     ['No severe false passes', readiness.checks.severeFalsePasses === true],
     ['False-hold rate', readiness.checks.falseHolds === true],
