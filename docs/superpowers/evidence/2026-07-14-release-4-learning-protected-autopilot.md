@@ -952,3 +952,132 @@ remaining gate still requires explicit client consent, 25 additional genuine
 decisions across the two-workspace cohort, 30 total independent adjudications,
 complete 168-hour real publication outcomes, and the documented release,
 replay, regression, tenancy, and kill-switch evidence.
+
+## 2026-07-17 Lane-Aware Critic And Release Judge Availability Gate
+
+### Readiness Accounting Gap
+
+The readiness calculation previously grouped every verdict only by
+`critic_kind`. A deterministic pass could therefore mask an unavailable
+independent LLM verdict of the same kind. The denominator also omitted the
+selected image or video critic. Separately, the admin operations view treated
+any complete pipeline receipt as proof that the independent Release Judge was
+available even when a blocking critic had correctly prevented the Judge call.
+
+Read-only production evidence exposed the difference. The five current owner
+pilot decisions each selected an image and each stopped at `block_red` because
+the image critic blocked. Their persisted verdicts contain:
+
+- 20 of 20 available deterministic slots;
+- 12 of 25 available independent text and business-harm slots; and
+- 5 of 5 available selected-media slots.
+
+The lane-aware result is therefore 37 of 50, or 74 percent, rather than the
+stored legacy readiness value of 80 percent. All five legacy summaries have no
+Judge status because the Judge correctly did not run after the image block.
+
+Draft PR `#209` now:
+
+- separates deterministic, independent, and media critic lanes;
+- uses the latest attempt within each lane and critic kind;
+- requires exactly the selected image or video critic;
+- uses a four-slot denominator after a deterministic hard block and a
+  nine-slot text/harm denominator plus selected media on the ordinary path;
+- persists Release Judge telemetry as `available`, `unavailable`, or
+  `not_run`;
+- treats missing or contradictory Judge telemetry as `unknown` and fails
+  readiness closed;
+- measures Judge availability only across actual Judge invocations while
+  separately requiring 100 percent Judge telemetry coverage; and
+- requires both Judge gates and complete path-aware receipts before Protected
+  Autopilot can become ready.
+
+Legacy inference is deliberately narrow. A legacy receipt is `not_run` only
+when its stored critic verdicts prove a Judge-preventing block, warning,
+unavailability, or missing required slot. A legacy green or red receipt with
+all required critics passing may infer that the Judge was available. An
+ambiguous legacy hold remains unknown and cannot count as complete.
+
+### Verification And Staging Proof
+
+The new proof-manifest regression was observed failing before the four new
+mandatory checks were registered. The lane, path, media, and Judge tests were
+also observed failing before the readiness repair. Verification at source
+commit `5d6d1132bdb411ef829406e2f39415811d338967`:
+
+- Frontend: 17 test files and 197 tests passed.
+- Worker: 90 test files and 1,169 tests passed.
+- Focused Worker verification: 4 test files and 91 tests passed.
+- Strict frontend and Worker TypeScript verification passed.
+- Production Vite build passed with 1,924 modules transformed.
+- The 70-check image/content smoke suite passed.
+- The signed offline release proof passed 19 mandatory checks backed by
+  154 tests with no failed or missing checks.
+- GitHub CI run `29572773439` passed frontend, Worker, Shopify, on-hold,
+  Facebook scheduling, and route-registration guards.
+- Draft PR `#209` remains unmerged and mergeable.
+
+The clean-tree offline artifact is:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-17T10-14-01-717Z.json`
+- Envelope SHA-256:
+  `3F1E709C1B76CF332D1A3618712A4F12291869F666CC2D0501D4117E75407C25`
+- Artifact file SHA-256:
+  `E9BAB5C411155197F3C6392A2CB974B1860226F331F2048817D7137DD4DB2D20`
+- Raw Vitest report SHA-256:
+  `4785DD4C71E550BDFC16F70732BC23A988359B1CC203517FCEB20EDEA0CCD4B1`
+
+Staging Worker version `04bf4fd3-400a-4d52-8374-a2a2c1eef545`
+was deployed from that exact commit with:
+
+- `LEARNING_BRAIN_ENABLED=true`
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+Post-deploy health returned `200`. Unauthenticated pilot enrollment and admin
+operations requests returned `401`. The exact final admin operations CTE
+compiled against the real staging D1 and read two rows while writing zero.
+Staging still contains zero workspace learning settings, pilot enrollments,
+learning decisions, and critic verdicts.
+
+The first natural post-deploy trigger wrote successful staging cron receipts
+`5916` (`learning_pilot`, `2026-07-17 10:30:59`) and `5917`
+(`learning_readiness`, `2026-07-17 10:31:01`). Both processed zero posts and
+reported no error. The readiness receipt evaluated at
+`2026-07-17T10:31:00.055Z` remained `ready=0` and included the new Judge
+metrics and checks: zero invocations, zero availability, zero telemetry
+coverage, and both Judge gates false. This proves the new code fails closed
+when staging has no genuine evidence.
+
+Credential-free staging evidence:
+
+- Artifact:
+  `D:\GitHubBackup\SocialAi\release-evidence\staging-learning-availability-proof-2026-07-17T10-32-27-147Z.json`
+- Artifact SHA-256:
+  `C6ED3224C1CBF16F8481355EDBFC7E8E10975D17F029CA7AD4CCF5591B932A69`
+- Canonical payload SHA-256:
+  `0F267B48C5E6A68E39BCBACE6AE0C88F3A9386FE4513537813D05ECD341C3817`
+
+The production Clerk session was not accepted by the isolated staging Worker.
+No authentication control was weakened or bypassed. Authenticated staging
+evidence therefore remains unproven and this staging exercise does not count as
+promotion evidence.
+
+### Production Remains Unchanged And Not Ready
+
+No production Worker deploy was performed. Production remains on version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5` with direct health `200`.
+Hugheseys Que remains exactly `status='on_hold'`. The latest production
+readiness receipt remains `ready=0`, with five owner decisions, one workspace,
+zero client decisions, zero adjudications, stored legacy availability of 80
+percent, and 100 percent legacy receipt coverage. All direct verification
+queries reported `changed_db=false` and `rows_written=0`.
+
+This increment created no customer consent, pilot enrollment, post, schedule,
+adjudication, outcome, or publication. It changed no production runtime flag
+and does not count toward promotion. The remaining gate still requires an
+explicitly consented active client, 25 additional genuine decisions across the
+two-workspace cohort, 30 total independent adjudications, complete 168-hour real
+publication outcomes, authenticated staging ownership evidence, and every
+documented replay, publishing-regression, tenancy, and kill-switch proof.
