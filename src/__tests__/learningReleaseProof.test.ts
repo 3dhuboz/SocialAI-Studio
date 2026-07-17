@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   REQUIRED_RELEASE_PROOF_CHECKS,
@@ -85,6 +87,18 @@ describe('buildReleaseProofArtifact', () => {
     expect(first.artifactSha256).toBe(await hashReleaseProofPayload(first.payload));
     expect(first.payload.result).toBe('offline_pass');
     expect(first.payload.replayRedTeamCandidate).toBe(true);
+  });
+
+  it('labels the payload hash separately from the artifact file checksum', () => {
+    const source = readFileSync(
+      resolve(process.cwd(), 'scripts/learning-release-proof.ts'),
+      'utf8',
+    );
+
+    expect(source).toContain('const artifactFileSha256 = sha256File(artifactPath);');
+    expect(source).toContain('`${artifactFileSha256}  ${artifactPath}\\n`');
+    expect(source).toContain('`Payload SHA-256: ${artifact.artifactSha256}`');
+    expect(source).toContain('`Artifact file SHA-256: ${artifactFileSha256}`');
   });
 
   it('cannot claim live staging, authenticated submission, or production mutation', async () => {
