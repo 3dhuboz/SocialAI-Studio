@@ -37,20 +37,57 @@ import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
 import { reconcileSubscriptions } from './reconcile-subscriptions';
 
+const LEARNING_PILOT_DETAIL_KEYS = [
+  'posts_processed',
+  'candidates_considered',
+  'evaluated',
+  'reused',
+  'claimed_elsewhere',
+  'budget_skipped',
+  'context_not_ready',
+  'invalid_skipped',
+  'errors',
+] as const;
+
+type TrackedCronResult = {
+  posts_processed?: number;
+};
+
+function safeCounter(value: unknown): number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= 0
+    ? value
+    : 0;
+}
+
+export function buildCronDetails(
+  cronType: string,
+  result: TrackedCronResult | void,
+): string | null {
+  if (cronType !== 'learning_pilot' || !result) return null;
+  const counters = result as Record<string, unknown>;
+  return JSON.stringify(Object.fromEntries(
+    LEARNING_PILOT_DETAIL_KEYS.map((key) => [key, safeCounter(counters[key])]),
+  ));
+}
+
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
 // Returns void; never throws (so a failure in one cron doesn't kill the worker).
-async function trackCron(
+export async function trackCron(
   env: Env,
   cronType: string,
-  fn: () => Promise<{ posts_processed?: number } | void>,
+  fn: () => Promise<TrackedCronResult | void>,
 ): Promise<void> {
   const start = Date.now();
   let success = 1;
   let posts = 0;
   let error: string | null = null;
+  let detailsJson: string | null = null;
   try {
     const result = await fn();
     posts = result?.posts_processed ?? 0;
+    detailsJson = buildCronDetails(cronType, result);
   } catch (e: any) {
     success = 0;
     error = (e?.message || String(e)).slice(0, 1000);
@@ -64,9 +101,10 @@ async function trackCron(
   const duration = Date.now() - start;
   try {
     await env.DB.prepare(
-      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms)
-       VALUES (?,?,?,?,?)`
-    ).bind(cronType, success, posts, error, duration).run();
+      `INSERT INTO cron_runs (
+         cron_type, success, posts_processed, error, duration_ms, details_json
+       ) VALUES (?,?,?,?,?,?)`
+    ).bind(cronType, success, posts, error, duration, detailsJson).run();
   } catch (logErr: any) {
     console.error(`[CRON ${cronType}] Failed to log run:`, logErr?.message);
   }

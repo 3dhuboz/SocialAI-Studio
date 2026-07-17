@@ -65,7 +65,8 @@ export function registerHealthRoutes(app: Hono<{ Bindings: Env }>): void {
   app.get('/api/cron-health', async (c) => {
     const rows = await c.env.DB.prepare(
       `SELECT run_at, cron_type, success, posts_processed, duration_ms,
-              substr(COALESCE(error,''),1,200) as error
+              substr(COALESCE(error,''),1,200) as error,
+              details_json
        FROM cron_runs ORDER BY run_at DESC LIMIT 30`
     ).all();
     const runs = rows.results ?? [];
