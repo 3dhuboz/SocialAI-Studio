@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -196,5 +198,28 @@ describe('ProtectedAutopilotControl', () => {
 
     expect(html).toContain('Validated regression proof pending or failed');
     expect(html).not.toContain('1 recorded');
+  });
+});
+
+describe('Shopify Protected Autopilot parity', () => {
+  it('types and displays both independent Release Judge readiness gates', () => {
+    const api = readFileSync(resolve(
+      process.cwd(),
+      'shopify-app/src/api.ts',
+    ), 'utf8');
+    const settings = readFileSync(resolve(
+      process.cwd(),
+      'shopify-app/src/pages/Settings.tsx',
+    ), 'utf8');
+
+    for (const field of [
+      'releaseJudgeAvailability',
+      'releaseJudgeTelemetry',
+    ]) {
+      expect(api).toContain(`${field}: boolean`);
+      expect(settings).toContain(`readiness.checks.${field} === true`);
+    }
+    expect(settings).toContain("['Release Judge availability'");
+    expect(settings).toContain("['Release Judge telemetry coverage'");
   });
 });

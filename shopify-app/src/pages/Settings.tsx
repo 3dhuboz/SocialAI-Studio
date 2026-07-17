@@ -692,6 +692,8 @@ function ProtectedAutopilotSettingsCard() {
     ['No severe false passes', readiness.checks.severeFalsePasses === true],
     ['False-hold rate', readiness.checks.falseHolds === true],
     ['Critic availability', readiness.checks.availability === true],
+    ['Release Judge availability', readiness.checks.releaseJudgeAvailability === true],
+    ['Release Judge telemetry coverage', readiness.checks.releaseJudgeTelemetry === true],
     ['Decision receipt coverage', readiness.checks.receipts === true],
     ['Prediction lift', readiness.checks.predictionLift === true],
     ['Rank correlation', readiness.checks.rankCorrelation === true],

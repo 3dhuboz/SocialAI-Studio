@@ -1155,3 +1155,65 @@ eligible evidence must come from a genuinely new owner draft created through
 normal product use; an explicitly consented active client is still required for
 the second workspace. Historical receipts, synthetic fixtures, and operator
 replays remain excluded from promotion calculations.
+
+## 2026-07-17 Shopify Release Judge Readiness Parity
+
+### Completion-Audit Finding And Repair
+
+A requirement-to-evidence audit confirmed that the privacy-safe fleet
+aggregation already enforces ten distinct workspaces, one hundred distinct
+posts, coarse fields only, duplicate-post suppression, deletion invalidation,
+and weekly rebuilding. No duplicate aggregation repair was needed.
+
+The audit instead found a real cross-surface readiness gap. The Worker and main
+dashboard expose separate `releaseJudgeAvailability` and
+`releaseJudgeTelemetry` gates, but the Shopify Protected Autopilot checklist
+omitted both and typed readiness checks and metrics as generic records. The
+server still failed closed, so this was not a publication bypass, but a Shopify
+merchant could not see two independent reasons that Protected Autopilot was
+not ready.
+
+The Shopify API contract now explicitly types every readiness check and metric,
+including Judge availability, Judge telemetry coverage, and Judge invocation
+count. Shopify Settings now renders both missing Judge gates alongside the
+existing critic, receipt, evidence, cost, and tenancy gates. Each check uses an
+exact `=== true` comparison, so a missing field during a staggered deployment
+is shown as not passed rather than inferred safe.
+
+A regression requiring both fields in the API contract and both rows in the
+Shopify checklist was observed failing before the repair and passing after it.
+
+### Verification
+
+- Frontend: 17 test files and 198 tests passed.
+- Worker: 90 test files and 1,169 tests passed.
+- Focused Protected Autopilot parity: 7 tests passed.
+- Strict frontend, Worker, and Shopify TypeScript verification passed.
+- Main production build passed with 1,924 modules transformed.
+- The 70-check image/content safety smoke suite passed.
+- Shopify production build passed with 1,124 modules transformed.
+- Shopify build verification found no unresolved Vite placeholders.
+
+The Shopify build used the public committed `client_id` from
+`shopify.app.toml` only in the build process. No env file or secret was
+created. No Worker runtime changed, so no Worker deployment was performed for
+this UI-only parity repair.
+
+### Production Remains Unchanged And Gate-Closed
+
+Production remains on Worker version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; direct health returned `200`.
+Read-only D1 verification again returned `hughesq-001` as
+`status='on_hold'` and the latest current-policy readiness receipt as
+`ready=0`, with five owner decisions and zero client decisions. Both statements
+reported `changed_db=false` and `rows_written=0`.
+
+The isolated staging Worker still has no Clerk, JWT, or signed-embed
+verification secret available from the approved local environment.
+Authentication was not weakened and no unverifiable credential was copied.
+Authenticated staging ownership evidence therefore remains unproven.
+
+This increment creates no consent, enrollment, post, schedule, adjudication,
+outcome, or publication and does not count toward promotion. Protected
+Autopilot and reach-plan application remain disabled until every documented
+gate is satisfied by genuine evidence.
