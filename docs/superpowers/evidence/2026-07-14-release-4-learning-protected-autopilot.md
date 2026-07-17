@@ -1738,3 +1738,96 @@ production checks wrote zero rows, and `hughesq-001` remains exactly
 The scheduled-path defect and its observability gap are closed in staging.
 Production promotion remains blocked until all genuine consent, client-cohort,
 adjudication, availability, cost, outcome, and release-readiness gates pass.
+
+## 2026-07-17 Synthetic Pilot Evidence Disqualification
+
+### Integrity Finding And Permanent Boundary
+
+The five authenticated staging decisions were explicitly documented synthetic
+QA fixtures, but the readiness collector and admin pilot cohort treated every
+current-policy approval decision as promotion evidence. Left unfixed, repeated
+red-team runs could accumulate toward the 30-decision gate even though the
+evidence log said they must not count.
+
+Schema v44 adds `learning_decision_disqualifications`, an append-only,
+tenant-scoped receipt table. It accepts only `reason='synthetic_qa'`, enforces
+canonical user/client ownership tuples, blocks updates with a trigger, and
+cascades only when the parent decision is removed during scoped privacy
+erasure. The original post, decision, and critic verdicts remain intact for
+audit.
+
+The authenticated admin endpoint
+`POST /api/learning/pilot/disqualify/:decisionId` exists only when
+`ENVIRONMENT='staging'`, the learning brain is enabled, and release enforcement
+and Protected Autopilot are both disabled. Its single atomic insert accepts
+only a current-policy, unpublished, unadjudicated, unscheduled Draft in an
+active enrolled workspace. It derives the tenant tuple from the decision,
+rejects unexpected body fields, is idempotent on `decision_id`, and never
+updates a post or decision.
+
+Readiness, adjudication sampling, and the admin operations cohort all join the
+receipt by the complete tenant tuple and require no matching exclusion before
+their 30-row limit. Privacy deletion explicitly removes the receipts within
+the same tenant scope. Five exact schema, route, idempotency, fail-closed, and
+readiness contracts are now mandatory entries in the offline release-proof
+allowlist.
+
+### Authenticated And Natural Staging Proof
+
+Only staging received schema v44 and Worker version
+`d828d0ef-6f2a-4e5d-a06d-2ae68cefb9f9`, deployed from
+`b3214eece1c8b6e765e4a30ad0b691bb4b3529fa`. GitHub PR `#209` checks passed
+that source commit.
+
+The existing authenticated SocialAI browser session submitted all five
+decisions through the real staging endpoint. Every response returned HTTP
+`200`, `created=true`, and `postMutated=false`. Repeating the first request
+returned the same receipt with `created=false` and `postMutated=false`. The
+Clerk bearer existed only in page memory and was never output or persisted.
+
+Read-only D1 verification then found exactly five distinct synthetic exclusion
+receipts. All five source decisions still existed, all five source posts
+remained unscheduled Drafts, and publication and adjudication counts remained
+zero.
+
+No readiness evaluation was manually triggered. The natural 15-minute
+scheduler persisted successful cron receipt `6206` at
+`2026-07-17 14:15:58` UTC and immutable readiness snapshot
+`2a226094-5d45-45eb-b02e-aa59c955d7ce` at
+`2026-07-17T14:15:57.894Z`. Compared with the preceding 14:00 snapshot:
+
+- eligible pilot decisions fell from five to zero;
+- eligible workspaces and owner decisions fell from one/five to zero/zero;
+- client decisions and adjudications remained zero;
+- critical bypasses remained zero; and
+- readiness remained safely red.
+
+Authenticated `/api/learning/readiness` and
+`/api/learning/admin/operations` independently returned HTTP `200` with zero
+pilot decisions; the owner workspace operations row also reported
+`decisionCount=0`.
+
+Credential-free evidence:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-synthetic-pilot-exclusion-proof-2026-07-17T14-17-09-603Z.json`
+- SHA-256:
+  `01C589D03F34E7716E27D60AA63D577A07C2B4E383B9317BFC105211F392612F`
+
+### Verification And Production Boundary
+
+The complete Worker suite passed 94 files and 1,196 tests, strict Worker
+TypeScript passed, the frontend suite passed 17 files and 199 tests, and the
+staging Wrangler dry-run compiled against only `socialai-db-staging`.
+
+Production was not migrated, deployed, or mutated. It remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5` and schema v42 with no v44 table,
+zero Protected Autopilot workspaces, zero autopublish consents, and red
+readiness. The separate five production owner-pilot decisions have different
+IDs and older timestamps; no artifact classified them as these staging
+fixtures, so they were not relabelled or changed. `hughesq-001` remains exactly
+`status='on_hold'`.
+
+This closes the synthetic-volume integrity defect. It does not create genuine
+pilot volume, client-cohort evidence, adjudications, outcome history, or
+promotion approval. Pilot-attributable staging cost telemetry remains the next
+fail-closed readiness gap.

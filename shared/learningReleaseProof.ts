@@ -136,6 +136,31 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'record-only pilot collector evaluates at most one draft from each of two consented workspaces',
   },
   {
+    id: 'pilot_synthetic_exclusion_schema',
+    suite: 'src/__tests__/learning-pilot-disqualification-schema.test.ts',
+    assertion: 'learning pilot disqualification schema creates immutable tenant-scoped synthetic QA receipts only',
+  },
+  {
+    id: 'pilot_synthetic_exclusion_route',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes appends a staging-only synthetic QA disqualification without mutating evidence',
+  },
+  {
+    id: 'pilot_synthetic_exclusion_idempotent',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes returns the existing immutable disqualification idempotently',
+  },
+  {
+    id: 'pilot_synthetic_exclusion_fail_closed',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes rejects non-admin, non-staging, malformed, and unsafe disqualifications',
+  },
+  {
+    id: 'pilot_synthetic_exclusion_readiness',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness collects a strict consecutive pilot window and current evidence from D1',
+  },
+  {
     id: 'readiness_pilot_thresholds',
     suite: 'src/__tests__/learning-readiness.test.ts',
     assertion: 'learning release readiness requires enough adjudicated pilot evidence and every safety threshold',
