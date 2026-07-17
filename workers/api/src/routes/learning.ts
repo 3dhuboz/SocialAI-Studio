@@ -11,6 +11,7 @@ import {
 import {
   AUTOPILOT_POLICY_VERSION,
   RELEASE_EVIDENCE_MAX_TTL_MS,
+  type ReleaseEvidenceKind,
 } from '../lib/learning/readiness';
 import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
@@ -138,6 +139,78 @@ type AdminOperationsRow = AdjudicationEvidenceSourceRow & {
   judge_available: number | string | null;
   sample_decision_id: string | null;
 };
+
+type AdminReleaseEvidenceRow = {
+  evidence_kind: ReleaseEvidenceKind;
+  owner_kind: WorkspaceOwnerKind | null;
+  passed: number | string | null;
+  recorded_at: string;
+  expires_at: string | null;
+};
+
+const ADMIN_RELEASE_EVIDENCE_REQUIREMENTS: ReadonlyArray<{
+  evidenceKind: ReleaseEvidenceKind;
+  ownerKind: WorkspaceOwnerKind | null;
+}> = [
+  { evidenceKind: 'replay_red_team', ownerKind: null },
+  { evidenceKind: 'kill_switch', ownerKind: null },
+  { evidenceKind: 'publish_regression', ownerKind: null },
+  { evidenceKind: 'staging_green', ownerKind: 'user' },
+  { evidenceKind: 'staging_block', ownerKind: 'user' },
+  { evidenceKind: 'staging_green', ownerKind: 'client' },
+  { evidenceKind: 'staging_block', ownerKind: 'client' },
+  { evidenceKind: 'staging_green', ownerKind: 'shop' },
+  { evidenceKind: 'staging_block', ownerKind: 'shop' },
+];
+
+function summarizeAdminReleaseEvidence(
+  rows: AdminReleaseEvidenceRow[],
+  now: Date = new Date(),
+) {
+  const key = (
+    evidenceKind: ReleaseEvidenceKind,
+    ownerKind: WorkspaceOwnerKind | null,
+  ) => `${evidenceKind}:${ownerKind ?? '*'}`;
+  const latest = new Map<string, AdminReleaseEvidenceRow>();
+  for (const row of rows) {
+    const rowKey = key(row.evidence_kind, row.owner_kind);
+    const existing = latest.get(rowKey);
+    if (!existing || Date.parse(row.recorded_at) > Date.parse(existing.recorded_at)) {
+      latest.set(rowKey, row);
+    }
+  }
+
+  const nowMs = now.getTime();
+  let expiredCount = 0;
+  const validExpiryTimes: number[] = [];
+  for (const requirement of ADMIN_RELEASE_EVIDENCE_REQUIREMENTS) {
+    const row = latest.get(key(requirement.evidenceKind, requirement.ownerKind));
+    if (!row) continue;
+    const recordedAt = Date.parse(row.recorded_at);
+    const expiresAt = row.expires_at ? Date.parse(row.expires_at) : Number.NaN;
+    if (Number.isFinite(expiresAt) && expiresAt <= nowMs) expiredCount += 1;
+    const valid = Number(row.passed) === 1
+      && Number.isFinite(recordedAt)
+      && Number.isFinite(expiresAt)
+      && recordedAt <= nowMs
+      && expiresAt > nowMs
+      && expiresAt > recordedAt
+      && expiresAt - recordedAt <= RELEASE_EVIDENCE_MAX_TTL_MS;
+    if (valid) validExpiryTimes.push(expiresAt);
+  }
+
+  const validCount = validExpiryTimes.length;
+  const requiredCount = ADMIN_RELEASE_EVIDENCE_REQUIREMENTS.length;
+  const nextExpiryMs = validCount > 0 ? Math.min(...validExpiryTimes) : null;
+  return {
+    validCount,
+    requiredCount,
+    invalidOrMissingCount: requiredCount - validCount,
+    expiredCount,
+    complete: validCount === requiredCount,
+    nextExpiryAt: nextExpiryMs == null ? null : new Date(nextExpiryMs).toISOString(),
+  };
+}
 
 function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
   if (!value) return {};
@@ -1348,6 +1421,26 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
        LIMIT ?
     `).bind(AUTOPILOT_POLICY_VERSION, limit).all<AdminOperationsRow>();
     const readinessRow = await latestReadiness(c.env.DB);
+    const evidenceRows = await c.env.DB.prepare(`
+      WITH latest_evidence AS (
+        SELECT evidence_kind, owner_kind, passed, recorded_at, expires_at,
+               ROW_NUMBER() OVER (
+                 PARTITION BY evidence_kind, COALESCE(owner_kind, '')
+                 ORDER BY recorded_at DESC, id DESC
+               ) AS evidence_rank
+          FROM learning_release_evidence
+         WHERE policy_version = ?
+      )
+      SELECT evidence_kind, owner_kind, passed, recorded_at, expires_at
+        FROM latest_evidence
+       WHERE evidence_rank = 1
+       ORDER BY evidence_kind, owner_kind
+       LIMIT ?
+    `).bind(
+      AUTOPILOT_POLICY_VERSION,
+      ADMIN_RELEASE_EVIDENCE_REQUIREMENTS.length,
+    ).all<AdminReleaseEvidenceRow>();
+    const releaseEvidence = summarizeAdminReleaseEvidence(evidenceRows.results ?? []);
     const readinessAgeMs = readinessRow
       ? Date.now() - Date.parse(readinessRow.evaluated_at)
       : Number.POSITIVE_INFINITY;
@@ -1401,6 +1494,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     return c.json({
       policyVersion: AUTOPILOT_POLICY_VERSION,
       globalSwitches,
+      releaseEvidence,
       readiness: {
         ready: readinessRow?.ready === 1
           && readinessAgeMs >= 0

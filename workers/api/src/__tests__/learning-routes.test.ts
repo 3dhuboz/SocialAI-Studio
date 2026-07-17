@@ -965,13 +965,35 @@ describe('learning settings and release evidence routes', () => {
 
   it('returns bounded admin operational metrics from immutable release evidence', async () => {
     const evaluatedAt = new Date().toISOString();
+    const evidenceRecordedAt = new Date(Date.now() - 60_000).toISOString();
+    const evidenceExpiresAt = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString();
+    const releaseEvidence = [
+      ['replay_red_team', null],
+      ['kill_switch', null],
+      ['publish_regression', null],
+      ['staging_green', 'user'],
+      ['staging_block', 'user'],
+      ['staging_green', 'client'],
+      ['staging_block', 'client'],
+      ['staging_green', 'shop'],
+      ['staging_block', 'shop'],
+    ].map(([evidence_kind, owner_kind]) => ({
+      evidence_kind, owner_kind, passed: 1,
+      recorded_at: evidenceRecordedAt, expires_at: evidenceExpiresAt,
+    }));
     const sourceFields = await adjudicationSourceFields();
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'FROM learning_release_readiness': [{
-        id: 'ready-1', ready: 0, metrics_json: '{"pilotDecisions":12}',
+        id: 'ready-1', ready: 0,
+        metrics_json: JSON.stringify({
+          pilotDecisions: 12, pilotWorkspaceCount: 2,
+          pilotUserDecisions: 5, pilotClientDecisions: 7,
+          adjudicatedDecisions: 8,
+        }),
         checks_json: '{"pilot":false}', evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
+      'WITH latest_evidence AS': releaseEvidence,
       'WITH pilot_cohort AS': [{
         user_id: 'owner-2', workspace_key: 'client-2', client_id: 'client-2',
         owner_kind: 'client', owner_id: 'client-2', mode: 'approval',
@@ -1009,6 +1031,14 @@ describe('learning settings and release evidence routes', () => {
         learningBrain: true,
         releaseEnforcement: false,
         protectedAutopilot: false,
+      },
+      releaseEvidence: {
+        validCount: 9,
+        requiredCount: 9,
+        invalidOrMissingCount: 0,
+        expiredCount: 0,
+        complete: true,
+        nextExpiryAt: evidenceExpiresAt,
       },
       workspaces: [{
         workspaceKey: 'client-2', ownerKind: 'client', mode: 'approval',
@@ -1052,5 +1082,11 @@ describe('learning settings and release evidence routes', () => {
     expect(operations.sql).toContain('LEFT JOIN posts p');
     expect(operations.sql).not.toContain('sample_release_state');
     expect(operations.binds).toEqual([AUTOPILOT_POLICY_VERSION, 10]);
+    const evidenceQuery = calls.find((call) => call.sql.includes('WITH latest_evidence AS'))!;
+    expect(evidenceQuery.sql).toContain('ROW_NUMBER() OVER');
+    expect(evidenceQuery.sql).toContain("PARTITION BY evidence_kind, COALESCE(owner_kind, '')");
+    expect(evidenceQuery.sql).toContain('WHERE evidence_rank = 1');
+    expect(evidenceQuery.sql).toContain('LIMIT ?');
+    expect(evidenceQuery.binds).toEqual([AUTOPILOT_POLICY_VERSION, 9]);
   });
 });

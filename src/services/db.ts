@@ -244,6 +244,9 @@ export interface LearningReadinessChecks {
 
 export interface LearningReadinessMetrics {
   pilotDecisions?: number;
+  pilotWorkspaceCount?: number;
+  pilotUserDecisions?: number;
+  pilotClientDecisions?: number;
   adjudicatedDecisions?: number;
   severeFalsePasses?: number;
   falseHoldRate?: number;
@@ -337,6 +340,14 @@ export interface AdminLearningWorkspace {
 export interface AdminLearningOperations {
   policyVersion: string;
   globalSwitches: LearningGlobalSwitches;
+  releaseEvidence?: {
+    validCount: number;
+    requiredCount: number;
+    invalidOrMissingCount: number;
+    expiredCount: number;
+    complete: boolean;
+    nextExpiryAt: string | null;
+  };
   readiness: Omit<LearningReadinessResponse, 'policyVersion' | 'effectiveMode' | 'cost' | 'globalSwitches'>;
   workspaces: AdminLearningWorkspace[];
 }

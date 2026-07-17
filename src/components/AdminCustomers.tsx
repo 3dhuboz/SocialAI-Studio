@@ -374,6 +374,28 @@ export const AdminCustomers: React.FC = () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 const fmtRate = (value: number | null) => value == null ? 'No sample' : `${(value * 100).toFixed(1)}%`;
+const PILOT_DECISION_TARGET = 30;
+const PILOT_WORKSPACE_TARGET = 2;
+const RELEASE_EVIDENCE_TARGET = 9;
+
+const safeMetricCount = (value: number | undefined): number => (
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0
+);
+
+const releaseEvidenceExpiryLabel = (expiresAt: string | null): string => {
+  if (!expiresAt) return 'No valid receipt expiry available';
+  const expiryMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiryMs)) return 'Receipt expiry is invalid';
+  const remainingMs = expiryMs - Date.now();
+  if (remainingMs <= 0) return 'Release evidence has expired';
+  const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+  const remaining = remainingHours <= 48
+    ? `${remainingHours} hour${remainingHours === 1 ? '' : 's'}`
+    : `${Math.ceil(remainingHours / 24)} days`;
+  return `Next receipt expires in ${remaining}`;
+};
 
 const safeReviewMediaUrl = (value: string | null): string | null => {
   if (!value) return null;
@@ -563,6 +585,21 @@ export const LearningOperationsCard: React.FC<{
 }) => {
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
   const killSwitchEngaged = operations?.globalSwitches.protectedAutopilot !== true;
+  const pilotDecisions = safeMetricCount(operations?.readiness.metrics.pilotDecisions);
+  const pilotWorkspaceCount = safeMetricCount(operations?.readiness.metrics.pilotWorkspaceCount);
+  const pilotUserDecisions = safeMetricCount(operations?.readiness.metrics.pilotUserDecisions);
+  const pilotClientDecisions = safeMetricCount(operations?.readiness.metrics.pilotClientDecisions);
+  const adjudicatedDecisions = safeMetricCount(operations?.readiness.metrics.adjudicatedDecisions);
+  const pilotRemaining = Math.max(0, PILOT_DECISION_TARGET - pilotDecisions);
+  const pilotProgress = Math.min(100, (pilotDecisions / PILOT_DECISION_TARGET) * 100);
+  const releaseEvidence = operations?.releaseEvidence ?? {
+    validCount: 0,
+    requiredCount: RELEASE_EVIDENCE_TARGET,
+    invalidOrMissingCount: RELEASE_EVIDENCE_TARGET,
+    expiredCount: 0,
+    complete: false,
+    nextExpiryAt: null,
+  };
   const [pilotBudgetDollars, setPilotBudgetDollars] = useState('5.00');
   const [pilotCustomerConsentConfirmed, setPilotCustomerConsentConfirmed] = useState(false);
   const [pilotCustomerConsentNote, setPilotCustomerConsentNote] = useState('');
@@ -621,11 +658,88 @@ export const LearningOperationsCard: React.FC<{
       </div>
 
       {operations && (
-        <div className="mt-3 flex flex-wrap gap-2 text-[9px] text-white/40">
-          <span>Learning brain: {operations.globalSwitches.learningBrain ? 'on' : 'off'}</span>
-          <span>Release enforcement: {operations.globalSwitches.releaseEnforcement ? 'on' : 'off'}</span>
-          <span>Policy: {operations.policyVersion}</span>
-          <span>{operations.workspaces.length} workspace{operations.workspaces.length === 1 ? '' : 's'}</span>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1.35fr_1fr]">
+          <div className="rounded-xl border border-white/[0.07] bg-black/20 p-3.5">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-cyan-200/60">
+                  Current-policy pilot
+                </p>
+                <p className="mt-1 text-lg font-black text-white/85">
+                  {pilotDecisions} / {PILOT_DECISION_TARGET} decisions
+                </p>
+              </div>
+              <p className="text-[10px] font-bold text-white/40">
+                {pilotRemaining === 0 ? 'Decision gate met' : `${pilotRemaining} remaining`}
+              </p>
+            </div>
+            <div
+              className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]"
+              role="progressbar"
+              aria-label="Pilot decision progress"
+              aria-valuemin={0}
+              aria-valuemax={PILOT_DECISION_TARGET}
+              aria-valuenow={Math.min(pilotDecisions, PILOT_DECISION_TARGET)}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400"
+                style={{ width: `${pilotProgress}%` }}
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ['Workspaces', `${pilotWorkspaceCount} / ${PILOT_WORKSPACE_TARGET}`],
+                ['User decisions', String(pilotUserDecisions)],
+                ['Client decisions', String(pilotClientDecisions)],
+                ['Adjudicated', `${adjudicatedDecisions} / ${PILOT_DECISION_TARGET}`],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-white/[0.05] bg-black/15 p-2.5">
+                  <p className="text-[9px] leading-tight text-white/30">{label}</p>
+                  <p className="mt-1 text-xs font-black text-white/70">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={`rounded-xl border p-3.5 ${
+            releaseEvidence.complete
+              ? 'border-emerald-400/15 bg-emerald-500/[0.035]'
+              : 'border-amber-400/15 bg-amber-500/[0.035]'
+          }`}>
+            <div className="flex items-center gap-1.5">
+              <Clock size={12} className={
+                releaseEvidence.complete ? 'text-emerald-300' : 'text-amber-300'
+              } />
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/45">
+                Immutable release evidence
+              </p>
+            </div>
+            <p className="mt-2 text-lg font-black text-white/85">
+              {releaseEvidence.validCount} / {releaseEvidence.requiredCount} valid receipts
+            </p>
+            <p className="mt-1 text-[10px] text-white/40">
+              {releaseEvidenceExpiryLabel(releaseEvidence.nextExpiryAt)}
+            </p>
+            {!releaseEvidence.complete && (
+              <p className="mt-2 text-[10px] font-bold leading-relaxed text-amber-100/70">
+                {releaseEvidence.invalidOrMissingCount} current-policy receipt
+                {releaseEvidence.invalidOrMissingCount === 1 ? '' : 's'} missing or invalid.
+                {releaseEvidence.expiredCount > 0
+                  ? ` ${releaseEvidence.expiredCount} expired.`
+                  : ''}
+              </p>
+            )}
+          </div>
+
+          <div className="lg:col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-white/[0.05] bg-black/15 px-3 py-2 text-[9px] text-white/35">
+            <span>Learning brain: {operations.globalSwitches.learningBrain ? 'on' : 'off'}</span>
+            <span>Release enforcement: {operations.globalSwitches.releaseEnforcement ? 'on' : 'off'}</span>
+            <span>Policy: {operations.policyVersion}</span>
+            <span>{operations.workspaces.length} workspace{operations.workspaces.length === 1 ? '' : 's'}</span>
+            <span className="font-bold text-rose-100/55">
+              Read-only status: this panel cannot enable autopilot, schedule, or publish posts.
+            </span>
+          </div>
         </div>
       )}
 
