@@ -428,7 +428,11 @@ describe('learning settings and release evidence routes', () => {
         autopublish_policy_version: null, experiment_rate: 0,
         monthly_ai_budget_usd_cents: 500, disabled_reason: null,
       }],
-      'SELECT id FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-1' }],
+      'FROM learning_pilot_enrollments pen': [{
+        id: 'pilot-enrollment-1', monthly_ai_budget_usd_cents: 500,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
+      'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
     });
     runPilotPipeline.mockResolvedValue({ id: 'decision-pilot-1', state: 'pass_green' });
     const env = {
@@ -464,6 +468,55 @@ describe('learning settings and release evidence routes', () => {
     expect(postRead.sql).toContain('LEFT JOIN users u ON u.id = p.user_id');
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
     expect(calls.some((call) => /INSERT\s+INTO\s+posts/i.test(call.sql))).toBe(false);
+    const enrollmentRead = calls.find((call) =>
+      call.sql.includes('FROM learning_pilot_enrollments pen'))!;
+    expect(enrollmentRead.sql).toContain("pen.consent_basis = 'customer_attested'");
+    expect(enrollmentRead.sql).toContain("w.mode = 'approval'");
+    expect(enrollmentRead.sql).toContain('w.monthly_ai_budget_usd_cents > 0');
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(true);
+  });
+
+  it('stops pilot validation before critic spend when the budget reserve is unavailable', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [{
+        id: 'draft-budget-stop', user_id: 'owner_1', client_id: null,
+        owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+        content: 'Owner draft', platform: 'Facebook', hashtags: '[]',
+        image_url: null, post_type: 'text', video_url: null, video_status: null,
+        video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 500, disabled_reason: null,
+      }],
+      'FROM learning_pilot_enrollments pen': [{
+        id: 'pilot-enrollment-owner', monthly_ai_budget_usd_cents: 500,
+      }],
+      'FROM ai_usage': [{ spend_usd: 4.51, telemetry_count: 30 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/validate/draft-budget-stop', {
+      method: 'POST', headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Pilot AI budget reserve is unavailable; no critics ran',
+    });
+    expect(runPilotPipeline).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
   });
 
   it('refuses pilot validation when approval settings exist without an enrollment receipt', async () => {
@@ -482,7 +535,7 @@ describe('learning settings and release evidence routes', () => {
         autopublish_policy_version: null, experiment_rate: 0,
         monthly_ai_budget_usd_cents: 500, disabled_reason: null,
       }],
-      'SELECT id FROM learning_pilot_enrollments': [],
+      'FROM learning_pilot_enrollments pen': [],
     });
     const env = {
       DB: db,
@@ -720,6 +773,8 @@ describe('learning settings and release evidence routes', () => {
     expect(query.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");
     expect(query.sql).toContain('NOT EXISTS');
     expect(query.sql).toContain("d.stage = 'release'");
+    expect(query.sql).toContain("d.release_state IN ('pass_green','hold_amber','block_red')");
+    expect(query.sql).toContain("$.verdictCount");
   });
 
   it('lets only an admin adjudicate a release decision and derives its tenant tuple', async () => {

@@ -16,9 +16,12 @@ import {
 import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
   buildReleaseContentHash,
-  runAndPersistReleasePipeline,
   type PublishablePost,
 } from '../lib/learning/release-preflight';
+import {
+  getRecordOnlyPilotBudgetStatus,
+  runClaimedPilotEvaluation,
+} from '../lib/learning/pilot-evaluation';
 import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
@@ -74,6 +77,11 @@ type PilotCandidateRow = {
 type PilotEnrollmentRow = {
   id: string;
   enrolled_at: string;
+};
+
+type PilotValidationEnrollmentRow = {
+  id: string;
+  monthly_ai_budget_usd_cents: number | string | null;
 };
 
 type DecisionRow = Record<string, unknown> & {
@@ -846,6 +854,19 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
               WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
             AND d.post_id = p.id
             AND d.stage = 'release'
+            AND d.release_state IN ('pass_green','hold_amber','block_red')
+            AND CAST(
+              COALESCE(json_extract(d.summary_json, '$.verdictCount'), -1)
+              AS INTEGER
+            ) = (
+              SELECT COUNT(*)
+              FROM learning_critic_verdicts v
+              WHERE v.decision_id = d.id
+            )
+            AND CAST(
+              COALESCE(json_extract(d.summary_json, '$.verdictCount'), 0)
+              AS INTEGER
+            ) > 0
         )
       GROUP BY p.user_id,p.client_id
       ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
@@ -928,11 +949,32 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (mode !== 'approval') {
       return c.json({ error: 'Workspace must be enrolled in approval-mode pilot validation' }, 409);
     }
+    const validationNow = new Date();
     const enrollment = await c.env.DB.prepare(`
-      SELECT id FROM learning_pilot_enrollments
-      WHERE user_id = ? AND workspace_key = ?
-        AND client_id IS ? AND owner_kind = ? AND owner_id = ?
-        AND policy_version = ? AND record_only = 1
+      SELECT pen.id, w.monthly_ai_budget_usd_cents
+      FROM learning_pilot_enrollments pen
+      INNER JOIN workspace_learning_settings w
+        ON w.user_id = pen.user_id
+       AND w.workspace_key = pen.workspace_key
+       AND w.client_id IS pen.client_id
+       AND w.owner_kind = pen.owner_kind
+       AND w.owner_id = pen.owner_id
+      WHERE pen.user_id = ? AND pen.workspace_key = ?
+        AND pen.client_id IS ? AND pen.owner_kind = ? AND pen.owner_id = ?
+        AND pen.policy_version = ? AND pen.record_only = 1
+        AND pen.consent_confirmed_at IS NOT NULL
+        AND pen.consent_confirmed_at <= ?
+        AND w.mode = 'approval'
+        AND w.monthly_ai_budget_usd_cents > 0
+        AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+        AND (
+          (pen.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
+          OR (
+            pen.owner_kind = 'client'
+            AND pen.consent_basis = 'customer_attested'
+            AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+          )
+        )
       LIMIT 1
     `).bind(
       identity.userId,
@@ -941,9 +983,25 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       identity.ownerKind,
       identity.ownerId,
       AUTOPILOT_POLICY_VERSION,
-    ).first<{ id: string }>();
+      validationNow.toISOString(),
+    ).first<PilotValidationEnrollmentRow>();
     if (!enrollment) {
       return c.json({ error: 'Workspace has no current-policy pilot enrollment receipt' }, 409);
+    }
+    const budgetUsdCents = Number(enrollment.monthly_ai_budget_usd_cents);
+    const budget = await getRecordOnlyPilotBudgetStatus(
+      c.env.DB,
+      identity,
+      budgetUsdCents,
+      validationNow,
+    );
+    if (!budget.allowed) {
+      const telemetryUnavailable = budget.reason === 'telemetry_unavailable';
+      return c.json({
+        error: telemetryUnavailable
+          ? 'Pilot cost telemetry is unavailable; no critics ran'
+          : 'Pilot AI budget reserve is unavailable; no critics ran',
+      }, telemetryUnavailable ? 503 : 409);
     }
 
     const post: PublishablePost = {
@@ -964,10 +1022,19 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       archetype_slug: row.archetype_slug,
     };
     try {
-      const result = await runAndPersistReleasePipeline(c.env, post, 'approval');
+      const result = await runClaimedPilotEvaluation(c.env, post);
+      if (
+        result.status === 'busy'
+        || result.decisionId == null
+        || result.releaseState == null
+      ) {
+        return c.json({
+          error: 'Pilot validation is already running; no duplicate critic spend was started',
+        }, 409);
+      }
       return c.json({
-        decisionId: result.id,
-        releaseState: result.state,
+        decisionId: result.decisionId,
+        releaseState: result.releaseState,
         postId: row.id,
         sourceStatus: 'Draft',
         postMutated: false,

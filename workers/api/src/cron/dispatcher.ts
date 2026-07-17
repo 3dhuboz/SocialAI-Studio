@@ -28,6 +28,7 @@ import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
+import { cronEvaluateLearningPilot } from './evaluate-learning-pilot';
 import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
 import { cronLearnStrategies } from './learn-strategies';
 import { cronEvaluateLearningReadiness } from './evaluate-learning-readiness';
@@ -134,6 +135,16 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // webhooks. Cheap when no Shopify shops are out of sync; runs on the same
     // 15-min cadence as health sweep since both are observability-tier work.
     await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    if (
+      env.LEARNING_BRAIN_ENABLED === 'true'
+      && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
+      && env.LEARNING_AUTOPILOT_ENABLED !== 'true'
+    ) {
+      // Record-only pilot work is isolated from the 5-minute publish lane.
+      // It evaluates at most one Draft per explicitly consented workspace
+      // and can never schedule, mutate, or publish the source post.
+      await trackCron(env, 'learning_pilot', () => cronEvaluateLearningPilot(env));
+    }
     if (env.LEARNING_BRAIN_ENABLED === 'true') {
       await trackCron(env, 'learning_readiness', () => cronEvaluateLearningReadiness(env));
     }

@@ -39,4 +39,28 @@ describe('learning shadow wiring', () => {
     expect(env).toContain('LEARNING_AUTOPILOT_ENABLED?: string;');
     expect(wrangler.match(/LEARNING_AUTOPILOT_ENABLED\s*=\s*"false"/g)).toHaveLength(2);
   });
+
+  it('runs the bounded record-only collector only on the dormant 15-minute lane', () => {
+    const dispatcher = readFileSync(resolve(process.cwd(), 'src/cron/dispatcher.ts'), 'utf8');
+    const lane = dispatcher.indexOf("if (cron === '*/15 * * * *')");
+    const importIndex = dispatcher.indexOf(
+      "import { cronEvaluateLearningPilot } from './evaluate-learning-pilot';",
+    );
+    const enforcementGuard = dispatcher.indexOf(
+      "env.LEARNING_RELEASE_ENFORCEMENT !== 'true'",
+      lane,
+    );
+    const autopilotGuard = dispatcher.indexOf(
+      "env.LEARNING_AUTOPILOT_ENABLED !== 'true'",
+      lane,
+    );
+    const collector = dispatcher.indexOf("trackCron(env, 'learning_pilot'", lane);
+    const readiness = dispatcher.indexOf("trackCron(env, 'learning_readiness'", lane);
+
+    expect(importIndex).toBeGreaterThan(-1);
+    expect(enforcementGuard).toBeGreaterThan(lane);
+    expect(autopilotGuard).toBeGreaterThan(enforcementGuard);
+    expect(collector).toBeGreaterThan(autopilotGuard);
+    expect(readiness).toBeGreaterThan(collector);
+  });
 });

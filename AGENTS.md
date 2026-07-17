@@ -194,6 +194,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
 | `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
+| `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Lease-guarded record-only critique of at most one new Draft per explicitly consented pilot workspace |
 | `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
 | `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
 | `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
