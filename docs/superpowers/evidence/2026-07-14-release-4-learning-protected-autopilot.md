@@ -1831,3 +1831,106 @@ This closes the synthetic-volume integrity defect. It does not create genuine
 pilot volume, client-cohort evidence, adjudications, outcome history, or
 promotion approval. Pilot-attributable staging cost telemetry remains the next
 fail-closed readiness gap.
+
+## 2026-07-17 Pilot AI Usage Attribution
+
+### Defect And Permanent Boundary
+
+The readiness budget check previously used only the workspace-wide monthly
+`ai_usage` total. Unrelated product calls could therefore make the budget
+telemetry appear present even when the selected pilot decisions had no cost
+receipts. Staging usage logging was also disabled, and the general logger
+intentionally swallowed persistence failures. That combination could not
+support a release gate.
+
+Schema v45 adds nullable `ai_usage.learning_decision_id`, an indexed foreign
+key to `learning_decisions`. Its insert trigger accepts an attribution only
+when the decision, user, client, and post tuple exactly matches. Its update
+trigger makes the attribution identity and tenant tuple immutable. Tenant
+privacy deletion can still cascade the receipt with its parent decision.
+
+Pilot evaluation now allocates the decision claim before running critics and
+passes a request-local usage scope through the complete critic pipeline. Every
+metered AI call in that scope must persist against the exact claim. A scoped
+logging failure is fatal, and a decision cannot transition from
+`persistenceState='writing'` to `persistenceState='complete'` unless the number
+of persisted receipts exactly equals the number of attempted calls with zero
+failures. The scope is held in a `WeakMap`; it cannot be supplied through
+Wrangler variables or leak into parent or concurrent requests. Unscoped
+product AI calls retain their existing best-effort behavior.
+
+Readiness still treats the full workspace monthly ledger as the hard budget
+cap. Separately, it now requires every selected, eligible pilot decision to
+have exact tenant-and-post-matched usage receipts, a positive pilot spend no
+greater than the workspace total, and no null or negative estimates. Generic
+unrelated usage cannot satisfy the pilot evidence gate. Eight corresponding
+schema, scope, identity, completion, coverage, and estimate-integrity checks
+are permanent mandatory release-proof contracts.
+
+### Isolated Database And Staging Proof
+
+The v45 migration was first exercised against a disposable local D1 database.
+An exact attribution inserted successfully; a cross-tenant attribution and an
+identity update were both rejected; deleting the parent decision cascaded the
+usage receipt. No remote data participated in that exercise.
+
+Only `socialai-db-staging` then received v45. Read-only metadata verification
+found the new column, one guarded index, both guard triggers, and the expected
+`learning_decision_id -> learning_decisions.id ON DELETE CASCADE` foreign key.
+The staging `ai_usage` ledger remained at zero rows before and after migration.
+Matching Worker version `c43d0828-b76e-4c33-bb63-2d81a7a7c352` was deployed
+from source commit `996c8844e65e07e8aaa3032c20b686cedf94b37e`.
+Release enforcement, Protected Autopilot, and organic-reach application remain
+disabled.
+
+No profile, fact, post, consent, schedule, or decision was created or modified
+to force a paid proof. Cloudflare naturally invoked the staging pilot at
+`2026-07-17 15:00:57` UTC. Cron receipt `6262` succeeded with:
+
+```json
+{
+  "posts_processed": 0,
+  "candidates_considered": 1,
+  "evaluated": 0,
+  "reused": 0,
+  "claimed_elsewhere": 0,
+  "budget_skipped": 0,
+  "context_not_ready": 1,
+  "invalid_skipped": 0,
+  "errors": 0
+}
+```
+
+The only candidate was the existing, explicitly labelled staging QA Draft
+`bf848b80-b88d-4ff4-88b8-6ab0992e535f`. The owning profile was still exactly
+the empty JSON object and had zero verified client facts, so the skip was
+truthful. After the run, the post remained an unscheduled 168-character text
+Draft with no image or video. It had zero decisions, while the entire staging
+usage ledger still had zero rows, zero attributed rows, zero invalid costs, and
+zero spend. The following readiness cron also succeeded and remained red.
+
+This proves that missing truthful context fails closed before critics, spend,
+decision completion, scheduling, or publishing. It does not prove a live paid
+pilot attribution. That separate gate remains unsatisfied until a genuinely
+configured, enrolled staging workspace naturally produces an evaluation; no
+synthetic context or fabricated cost will be substituted.
+
+Credential-free evidence:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-pilot-cost-attribution-proof-2026-07-17T15-06-00-000Z.json`
+- SHA-256:
+  `20C7C20795C2F9EC3B8FC53E679B969B13898D04B8031F4046C81393D2C0F35A`
+
+### Verification And Production Boundary
+
+Before this evidence update, the complete Worker suite passed 95 files and
+1,204 tests, strict Worker TypeScript passed, the frontend suite passed 17
+files and 199 tests, the production frontend build passed, and the focused
+release-proof allowlist test passed all ten cases. The final clean-tree release
+proof and immutable repository save are run again after this evidence is
+committed.
+
+Production was not migrated, deployed, or mutated. It remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, its `ai_usage` table has no v45
+column, and every production database check reported `changed_db=false`.
+`hughesq-001` remains exactly `status='on_hold'`.

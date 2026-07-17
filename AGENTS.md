@@ -215,7 +215,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Current production schema version:** v42.
 
-**Current staging schema version:** v44.
+**Current staging schema version:** v45.
 
 Pilot AI cost attribution migration:
 `workers/api/schema_v45_learning_ai_usage_attribution.sql`.
@@ -223,7 +223,8 @@ It adds an immutable, tenant-and-post guarded decision scope to `ai_usage`.
 Record-only pilot calls fail closed if scoped metering cannot persist, and
 readiness requires exact coverage for every eligible pilot decision while the
 existing full-workspace monthly ledger remains the budget cap. The migration
-is not yet live and must precede matching Worker code in each environment.
+is live in staging only and must precede matching Worker code in every other
+environment.
 
 Pilot QA disqualification migration:
 `workers/api/schema_v44_learning_decision_disqualifications.sql`.
