@@ -454,7 +454,10 @@ const defaultDeps: PublishOrchestratorDeps = {
   evaluatePreflight: evaluateReleasePreflight,
   persistHold,
   createPost,
-  graphFetch: fetch,
+  // Cloudflare's global fetch is receiver-sensitive. Storing it directly and
+  // later calling deps.graphFetch(...) binds `this` to the deps object, which
+  // throws "Illegal invocation" before any provider request is made.
+  graphFetch: (input, init) => globalThis.fetch(input, init),
   buildContentHash: buildReleaseContentHash,
   recordDeliveryReceipt: recordPublishDeliveryReceipt,
   newAttemptId: () => crypto.randomUUID(),

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import {
   publishPersistedPost,
@@ -69,6 +69,46 @@ function safeDeps(calls: { critic: number; postproxy: number; graph: number }): 
 }
 
 describe('publishPersistedPost', () => {
+  it('does not rebind Cloudflare global fetch when using the default Graph transport', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.graphFetch;
+    (deps as any).recordDeliveryReceipt = async () => undefined;
+    (deps as any).buildContentHash = async () => 'a'.repeat(64);
+    (deps as any).newAttemptId = () => 'attempt-cloudflare-fetch-binding';
+
+    const receiverSensitiveFetch = vi.fn(function (
+      this: unknown,
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ): Promise<Response> {
+      if (this !== globalThis) {
+        throw new TypeError('Illegal invocation: incorrect fetch receiver');
+      }
+      return Promise.resolve(new Response('{"error":{"message":"invalid token"}}', {
+        status: 400,
+      }));
+    });
+
+    vi.stubGlobal('fetch', receiverSensitiveFetch);
+    vi.resetModules();
+    try {
+      const module = await import('../lib/publishing/publish-orchestrator');
+      const outcome = await module.publishPersistedPost(
+        { DB: {} as D1Database } as Env,
+        fixturePost,
+        graphTarget,
+        deps,
+      );
+
+      expect(outcome).toMatchObject({ backend: 'graph' });
+      expect(receiverSensitiveFetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
   it('makes zero Postproxy or Graph calls when preflight holds', async () => {
     const calls = { critic: 0, postproxy: 0, graph: 0 };
     const deps = safeDeps(calls);
