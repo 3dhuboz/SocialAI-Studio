@@ -26,7 +26,7 @@ const operations: AdminLearningOperations = {
     ownerKind: 'client', ownerId: 'client_1', mode: 'approval',
     consentAt: null, consentPolicyVersion: null, active: false, onHold: true,
     decisionCount: 20, holdRate: 0.2, sampledFalseHoldRate: 0.1,
-    criticAvailability: 0.99, judgeAvailability: 1,
+    criticAvailability: 0.99, judgeAvailability: 1, judgeTelemetryCoverage: 1,
     severeFalsePasses: 0, adjudicationCoverage: 0.5,
     globalKillSwitchEnabled: false, updatedAt: '2026-07-14T08:00:00.000Z',
     sampleDecisionId: 'decision_1', samplePostId: 'post_1',
@@ -94,7 +94,8 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('10.0%');
     expect(html).toContain('Critic availability');
     expect(html).toContain('99.0%');
-    expect(html).toContain('Judge receipt availability');
+    expect(html).toContain('Judge availability');
+    expect(html).toContain('Judge telemetry coverage');
     expect(html).toContain('100.0%');
     expect(html).toContain('Severe false passes');
     expect(html).toContain('Adjudication coverage');

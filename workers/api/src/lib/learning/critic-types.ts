@@ -17,6 +17,13 @@ export const BASE_REQUIRED_CRITICS: CriticKind[] = [
   'business_harm',
 ];
 
+export const DETERMINISTIC_REQUIRED_CRITICS: CriticKind[] = [
+  'brand',
+  'fact',
+  'repetition',
+  'platform',
+];
+
 export interface CriticResult {
   kind: CriticKind;
   verdict: CriticVerdict;

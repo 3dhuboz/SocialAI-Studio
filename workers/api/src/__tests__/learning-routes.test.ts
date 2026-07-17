@@ -1095,7 +1095,8 @@ describe('learning settings and release evidence routes', () => {
         client_status: 'on_hold', shop_uninstalled_at: null,
         decision_count: 20, hold_count: 4, adjudicated_count: 10,
         false_hold_count: 1, severe_false_passes: 0,
-        critic_total: 100, critic_available: 99, judge_available: 20,
+        critic_total: 200, critic_available: 198,
+        judge_total: 20, judge_available: 20, judge_telemetry_count: 20,
         sample_decision_id: 'decision-sample-1', sample_post_id: 'post-sample-1',
         ...sourceFields,
       }],
@@ -1139,6 +1140,7 @@ describe('learning settings and release evidence routes', () => {
         onHold: true, decisionCount: 20, holdRate: 0.2,
         sampledFalseHoldRate: 0.1, criticAvailability: 0.99,
         judgeAvailability: 1, severeFalsePasses: 0,
+        judgeTelemetryCoverage: 1,
         adjudicationCoverage: 0.5, globalKillSwitchEnabled: false,
         sampleDecisionId: 'decision-sample-1', samplePostId: 'post-sample-1',
         sampleEvidenceStatus: 'verified',
@@ -1157,14 +1159,27 @@ describe('learning settings and release evidence routes', () => {
     const operations = calls.find((call) => call.sql.includes('WITH pilot_cohort AS'))!;
     expect(operations.sql).toContain('ROW_NUMBER() OVER');
     expect(operations.sql).toContain('verdict_attempts AS');
+    expect(operations.sql).toContain('verdict_sources AS');
     expect(operations.sql).toContain('verdict_slots AS');
-    expect(operations.sql).toContain('PARTITION BY v.decision_id, v.critic_kind');
+    expect(operations.sql).toContain('decision_critic_paths AS');
+    expect(operations.sql).toContain('expected_critic_metrics AS');
+    expect(operations.sql).toContain(
+      'PARTITION BY v.decision_id, v.critic_lane, v.critic_kind',
+    );
+    expect(operations.sql).toContain("WHEN v.provider = 'deterministic'");
+    expect(operations.sql).toContain("THEN 'deterministic'");
     expect(operations.sql).toContain('MAX(v.attempt) OVER');
     expect(operations.sql).toContain('v.attempt = v.latest_attempt');
     expect(operations.sql).toContain(
       "MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END)",
     );
-    expect(operations.sql).toContain('SUM(v.available) AS critic_available');
+    expect(operations.sql).toContain("'image'");
+    expect(operations.sql).toContain("'video_manifest'");
+    expect(operations.sql).toContain('AS critic_total');
+    expect(operations.sql).toContain('deterministic_block');
+    expect(operations.sql).toContain('THEN v.available ELSE 0 END');
+    expect(operations.sql).toContain('AS judge_total');
+    expect(operations.sql).toContain('AS judge_telemetry_count');
     expect(operations.sql).not.toContain('WITH recent AS');
     expect(operations.sql).not.toContain('r.rn <= 30');
     expect(operations.sql).toContain("w.owner_kind = 'client'");

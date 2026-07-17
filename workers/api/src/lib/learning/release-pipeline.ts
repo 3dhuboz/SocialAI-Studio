@@ -44,11 +44,18 @@ export interface ReleaseJudgeInput {
   repairHistory: string[][];
 }
 
+export type ReleaseJudgeStatus =
+  | 'available'
+  | 'unavailable'
+  | 'not_run'
+  | 'unknown';
+
 export interface ReleasePipelineResult {
   state: 'pass_green' | 'hold_amber' | 'block_red';
   candidate: CandidateInput;
   attempts: CriticResult[][];
   repairHistory: string[][];
+  judgeStatus?: ReleaseJudgeStatus;
 }
 
 export interface ReleasePipelineDeps {

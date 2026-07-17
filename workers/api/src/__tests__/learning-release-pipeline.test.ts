@@ -5,7 +5,10 @@ import {
   inspectFinalVideoUrl,
   runMediaCritic,
 } from '../lib/learning/media-critic';
-import { runReleaseJudge } from '../lib/learning/release-judge';
+import {
+  runReleaseJudge,
+  runReleaseJudgeWithTelemetry,
+} from '../lib/learning/release-judge';
 import {
   runReleasePipeline,
   type CandidateInput,
@@ -438,6 +441,21 @@ describe('runReleaseJudge', () => {
     expect(state).toBe('hold_amber');
   });
 
+  it('records unavailable telemetry when the independent judge call fails', async () => {
+    const result = await runReleaseJudgeWithTelemetry(
+      {} as Env,
+      judgeInput,
+      async () => {
+        throw new Error('providers unavailable');
+      },
+    );
+
+    expect(result).toEqual({
+      state: 'hold_amber',
+      status: 'unavailable',
+    });
+  });
+
   it('rejects invalid judge states', async () => {
     const state = await runReleaseJudge({} as Env, judgeInput, async () => ({
       text: '{"state":"approve_everything"}',
@@ -460,6 +478,21 @@ describe('runReleaseJudge', () => {
     );
 
     expect(state).toBe('hold_amber');
+  });
+
+  it('records not-run telemetry when critic evidence prevents a judge call', async () => {
+    const call = vi.fn();
+    const result = await runReleaseJudgeWithTelemetry(
+      {} as Env,
+      { ...judgeInput, results: [verdict('brand')] },
+      call,
+    );
+
+    expect(result).toEqual({
+      state: 'hold_amber',
+      status: 'not_run',
+    });
+    expect(call).not.toHaveBeenCalled();
   });
 
   it('cannot override a release-critical block', async () => {
@@ -510,5 +543,22 @@ describe('runReleaseJudge', () => {
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_CRITIC_RESULTS>>');
     expect(prompt).not.toContain('SECRET_CHAIN');
+  });
+
+  it('records available telemetry only for a valid independent judge result', async () => {
+    const result = await runReleaseJudgeWithTelemetry(
+      {} as Env,
+      judgeInput,
+      async () => ({
+        text: '{"state":"pass_green"}',
+        provider: 'test',
+        model: 'test',
+      }),
+    );
+
+    expect(result).toEqual({
+      state: 'pass_green',
+      status: 'available',
+    });
   });
 });

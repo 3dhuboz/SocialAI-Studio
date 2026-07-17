@@ -27,14 +27,25 @@ const baseInput: ReleaseProofInput = {
     exitCode: 0,
     reportSha256: 'b'.repeat(64),
     summary: {
-      totalTests: 15,
-      passedTests: 15,
+      totalTests: REQUIRED_RELEASE_PROOF_CHECKS.length,
+      passedTests: REQUIRED_RELEASE_PROOF_CHECKS.length,
       failedTests: 0,
     },
   },
 };
 
 describe('buildReleaseProofArtifact', () => {
+  it('requires lane-aware critic, media, path, and Release Judge readiness proofs', () => {
+    expect(REQUIRED_RELEASE_PROOF_CHECKS.map((check) => check.id)).toEqual(
+      expect.arrayContaining([
+        'critic_lane_independence',
+        'deterministic_block_path',
+        'selected_media_critic',
+        'release_judge_telemetry',
+      ]),
+    );
+  });
+
   it('produces a deterministic SHA-256 envelope for a complete offline pass', async () => {
     const first = await buildReleaseProofArtifact(baseInput);
     const second = await buildReleaseProofArtifact(baseInput);

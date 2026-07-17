@@ -66,6 +66,26 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'reduceCriticResults holds when a required critic remains unavailable',
   },
   {
+    id: 'critic_lane_independence',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness does not let a deterministic pass mask an unavailable independent critic',
+  },
+  {
+    id: 'deterministic_block_path',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness does not count critics intentionally skipped after a deterministic hard block',
+  },
+  {
+    id: 'selected_media_critic',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness requires the selected media critic for availability and receipt coverage',
+  },
+  {
+    id: 'release_judge_telemetry',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness fails closed on unavailable or ambiguous Release Judge telemetry',
+  },
+  {
     id: 'advisory_warning',
     suite: 'src/__tests__/learning-critic-reducer.test.ts',
     assertion: 'reduceCriticResults passes when every required critic passes',

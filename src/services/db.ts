@@ -230,6 +230,8 @@ export interface LearningReadinessChecks {
   severeFalsePasses?: boolean;
   falseHolds?: boolean;
   availability?: boolean;
+  releaseJudgeAvailability?: boolean;
+  releaseJudgeTelemetry?: boolean;
   receipts?: boolean;
   predictionLift?: boolean;
   rankCorrelation?: boolean;
@@ -251,6 +253,9 @@ export interface LearningReadinessMetrics {
   severeFalsePasses?: number;
   falseHoldRate?: number;
   requiredAvailability?: number;
+  releaseJudgeAvailability?: number;
+  releaseJudgeTelemetryCoverage?: number;
+  releaseJudgeInvocations?: number;
   decisionReceiptCoverage?: number;
   predictionLift?: number;
   rankCorrelation?: number;
@@ -327,6 +332,7 @@ export interface AdminLearningWorkspace {
   sampledFalseHoldRate: number | null;
   criticAvailability: number | null;
   judgeAvailability: number | null;
+  judgeTelemetryCoverage: number | null;
   severeFalsePasses: number;
   adjudicationCoverage: number | null;
   globalKillSwitchEnabled: boolean;

@@ -925,12 +925,13 @@ export const LearningOperationsCard: React.FC<{
                   </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
                   {[
                     ['Hold rate', fmtRate(workspace.holdRate)],
                     ['Sampled false holds', fmtRate(workspace.sampledFalseHoldRate)],
                     ['Critic availability', fmtRate(workspace.criticAvailability)],
-                    ['Judge receipt availability', fmtRate(workspace.judgeAvailability)],
+                    ['Judge availability', fmtRate(workspace.judgeAvailability)],
+                    ['Judge telemetry coverage', fmtRate(workspace.judgeTelemetryCoverage)],
                     ['Severe false passes', String(workspace.severeFalsePasses)],
                     ['Adjudication coverage', fmtRate(workspace.adjudicationCoverage)],
                   ].map(([label, value]) => (

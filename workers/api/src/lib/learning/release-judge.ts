@@ -8,10 +8,17 @@ import { callIndependentJson } from './independent-json';
 import type {
   CandidateInput,
   ReleaseJudgeInput,
+  ReleaseJudgeStatus,
 } from './release-pipeline';
 import type { CriticJsonCaller } from './text-critic-council';
 
 const RELEASE_STATES = new Set(['pass_green', 'hold_amber', 'block_red']);
+type ReleaseJudgeState = 'pass_green' | 'hold_amber' | 'block_red';
+
+export interface ReleaseJudgeTelemetry {
+  state: ReleaseJudgeState;
+  status: Exclude<ReleaseJudgeStatus, 'unknown'>;
+}
 
 function safeCandidate(candidate: CandidateInput): Record<string, unknown> {
   return {
@@ -41,14 +48,14 @@ function requiredKinds(input: ReleaseJudgeInput): CriticKind[] {
   return BASE_REQUIRED_CRITICS;
 }
 
-export async function runReleaseJudge(
+export async function runReleaseJudgeWithTelemetry(
   env: Env,
   input: ReleaseJudgeInput,
   injectedCall?: CriticJsonCaller,
-): Promise<'pass_green' | 'hold_amber' | 'block_red'> {
+): Promise<ReleaseJudgeTelemetry> {
   const required = requiredKinds(input);
   if (input.results.some((result) => result.verdict === 'block')) {
-    return 'block_red';
+    return { state: 'block_red', status: 'not_run' };
   }
   if (
     required.some((kind) => !input.results.some((result) => result.kind === kind)) ||
@@ -58,7 +65,7 @@ export async function runReleaseJudge(
         (result.verdict === 'unavailable' || result.verdict === 'warn_repairable'),
     )
   ) {
-    return 'hold_amber';
+    return { state: 'hold_amber', status: 'not_run' };
   }
 
   const call: CriticJsonCaller = injectedCall ?? (
@@ -84,9 +91,22 @@ export async function runReleaseJudge(
       postId: input.candidate.postId,
     });
     const parsed = JSON.parse(response.text) as { state?: unknown };
-    if (!RELEASE_STATES.has(String(parsed.state))) return 'hold_amber';
-    return parsed.state as 'pass_green' | 'hold_amber' | 'block_red';
+    if (!RELEASE_STATES.has(String(parsed.state))) {
+      return { state: 'hold_amber', status: 'unavailable' };
+    }
+    return {
+      state: parsed.state as ReleaseJudgeState,
+      status: 'available',
+    };
   } catch {
-    return 'hold_amber';
+    return { state: 'hold_amber', status: 'unavailable' };
   }
+}
+
+export async function runReleaseJudge(
+  env: Env,
+  input: ReleaseJudgeInput,
+  injectedCall?: CriticJsonCaller,
+): Promise<ReleaseJudgeState> {
+  return (await runReleaseJudgeWithTelemetry(env, input, injectedCall)).state;
 }

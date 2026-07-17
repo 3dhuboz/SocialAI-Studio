@@ -18,7 +18,8 @@ const readiness: LearningReadinessResponse = {
   effectiveMode: 'approval', evaluatedAt: '2026-07-14T08:00:00.000Z',
   checks: {
     pilot: false, adjudications: false, severeFalsePasses: true,
-    falseHolds: true, availability: true, receipts: true,
+    falseHolds: true, availability: true,
+    releaseJudgeAvailability: true, releaseJudgeTelemetry: true, receipts: true,
     predictionLift: false, rankCorrelation: false, criticalBypasses: true,
     publishingRegressions: true, cost: true, killSwitch: true,
     replayRedTeam: true, publishRegression: true,
@@ -26,7 +27,9 @@ const readiness: LearningReadinessResponse = {
   },
   metrics: {
     pilotDecisions: 0, adjudicatedDecisions: 0, severeFalsePasses: 0,
-    falseHoldRate: 0, requiredAvailability: 1, decisionReceiptCoverage: 1,
+    falseHoldRate: 0, requiredAvailability: 1,
+    releaseJudgeAvailability: 1, releaseJudgeTelemetryCoverage: 1,
+    releaseJudgeInvocations: 12, decisionReceiptCoverage: 1,
     predictionLift: 0, rankCorrelation: 0, criticalBypasses: 0,
     publishingRegressions: 0, costWithinBudget: true, killSwitchTested: true,
   },
@@ -59,6 +62,10 @@ describe('ProtectedAutopilotControl', () => {
     expect(html).toContain('Pilot decisions');
     expect(html).toContain('0 of 30');
     expect(html).toContain('Adjudicated decisions');
+    expect(html).toContain('Required critic and media availability');
+    expect(html).toContain('Release Judge availability');
+    expect(html).toContain('Release Judge telemetry coverage');
+    expect(html).toContain('12 calls');
     expect(html).toContain('Prediction lift');
     expect(html).toContain('Tenant isolation proofs');
     expect(html).toContain('$1.20');

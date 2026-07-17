@@ -204,6 +204,7 @@ describe('runAndPersistReleasePipeline', () => {
       candidate: {} as any,
       attempts: [[verdict]],
       repairHistory: [],
+      judgeStatus: 'available',
     };
 
     const result = await runAndPersistReleasePipeline(
@@ -246,7 +247,13 @@ describe('runAndPersistReleasePipeline', () => {
       postId: 'p1',
       stage: 'release',
       releaseState: 'pass_green',
-      summary: { verdictCount: 1, attemptCount: 1, predictedOutcomeScore: 77 },
+      summary: {
+        verdictCount: 1,
+        attemptCount: 1,
+        predictedOutcomeScore: 77,
+        judgeStatus: 'available',
+        judgeTelemetryVersion: 1,
+      },
     });
     expect(verdictsSeen).toEqual([[verdict]]);
     expect(result).toEqual({ id: 'decision-1', state: 'pass_green' });

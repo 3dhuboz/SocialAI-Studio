@@ -1,6 +1,9 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
-import { BASE_REQUIRED_CRITICS } from '../lib/learning/critic-types';
+import {
+  BASE_REQUIRED_CRITICS,
+  DETERMINISTIC_REQUIRED_CRITICS,
+} from '../lib/learning/critic-types';
 import { listDecisionReceipts } from '../lib/learning/decision-repository';
 import {
   normalizeWorkspaceIdentity,
@@ -144,7 +147,9 @@ type AdminOperationsRow = AdjudicationEvidenceSourceRow & {
   severe_false_passes: number | string | null;
   critic_total: number | string | null;
   critic_available: number | string | null;
+  judge_total: number | string | null;
   judge_available: number | string | null;
+  judge_telemetry_count: number | string | null;
   sample_decision_id: string | null;
 };
 
@@ -353,7 +358,10 @@ const CURRENT_POLICY_PILOT_COHORT_SQL = `
   LIMIT 30
 `;
 
-const BASE_REQUIRED_CRITICS_SQL = BASE_REQUIRED_CRITICS
+const DETERMINISTIC_REQUIRED_CRITICS_SQL = DETERMINISTIC_REQUIRED_CRITICS
+  .map((kind) => `'${kind}'`)
+  .join(', ');
+const ALL_REQUIRED_CRITICS_SQL = [...BASE_REQUIRED_CRITICS, 'image', 'video_manifest']
   .map((kind) => `'${kind}'`)
   .join(', ');
 
@@ -1378,20 +1386,32 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     const rows = await c.env.DB.prepare(`
       WITH pilot_cohort AS (
         ${CURRENT_POLICY_PILOT_COHORT_SQL}
-      ), verdict_attempts AS (
-        SELECT v.decision_id, v.critic_kind, v.verdict, v.attempt,
-               MAX(v.attempt) OVER (
-                 PARTITION BY v.decision_id, v.critic_kind
-               ) AS latest_attempt
+      ), verdict_sources AS (
+        SELECT v.decision_id,
+               CASE
+                 WHEN v.critic_kind IN ('image','video_manifest') THEN 'media'
+                 WHEN v.provider = 'deterministic'
+                  AND v.critic_kind IN (${DETERMINISTIC_REQUIRED_CRITICS_SQL})
+                 THEN 'deterministic'
+                 ELSE 'independent'
+               END AS critic_lane,
+               v.critic_kind, v.verdict, v.attempt
           FROM learning_critic_verdicts v
           INNER JOIN pilot_cohort r ON r.id = v.decision_id
-         WHERE v.critic_kind IN (${BASE_REQUIRED_CRITICS_SQL})
+         WHERE v.critic_kind IN (${ALL_REQUIRED_CRITICS_SQL})
+      ), verdict_attempts AS (
+        SELECT v.decision_id, v.critic_lane, v.critic_kind, v.verdict, v.attempt,
+               MAX(v.attempt) OVER (
+                 PARTITION BY v.decision_id, v.critic_lane, v.critic_kind
+               ) AS latest_attempt
+          FROM verdict_sources v
       ), verdict_slots AS (
-        SELECT v.decision_id, v.critic_kind,
-               MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS available
+        SELECT v.decision_id, v.critic_lane, v.critic_kind,
+               MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS available,
+               MAX(CASE WHEN v.verdict = 'block' THEN 1 ELSE 0 END) AS blocked
           FROM verdict_attempts v
          WHERE v.attempt = v.latest_attempt
-         GROUP BY v.decision_id, v.critic_kind
+         GROUP BY v.decision_id, v.critic_lane, v.critic_kind
       ), decision_metrics AS (
         SELECT r.user_id, r.workspace_key,
                COUNT(*) AS decision_count,
@@ -1407,22 +1427,67 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
                   AND r.release_state = 'pass_green' THEN 1 ELSE 0 END
                ) AS severe_false_passes,
                SUM(CASE
-                 WHEN json_extract(r.summary_json, '$.persistenceState') = 'complete'
-                  AND json_extract(r.summary_json, '$.pipelineState') IS NOT NULL
+                 WHEN json_extract(r.summary_json, '$.judgeStatus')
+                      IN ('available','unavailable')
                  THEN 1 ELSE 0 END
-               ) AS judge_available
+               ) AS judge_total,
+               SUM(CASE
+                 WHEN json_extract(r.summary_json, '$.judgeStatus') = 'available'
+                 THEN 1 ELSE 0 END
+               ) AS judge_available,
+               SUM(CASE
+                 WHEN json_extract(r.summary_json, '$.judgeStatus')
+                      IN ('available','unavailable','not_run')
+                 THEN 1 ELSE 0 END
+               ) AS judge_telemetry_count
           FROM pilot_cohort r
           LEFT JOIN learning_adjudications a ON a.decision_id = r.id
            AND a.user_id = r.user_id AND a.workspace_key = r.workspace_key
            AND a.owner_kind = r.owner_kind AND a.owner_id = r.owner_id
          GROUP BY r.user_id, r.workspace_key
-      ), verdict_metrics AS (
-        SELECT r.user_id, r.workspace_key,
-               COUNT(v.critic_kind) AS critic_total,
-               SUM(v.available) AS critic_available
+      ), decision_critic_paths AS (
+        SELECT r.id, r.user_id, r.workspace_key, r.summary_json,
+               MAX(CASE
+                 WHEN v.critic_lane = 'deterministic' AND v.blocked = 1
+                 THEN 1 ELSE 0 END
+               ) AS deterministic_block
           FROM pilot_cohort r
-          JOIN verdict_slots v ON v.decision_id = r.id
-         GROUP BY r.user_id, r.workspace_key
+          LEFT JOIN verdict_slots v ON v.decision_id = r.id
+         GROUP BY r.id, r.user_id, r.workspace_key, r.summary_json
+      ), expected_critic_metrics AS (
+        SELECT p.user_id, p.workspace_key,
+               SUM(CASE
+                 WHEN p.deterministic_block = 1
+                 THEN ${DETERMINISTIC_REQUIRED_CRITICS.length}
+                 ELSE ${
+                   BASE_REQUIRED_CRITICS.length + DETERMINISTIC_REQUIRED_CRITICS.length
+                 } + CASE
+                   WHEN json_extract(p.summary_json, '$.mediaKind') IN ('image','video')
+                   THEN 1 ELSE 0 END
+                 END
+               ) AS critic_total
+          FROM decision_critic_paths p
+         GROUP BY p.user_id, p.workspace_key
+      ), verdict_metrics AS (
+        SELECT p.user_id, p.workspace_key,
+               SUM(CASE
+                 WHEN v.critic_lane = 'deterministic'
+                   OR (p.deterministic_block = 0 AND v.critic_lane = 'independent')
+                   OR (
+                     p.deterministic_block = 0
+                     AND json_extract(p.summary_json, '$.mediaKind') = 'image'
+                     AND v.critic_kind = 'image'
+                   )
+                   OR (
+                     p.deterministic_block = 0
+                     AND json_extract(p.summary_json, '$.mediaKind') = 'video'
+                     AND v.critic_kind = 'video_manifest'
+                   )
+                 THEN v.available ELSE 0 END
+               ) AS critic_available
+          FROM decision_critic_paths p
+          LEFT JOIN verdict_slots v ON v.decision_id = p.id
+         GROUP BY p.user_id, p.workspace_key
       ), sample_candidates AS (
         SELECT r.user_id, r.workspace_key, r.owner_kind, r.owner_id,
                r.id AS sample_decision_id, r.post_id AS sample_post_id,
@@ -1471,7 +1536,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
              s.uninstalled_at AS shop_uninstalled_at,
              dm.decision_count, dm.hold_count, dm.adjudicated_count,
               dm.false_hold_count, dm.severe_false_passes,
-              vm.critic_total, vm.critic_available, dm.judge_available,
+              em.critic_total, vm.critic_available,
+              dm.judge_total, dm.judge_available, dm.judge_telemetry_count,
               sc.sample_decision_id, sc.sample_post_id,
               sc.review_content_hash,sc.review_content,sc.review_platform,
               sc.review_hashtags,sc.review_image_url,sc.review_post_type,
@@ -1485,6 +1551,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
          AND LOWER(s.shop_domain) = w.owner_id
         LEFT JOIN decision_metrics dm ON dm.user_id = w.user_id
          AND dm.workspace_key = w.workspace_key
+        LEFT JOIN expected_critic_metrics em ON em.user_id = w.user_id
+         AND em.workspace_key = w.workspace_key
         LEFT JOIN verdict_metrics vm ON vm.user_id = w.user_id
          AND vm.workspace_key = w.workspace_key
         LEFT JOIN sample_candidates sc ON sc.user_id = w.user_id
@@ -1530,7 +1598,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       const falseHoldCount = countValue(row.false_hold_count);
       const criticTotal = countValue(row.critic_total);
       const criticAvailable = countValue(row.critic_available);
+      const judgeTotal = countValue(row.judge_total);
       const judgeAvailable = countValue(row.judge_available);
+      const judgeTelemetryCount = countValue(row.judge_telemetry_count);
       const onHold = row.owner_kind === 'client'
         && row.client_status?.trim().toLowerCase() === 'on_hold';
       const active = row.owner_kind === 'user' ? row.user_exists != null
@@ -1554,7 +1624,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         holdRate: ratio(holdCount, decisionCount),
         sampledFalseHoldRate: ratio(falseHoldCount, adjudicatedCount),
         criticAvailability: ratio(criticAvailable, criticTotal),
-        judgeAvailability: ratio(judgeAvailable, decisionCount),
+        judgeAvailability: ratio(judgeAvailable, judgeTotal),
+        judgeTelemetryCoverage: ratio(judgeTelemetryCount, decisionCount),
         severeFalsePasses: countValue(row.severe_false_passes),
         adjudicationCoverage: ratio(adjudicatedCount, decisionCount),
         globalKillSwitchEnabled: globalSwitches.protectedAutopilot,

@@ -4,7 +4,12 @@ import {
   type LearningMode,
   type ReleaseState,
 } from './types';
-import { BASE_REQUIRED_CRITICS, type CriticKind } from './critic-types';
+import {
+  BASE_REQUIRED_CRITICS,
+  DETERMINISTIC_REQUIRED_CRITICS,
+  type CriticKind,
+} from './critic-types';
+import type { ReleaseJudgeStatus } from './release-pipeline';
 
 export const AUTOPILOT_POLICY_VERSION = '2026-07-14-v1';
 export const RELEASE_EVIDENCE_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -33,6 +38,9 @@ export interface ReadinessMetrics {
   severeFalsePasses: number;
   falseHoldRate: number;
   requiredAvailability: number;
+  releaseJudgeAvailability: number;
+  releaseJudgeTelemetryCoverage: number;
+  releaseJudgeInvocations: number;
   decisionReceiptCoverage: number;
   predictionLift: number;
   rankCorrelation: number;
@@ -63,6 +71,7 @@ export interface PilotVerdictRow {
   critic_kind: CriticKind;
   verdict: string;
   attempt: number;
+  provider?: string | null;
 }
 
 export interface WorkspaceCostTelemetry {
@@ -86,6 +95,8 @@ export interface ReadinessChecks {
   severeFalsePasses: boolean;
   falseHolds: boolean;
   availability: boolean;
+  releaseJudgeAvailability: boolean;
+  releaseJudgeTelemetry: boolean;
   receipts: boolean;
   predictionLift: boolean;
   rankCorrelation: boolean;
@@ -120,6 +131,8 @@ export function evaluateReadiness(metrics: ReadinessMetrics): {
     severeFalsePasses: metrics.severeFalsePasses === 0,
     falseHolds: metrics.falseHoldRate < 0.05,
     availability: metrics.requiredAvailability >= 0.995,
+    releaseJudgeAvailability: metrics.releaseJudgeAvailability >= 0.995,
+    releaseJudgeTelemetry: metrics.releaseJudgeTelemetryCoverage === 1,
     receipts: metrics.decisionReceiptCoverage === 1,
     predictionLift: metrics.predictionLift >= 0.15,
     rankCorrelation: metrics.rankCorrelation > 0,
@@ -220,6 +233,82 @@ function workspaceTelemetryKey(userId: string, workspaceKey: string): string {
   return `${userId}\u0000${workspaceKey}`;
 }
 
+type LatestCriticSlot = {
+  attempt: number;
+  available: boolean;
+  hasBlock: boolean;
+  hasPass: boolean;
+  hasUnavailable: boolean;
+  hasWarning: boolean;
+};
+
+type CriticLane = 'deterministic' | 'independent' | 'media';
+type RequiredCriticSlot = { lane: CriticLane; kind: CriticKind };
+
+function requiredCriticSlots(summary: Record<string, unknown>): RequiredCriticSlot[] {
+  const slots: RequiredCriticSlot[] = [
+    ...DETERMINISTIC_REQUIRED_CRITICS.map((kind) => ({
+      lane: 'deterministic' as const,
+      kind,
+    })),
+    ...BASE_REQUIRED_CRITICS.map((kind) => ({
+      lane: 'independent' as const,
+      kind,
+    })),
+  ];
+  if (summary.mediaKind === 'image') slots.push({ lane: 'media', kind: 'image' });
+  if (summary.mediaKind === 'video') {
+    slots.push({ lane: 'media', kind: 'video_manifest' });
+  }
+  return slots;
+}
+
+function criticLane(verdict: PilotVerdictRow): CriticLane {
+  if (verdict.critic_kind === 'image' || verdict.critic_kind === 'video_manifest') {
+    return 'media';
+  }
+  if (
+    verdict.provider === 'deterministic'
+    && DETERMINISTIC_REQUIRED_CRITICS.includes(verdict.critic_kind)
+  ) {
+    return 'deterministic';
+  }
+  return 'independent';
+}
+
+function criticSlotKey(
+  decisionId: string,
+  lane: CriticLane,
+  kind: CriticKind,
+): string {
+  return `${decisionId}\u0000${lane}\u0000${kind}`;
+}
+
+function slotPreventsJudge(slot: LatestCriticSlot | undefined): boolean {
+  return !slot || slot.hasBlock || slot.hasUnavailable || slot.hasWarning || !slot.hasPass;
+}
+
+function resolveJudgeStatus(
+  summary: Record<string, unknown>,
+  slots: Array<LatestCriticSlot | undefined>,
+): ReleaseJudgeStatus {
+  const explicit = typeof summary.judgeStatus === 'string'
+    && ['available', 'unavailable', 'not_run'].includes(summary.judgeStatus)
+    ? summary.judgeStatus as Exclude<ReleaseJudgeStatus, 'unknown'>
+    : null;
+  const prevented = slots.some(slotPreventsJudge);
+
+  if (explicit === 'not_run') return prevented ? explicit : 'unknown';
+  if (explicit === 'available' || explicit === 'unavailable') {
+    return prevented ? 'unknown' : explicit;
+  }
+  if (prevented) return 'not_run';
+  if (summary.pipelineState === 'pass_green' || summary.pipelineState === 'block_red') {
+    return 'available';
+  }
+  return 'unknown';
+}
+
 export function buildReadinessMetrics(
   decisions: PilotDecisionRow[],
   verdicts: PilotVerdictRow[],
@@ -228,30 +317,70 @@ export function buildReadinessMetrics(
   const pilotDecisions = decisions.filter((decision) =>
     decision.mode === 'approval'
     && (decision.owner_kind === 'user' || decision.owner_kind === 'client'));
-  const latestCriticSlots = new Map<string, { attempt: number; available: boolean }>();
+  const latestCriticSlots = new Map<string, LatestCriticSlot>();
   for (const verdict of verdicts) {
-    if (!BASE_REQUIRED_CRITICS.includes(verdict.critic_kind)) continue;
-    const key = `${verdict.decision_id}\u0000${verdict.critic_kind}`;
+    const key = criticSlotKey(
+      verdict.decision_id,
+      criticLane(verdict),
+      verdict.critic_kind,
+    );
     const current = latestCriticSlots.get(key);
-    const available = verdict.verdict !== 'unavailable';
     if (!current || verdict.attempt > current.attempt) {
-      latestCriticSlots.set(key, { attempt: verdict.attempt, available });
-    } else if (verdict.attempt === current.attempt && available && !current.available) {
-      latestCriticSlots.set(key, { attempt: verdict.attempt, available: true });
+      latestCriticSlots.set(key, {
+        attempt: verdict.attempt,
+        available: verdict.verdict !== 'unavailable',
+        hasBlock: verdict.verdict === 'block',
+        hasPass: verdict.verdict === 'pass',
+        hasUnavailable: verdict.verdict === 'unavailable',
+        hasWarning: verdict.verdict === 'warn_repairable',
+      });
+    } else if (verdict.attempt === current.attempt) {
+      current.available ||= verdict.verdict !== 'unavailable';
+      current.hasBlock ||= verdict.verdict === 'block';
+      current.hasPass ||= verdict.verdict === 'pass';
+      current.hasUnavailable ||= verdict.verdict === 'unavailable';
+      current.hasWarning ||= verdict.verdict === 'warn_repairable';
     }
   }
 
-  const expectedSlots = pilotDecisions.length * BASE_REQUIRED_CRITICS.length;
+  let expectedSlots = 0;
   let availableSlots = 0;
   let completeReceipts = 0;
+  let judgeAvailable = 0;
+  let judgeInvocations = 0;
+  let judgeTelemetryCount = 0;
   const predictionSamples: PredictionSample[] = [];
   for (const decision of pilotDecisions) {
     const summary = parseSummary(decision.summary_json);
-    const hasEveryCritic = BASE_REQUIRED_CRITICS.every((kind) =>
-      latestCriticSlots.has(`${decision.id}\u0000${kind}`));
-    if (summary.persistenceState === 'complete' && hasEveryCritic) completeReceipts += 1;
-    for (const kind of BASE_REQUIRED_CRITICS) {
-      const slot = latestCriticSlots.get(`${decision.id}\u0000${kind}`);
+    const deterministicRequired = DETERMINISTIC_REQUIRED_CRITICS.map((kind) => ({
+      lane: 'deterministic' as const,
+      kind,
+    }));
+    const deterministicSlots = deterministicRequired.map(({ lane, kind }) =>
+      latestCriticSlots.get(criticSlotKey(decision.id, lane, kind)));
+    const deterministicBlocked = deterministicSlots.some((slot) => slot?.hasBlock);
+    const required = deterministicBlocked
+      ? deterministicRequired
+      : requiredCriticSlots(summary);
+    const requiredSlots = required.map(({ lane, kind }) =>
+      latestCriticSlots.get(criticSlotKey(decision.id, lane, kind)));
+    expectedSlots += required.length;
+    const hasEveryCritic = requiredSlots.every(Boolean);
+    const judgeStatus = resolveJudgeStatus(summary, requiredSlots);
+    if (judgeStatus !== 'unknown') judgeTelemetryCount += 1;
+    if (judgeStatus === 'available' || judgeStatus === 'unavailable') {
+      judgeInvocations += 1;
+      if (judgeStatus === 'available') judgeAvailable += 1;
+    }
+    if (
+      summary.persistenceState === 'complete'
+      && hasEveryCritic
+      && judgeStatus !== 'unknown'
+    ) {
+      completeReceipts += 1;
+    }
+    for (const { lane, kind } of required) {
+      const slot = latestCriticSlots.get(criticSlotKey(decision.id, lane, kind));
       if (slot?.available) availableSlots += 1;
     }
     const predicted = typeof summary.predictedOutcomeScore === 'number'
@@ -313,6 +442,11 @@ export function buildReadinessMetrics(
     severeFalsePasses,
     falseHoldRate: adjudicated.length === 0 ? 1 : falseHolds / adjudicated.length,
     requiredAvailability: expectedSlots === 0 ? 0 : availableSlots / expectedSlots,
+    releaseJudgeAvailability: judgeInvocations === 0 ? 0 : judgeAvailable / judgeInvocations,
+    releaseJudgeTelemetryCoverage: pilotDecisions.length === 0
+      ? 0
+      : judgeTelemetryCount / pilotDecisions.length,
+    releaseJudgeInvocations: judgeInvocations,
     decisionReceiptCoverage: pilotDecisions.length === 0
       ? 0
       : completeReceipts / pilotDecisions.length,
@@ -461,7 +595,7 @@ export async function collectLearningReadiness(
   if (decisions.length > 0) {
     const placeholders = decisions.map(() => '?').join(',');
     const rows = await db.prepare(`
-      SELECT decision_id, critic_kind, verdict, attempt
+      SELECT decision_id, critic_kind, verdict, attempt, provider
       FROM learning_critic_verdicts
       WHERE decision_id IN (${placeholders})
       ORDER BY decision_id, critic_kind, attempt

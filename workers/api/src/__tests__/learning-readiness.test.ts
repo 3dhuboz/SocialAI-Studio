@@ -82,6 +82,9 @@ const readyMetrics: ReadinessMetrics = {
   severeFalsePasses: 0,
   falseHoldRate: 0.033,
   requiredAvailability: 0.995,
+  releaseJudgeAvailability: 1,
+  releaseJudgeTelemetryCoverage: 1,
+  releaseJudgeInvocations: 30,
   decisionReceiptCoverage: 1,
   predictionLift: 0.15,
   rankCorrelation: 0.1,
@@ -90,6 +93,34 @@ const readyMetrics: ReadinessMetrics = {
   costWithinBudget: true,
   killSwitchTested: true,
 };
+
+const deterministicKinds = ['brand', 'fact', 'repetition', 'platform'] as const;
+const independentKinds = [
+  'brand',
+  'fact',
+  'repetition',
+  'platform',
+  'business_harm',
+] as const;
+
+function completeTextVerdicts(decisionId: string): PilotVerdictRow[] {
+  return [
+    ...deterministicKinds.map((criticKind) => ({
+      decision_id: decisionId,
+      critic_kind: criticKind,
+      verdict: 'pass',
+      attempt: 0,
+      provider: 'deterministic',
+    } as const)),
+    ...independentKinds.map((criticKind) => ({
+      decision_id: decisionId,
+      critic_kind: criticKind,
+      verdict: 'pass',
+      attempt: 0,
+      provider: 'anthropic',
+    } as const)),
+  ];
+}
 
 describe('learning release readiness', () => {
   it('requires enough adjudicated pilot evidence and every safety threshold', () => {
@@ -104,6 +135,8 @@ describe('learning release readiness', () => {
       { severeFalsePasses: 1 },
       { falseHoldRate: 0.05 },
       { requiredAvailability: 0.994 },
+      { releaseJudgeAvailability: 0.994 },
+      { releaseJudgeTelemetryCoverage: 0.999 },
       { decisionReceiptCoverage: 0.999 },
       { predictionLift: 0.149 },
       { rankCorrelation: 0 },
@@ -217,6 +250,9 @@ describe('learning release readiness', () => {
         release_state: 'pass_green',
         summary_json: JSON.stringify({
           persistenceState: 'complete',
+          pipelineState: 'pass_green',
+          mediaKind: 'none',
+          judgeStatus: 'available',
           predictedOutcomeScore: (index % 15) + 1,
         }),
         publication_event_id: `publication-${index}`,
@@ -225,14 +261,8 @@ describe('learning release readiness', () => {
         adjudication_severity: 'advisory',
       };
     });
-    const requiredKinds = ['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const;
     const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
-      requiredKinds.map((criticKind) => ({
-        decision_id: decision.id,
-        critic_kind: criticKind,
-        verdict: 'pass',
-        attempt: 0,
-      })));
+      completeTextVerdicts(decision.id));
     const costs: WorkspaceCostTelemetry[] = [
       {
         userId: 'owner-1',
@@ -260,6 +290,9 @@ describe('learning release readiness', () => {
       severeFalsePasses: 0,
       falseHoldRate: 0,
       requiredAvailability: 1,
+      releaseJudgeAvailability: 1,
+      releaseJudgeTelemetryCoverage: 1,
+      releaseJudgeInvocations: 30,
       decisionReceiptCoverage: 1,
       rankCorrelation: 1,
       criticalBypasses: 0,
@@ -308,27 +341,219 @@ describe('learning release readiness', () => {
       owner_id: 'owner-1',
       mode: 'approval',
       release_state: 'pass_green',
-      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'pass_green',
+        mediaKind: 'none',
+        judgeStatus: 'available',
+      }),
       publication_event_id: null,
       normalized_score: null,
       expected_state: null,
       adjudication_severity: null,
     }];
     const verdicts: PilotVerdictRow[] = [
+      ...completeTextVerdicts('decision-fallback'),
       {
         decision_id: 'decision-fallback', critic_kind: 'brand',
-        verdict: 'unavailable', attempt: 0,
+        verdict: 'unavailable', attempt: 0, provider: 'unavailable',
       },
-      ...(['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const)
-        .map((criticKind) => ({
-          decision_id: 'decision-fallback', critic_kind: criticKind,
-          verdict: 'pass' as const, attempt: 0,
-        })),
     ];
 
     expect(buildReadinessMetrics(decisions, verdicts, []).requiredAvailability).toBe(1);
     expect(buildReadinessMetrics(decisions, [...verdicts].reverse(), []).requiredAvailability)
       .toBe(1);
+  });
+
+  it('does not let a deterministic pass mask an unavailable independent critic', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-independent-outage',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'hold_amber',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'hold_amber',
+        mediaKind: 'none',
+        judgeStatus: 'not_run',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const verdicts = completeTextVerdicts(decision.id).map((row) =>
+      row.critic_kind === 'brand' && row.provider !== 'deterministic'
+        ? { ...row, verdict: 'unavailable', provider: 'unavailable' }
+        : row);
+
+    const metrics = buildReadinessMetrics([decision], verdicts, []);
+    expect(metrics.requiredAvailability).toBeCloseTo(8 / 9);
+    expect(metrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(metrics.decisionReceiptCoverage).toBe(1);
+  });
+
+  it('does not count critics intentionally skipped after a deterministic hard block', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-deterministic-block',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'block_red',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'block_red',
+        mediaKind: 'image',
+        judgeStatus: 'not_run',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const verdicts: PilotVerdictRow[] = deterministicKinds.map((criticKind) => ({
+      decision_id: decision.id,
+      critic_kind: criticKind,
+      verdict: criticKind === 'brand' ? 'block' : 'pass',
+      attempt: 0,
+      provider: 'deterministic',
+    }));
+
+    const metrics = buildReadinessMetrics([decision], verdicts, []);
+    expect(metrics.requiredAvailability).toBe(1);
+    expect(metrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(metrics.releaseJudgeInvocations).toBe(0);
+    expect(metrics.decisionReceiptCoverage).toBe(1);
+  });
+
+  it('requires the selected media critic for availability and receipt coverage', () => {
+    const decisions: PilotDecisionRow[] = [{
+      id: 'decision-image',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'pass_green',
+        mediaKind: 'image',
+        judgeStatus: 'available',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    }];
+    const baseVerdicts = completeTextVerdicts('decision-image');
+
+    const missingMedia = buildReadinessMetrics(decisions, baseVerdicts, []);
+    expect(missingMedia.requiredAvailability).toBeCloseTo(9 / 10);
+    expect(missingMedia.decisionReceiptCoverage).toBe(0);
+
+    const complete = buildReadinessMetrics(decisions, [
+      ...baseVerdicts,
+      {
+        decision_id: 'decision-image',
+        critic_kind: 'image',
+        verdict: 'pass',
+        attempt: 0,
+        provider: 'vision_critic',
+      },
+    ], []);
+    expect(complete.requiredAvailability).toBe(1);
+    expect(complete.decisionReceiptCoverage).toBe(1);
+  });
+
+  it('fails closed on unavailable or ambiguous Release Judge telemetry', () => {
+    const decision = (judgeStatus?: string): PilotDecisionRow => ({
+      id: `decision-${judgeStatus ?? 'legacy'}`,
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'hold_amber',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'hold_amber',
+        mediaKind: 'none',
+        ...(judgeStatus ? { judgeStatus } : {}),
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    });
+    const verdicts = (id: string): PilotVerdictRow[] => completeTextVerdicts(id);
+
+    const unavailable = decision('unavailable');
+    const unavailableMetrics = buildReadinessMetrics(
+      [unavailable],
+      verdicts(unavailable.id),
+      [],
+    );
+    expect(unavailableMetrics.releaseJudgeAvailability).toBe(0);
+    expect(unavailableMetrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(unavailableMetrics.decisionReceiptCoverage).toBe(1);
+
+    const ambiguous = decision();
+    const ambiguousMetrics = buildReadinessMetrics(
+      [ambiguous],
+      verdicts(ambiguous.id),
+      [],
+    );
+    expect(ambiguousMetrics.releaseJudgeAvailability).toBe(0);
+    expect(ambiguousMetrics.releaseJudgeTelemetryCoverage).toBe(0);
+    expect(ambiguousMetrics.decisionReceiptCoverage).toBe(0);
+  });
+
+  it('infers legacy judge not-run only when a stored critic verdict proves it', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-legacy-block',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'block_red',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'block_red',
+        mediaKind: 'image',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const verdicts: PilotVerdictRow[] = [
+      ...completeTextVerdicts(decision.id),
+      {
+        decision_id: decision.id,
+        critic_kind: 'image',
+        verdict: 'block',
+        attempt: 0,
+        provider: 'vision_critic',
+      },
+    ];
+
+    const metrics = buildReadinessMetrics([decision], verdicts, []);
+    expect(metrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(metrics.releaseJudgeInvocations).toBe(0);
+    expect(metrics.releaseJudgeAvailability).toBe(0);
+    expect(metrics.decisionReceiptCoverage).toBe(1);
   });
 
   it('treats latest unavailable critics, incomplete receipts, bypasses and missing cost as unsafe', () => {
@@ -348,15 +573,17 @@ describe('learning release readiness', () => {
       adjudication_severity: 'release_critical',
     }];
     const verdicts: PilotVerdictRow[] = [
-      ...(['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const)
-        .map((criticKind) => ({
-          decision_id: 'decision-1', critic_kind: criticKind,
-          verdict: 'pass' as const, attempt: 0,
-        })),
-      { decision_id: 'decision-1', critic_kind: 'brand', verdict: 'unavailable', attempt: 1 },
+      ...completeTextVerdicts('decision-1'),
+      {
+        decision_id: 'decision-1',
+        critic_kind: 'brand',
+        verdict: 'unavailable',
+        attempt: 1,
+        provider: 'unavailable',
+      },
     ];
     const metrics = buildReadinessMetrics(decisions, verdicts, []);
-    expect(metrics.requiredAvailability).toBe(0.8);
+    expect(metrics.requiredAvailability).toBeCloseTo(8 / 9);
     expect(metrics.decisionReceiptCoverage).toBe(0);
     expect(metrics.falseHoldRate).toBe(1);
     expect(metrics.criticalBypasses).toBe(1);
@@ -376,7 +603,11 @@ describe('learning release readiness', () => {
         mode: 'approval',
         release_state: 'pass_green',
         summary_json: JSON.stringify({
-          persistenceState: 'complete', predictedOutcomeScore: (index % 15) + 1,
+          persistenceState: 'complete',
+          pipelineState: 'pass_green',
+          mediaKind: 'none',
+          judgeStatus: 'available',
+          predictedOutcomeScore: (index % 15) + 1,
         }),
         publication_event_id: `publication-${index}`,
         normalized_score: (index % 15) + 1,
@@ -385,9 +616,7 @@ describe('learning release readiness', () => {
       };
     });
     const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
-      (['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const).map((criticKind) => ({
-        decision_id: decision.id, critic_kind: criticKind, verdict: 'pass', attempt: 0,
-      })));
+      completeTextVerdicts(decision.id));
     const evidence: ReleaseEvidenceRow[] = [
       ['replay_red_team', null], ['kill_switch', null], ['publish_regression', null],
       ...(['user', 'client', 'shop'] as const).flatMap((kind) => [
