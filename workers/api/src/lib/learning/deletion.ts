@@ -87,6 +87,7 @@ async function deleteOutcomeWorkspaceData(
     'learning_experiments',
     'learning_profiles',
     'learning_signals',
+    'learning_decision_disqualifications',
     'learning_adjudications',
     'learning_pilot_enrollments',
   ]) {
@@ -121,6 +122,7 @@ async function deleteOutcomeUserData(
     'learning_experiments',
     'learning_profiles',
     'learning_signals',
+    'learning_decision_disqualifications',
     'learning_adjudications',
     'learning_pilot_enrollments',
   ]) {

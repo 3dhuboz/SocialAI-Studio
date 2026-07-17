@@ -549,6 +549,13 @@ export async function collectLearningReadiness(
       ON d.owner_kind = 'client'
      AND c.id = d.client_id
      AND c.user_id = d.user_id
+    LEFT JOIN learning_decision_disqualifications disq
+      ON disq.decision_id = d.id
+     AND disq.user_id = d.user_id
+     AND disq.workspace_key = d.workspace_key
+     AND disq.client_id IS d.client_id
+     AND disq.owner_kind = d.owner_kind
+     AND disq.owner_id = d.owner_id
     LEFT JOIN learning_adjudications a
       ON a.decision_id = d.id
      AND a.user_id = d.user_id
@@ -578,6 +585,7 @@ export async function collectLearningReadiness(
     WHERE d.stage = 'release'
       AND d.mode = 'approval'
       AND d.owner_kind IN ('user','client')
+      AND disq.id IS NULL
       AND (
         (d.owner_kind = 'user' AND u.id IS NOT NULL)
         OR (

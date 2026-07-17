@@ -91,6 +91,20 @@ type PilotValidationEnrollmentRow = {
   monthly_ai_budget_usd_cents: number | string | null;
 };
 
+type PilotDisqualificationRow = {
+  id: string;
+  decision_id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  reason: 'synthetic_qa';
+  note: string;
+  excluded_by: string;
+  created_at: string;
+};
+
 type DecisionRow = Record<string, unknown> & {
   id: string;
   summary_json?: string | null;
@@ -347,9 +361,17 @@ const CURRENT_POLICY_PILOT_COHORT_SQL = `
     ON d.owner_kind = 'client'
    AND pilot_client.id = d.client_id
    AND pilot_client.user_id = d.user_id
+  LEFT JOIN learning_decision_disqualifications disq
+    ON disq.decision_id = d.id
+   AND disq.user_id = d.user_id
+   AND disq.workspace_key = d.workspace_key
+   AND disq.client_id IS d.client_id
+   AND disq.owner_kind = d.owner_kind
+   AND disq.owner_id = d.owner_id
   WHERE d.stage = 'release'
     AND d.mode = 'approval'
     AND d.owner_kind IN ('user','client')
+    AND disq.id IS NULL
     AND (
       (d.owner_kind = 'user' AND pilot_user.id IS NOT NULL)
       OR (
@@ -537,6 +559,24 @@ function dormantPilotEnabled(env: Env): boolean {
   return env.LEARNING_BRAIN_ENABLED === 'true'
     && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
     && env.LEARNING_AUTOPILOT_ENABLED !== 'true';
+}
+
+function stagingEnvironment(env: Env): boolean {
+  return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+}
+
+function existingPilotDisqualification(
+  db: D1Database,
+  decisionId: string,
+): Promise<PilotDisqualificationRow | null> {
+  return db.prepare(`
+    SELECT
+      id,decision_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+      reason,note,excluded_by,created_at
+    FROM learning_decision_disqualifications
+    WHERE decision_id = ?
+    LIMIT 1
+  `).bind(decisionId).first<PilotDisqualificationRow>();
 }
 
 function latestReadiness(db: D1Database) {
@@ -1097,6 +1137,184 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({
         error: 'Pilot validation failed closed; no post changes were made',
       }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/disqualify/:decisionId', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    if (!stagingEnvironment(c.env)) {
+      return c.json({
+        error: 'Synthetic pilot disqualification is available only in isolated staging',
+      }, 409);
+    }
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot disqualification is available only while enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    try {
+      const body = await jsonBody(c.req.raw);
+      const unexpected = Object.keys(body).filter(
+        (key) => key !== 'reason' && key !== 'note',
+      );
+      if (unexpected.length > 0) {
+        return c.json({ error: 'Disqualification accepts only reason and note' }, 400);
+      }
+      if (body.reason !== 'synthetic_qa') {
+        return c.json({ error: 'reason must be synthetic_qa' }, 400);
+      }
+      const note = typeof body.note === 'string' ? body.note.trim() : '';
+      if (note.length < 10 || note.length > 2000) {
+        return c.json({ error: 'note must be between 10 and 2000 characters' }, 400);
+      }
+      const decisionId = c.req.param('decisionId').trim();
+      if (!decisionId) return c.json({ error: 'Not found' }, 404);
+
+      const existing = await existingPilotDisqualification(c.env.DB, decisionId);
+      if (existing) {
+        return c.json({
+          disqualificationId: existing.id,
+          decisionId: existing.decision_id,
+          reason: existing.reason,
+          createdAt: existing.created_at,
+          created: false,
+          postMutated: false,
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+      const receipt = await c.env.DB.prepare(`
+        INSERT INTO learning_decision_disqualifications (
+          id,decision_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+          reason,note,excluded_by,created_at
+        )
+        SELECT
+          ?,d.id,d.user_id,d.workspace_key,d.client_id,d.owner_kind,d.owner_id,
+          ?,?,?,?
+        FROM learning_decisions d
+        INNER JOIN learning_pilot_enrollments pen
+          ON pen.user_id = d.user_id
+         AND pen.workspace_key = d.workspace_key
+         AND pen.client_id IS d.client_id
+         AND pen.owner_kind = d.owner_kind
+         AND pen.owner_id = d.owner_id
+         AND pen.policy_version = ?
+         AND pen.record_only = 1
+         AND unixepoch(d.created_at) >= unixepoch(pen.enrolled_at)
+         AND unixepoch(pen.consent_confirmed_at) <= unixepoch(d.created_at)
+         AND (
+           (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
+           OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
+         )
+        INNER JOIN posts p
+          ON p.id = d.post_id
+         AND TRIM(p.user_id) = d.user_id
+         AND p.client_id IS d.client_id
+         AND COALESCE(
+           NULLIF(TRIM(p.owner_kind), ''),
+           CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+         ) = d.owner_kind
+         AND CASE
+           WHEN d.owner_kind = 'client' THEN TRIM(COALESCE(p.owner_id, p.client_id))
+           ELSE TRIM(COALESCE(p.owner_id, p.user_id))
+         END = d.owner_id
+         AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+         AND NULLIF(TRIM(COALESCE(p.scheduled_for, '')), '') IS NULL
+        LEFT JOIN users pilot_user
+          ON d.owner_kind = 'user' AND pilot_user.id = d.user_id
+        LEFT JOIN clients pilot_client
+          ON d.owner_kind = 'client'
+         AND pilot_client.id = d.client_id
+         AND pilot_client.user_id = d.user_id
+        WHERE d.id = ?
+          AND d.stage = 'release'
+          AND d.mode = 'approval'
+          AND d.owner_kind IN ('user','client')
+          AND (
+            (d.owner_kind = 'user' AND pilot_user.id IS NOT NULL)
+            OR (
+              d.owner_kind = 'client'
+              AND pilot_client.id IS NOT NULL
+              AND COALESCE(LOWER(TRIM(pilot_client.status)), 'active') <> 'on_hold'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM learning_adjudications a
+            WHERE a.decision_id = d.id
+              AND a.user_id = d.user_id
+              AND a.workspace_key = d.workspace_key
+              AND a.client_id IS d.client_id
+              AND a.owner_kind = d.owner_kind
+              AND a.owner_id = d.owner_id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM publication_events pe
+            WHERE pe.decision_id = d.id
+              AND pe.user_id = d.user_id
+              AND pe.workspace_key = d.workspace_key
+              AND pe.client_id IS d.client_id
+              AND pe.owner_kind = d.owner_kind
+              AND pe.owner_id = d.owner_id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM learning_decision_disqualifications disq
+            WHERE disq.decision_id = d.id
+          )
+        RETURNING
+          id,decision_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+          reason,note,excluded_by,created_at
+      `).bind(
+        id,
+        body.reason,
+        note,
+        adminId,
+        createdAt,
+        AUTOPILOT_POLICY_VERSION,
+        decisionId,
+      ).first<PilotDisqualificationRow>();
+
+      if (!receipt) {
+        return c.json({
+          error: 'Only an unpublished, unadjudicated, unscheduled current-pilot Draft can be disqualified',
+        }, 409);
+      }
+      return c.json({
+        disqualificationId: receipt.id,
+        decisionId: receipt.decision_id,
+        reason: receipt.reason,
+        createdAt: receipt.created_at,
+        created: true,
+        postMutated: false,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/unique/i.test(message)) {
+        const decisionId = c.req.param('decisionId').trim();
+        const existing = await existingPilotDisqualification(c.env.DB, decisionId);
+        if (existing) {
+          return c.json({
+            disqualificationId: existing.id,
+            decisionId: existing.decision_id,
+            reason: existing.reason,
+            createdAt: existing.created_at,
+            created: false,
+            postMutated: false,
+          });
+        }
+      }
+      console.warn('[learning-pilot] disqualification failed closed', {
+        decisionId: c.req.param('decisionId'),
+        reason: message || 'unknown error',
+      });
+      return c.json({ error: 'Pilot disqualification failed closed' }, 503);
     }
   });
 

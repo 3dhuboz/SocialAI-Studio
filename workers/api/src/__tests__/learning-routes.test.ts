@@ -652,6 +652,222 @@ describe('learning settings and release evidence routes', () => {
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
   });
 
+  it('appends a staging-only synthetic QA disqualification without mutating evidence', async () => {
+    const note = 'Authenticated staging QA fixture created for release-gate testing.';
+    const receipt = {
+      id: 'disqualification-1',
+      decision_id: 'decision-qa-1',
+      user_id: 'owner_1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner_1',
+      reason: 'synthetic_qa',
+      note,
+      excluded_by: 'owner_1',
+      created_at: '2026-07-17T13:00:00.000Z',
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'INSERT INTO learning_decision_disqualifications': [receipt],
+      'FROM learning_decision_disqualifications': [],
+    });
+    const env = {
+      DB: db,
+      ENVIRONMENT: 'staging',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request(
+      '/api/learning/pilot/disqualify/decision-qa-1',
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ reason: 'synthetic_qa', note }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      disqualificationId: 'disqualification-1',
+      decisionId: 'decision-qa-1',
+      reason: 'synthetic_qa',
+      createdAt: '2026-07-17T13:00:00.000Z',
+      created: true,
+      postMutated: false,
+    });
+    const write = calls.find((call) =>
+      call.sql.includes('INSERT INTO learning_decision_disqualifications'))!;
+    expect(write.method).toBe('first');
+    expect(write.binds.slice(1)).toEqual([
+      'synthetic_qa',
+      note,
+      'owner_1',
+      expect.any(String),
+      AUTOPILOT_POLICY_VERSION,
+      'decision-qa-1',
+    ]);
+    expect(write.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
+    expect(write.sql).toContain("pen.consent_basis = 'owner_self'");
+    expect(write.sql).toContain("pen.consent_basis = 'customer_attested'");
+    expect(write.sql).toContain("LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'");
+    expect(write.sql).toContain(
+      "NULLIF(TRIM(COALESCE(p.scheduled_for, '')), '') IS NULL",
+    );
+    expect(write.sql).toContain('FROM learning_adjudications a');
+    expect(write.sql).toContain('FROM publication_events pe');
+    expect(write.sql).toContain(
+      "COALESCE(LOWER(TRIM(pilot_client.status)), 'active') <> 'on_hold'",
+    );
+    expect(calls.some((call) =>
+      /\b(?:UPDATE|DELETE FROM)\s+(?:posts|learning_decisions)\b/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('returns the existing immutable disqualification idempotently', async () => {
+    const existing = {
+      id: 'disqualification-existing',
+      decision_id: 'decision-qa-existing',
+      user_id: 'owner_1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner_1',
+      reason: 'synthetic_qa',
+      note: 'Existing authenticated staging QA fixture.',
+      excluded_by: 'owner_1',
+      created_at: '2026-07-17T12:00:00.000Z',
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM learning_decision_disqualifications': [existing],
+    });
+    const env = {
+      DB: db,
+      ENVIRONMENT: 'staging',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request(
+      '/api/learning/pilot/disqualify/decision-qa-existing',
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({
+          reason: 'synthetic_qa',
+          note: 'A repeat request must not create a second receipt.',
+        }),
+      },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      disqualificationId: 'disqualification-existing',
+      decisionId: 'decision-qa-existing',
+      created: false,
+      postMutated: false,
+    });
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT INTO learning_decision_disqualifications'))).toBe(false);
+  });
+
+  it('rejects non-admin, non-staging, malformed, and unsafe disqualifications', async () => {
+    const nonAdminDb = makeRecordingD1({ 'SELECT email, is_admin': [] });
+    const stagingEnv = {
+      DB: nonAdminDb.db,
+      ENVIRONMENT: 'staging',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const stagingApp = makeApp(stagingEnv);
+    const nonAdmin = await stagingApp.app.request(
+      '/api/learning/pilot/disqualify/decision-qa',
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ reason: 'synthetic_qa', note: 'Synthetic QA receipt.' }),
+      },
+      stagingEnv,
+    );
+    expect(nonAdmin.status).toBe(403);
+    expect(nonAdminDb.calls.some((call) =>
+      call.sql.includes('learning_decision_disqualifications'))).toBe(false);
+
+    const productionDb = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const productionEnv = {
+      DB: productionDb.db,
+      ENVIRONMENT: 'production',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const productionApp = makeApp(productionEnv);
+    const production = await productionApp.app.request(
+      '/api/learning/pilot/disqualify/decision-qa',
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ reason: 'synthetic_qa', note: 'Synthetic QA receipt.' }),
+      },
+      productionEnv,
+    );
+    expect(production.status).toBe(409);
+    expect(productionDb.calls.some((call) =>
+      call.sql.includes('learning_decision_disqualifications'))).toBe(false);
+
+    const unsafeDb = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM learning_decision_disqualifications': [],
+      'INSERT INTO learning_decision_disqualifications': [],
+    });
+    const unsafeEnv = { ...stagingEnv, DB: unsafeDb.db } as Env;
+    const unsafeApp = makeApp(unsafeEnv);
+    const malformed = await unsafeApp.app.request(
+      '/api/learning/pilot/disqualify/decision-qa',
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({
+          reason: 'customer_request',
+          note: 'Wrong reason must fail.',
+          force: true,
+        }),
+      },
+      unsafeEnv,
+    );
+    expect(malformed.status).toBe(400);
+    expect(unsafeDb.calls.some((call) =>
+      call.sql.includes('INSERT INTO learning_decision_disqualifications'))).toBe(false);
+
+    const unsafe = await unsafeApp.app.request(
+      '/api/learning/pilot/disqualify/decision-published',
+      {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({
+          reason: 'synthetic_qa',
+          note: 'Published or adjudicated evidence must fail closed.',
+        }),
+      },
+      unsafeEnv,
+    );
+    expect(unsafe.status).toBe(409);
+    expect(unsafeDb.calls.find((call) =>
+      call.sql.includes('INSERT INTO learning_decision_disqualifications'))?.sql)
+      .toContain('NOT EXISTS');
+  });
+
   it('enrolls one active client into record-only approval validation with an explicit cost ceiling', async () => {
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
@@ -912,6 +1128,8 @@ describe('learning settings and release evidence routes', () => {
     const sourceRead = calls.find((call) => call.sql.includes('FROM learning_decisions'))!;
     expect(sourceRead.sql).toContain('INNER JOIN learning_pilot_enrollments');
     expect(sourceRead.sql).toContain('pen.policy_version = ?');
+    expect(sourceRead.sql).toContain('LEFT JOIN learning_decision_disqualifications disq');
+    expect(sourceRead.sql).toContain('disq.id IS NULL');
     expect(sourceRead.sql).toContain('LEFT JOIN posts p');
     expect(sourceRead.binds).toEqual([AUTOPILOT_POLICY_VERSION, 'decision-1']);
   });
@@ -1252,6 +1470,8 @@ describe('learning settings and release evidence routes', () => {
     expect(operations.sql).toContain('sample_rank = 1');
     expect(operations.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
     expect(operations.sql).toContain('pen.policy_version = ?');
+    expect(operations.sql).toContain('LEFT JOIN learning_decision_disqualifications disq');
+    expect(operations.sql).toContain('disq.id IS NULL');
     expect(operations.sql).toContain('LEFT JOIN posts p');
     expect(operations.sql).not.toContain('sample_release_state');
     expect(operations.binds).toEqual([AUTOPILOT_POLICY_VERSION, 10]);

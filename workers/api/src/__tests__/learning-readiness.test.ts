@@ -660,6 +660,10 @@ describe('learning release readiness', () => {
     expect(pilotCall.binds).toEqual([AUTOPILOT_POLICY_VERSION]);
     expect(pilotCall.sql).toContain("d.owner_kind IN ('user','client')");
     expect(pilotCall.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+    expect(pilotCall.sql).toContain(
+      'LEFT JOIN learning_decision_disqualifications disq',
+    );
+    expect(pilotCall.sql).toContain('disq.id IS NULL');
     expect(pilotCall.sql).toContain('a.user_id = d.user_id');
     expect(pilotCall.sql).toContain('pe.owner_id = d.owner_id');
   });

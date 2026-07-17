@@ -211,11 +211,19 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v43
+**Current source schema version:** v44
 
 **Current production schema version:** v42.
 
-**Current staging schema version:** v43.
+**Current staging schema version:** v44.
+
+Pilot QA disqualification migration:
+`workers/api/schema_v44_learning_decision_disqualifications.sql`.
+It adds append-only, tenant-scoped `synthetic_qa` receipts so authenticated
+staging fixtures cannot count toward readiness or enter adjudication sampling.
+The route is staging-only and accepts only unpublished, unadjudicated,
+unscheduled current-pilot Drafts. It never mutates posts or decisions. The
+migration is live in staging only and must precede matching Worker code.
 
 Pilot cron telemetry migration: `workers/api/schema_v43_cron_run_details.sql`.
 It adds a bounded `details_json` field to `cron_runs`; application code writes
@@ -294,6 +302,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `tracking_links` | Tenant-scoped organic action and conversion tracking links |
 | `conversion_feedback` | Owner-recorded calls, messages, leads, bookings, sales, and order value |
 | `learning_adjudications` | Admin pilot labels for sampled immutable release decisions |
+| `learning_decision_disqualifications` | Immutable staging QA exclusions that keep synthetic decisions out of readiness and adjudication |
 | `learning_pilot_enrollments` | Policy-versioned record-only pilot cohort and consent receipts; update-blocked but privacy-deletable |
 | `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
 | `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
