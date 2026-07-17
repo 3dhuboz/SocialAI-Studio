@@ -1457,7 +1457,7 @@ zero outcomes, zero outcome attempts, and zero approved media assets.
 
 ### Final Staging State
 
-The final branch head is
+The final staged code head is
 `301221d33914d76d662c34fc773b06ef0d46f0c8`. Staging runs Worker version
 `d94fcc79-a543-4cc4-b9f9-d94cedf87e6f` against only
 `socialai-db-staging`. Its deployment still has:
