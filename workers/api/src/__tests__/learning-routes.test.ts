@@ -972,7 +972,7 @@ describe('learning settings and release evidence routes', () => {
         id: 'ready-1', ready: 0, metrics_json: '{"pilotDecisions":12}',
         checks_json: '{"pilot":false}', evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
-      'WITH recent AS': [{
+      'WITH pilot_cohort AS': [{
         user_id: 'owner-2', workspace_key: 'client-2', client_id: 'client-2',
         owner_kind: 'client', owner_id: 'client-2', mode: 'approval',
         autopublish_policy_version: null, updated_at: evaluatedAt,
@@ -1030,9 +1030,19 @@ describe('learning settings and release evidence routes', () => {
       }],
     });
     expect(payload.workspaces[0]).not.toHaveProperty('sampleReleaseState');
-    const operations = calls.find((call) => call.sql.includes('WITH recent AS'))!;
+    const operations = calls.find((call) => call.sql.includes('WITH pilot_cohort AS'))!;
     expect(operations.sql).toContain('ROW_NUMBER() OVER');
-    expect(operations.sql).toContain('r.rn <= 30');
+    expect(operations.sql).toContain('verdict_attempts AS');
+    expect(operations.sql).toContain('verdict_slots AS');
+    expect(operations.sql).toContain('PARTITION BY v.decision_id, v.critic_kind');
+    expect(operations.sql).toContain('MAX(v.attempt) OVER');
+    expect(operations.sql).toContain('v.attempt = v.latest_attempt');
+    expect(operations.sql).toContain(
+      "MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END)",
+    );
+    expect(operations.sql).toContain('SUM(v.available) AS critic_available');
+    expect(operations.sql).not.toContain('WITH recent AS');
+    expect(operations.sql).not.toContain('r.rn <= 30');
     expect(operations.sql).toContain("w.owner_kind = 'client'");
     expect(operations.sql).toContain("w.owner_kind = 'shop'");
     expect(operations.sql).toContain('a.id IS NULL');

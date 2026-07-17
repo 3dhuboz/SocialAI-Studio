@@ -1,5 +1,6 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
+import { BASE_REQUIRED_CRITICS } from '../lib/learning/critic-types';
 import { listDecisionReceipts } from '../lib/learning/decision-repository';
 import {
   normalizeWorkspaceIdentity,
@@ -270,6 +271,10 @@ const CURRENT_POLICY_PILOT_COHORT_SQL = `
   ORDER BY d.created_at DESC, d.id DESC
   LIMIT 30
 `;
+
+const BASE_REQUIRED_CRITICS_SQL = BASE_REQUIRED_CRITICS
+  .map((kind) => `'${kind}'`)
+  .join(', ');
 
 async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   try {
@@ -1224,16 +1229,22 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ error: 'limit must be an integer between 1 and 200' }, 400);
     }
     const rows = await c.env.DB.prepare(`
-      WITH recent AS (
-        SELECT d.*,
-               ROW_NUMBER() OVER (
-                 PARTITION BY d.user_id, d.workspace_key
-                 ORDER BY d.updated_at DESC, d.id DESC
-               ) AS rn
-          FROM learning_decisions d
-         WHERE d.stage = 'release'
-      ), pilot_cohort AS (
+      WITH pilot_cohort AS (
         ${CURRENT_POLICY_PILOT_COHORT_SQL}
+      ), verdict_attempts AS (
+        SELECT v.decision_id, v.critic_kind, v.verdict, v.attempt,
+               MAX(v.attempt) OVER (
+                 PARTITION BY v.decision_id, v.critic_kind
+               ) AS latest_attempt
+          FROM learning_critic_verdicts v
+          INNER JOIN pilot_cohort r ON r.id = v.decision_id
+         WHERE v.critic_kind IN (${BASE_REQUIRED_CRITICS_SQL})
+      ), verdict_slots AS (
+        SELECT v.decision_id, v.critic_kind,
+               MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS available
+          FROM verdict_attempts v
+         WHERE v.attempt = v.latest_attempt
+         GROUP BY v.decision_id, v.critic_kind
       ), decision_metrics AS (
         SELECT r.user_id, r.workspace_key,
                COUNT(*) AS decision_count,
@@ -1253,19 +1264,17 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
                   AND json_extract(r.summary_json, '$.pipelineState') IS NOT NULL
                  THEN 1 ELSE 0 END
                ) AS judge_available
-          FROM recent r
+          FROM pilot_cohort r
           LEFT JOIN learning_adjudications a ON a.decision_id = r.id
            AND a.user_id = r.user_id AND a.workspace_key = r.workspace_key
            AND a.owner_kind = r.owner_kind AND a.owner_id = r.owner_id
-         WHERE r.rn <= 30
          GROUP BY r.user_id, r.workspace_key
       ), verdict_metrics AS (
         SELECT r.user_id, r.workspace_key,
-               COUNT(v.id) AS critic_total,
-               SUM(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS critic_available
-          FROM recent r
-          JOIN learning_critic_verdicts v ON v.decision_id = r.id
-         WHERE r.rn <= 30
+               COUNT(v.critic_kind) AS critic_total,
+               SUM(v.available) AS critic_available
+          FROM pilot_cohort r
+          JOIN verdict_slots v ON v.decision_id = r.id
          GROUP BY r.user_id, r.workspace_key
       ), sample_candidates AS (
         SELECT r.user_id, r.workspace_key, r.owner_kind, r.owner_id,
