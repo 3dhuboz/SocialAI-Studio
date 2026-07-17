@@ -2027,3 +2027,108 @@ not create genuine context, customer consent, a paid pilot evaluation, or
 attributable cost evidence. The next gate remains an explicit, authorized
 owner-self staging business profile or a separately attested client profile;
 neither will be fabricated or copied implicitly.
+
+## 2026-07-17 Authorized Owner Context And Natural Record-Only Pilot
+
+### Authorization And Data Minimization
+
+Steve explicitly authorized copying Penny Wise I.T's non-secret business
+profile into staging for record-only testing. The production profile was read
+only. Its raw values were never printed, written to an evidence artifact, or
+committed.
+
+A strict allowlist retained only five canonical business-context strings:
+`description`, `productsServices`, `targetAudience`, `uniqueValue`, and
+`contentTopics`. Ten other fields were excluded, including Facebook
+configuration, name, location, logo, tone, social preferences, disclosure
+preferences, video preferences, and forbidden-subject configuration. The
+selected fields were capped at 1,000 characters, stripped of control
+characters, and rejected if they resembled an email address, URL, phone
+number, API key, credential, secret, or long token. No sensitive pattern was
+detected.
+
+The source profile was 1,025 bytes with SHA-256
+`23e15c627b6bc7742ee7dfb776f7641f692d94af506b945644453bfeb1db5275`.
+The minimized payload was 700 bytes with SHA-256
+`dc0f6a2aa1444cad0e19b78dc6843ab3caf4b2cd56c809ca21954187457a6159`.
+At `2026-07-17T22:37:12.715Z`, one exact staging owner row changed from the
+empty-object hash
+`44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`
+to the minimized hash. The write required the existing profile to be exactly
+`{}` and independently verified one target row, the exact post-write hash,
+and the exact five-key set. Temporary SQL was removed. Production changed
+zero rows.
+
+### Natural Runtime And Cost Attribution
+
+No evaluator endpoint was called. Cloudflare naturally invoked the isolated
+staging `learning_pilot` cron after the authorized profile became ready. Cron
+receipt `6855` completed at `2026-07-17 22:46:05` UTC in 8,724 ms with one
+candidate considered, one post processed, one evaluation, and zero reused
+receipts, competing claims, budget skips, context skips, invalid rows, or
+errors.
+
+Decision `12b1aec0-5556-4d46-9a98-af78262f8a37` belongs to the exact owner
+workspace and QA Draft
+`bf848b80-b88d-4ff4-88b8-6ab0992e535f`. It persisted
+`persistenceState='complete'`, `release_state='hold_amber'`, and exact 9/9
+summary-to-row verdict parity. It ran one attempt, made no repair, changed no
+candidate content, and requested no media.
+
+The decision persisted all required deterministic critic slots plus the
+independent Anthropic text council and business-harm critic. The deterministic
+fact critic returned a release-critical repairable warning. The independent
+business-harm critic returned `unavailable`, so the Release Judge correctly
+recorded `judgeStatus='not_run'` and the post stayed amber. This is the intended
+fail-closed behavior: provider output that cannot satisfy the critic contract
+does not become unattended approval.
+
+Exactly two AI usage rows were attached to the decision and the exact
+owner/post tuple:
+
+- `learning_text_council`: 1,000 input tokens, 388 output tokens,
+  estimated `$0.002940`;
+- `learning_harm_critic`: 656 input tokens, 129 output tokens,
+  estimated `$0.001301`.
+
+Total estimated spend was `$0.004241`. There were zero unattributed rows, zero
+null or negative cost estimates, and zero failed usage receipts. The source
+post's full safety fingerprint remained
+`c302cd467bc4d03a9a17c033c8a90fbfc787423e9cc60a237ec5613ba5786ff9`
+before and after evaluation. It remained an unscheduled, media-free Draft with
+zero publication events and zero adjudications.
+
+### Synthetic Exclusion And Production Boundary
+
+The post is an explicit staging QA fixture, not a real customer sample.
+Readiness snapshot `3e857397-da53-4b02-a3ed-fce67a32ff1c` therefore remained
+red even before exclusion: receipt coverage and cost attribution were
+complete, but required critic availability was 8/9. An immutable staging-only
+`synthetic_qa` exclusion
+`106bf41e-47c3-45ec-9b0f-0cb59eb45c58` was appended only after the exact
+current-policy enrollment, consent, workspace, Draft, schedule, publication,
+and adjudication preconditions passed. It did not mutate the post or decision.
+
+The next natural scheduler cycle persisted the exclusion outcome. Pilot cron
+receipt `6874` succeeded at `2026-07-17 23:00:57` UTC with zero candidates,
+zero evaluations, and zero errors. Readiness snapshot
+`77bd0bb8-2157-44cb-a973-464f11927c12` followed at
+`2026-07-17T23:00:57.208Z`, remained red, and reported zero eligible pilot
+decisions, workspaces, user decisions, or client decisions. The two attributed
+cost rows remain available for audit but cannot count toward readiness.
+
+Credential-free evidence:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-authorized-profile-natural-pilot-proof-2026-07-17T23-02-01-116Z.json`
+- SHA-256:
+  `57B8F5FAEB35BBE82A958A8FCD6FFF46997B8C4258CEA4D42401379F8EFB6883`
+
+The complete Worker suite passed 95 files and 1,205 tests, strict Worker
+TypeScript passed, the frontend suite passed 17 files and 200 tests, frontend
+TypeScript passed, and the production frontend build passed. Staging remained
+on Worker `281399b5-16ca-428e-8c84-392fc6814f02` with release enforcement,
+Protected Autopilot, and organic-reach application disabled.
+
+Production was not migrated, deployed, or written. It remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, and `hughesq-001` remains exactly
+`status='on_hold'`.
