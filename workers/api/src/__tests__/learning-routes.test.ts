@@ -431,6 +431,11 @@ describe('learning settings and release evidence routes', () => {
       'FROM learning_pilot_enrollments pen': [{
         id: 'pilot-enrollment-1', monthly_ai_budget_usd_cents: 500,
       }],
+      'SELECT profile FROM clients': [{
+        profile: '{"productsServices":"Brisket catering and smoked meats"}',
+      }],
+      'FROM client_facts': [],
+      'FROM posts': [],
       'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
       'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
     });
@@ -495,6 +500,11 @@ describe('learning settings and release evidence routes', () => {
       'FROM learning_pilot_enrollments pen': [{
         id: 'pilot-enrollment-owner', monthly_ai_budget_usd_cents: 500,
       }],
+      'SELECT profile FROM users': [{
+        profile: '{"description":"Custom software and workflow automation"}',
+      }],
+      'FROM client_facts': [],
+      'FROM posts': [],
       'FROM ai_usage': [{ spend_usd: 4.51, telemetry_count: 30 }],
     });
     const env = {
@@ -514,6 +524,60 @@ describe('learning settings and release evidence routes', () => {
       error: 'Pilot AI budget reserve is unavailable; no critics ran',
     });
     expect(runPilotPipeline).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('refuses pilot validation before budget or critic spend when business context is empty', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [{
+        id: 'draft-empty-context', user_id: 'owner_1', client_id: null,
+        owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+        content: 'A claim-free workflow observation.', platform: 'Facebook', hashtags: '[]',
+        image_url: null, post_type: 'text', video_url: null, video_status: null,
+        video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 500, disabled_reason: null,
+      }],
+      'FROM learning_pilot_enrollments pen': [{
+        id: 'pilot-enrollment-owner', monthly_ai_budget_usd_cents: 500,
+      }],
+      'SELECT profile FROM users': [{
+        profile: '{"name":"Penny Wise I.T","tone":"Professional","location":"Gladstone"}',
+      }],
+      'FROM client_facts': [],
+      'FROM posts': [],
+      'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/validate/draft-empty-context', {
+      method: 'POST', headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Pilot business context is incomplete; complete the business profile or add a verified fact before running critics',
+      code: 'pilot_context_not_ready',
+      readiness: {
+        meaningfulProfileFieldCount: 0,
+        verifiedFactCount: 0,
+      },
+    });
+    expect(runPilotPipeline).not.toHaveBeenCalled();
+    expect(calls.some((call) => call.sql.includes('FROM ai_usage'))).toBe(false);
     expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
     expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
       .toBe(false);

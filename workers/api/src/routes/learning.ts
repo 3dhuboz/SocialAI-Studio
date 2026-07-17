@@ -4,6 +4,10 @@ import {
   BASE_REQUIRED_CRITICS,
   DETERMINISTIC_REQUIRED_CRITICS,
 } from '../lib/learning/critic-types';
+import {
+  assessCriticContextReadiness,
+  loadCriticContext,
+} from '../lib/learning/critic-context';
 import { listDecisionReceipts } from '../lib/learning/decision-repository';
 import {
   normalizeWorkspaceIdentity,
@@ -1002,6 +1006,37 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     ).first<PilotValidationEnrollmentRow>();
     if (!enrollment) {
       return c.json({ error: 'Workspace has no current-policy pilot enrollment receipt' }, 409);
+    }
+    let contextReadiness;
+    try {
+      const criticContext = await loadCriticContext(
+        c.env,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+      );
+      contextReadiness = assessCriticContextReadiness(criticContext);
+    } catch (error) {
+      console.warn('[learning-pilot] critic context unavailable', {
+        postId: row.id,
+        workspaceKey: identity.workspaceKey,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot business context could not be loaded; no critics ran',
+        code: 'pilot_context_unavailable',
+      }, 503);
+    }
+    if (!contextReadiness.ready) {
+      return c.json({
+        error: 'Pilot business context is incomplete; complete the business profile or add a verified fact before running critics',
+        code: 'pilot_context_not_ready',
+        readiness: {
+          meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
+          verifiedFactCount: contextReadiness.verifiedFactCount,
+        },
+      }, 409);
     }
     const budgetUsdCents = Number(enrollment.monthly_ai_budget_usd_cents);
     const budget = await getRecordOnlyPilotBudgetStatus(
