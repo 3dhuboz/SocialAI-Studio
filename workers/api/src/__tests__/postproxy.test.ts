@@ -221,6 +221,20 @@ describe('createPost', () => {
     });
   });
 
+  it('normalizes a numeric provider post id before returning it', async () => {
+    vi.stubGlobal('fetch', mockFetch({ body: { id: 101, status: 'accepted' } }));
+
+    const result = await createPost(env, {
+      profileId: 'proof-profile',
+      body: 'proof caption',
+      media: [],
+      format: 'post',
+      pageId: 'proof-page',
+    });
+
+    expect(result).toEqual({ id: '101', status: 'accepted' });
+  });
+
   it('throws an Error with status + body slice on non-2xx', async () => {
     vi.stubGlobal('fetch', mockFetch({ status: 400, text: 'Bad placement_id' }));
     await expect(
