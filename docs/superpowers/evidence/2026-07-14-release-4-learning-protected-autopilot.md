@@ -1565,3 +1565,80 @@ customer enrollment, adjudication, evidence submission, or customer-status
 change was performed. Production remains on
 `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, current readiness remains `ready=0`,
 and `hughesq-001` remains exactly `status='on_hold'`.
+
+## 2026-07-17 Pilot Business-Context Readiness Gate
+
+### Live Defect And Fail-Closed Contract
+
+The authenticated record-only pilot had exposed a quality defect that was
+separate from the critic-repair safety fixes. A claim-free Draft could spend
+all three business-harm attempts and end at `unavailable` solely because its
+staging business profile was empty. The post remained held and unpublished,
+but the route wasted critic budget and reported an ambiguous hold instead of
+telling the operator that required business evidence was missing.
+
+Pilot validation now loads the tenant-scoped critic context after immutable
+enrollment verification and before budget telemetry, decision creation, or
+critic execution. It proceeds only when the workspace has at least one
+substantive business descriptor or a non-placeholder verified fact. Names,
+logos, tone, location, denylist entries, social goals, and placeholders such
+as `TBD`, `N/A`, or `unknown` do not make the workspace ready.
+
+Missing context returns a deterministic `409` with
+`code='pilot_context_not_ready'`, zero profile/fact counts, and an instruction
+to complete the profile or add a verified fact. Context-loading failures
+return a separate fail-closed `503`. The normal release pipeline remains
+unchanged and fail-closed; this precheck applies only to the dormant,
+admin-only, record-only pilot endpoint.
+
+### Automated And Staging Verification
+
+Focused context and route verification passed 40 tests. The route test proves
+the missing-context branch does not query cost telemetry, create a learning
+decision, invoke the critic pipeline, or mutate a post. The complete Worker
+suite passed 92 files and 1,186 tests, strict Worker TypeScript passed, the
+frontend suite passed 199 tests, and the production frontend build completed.
+GitHub PR `#209` checks passed at implementation commit
+`e9169ef636044c4dbaad3b38390b315b371c2ec1`.
+
+Only the isolated staging Worker was deployed. Staging version
+`878032eb-4cad-4905-af04-fed06b0e0cef` runs against
+`socialai-db-staging` with:
+
+- `LEARNING_BRAIN_ENABLED="true"`;
+- `LEARNING_RELEASE_ENFORCEMENT="false"`;
+- `LEARNING_AUTOPILOT_ENABLED="false"`;
+- `ORGANIC_REACH_ENABLED="true"`; and
+- `ORGANIC_REACH_APPLY_ENABLED="false"`.
+
+Direct staging and production health checks returned `200`. The unauthenticated
+staging pilot route returned `401`, confirming the Clerk boundary remained
+closed. No reusable bearer token was retained, so a fresh authenticated live
+`409` was not submitted and is not claimed. Authentication was not weakened,
+and no credential was copied or written to disk.
+
+Read-only staging D1 verification found one record-only owner enrollment,
+zero context-ready owner enrollments, zero scheduled or published posts, and
+zero publication events. Latest staging readiness remains `ready=0`. Every
+successful verification query reported `changed_db=false`, `changes=0`, and
+`rows_written=0`.
+
+Credential-free evidence:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-pilot-context-readiness-proof-2026-07-17T12-43-38-645Z.json`
+- SHA-256:
+  `8B1D069058FF337BBC01623A1A2B77F8388349905D32A226551E5134E7C67D33`
+
+### Production Remains Unchanged And Gate-Closed
+
+Production was not deployed and remains on version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`. Its exact deployed bindings still
+have learning enforcement, Protected Autopilot, and organic-reach application
+disabled; latest readiness remains `ready=0`. Read-only production D1
+verification returned `hughesq-001` as exactly `status='on_hold'` with zero
+rows written.
+
+This removes an avoidable source of inconsistent pilot holds and critic cost.
+It does not supply the missing genuine client cohort, unchanged green
+decisions, adjudications, outcome history, or promotion evidence. Production
+rollout therefore remains blocked.
