@@ -680,7 +680,8 @@ describe('readiness cron receipts', () => {
   it('persists every evaluation and alerts once when readiness turns green to red', async () => {
     const persist = vi.fn(async () => undefined);
     const alert = vi.fn(async () => undefined);
-    const result = await cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
+    const env = { DB: {} as D1Database } as Env;
+    const result = await cronEvaluateLearningReadiness(env, {
       now: new Date('2026-07-14T01:00:00.000Z'),
       collect: async () => redSnapshot,
       loadPrevious: async () => ({ ready: 1 }),
@@ -692,6 +693,37 @@ describe('readiness cron receipts', () => {
     expect(result).toMatchObject({ posts_processed: 30, ready: false, id: 'readiness-1' });
     expect(persist).toHaveBeenCalledOnce();
     expect(alert).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith(
+      env,
+      'learning_readiness_green_to_red',
+      'critical',
+      expect.stringContaining('severeFalsePasses'),
+    );
+  });
+
+  it('does not alert without an actual green-to-red transition', async () => {
+    const persist = vi.fn(async () => undefined);
+    const alert = vi.fn(async () => undefined);
+    const scenarios = [
+      { previous: null, snapshot: redSnapshot },
+      { previous: { ready: 0 }, snapshot: redSnapshot },
+      { previous: { ready: 1 }, snapshot: { ...redSnapshot, ready: true } },
+    ];
+    let sequence = 0;
+
+    for (const scenario of scenarios) {
+      await cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
+        now: new Date('2026-07-14T01:00:00.000Z'),
+        collect: async () => scenario.snapshot,
+        loadPrevious: async () => scenario.previous,
+        persist,
+        alert,
+        randomId: () => `readiness-${++sequence}`,
+      });
+    }
+
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(alert).not.toHaveBeenCalled();
   });
 
   it('writes no replacement receipt when evidence collection fails', async () => {
