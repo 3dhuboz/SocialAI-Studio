@@ -302,14 +302,19 @@ export async function createPost(
   args: PostproxyCreatePostArgs,
 ): Promise<{ id: string; status: string }> {
   const body = buildCreatePostPayload(args);
-  const data = await pfFetch<{ id: string; status: string }>(env, '/posts', {
+  const data = await pfFetch<{ id?: string | number; status: string }>(env, '/posts', {
     method: 'POST',
     body,
   });
-  if (!data?.id) {
+  const id = typeof data?.id === 'string'
+    ? data.id.trim()
+    : typeof data?.id === 'number' && Number.isFinite(data.id)
+      ? String(data.id)
+      : '';
+  if (!id) {
     throw new Error('Postproxy createPost: missing id in response');
   }
-  return { id: data.id, status: data.status };
+  return { id, status: data.status };
 }
 
 /** Fetch a post's current status. Used by ops tooling + as a recovery
