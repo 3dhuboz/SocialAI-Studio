@@ -1504,3 +1504,64 @@ Read-only D1 verification returned `hughesq-001` as exactly
 `changes=0`, and `rows_written=0`. Promotion remains blocked until genuine
 consented client evidence, unchanged green decisions, adjudications, required
 volume, quality, cost, prediction, and all other documented gates pass.
+
+## 2026-07-17 Readiness Regression Alert Contract Recheck
+
+### Completion-Audit Finding And Closure
+
+The readiness cron already persisted every evaluation and called the
+rate-limited operational alert when readiness changed from green to red. Its
+test asserted only that some alert was called once. It did not prove the
+load-bearing alert key, critical severity, failed-check body, or silence for
+non-transition states.
+
+The readiness contract now proves that an actual green-to-red transition calls
+exactly `learning_readiness_green_to_red` at `critical` severity and includes
+the failed `severeFalsePasses` check in the operator body. A separate
+three-scenario test proves no alert is emitted on initial startup with no
+previous receipt, while readiness remains red, or while readiness remains
+green. Every scenario still persists its immutable readiness receipt.
+
+This is a test-only safety closure. It changes no Worker runtime, alert
+configuration, customer data, consent, learning decision, schedule,
+publication path, or rollout flag.
+
+### Production Signal Diagnosis
+
+The production readiness metric `publishingRegressions=1` was rechecked rather
+than treated as proof of a live bypass. The readiness implementation
+initializes that metric to one until current-policy publish-regression evidence
+passes. It is a fail-closed missing-proof marker.
+
+Read-only production D1 inspection of the five current approval-pilot
+decisions found all five at `block_red`, all five with no attached
+`publication_event_id`, and no adjudications. The corresponding readiness
+metric `criticalBypasses=0` is therefore consistent with the source rows: no
+blocked pilot decision was published.
+
+### Verification
+
+- Focused readiness verification: 25 tests passed.
+- Complete Worker verification: 92 files and 1,181 tests passed.
+- Strict Worker TypeScript verification passed.
+- Clean-tree release proof: 47 mandatory checks and 250 tests passed.
+- Source commit:
+  `5c71eba992f3749d19f94fe7e2d2a7f5c50edf30`.
+- Artifact:
+  `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-17T12-29-36-747Z.json`
+- Artifact file SHA-256:
+  `37F0D8A6061D8912E259877A77ED179A9C74B6F748B5BFD08B55A99C875DC147`
+
+The artifact continues to record `liveStagingProven=false`,
+`authenticatedEvidenceSubmitted=false`, `productionMutationPerformed=false`,
+and `releaseFlagsChanged=false`. This regression contract strengthens
+operator monitoring but does not count toward pilot volume, adjudication,
+tenancy, outcome, cost, or promotion gates.
+
+### Production Remains Unchanged And Gate-Closed
+
+No production Worker deployment, variable change, database mutation, consent,
+customer enrollment, adjudication, evidence submission, or customer-status
+change was performed. Production remains on
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, current readiness remains `ready=0`,
+and `hughesq-001` remains exactly `status='on_hold'`.
