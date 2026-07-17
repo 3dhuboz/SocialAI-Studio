@@ -1934,3 +1934,96 @@ Production was not migrated, deployed, or mutated. It remains on Worker
 `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, its `ai_usage` table has no v45
 column, and every production database check reported `changed_db=false`.
 `hughesq-001` remains exactly `status='on_hold'`.
+
+## 2026-07-17 Pre-Spend Pilot Context Gate
+
+### Operational Gap And Permanent Control
+
+Pilot validation already refused to run critics when the workspace lacked a
+meaningful business profile or verified fact. Enrollment did not apply the
+same precondition, however, and the candidate queue exposed no readiness
+diagnostic. An operator could therefore consume the immutable one-user or
+one-client cohort slot and discover the context problem only after attempting
+validation.
+
+Enrollment now loads the same canonical, tenant-scoped critic context used by
+validation before writing either the consent receipt or approval settings. A
+missing profile record returns `pilot_context_unavailable`; an empty profile
+and fact set returns `pilot_context_not_ready` with aggregate counts. Neither
+path writes an enrollment, settings row, decision, or AI usage receipt.
+Validation independently repeats the context check, so later profile removal
+also fails closed.
+
+The candidate query derives readiness from at most 80 tenant-scoped verified
+fact contents and the exact owner/client profile. Those values remain inside
+the Worker. Its response contains only:
+
+- `contextReady`;
+- the canonical readiness reason;
+- meaningful profile-field count; and
+- verified-fact count.
+
+The admin card shows separate enrollment and context badges, explains the
+missing prerequisite before action, and disables both enrollment and
+validation while context is incomplete. It also states that critics and AI
+spend remain blocked. Customer consent remains separately required for a
+client candidate and is still not consent to publish.
+
+Two new mandatory offline release checks pin the enrollment-before-context
+failure path and the privacy-safe candidate diagnostics:
+
+- `pilot_context_before_enrollment`
+- `pilot_context_candidate_diagnostics`
+
+### Verification And Staging Runtime
+
+Source commit `372930d0da937ef561c5df28426513c6dba3f04e`
+passed GitHub CI run `29591972853`, including frontend, Worker, Shopify, hold,
+and forbidden Facebook scheduling guards. Locally, the complete Worker suite
+passed 95 files and 1,205 tests, strict Worker TypeScript passed, the frontend
+suite passed 17 files and 200 tests, frontend TypeScript passed, the
+production build passed, and the staging Wrangler dry run resolved only
+`socialai-db-staging`.
+
+Matching staging Worker version
+`281399b5-16ca-428e-8c84-392fc6814f02` was deployed at
+`2026-07-17T15:26:12.639Z`. Release enforcement, Protected Autopilot, and
+organic-reach application remained disabled. Public health returned HTTP 200;
+the unauthenticated candidate endpoint returned HTTP 401.
+
+The logged-in frontend session did not expose a supported in-memory Clerk
+token handle. No cookie, browser storage, network credential interception, or
+token output was attempted, so an authenticated candidate GET is not claimed
+as runtime evidence.
+
+Cloudflare naturally invoked the newly deployed pilot at
+`2026-07-17 15:30:57` UTC. Cron receipt `6300` succeeded with one candidate
+considered, `context_not_ready=1`, zero evaluations, zero reused or competing
+claims, zero budget skips, zero invalid rows, and zero errors. Readiness
+snapshot `0331c777-9394-40e4-b55d-9db5a2678711` remained safely red with zero
+eligible pilot decisions.
+
+Before and after deployment, staging retained exactly one owner enrollment and
+one settings row. The QA Draft remained unscheduled, text-only, 168 characters,
+and media-free. It retained zero decisions, while the complete staging
+`ai_usage` ledger retained zero rows. The owner profile remained the empty JSON
+object and had zero verified facts. No profile, fact, client, post, consent,
+schedule, or publication data was created to force the proof.
+
+Credential-free evidence:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-pilot-context-readiness-proof-2026-07-17T15-33-00-000Z.json`
+- SHA-256:
+  `B59BDDF0BBABC0282F59C36D444D88E2C1A8F49A54B3E111B0323DE9D424EAFB`
+
+### Production Boundary And Next Gate
+
+Production was not migrated, deployed, or mutated. It remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; its `ai_usage` table still has no v45
+column, and `hughesq-001` remains exactly `status='on_hold'`.
+
+This closes the operator-visibility and premature-enrollment defect. It does
+not create genuine context, customer consent, a paid pilot evaluation, or
+attributable cost evidence. The next gate remains an explicit, authorized
+owner-self staging business profile or a separately attested client profile;
+neither will be fabricated or copied implicitly.
