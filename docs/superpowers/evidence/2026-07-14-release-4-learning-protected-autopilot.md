@@ -1081,3 +1081,77 @@ explicitly consented active client, 25 additional genuine decisions across the
 two-workspace cohort, 30 total independent adjudications, complete 168-hour real
 publication outcomes, authenticated staging ownership evidence, and every
 documented replay, publishing-regression, tenancy, and kill-switch proof.
+
+## 2026-07-17 Independent Critic Provider Contract Recheck
+
+### Historical Failure Diagnosis
+
+The five current production owner decisions were re-examined read-only after
+the lane-aware calculation exposed weak independent-critic availability. The
+provider requests themselves had returned model output. The unavailable
+verdicts came from strict parsing of:
+
+- fenced JSON;
+- omitted repairs for a repairable warning;
+- invalid verdict enum values; and
+- an invalid nested `kind` even though the canonical outer key was correct.
+
+Each failure predates the corresponding parser hardening already merged into
+the current source: fenced JSON normalization, strict-schema retry, explicit
+enum instructions, canonical outer-key handling, a larger output budget, and
+contradictory-unavailable rejection. No current parser failure was reproduced,
+so no runtime rewrite was made.
+
+The production collector candidate predicate was also executed directly using
+IDs and receipt counts only. All five owner drafts are correctly enrolled and
+otherwise valid, but each has exactly one terminal release decision and exactly
+one complete immutable receipt. The collector therefore excludes all five by
+design. Re-running or overwriting those receipts would corrupt the audit trail
+and falsely convert historical output into post-fix evidence.
+
+### Synthetic Live Provider Proof
+
+The exact current-source text council, business-harm critic, and Release Judge
+were exercised with a synthetic cafe fixture. AI usage metering was disabled
+with the staging environment setting; no D1 binding was supplied. The check
+used no customer content and had no enrollment, scheduling, publishing, or
+production mutation capability.
+
+The live result completed in 6,608 milliseconds:
+
+- brand, fact, repetition, and platform returned available `pass` verdicts;
+- business harm returned an available `pass` verdict;
+- the Release Judge returned `pass_green` with status `available`;
+- each stage completed in one high-level call through
+  `anthropic/claude-haiku-4-5`; and
+- OpenRouter was configured as the fallback but was not needed.
+
+Credential-free evidence:
+
+- Artifact:
+  `D:\GitHubBackup\SocialAi\release-evidence\learning-critic-provider-smoke-2026-07-17T10-45-18-092Z.json`
+- Artifact SHA-256:
+  `6D3D0AAE63A96D65591298ABAED83060DE863286E80BB68C14745911B8122093`
+- Source commit:
+  `adcd09ca88b8889b2deb6c12ec278c6aee5dcf50`
+
+The artifact explicitly records `gateEligible=false`,
+`customerDataUsed=false`, `databaseWritesEnabled=false`, and
+`productionMutation=false`. It is provider-contract health evidence only. It
+does not prove the deployed production Worker path and cannot replace genuine
+immutable owner and consented-client pilot decisions.
+
+### Production Remains Unchanged And Gate-Closed
+
+No production deploy or production write was performed. The final read-only
+query again returned `hughesq-001` as exactly `status='on_hold'`, with
+`changed_db=false` and `rows_written=0`. The latest production readiness
+evaluation at `2026-07-17T10:45:58.761Z` remained `ready=0`, with five owner
+decisions and zero client decisions.
+
+The original schema-handling issue is rectified in current source and the live
+provider contract is healthy, but the rollout remains not ready. The next
+eligible evidence must come from a genuinely new owner draft created through
+normal product use; an explicitly consented active client is still required for
+the second workspace. Historical receipts, synthetic fixtures, and operator
+replays remain excluded from promotion calculations.
