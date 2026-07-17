@@ -1394,3 +1394,113 @@ staging Clerk, JWT, or signed-embed verification credential is available.
 Authentication was not weakened and no credential was copied. This increment
 creates no consent, enrollment, post, schedule, adjudication, outcome,
 publication, or customer-status mutation and does not count toward promotion.
+
+## 2026-07-17 Authenticated Record-Only Pilot And Critic Repair Safety
+
+### Staging Authentication Was Constrained, Not Bypassed
+
+The isolated staging Worker now accepts Clerk bearer authentication only when
+both staging-only constraints pass: the token subject is in the exact
+`STAGING_AUTH_ALLOWED_USER_IDS` allowlist and the Clerk `azp` claim matches
+`https://socialaistudio.au`. The global staging guard requires both settings
+to exist and fails closed when either is missing. It reuses the verified
+identity in route middleware rather than weakening the normal Clerk path.
+
+Only the public Clerk JWT signing key was installed in staging. No production
+secret, bearer token, or browser credential was written to disk or committed.
+An unauthenticated owned route returned `401`; the allowlisted owner returned
+`200`; the learning admin route returned `403` before bootstrap and `200`
+after the normal authenticated user bootstrap plus one documented,
+staging-only admin promotion. The promotion changed exactly one isolated
+staging row.
+
+The authenticated owner then enrolled only their own workspace in the
+current-policy approval pilot. The enrollment is immutable, record-only, and
+uses `consent_basis='owner_self'`. It has no Protected Autopilot consent,
+no autopublish policy, a zero experiment rate, and a bounded 500-cent monthly
+AI budget.
+
+### Live Pilot Findings And Repairs
+
+The live record-only pilot exposed a genuine critic defect before promotion.
+An independent fact critic proposed adding unsupported metrics, client counts,
+testimonials, and case studies as repairs. The pipeline held the Draft and did
+not apply or publish those suggestions, but they were unsafe to retain as
+repair input. The repair path now:
+
+- normalizes fact warnings to one removal-only instruction;
+- tells every critic that rhetorical questions are not facts and recent posts
+  are repetition context only;
+- validates every independently repaired caption against deterministic
+  fabrication and fact checks before reuse; and
+- rejects any critic response that attaches repairs to `pass`, `block`, or
+  `unavailable`, forcing a strict retry or fail-closed result.
+
+A claim-free Draft produced an internal `pass_green` after two bounded
+repairs, but the persisted decision correctly remained `hold_amber` because
+the resulting candidate differed from the source Draft. A second distinct
+claim-free Draft remained amber after genuine repetition warnings and a
+release-critical unavailable harm verdict caused by the intentionally empty
+staging business profile. Neither result was relabelled as a green proof.
+
+A new post-deployment synthetic red-team Draft made an absolute revenue
+guarantee. The real pipeline returned `block_red` with one attempt, no repair,
+critical fact and business-harm blocks, `sourceStatus='Draft'`, and
+`postMutated=false`. A malformed non-warning repair in that receipt motivated
+the final parser hardening; that final parser-only commit has full automated
+and staging-deployment proof, but no second authenticated live decision is
+claimed for it.
+
+All five staging fixtures remain text-only Drafts with null schedules, images,
+and videos. Staging contains zero publication events, zero delivery receipts,
+zero outcomes, zero outcome attempts, and zero approved media assets.
+
+### Final Staging State
+
+The final branch head is
+`301221d33914d76d662c34fc773b06ef0d46f0c8`. Staging runs Worker version
+`d94fcc79-a543-4cc4-b9f9-d94cedf87e6f` against only
+`socialai-db-staging`. Its deployment still has:
+
+- `LEARNING_BRAIN_ENABLED="true"`;
+- `LEARNING_RELEASE_ENFORCEMENT="false"`;
+- `LEARNING_AUTOPILOT_ENABLED="false"`;
+- `ORGANIC_REACH_ENABLED="true"`; and
+- `ORGANIC_REACH_APPLY_ENABLED="false"`.
+
+Focused critic and preflight verification passed 42 tests. The complete Worker
+suite passed 92 files and 1,180 tests, strict Worker TypeScript passed, and the
+staging Wrangler dry-run targeted the isolated D1 with all three
+behavior-changing flags disabled. GitHub PR `#209` remains draft and
+mergeable; its CI and current Pages checks passed at the exact final head.
+
+The final staging readiness cron succeeded at
+`2026-07-17T12:15:56.495Z` and persisted `ready=0`. It observed five owner
+decisions in one workspace, zero client decisions, zero adjudications, and
+failed pilot-volume, cohort, false-hold, availability, prediction, ranking,
+and cost gates. This is partial live safety evidence, not a promotion
+certificate.
+
+The credential-free artifact and verified byte-hash sidecar are:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\staging-authenticated-learning-pilot-proof-2026-07-17T12-16-35-438Z.json`
+- SHA-256:
+  `95BCECC26EED37AAD9950D951CF1A87586834DB073CD1C6F1B63EEC85541CFC4`
+
+### Production Remains Unchanged And Gate-Closed
+
+No production Worker deployment, variable update, consent, customer
+enrollment, adjudication, release-evidence submission, or customer-status
+mutation was performed. Production remains on version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; direct health returned `200`; all
+three behavior-changing flags remain false. The latest production readiness
+receipt at `2026-07-17T12:15:56.474Z` remains `ready=0`. Production has zero
+Protected Autopilot workspaces, zero autopublish consents, and zero
+learning-related publication events or delivery receipts in the preceding
+day.
+
+Read-only D1 verification returned `hughesq-001` as exactly
+`status='on_hold'`. Every production query reported `changed_db=false`,
+`changes=0`, and `rows_written=0`. Promotion remains blocked until genuine
+consented client evidence, unchanged green decisions, adjudications, required
+volume, quality, cost, prediction, and all other documented gates pass.
