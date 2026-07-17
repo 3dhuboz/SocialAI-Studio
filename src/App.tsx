@@ -15,6 +15,7 @@ import { useAuth } from './contexts/AuthContext';
 import { useDb } from './hooks/useDb';
 import { mapDbPostToSocialPost, isNotConnectedError } from './services/db';
 import { getPaypalManageUrl } from './utils/paypal';
+import { REVIEWED_IMAGE_CONCURRENCY, runWithConcurrency } from './utils/asyncPool';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 // PricingTable is modal-gated (only mounted when showPricing is true).
@@ -2141,38 +2142,28 @@ const Dashboard: React.FC = () => {
       .filter(({ post }) => isSmartPostSafetyCleared(post));
     setAutoGenSet(new Set(candidates.map(({ index }) => index)));
     setImgGenDone(0);
-    let cursor = 0;
-    const generateNext = async () => {
-      while (cursor < candidates.length) {
-        const candidate = candidates[cursor];
-        cursor += 1;
-        const { post, index } = candidate;
-        const rawPrompt = post.imagePrompt || post.topic;
-        const prompt = guardSmartImagePrompt({ ...post, imagePrompt: rawPrompt });
-        try {
-          if (!prompt) continue;
-          if (prompt !== rawPrompt) {
-            setSmartPosts(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, imagePrompt: prompt } : item));
-            setSmartPostImages(prev => {
-              const next = { ...prev };
-              delete next[index];
-              return next;
-            });
-          }
-          const seedHint = `smart-auto:${index}:${post.scheduledFor}:${post.pillar || ''}:${post.topic || ''}`;
-          const img = await generateImage(prompt, post.content, seedHint);
-          if (img) setSmartPostImages(prev => ({ ...prev, [index]: img }));
-        } catch { /* the publish prewarmer remains the automatic fallback */ }
-        finally {
-          setAutoGenSet(prev => { const next = new Set(prev); next.delete(index); return next; });
-          setImgGenDone(done => done + 1);
+    await runWithConcurrency(candidates, REVIEWED_IMAGE_CONCURRENCY, async ({ post, index }) => {
+      const rawPrompt = post.imagePrompt || post.topic;
+      const prompt = guardSmartImagePrompt({ ...post, imagePrompt: rawPrompt });
+      try {
+        if (!prompt) return;
+        if (prompt !== rawPrompt) {
+          setSmartPosts(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, imagePrompt: prompt } : item));
+          setSmartPostImages(prev => {
+            const next = { ...prev };
+            delete next[index];
+            return next;
+          });
         }
+        const seedHint = `smart-auto:${index}:${post.scheduledFor}:${post.pillar || ''}:${post.topic || ''}`;
+        const img = await generateImage(prompt, post.content, seedHint);
+        if (img) setSmartPostImages(prev => ({ ...prev, [index]: img }));
+      } catch { /* the publish prewarmer remains the automatic fallback */ }
+      finally {
+        setAutoGenSet(prev => { const next = new Set(prev); next.delete(index); return next; });
+        setImgGenDone(done => done + 1);
       }
-    };
-    await Promise.all(Array.from(
-      { length: Math.min(4, candidates.length) },
-      () => generateNext(),
-    ));
+    });
   };
 
   const handleUploadImage = (idx: number) => {
@@ -2413,7 +2404,7 @@ const Dashboard: React.FC = () => {
     );
     if (missing.length === 0) return;
     const run = async () => {
-      for (const post of missing) {
+      await runWithConcurrency(missing, REVIEWED_IMAGE_CONCURRENCY, async (post) => {
         calendarAutoGenRanRef.current.add(post.id);
         setCalendarGenSet(prev => new Set(prev).add(post.id));
         try {
@@ -2434,9 +2425,9 @@ const Dashboard: React.FC = () => {
           console.warn('[autoGen] image generation failed for', post.id, e?.message);
         }
         setCalendarGenSet(prev => { const s = new Set(prev); s.delete(post.id); return s; });
-      }
+      });
     };
-    run();
+    void run().catch((error) => console.warn('[autoGen] image pool failed:', error));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [posts, activeTab]);
 
@@ -4850,7 +4841,7 @@ const Dashboard: React.FC = () => {
                     <p className="text-sm font-bold text-white">{safeSmartPostCount} caption-checked post{safeSmartPostCount === 1 ? '' : 's'} ready</p>
                     {autoGenSet.size > 0 ? (
                       <p className="text-xs text-amber-400 flex items-center gap-1">
-                        <Loader2 size={10} className="animate-spin" /> Generating and reviewing images four at a time… {imgGenDone}/{safeSmartPostCount}
+                        <Loader2 size={10} className="animate-spin" /> Generating and reviewing images in parallel… {imgGenDone}/{safeSmartPostCount}
                       </p>
                     ) : (
                       <p className="text-xs text-white/30">
