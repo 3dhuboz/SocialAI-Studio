@@ -19,7 +19,7 @@ const VERDICTS = new Set(['pass', 'warn_repairable', 'block', 'unavailable']);
 const SEVERITIES = new Set(['advisory', 'release_critical']);
 
 export const STRICT_CRITIC_SCHEMA_INSTRUCTIONS =
-  'Each requested critic value must contain verdict, severity, confidence, evidence, and repairs. The JSON object key is the canonical critic kind. Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable". Severity must be exactly one of "advisory" or "release_critical". Confidence must be a number from 0 to 1. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair.';
+  'Each requested critic value must contain verdict, severity, confidence, evidence, and repairs. The JSON object key is the canonical critic kind. Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable". Severity must be exactly one of "advisory" or "release_critical". Confidence must be a number from 0 to 1. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair. Use unavailable only when the critic genuinely cannot evaluate; unavailable must be release_critical with confidence 0.';
 
 function strictCriticStrings(
   value: unknown,
@@ -75,6 +75,12 @@ export function parseCriticResult(
   if (row.verdict === 'warn_repairable' && repairs.length === 0) {
     throw new Error(`Missing ${expectedKind} repair`);
   }
+  if (row.verdict === 'unavailable' && row.severity !== 'release_critical') {
+    throw new Error(`Invalid ${expectedKind} unavailable severity`);
+  }
+  if (row.verdict === 'unavailable' && confidence !== 0) {
+    throw new Error(`Invalid ${expectedKind} unavailable confidence`);
+  }
   return {
     kind: expectedKind,
     verdict: row.verdict as CriticVerdict,
@@ -126,6 +132,7 @@ export async function runTextCriticCouncil(
     wrapUntrusted(context.verifiedFacts.join('\n'), 'verified_facts', { maxLen: 8_000 }),
     wrapUntrusted(context.forbiddenSubjects.join('\n'), 'forbidden_subjects'),
     wrapUntrusted(context.recentPostDigests.join('\n'), 'recent_posts', { maxLen: 8_000 }),
+    'No factual claims to verify means pass, not unavailable. A missing risk is a pass; unavailable is only for a genuine inability to evaluate.',
     `Return exactly one JSON object keyed by brand, fact, repetition, and platform. ${STRICT_CRITIC_SCHEMA_INSTRUCTIONS}`,
   ].join('\n\n');
 
@@ -164,9 +171,12 @@ export async function callStrictCritics(
 ): Promise<CriticResult[]> {
   let validationError: unknown = new Error('Critic response failed strict validation');
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const validationMessage = validationError instanceof Error
+      ? validationError.message
+      : String(validationError);
     const attemptPrompt = attempt === 0
       ? prompt
-      : `${prompt}\n\nThe previous output failed strict schema validation. Return the complete corrected JSON object only.`;
+      : `${prompt}\n\nThe previous output failed strict schema validation: ${validationMessage}. Return the complete corrected JSON object only.`;
     const response = await call(systemPrompt, attemptPrompt, context);
     try {
       const parsed = parseExactCriticObject(response.text, expectedKinds);
