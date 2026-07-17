@@ -435,6 +435,15 @@ describe('independent model critics', () => {
     ).toThrow('Missing fact repair');
   });
 
+  it('rejects repair suggestions on non-repairable verdicts', () => {
+    expect(() => parseCriticResult({
+      ...critic('fact'),
+      verdict: 'block',
+      severity: 'release_critical',
+      repairs: ['Add a money-back guarantee.'],
+    }, 'fact')).toThrow('Unexpected fact repair');
+  });
+
   it('replaces unsafe model-proposed fact proof with removal-only guidance', () => {
     const result = parseCriticResult({
       ...critic('fact'),

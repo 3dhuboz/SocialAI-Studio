@@ -78,6 +78,9 @@ export function parseCriticResult(
   if (row.verdict === 'warn_repairable' && repairs.length === 0) {
     throw new Error(`Missing ${expectedKind} repair`);
   }
+  if (row.verdict !== 'warn_repairable' && repairs.length > 0) {
+    throw new Error(`Unexpected ${expectedKind} repair`);
+  }
   if (row.verdict === 'unavailable' && row.severity !== 'release_critical') {
     throw new Error(`Invalid ${expectedKind} unavailable severity`);
   }
