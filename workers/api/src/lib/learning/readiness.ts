@@ -228,12 +228,17 @@ export function buildReadinessMetrics(
   const pilotDecisions = decisions.filter((decision) =>
     decision.mode === 'approval'
     && (decision.owner_kind === 'user' || decision.owner_kind === 'client'));
-  const latestVerdicts = new Map<string, PilotVerdictRow>();
+  const latestCriticSlots = new Map<string, { attempt: number; available: boolean }>();
   for (const verdict of verdicts) {
     if (!BASE_REQUIRED_CRITICS.includes(verdict.critic_kind)) continue;
     const key = `${verdict.decision_id}\u0000${verdict.critic_kind}`;
-    const current = latestVerdicts.get(key);
-    if (!current || verdict.attempt > current.attempt) latestVerdicts.set(key, verdict);
+    const current = latestCriticSlots.get(key);
+    const available = verdict.verdict !== 'unavailable';
+    if (!current || verdict.attempt > current.attempt) {
+      latestCriticSlots.set(key, { attempt: verdict.attempt, available });
+    } else if (verdict.attempt === current.attempt && available && !current.available) {
+      latestCriticSlots.set(key, { attempt: verdict.attempt, available: true });
+    }
   }
 
   const expectedSlots = pilotDecisions.length * BASE_REQUIRED_CRITICS.length;
@@ -243,11 +248,11 @@ export function buildReadinessMetrics(
   for (const decision of pilotDecisions) {
     const summary = parseSummary(decision.summary_json);
     const hasEveryCritic = BASE_REQUIRED_CRITICS.every((kind) =>
-      latestVerdicts.has(`${decision.id}\u0000${kind}`));
+      latestCriticSlots.has(`${decision.id}\u0000${kind}`));
     if (summary.persistenceState === 'complete' && hasEveryCritic) completeReceipts += 1;
     for (const kind of BASE_REQUIRED_CRITICS) {
-      const verdict = latestVerdicts.get(`${decision.id}\u0000${kind}`);
-      if (verdict && verdict.verdict !== 'unavailable') availableSlots += 1;
+      const slot = latestCriticSlots.get(`${decision.id}\u0000${kind}`);
+      if (slot?.available) availableSlots += 1;
     }
     const predicted = typeof summary.predictedOutcomeScore === 'number'
       ? summary.predictedOutcomeScore

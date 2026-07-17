@@ -298,6 +298,39 @@ describe('learning release readiness', () => {
     });
   });
 
+  it('counts a required critic slot when any fallback is available on the latest attempt', () => {
+    const decisions: PilotDecisionRow[] = [{
+      id: 'decision-fallback',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    }];
+    const verdicts: PilotVerdictRow[] = [
+      {
+        decision_id: 'decision-fallback', critic_kind: 'brand',
+        verdict: 'unavailable', attempt: 0,
+      },
+      ...(['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const)
+        .map((criticKind) => ({
+          decision_id: 'decision-fallback', critic_kind: criticKind,
+          verdict: 'pass' as const, attempt: 0,
+        })),
+    ];
+
+    expect(buildReadinessMetrics(decisions, verdicts, []).requiredAvailability).toBe(1);
+    expect(buildReadinessMetrics(decisions, [...verdicts].reverse(), []).requiredAvailability)
+      .toBe(1);
+  });
+
   it('treats latest unavailable critics, incomplete receipts, bypasses and missing cost as unsafe', () => {
     const decisions: PilotDecisionRow[] = [{
       id: 'decision-1',
@@ -315,11 +348,15 @@ describe('learning release readiness', () => {
       adjudication_severity: 'release_critical',
     }];
     const verdicts: PilotVerdictRow[] = [
-      { decision_id: 'decision-1', critic_kind: 'brand', verdict: 'pass', attempt: 0 },
+      ...(['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const)
+        .map((criticKind) => ({
+          decision_id: 'decision-1', critic_kind: criticKind,
+          verdict: 'pass' as const, attempt: 0,
+        })),
       { decision_id: 'decision-1', critic_kind: 'brand', verdict: 'unavailable', attempt: 1 },
     ];
     const metrics = buildReadinessMetrics(decisions, verdicts, []);
-    expect(metrics.requiredAvailability).toBe(0);
+    expect(metrics.requiredAvailability).toBe(0.8);
     expect(metrics.decisionReceiptCoverage).toBe(0);
     expect(metrics.falseHoldRate).toBe(1);
     expect(metrics.criticalBypasses).toBe(1);
