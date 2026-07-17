@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../env';
 import {
+  assertSafeIndependentRepair,
   buildReleaseContentHash,
   evaluateReleasePreflight,
   runAndPersistReleasePipeline,
+  TEXT_REPAIR_SAFETY_RULES,
   type PublishablePost,
 } from '../lib/learning/release-preflight';
 import type { CriticResult } from '../lib/learning/critic-types';
@@ -330,5 +332,46 @@ describe('runAndPersistReleasePipeline', () => {
     });
 
     expect(new Set([noMedia, image, videoPending, videoReady]).size).toBe(4);
+  });
+});
+
+describe('independent repair safety', () => {
+  const candidate = {
+    userId: 'u1',
+    clientId: null,
+    ownerKind: 'user' as const,
+    ownerId: 'u1',
+    postId: 'p1',
+    mode: 'approval' as const,
+    content: 'What workflow step would you simplify first?',
+    platform: 'facebook',
+    hashtags: [],
+    media: { kind: 'none' as const, url: null, thumbnailUrl: null },
+  };
+  const context = {
+    profile: { businessName: 'Penny Wise I.T' },
+    verifiedFacts: ['Penny Wise I.T builds custom software.'],
+    forbiddenSubjects: [],
+    recentPostDigests: [],
+  };
+
+  it('documents removal-only repair rules', () => {
+    expect(TEXT_REPAIR_SAFETY_RULES).toContain('remove or soften');
+    expect(TEXT_REPAIR_SAFETY_RULES).toContain('Never invent or add metrics');
+  });
+
+  it('accepts a claim-free repaired caption', () => {
+    expect(() => assertSafeIndependentRepair(candidate, context)).not.toThrow();
+  });
+
+  it('rejects newly invented metrics and testimonials', () => {
+    expect(() => assertSafeIndependentRepair({
+      ...candidate,
+      content: 'Our software saves every client 60% of their admin time.',
+    }, context)).toThrow('unsupported concrete claims');
+    expect(() => assertSafeIndependentRepair({
+      ...candidate,
+      content: 'A local owner said: "This doubled our sales."',
+    }, context)).toThrow('fabrication-pattern content');
   });
 });
