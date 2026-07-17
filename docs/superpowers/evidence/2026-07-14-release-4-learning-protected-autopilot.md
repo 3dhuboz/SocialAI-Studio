@@ -1283,3 +1283,114 @@ outcome, publication, or customer-status mutation and does not count toward
 promotion. The rollout remains in approval mode until a genuinely consented
 active client contributes real pilot evidence and every other documented gate
 passes.
+
+## 2026-07-17 Complete Offline Release-Proof Contract
+
+### Completion-Audit Finding And Repair
+
+The offline release artifact could previously report `offline_pass` after
+nineteen representative checks even though several named Customer Learning
+Brain subsystems were not mandatory members of the proof contract. The
+underlying implementations and tests existed, but an accidental omission from
+`REQUIRED_RELEASE_PROOF_CHECKS` could let a future regression in bounded
+self-repair, outcome learning, privacy aggregation, centralized egress, reach
+application, or consent gating escape the artifact.
+
+The proof contract now requires forty-seven exact test assertions covering:
+
+- tenant-scoped shadow receipts with no post mutation;
+- deterministic, independent LLM, selected-media, and Release Judge lanes;
+- two-attempt bounded repair and non-overridable critical blocks;
+- the two-workspace owner/client pilot cohort and readiness thresholds;
+- readiness persistence, green-to-red alerting, and stale-on-failure behavior;
+- explicit current consent, current tenancy proof, cost, and kill-switch gates;
+- zero processing for malformed or on-hold workspaces;
+- manual, cron, Quick Post, Calendar, Postproxy, and Graph egress;
+- Facebook/Instagram-specific reach treatments, one-variable experiments,
+  non-mutating shadow plans, and guarded apply mode;
+- immutable 24-hour, 72-hour, and 168-hour outcomes under canonical tenant
+  scope;
+- bounded confidence-weighted strategy updates and private versioned profiles;
+- ten-workspace and one-hundred-post privacy thresholds, coarse output only,
+  and deletion invalidation; and
+- literal dormant production and staging enforcement flags.
+
+The contract test was observed failing against the prior nineteen-check
+manifest, then passing after all required assertions were added. A pre-commit
+generator run found all forty-seven checks across 247 passing tests but
+correctly returned `failed_or_unreviewed` solely because the Git tree was
+dirty.
+
+The audit also caught an evidence-integrity defect before recording the new
+artifact. The `.sha256` sidecar labelled the JSON artifact path with the
+canonical payload-envelope hash rather than the hash of the artifact file
+bytes. The generator now labels the payload hash separately, calculates the
+serialized JSON file hash after writing, and stores that real file hash in the
+sidecar. A regression contract and an independent `Get-FileHash` comparison
+prove the distinction.
+
+### Authoritative Offline Artifact
+
+The clean-tree generator completed at source commit
+`98bc77639c03f6f4f44452885a23d6fd55754dd7`:
+
+- Result: `offline_pass`
+- Required checks: 47
+- Missing checks: 0
+- Failed checks: 0
+- Executed tests: 247
+- Passed tests: 247
+- Artifact:
+  `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-17T11-21-53-964Z.json`
+- Canonical payload SHA-256:
+  `09561DA2981AF9D516EACC08AAD795656867BFB324C888B86F87E5B16EA3F027`
+- Artifact file SHA-256:
+  `B7269D1FD23324A272F6F717568DB367DB883A91EBCA2B7A0D0B83C69096FF4D`
+- Raw Vitest report SHA-256:
+  `CD63E1E31CDFC14B5628B4F33D43A980137CC3D566D3C715985B49490A759857`
+
+The sidecar and independently calculated artifact file hash match exactly. The
+embedded report hash and independently calculated raw-report hash also match.
+The artifact explicitly records `liveStagingProven=false`,
+`authenticatedEvidenceSubmitted=false`, `productionMutationPerformed=false`,
+and `releaseFlagsChanged=false`; it is a stronger offline replay candidate, not
+a promotion certificate.
+
+### Complete Verification
+
+- Frontend: 17 test files and 199 tests passed.
+- Worker: 90 test files and 1,169 tests passed.
+- Expanded proof suites: 247 tests passed.
+- Strict frontend and Worker TypeScript verification passed.
+- Main production build passed with 1,924 modules transformed.
+- The 70-check image/content safety smoke suite passed.
+- Shopify production build passed with 1,124 modules transformed.
+- Shopify build verification found no unresolved Vite placeholders.
+
+The Shopify build used the public committed `client_id` from
+`shopify.app.toml` only in the build process. No env file or secret was
+created.
+
+### Production Remains Unchanged And Gate-Closed
+
+No production Worker deployment or variable update was performed. Production
+remains on version `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, and direct health
+returned `200`. The deployed version still has:
+
+- `LEARNING_BRAIN_ENABLED="true"`;
+- `LEARNING_RELEASE_ENFORCEMENT="false"`;
+- `LEARNING_AUTOPILOT_ENABLED="false"`;
+- `ORGANIC_REACH_ENABLED="true"`; and
+- `ORGANIC_REACH_APPLY_ENABLED="false"`.
+
+The latest current-policy readiness evaluation at
+`2026-07-17T11:15:59.191Z` remains `ready=0`: five owner decisions, one pilot
+workspace, zero client decisions, and `pilotCohort=false`. Read-only D1
+verification returned `hughesq-001` as exactly `status='on_hold'`. Both
+statements reported `changed_db=false`, `changes=0`, and `rows_written=0`.
+
+Authenticated staging ownership evidence remains unproven because no approved
+staging Clerk, JWT, or signed-embed verification credential is available.
+Authentication was not weakened and no credential was copied. This increment
+creates no consent, enrollment, post, schedule, adjudication, outcome,
+publication, or customer-status mutation and does not count toward promotion.
