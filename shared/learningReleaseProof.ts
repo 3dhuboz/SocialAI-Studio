@@ -31,9 +31,19 @@ export interface ReleaseProofInput {
 
 export const REQUIRED_RELEASE_PROOF_CHECKS = [
   {
+    id: 'shadow_receipt_no_mutation',
+    suite: 'src/__tests__/learning-shadow.test.ts',
+    assertion: 'learning shadow evaluation creates snapshot receipts without mutating posts',
+  },
+  {
     id: 'macca_surreal_bbq',
     suite: 'src/__tests__/learning-release-pipeline.test.ts',
     assertion: 'runMediaCritic blocks the Macca surreal-BBQ anatomy regression before release',
+  },
+  {
+    id: 'bounded_self_repair',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'runReleasePipeline caps repairs at two and then holds',
   },
   {
     id: 'wrong_geography',
@@ -86,6 +96,16 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning release readiness fails closed on unavailable or ambiguous Release Judge telemetry',
   },
   {
+    id: 'release_judge_input_independence',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'runReleasePipeline never sends generator reasoning to the Release Judge',
+  },
+  {
+    id: 'release_judge_no_override',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'runReleasePipeline does not let the Release Judge override a critical content block',
+  },
+  {
     id: 'advisory_warning',
     suite: 'src/__tests__/learning-critic-reducer.test.ts',
     assertion: 'reduceCriticResults passes when every required critic passes',
@@ -111,6 +131,36 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'loadCriticContext loads Shopify context only from the canonical shop domain',
   },
   {
+    id: 'pilot_two_workspace_cohort',
+    suite: 'src/__tests__/learning-pilot-collector.test.ts',
+    assertion: 'record-only pilot collector evaluates at most one draft from each of two consented workspaces',
+  },
+  {
+    id: 'readiness_pilot_thresholds',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'learning release readiness requires enough adjudicated pilot evidence and every safety threshold',
+  },
+  {
+    id: 'readiness_monitoring_alert',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'readiness cron receipts persists every evaluation and alerts once when readiness turns green to red',
+  },
+  {
+    id: 'readiness_failure_stale',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'readiness cron receipts writes no replacement receipt when evidence collection fails',
+  },
+  {
+    id: 'protected_consent_gate',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'protected autopilot mode gates downgrades without current consent, fresh readiness, or an owner-kind proof',
+  },
+  {
+    id: 'on_hold_zero_processing',
+    suite: 'src/__tests__/learning-permanent-preflight.test.ts',
+    assertion: 'permanent release preflight makes zero critic and network calls for malformed or on-hold workspaces',
+  },
+  {
     id: 'kill_switch',
     suite: 'src/__tests__/learning-permanent-preflight.test.ts',
     assertion: 'permanent release preflight downgrades protected autopilot to approval when the emergency switch is off',
@@ -124,6 +174,96 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     id: 'publish_pass_preserved',
     suite: 'src/__tests__/publish-egress-preflight.test.ts',
     assertion: 'publishPersistedPost preserves Postproxy and Graph delivery when preflight allows it',
+  },
+  {
+    id: 'egress_manual_path',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publish egress source contracts routes manual Postproxy publishing through the orchestrator',
+  },
+  {
+    id: 'egress_cron_path',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publish egress source contracts routes cron Postproxy and final Graph publishing through the orchestrator',
+  },
+  {
+    id: 'egress_frontend_worker_only',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publish egress source contracts routes Quick Post and Calendar publishing through the Worker only',
+  },
+  {
+    id: 'egress_direct_helpers_removed',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publish egress source contracts removes every frontend direct-publish helper and banned Facebook scheduling path',
+  },
+  {
+    id: 'reach_platform_treatments',
+    suite: 'src/__tests__/reach-plan.test.ts',
+    assertion: 'reach plan determinism creates Facebook and Instagram treatments separately',
+  },
+  {
+    id: 'reach_single_variable_experiment',
+    suite: 'src/__tests__/reach-plan.test.ts',
+    assertion: 'reach plan determinism rejects experiments that change more than one variable',
+  },
+  {
+    id: 'reach_shadow_non_mutating',
+    suite: 'src/__tests__/reach-plan.test.ts',
+    assertion: 'reach plan orchestration persists shadow rationale without generating or applying media',
+  },
+  {
+    id: 'reach_apply_guardrails',
+    suite: 'src/__tests__/reach-plan.test.ts',
+    assertion: 'reach plan orchestration runs generated apply media through guardrails and critic preflight',
+  },
+  {
+    id: 'outcome_frozen_windows',
+    suite: 'src/__tests__/learning-outcome-collector.test.ts',
+    assertion: 'immutable outcome windows exposes only frozen 24, 72, and 168 hour windows',
+  },
+  {
+    id: 'outcome_immutable_once',
+    suite: 'src/__tests__/learning-outcome-collector.test.ts',
+    assertion: 'immutable outcome windows collects each canonical window once in canonical order',
+  },
+  {
+    id: 'outcome_tenant_scope',
+    suite: 'src/__tests__/learning-outcome-collector.test.ts',
+    assertion: 'due-window repository and tenant signal collection scopes user facts, tracking, and conversion reads to one canonical tenant',
+  },
+  {
+    id: 'strategy_bounded_weekly',
+    suite: 'src/__tests__/learning-strategy.test.ts',
+    assertion: 'confidence-weighted strategy learning caps upward and downward weekly changes at 0.10 after decay',
+  },
+  {
+    id: 'strategy_private_profile',
+    suite: 'src/__tests__/learning-strategy.test.ts',
+    assertion: 'weekly strategy learner learns only canonical final-window outcomes and writes a private versioned profile',
+  },
+  {
+    id: 'aggregate_workspace_threshold',
+    suite: 'src/__tests__/learning-archetype-aggregates.test.ts',
+    assertion: 'privacy-gated archetype aggregates emits nothing below ten distinct workspaces',
+  },
+  {
+    id: 'aggregate_post_threshold',
+    suite: 'src/__tests__/learning-archetype-aggregates.test.ts',
+    assertion: 'privacy-gated archetype aggregates emits nothing below one hundred distinct posts',
+  },
+  {
+    id: 'aggregate_coarse_only',
+    suite: 'src/__tests__/learning-archetype-aggregates.test.ts',
+    assertion: 'privacy-gated archetype aggregates emits only coarse fields after both privacy thresholds pass',
+  },
+  {
+    id: 'aggregate_deletion_invalidation',
+    suite: 'src/__tests__/learning-archetype-aggregates.test.ts',
+    assertion: 'privacy-gated archetype aggregates falls below threshold immediately when a deleted workspace is removed',
+  },
+  {
+    id: 'production_flags_dormant',
+    suite: 'src/__tests__/learning-config.test.ts',
+    assertion: 'learning release configuration enables shadow learning but keeps enforcement disabled in production and staging',
   },
 ] as const satisfies readonly ReleaseProofRequirement[];
 

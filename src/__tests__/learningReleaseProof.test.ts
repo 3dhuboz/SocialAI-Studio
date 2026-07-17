@@ -35,15 +35,45 @@ const baseInput: ReleaseProofInput = {
 };
 
 describe('buildReleaseProofArtifact', () => {
-  it('requires lane-aware critic, media, path, and Release Judge readiness proofs', () => {
+  it('requires every major Customer Learning Brain safety subsystem', () => {
     expect(REQUIRED_RELEASE_PROOF_CHECKS.map((check) => check.id)).toEqual(
       expect.arrayContaining([
+        'shadow_receipt_no_mutation',
+        'bounded_self_repair',
         'critic_lane_independence',
         'deterministic_block_path',
         'selected_media_critic',
         'release_judge_telemetry',
+        'release_judge_input_independence',
+        'release_judge_no_override',
+        'pilot_two_workspace_cohort',
+        'readiness_pilot_thresholds',
+        'readiness_monitoring_alert',
+        'readiness_failure_stale',
+        'protected_consent_gate',
+        'on_hold_zero_processing',
+        'egress_manual_path',
+        'egress_cron_path',
+        'egress_frontend_worker_only',
+        'egress_direct_helpers_removed',
+        'reach_platform_treatments',
+        'reach_single_variable_experiment',
+        'reach_shadow_non_mutating',
+        'reach_apply_guardrails',
+        'outcome_frozen_windows',
+        'outcome_immutable_once',
+        'outcome_tenant_scope',
+        'strategy_bounded_weekly',
+        'strategy_private_profile',
+        'aggregate_workspace_threshold',
+        'aggregate_post_threshold',
+        'aggregate_coarse_only',
+        'aggregate_deletion_invalidation',
+        'production_flags_dormant',
       ]),
     );
+    expect(new Set(REQUIRED_RELEASE_PROOF_CHECKS.map((check) => check.id)).size)
+      .toBe(REQUIRED_RELEASE_PROOF_CHECKS.length);
   });
 
   it('produces a deterministic SHA-256 envelope for a complete offline pass', async () => {
