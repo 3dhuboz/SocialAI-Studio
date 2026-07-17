@@ -122,6 +122,11 @@ export type Env = {
   // observability helpers can no-op outside prod (see lib/ai-usage.ts).
   // This is a `[vars]` value in wrangler.toml, not a binding.
   ENVIRONMENT?: string;
+  // When staging trusts a Clerk public JWT key, accept bearer sessions only
+  // from these comma-separated user IDs and authorized browser origins.
+  // Both must be configured or staging bearer authentication fails closed.
+  STAGING_AUTH_ALLOWED_USER_IDS?: string;
+  STAGING_AUTH_AUTHORIZED_PARTIES?: string;
 
   // Customer Learning Brain rollout controls. Both are literal-string,
   // off-by-default flags; workspace settings can only narrow behaviour.

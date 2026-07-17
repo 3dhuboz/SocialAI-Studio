@@ -52,6 +52,7 @@ SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e"
 # Secrets — set via: npx wrangler secret put KEY_NAME
 # OPENROUTER_API_KEY      (OpenRouter API key for AI generation)
 # CLERK_SECRET_KEY        (Clerk secret key for JWT verification — sk_live_... for production)
+# STAGING_AUTH_ALLOWED_USER_IDS (staging-only comma-separated Clerk user IDs)
 # HIGGSFIELD_API_KEY      (optional future image provider; do NOT paste a CLI/browser OAuth token)
 # HIGGSFIELD_API_SECRET   (optional future image provider; only with stable server API)
 # SHOPIFY_API_SECRET      (Shopify Client Secret — signs OAuth HMACs, webhook HMACs, session JWTs)
@@ -143,7 +144,7 @@ port = 8787
 
 [env.staging]
 name = "socialai-api-staging"
-vars = { ENVIRONMENT = "staging", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev", LEARNING_BRAIN_ENABLED = "true", LEARNING_RELEASE_ENFORCEMENT = "false", LEARNING_AUTOPILOT_ENABLED = "false", ORGANIC_REACH_ENABLED = "true", ORGANIC_REACH_APPLY_ENABLED = "false", SHOPIFY_APP_URL = "https://app.socialaistudio.au", SHOPIFY_APP_SCOPES = "read_products", SHOPIFY_FORCE_TEST_SHOPS = "socialai-dev-store.myshopify.com", SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e" }
+vars = { ENVIRONMENT = "staging", STAGING_AUTH_AUTHORIZED_PARTIES = "https://socialaistudio.au", R2_REELS_PUBLIC_BASE = "https://pub-cff7bdfbd7204e129ae671d65d62b20e.r2.dev", LEARNING_BRAIN_ENABLED = "true", LEARNING_RELEASE_ENFORCEMENT = "false", LEARNING_AUTOPILOT_ENABLED = "false", ORGANIC_REACH_ENABLED = "true", ORGANIC_REACH_APPLY_ENABLED = "false", SHOPIFY_APP_URL = "https://app.socialaistudio.au", SHOPIFY_APP_SCOPES = "read_products", SHOPIFY_FORCE_TEST_SHOPS = "socialai-dev-store.myshopify.com", SHOPIFY_API_KEY = "f191b1dcbd73ce52f9c4b0d27591545e" }
 
 # Staging D1 — created 2026-05-17 via `npx wrangler d1 create socialai-db-staging`.
 # Schema bootstrapped via `wrangler d1 export socialai-db --remote` followed by
