@@ -884,3 +884,71 @@ proof does not count toward promotion. Promotion still requires an explicitly
 consented active client, 30 genuine two-workspace decisions, 30 independent
 adjudications, complete 168-hour real publication outcomes, and all documented
 replay, regression, tenancy, and kill-switch evidence.
+
+## 2026-07-17 Exact-Workspace Pilot Consent Binding
+
+### Consent And Cohort Race Repair
+
+The admin pilot queue previously reused one customer-consent checkbox and note
+across every unenrolled client card. An operator could attest one customer and
+then submit a different client card. The enrollment schema already had the
+correct final atomic cohort lock, but the route also wrote approval settings
+before confirming that its exact immutable enrollment receipt had won that
+lock. A concurrent losing request could therefore leave settings behind even
+though the enrollment was rejected.
+
+Draft PR `#209` now binds consent state to the exact workspace key and names the
+target client in the attestation control. Every pilot action is disabled while
+another pilot action is in flight in the same admin session. On the Worker, the
+existing unique index on `(policy_version, owner_kind)` remains the final
+cohort lock. Approval settings are written only after `INSERT OR IGNORE` and a
+read-back confirm the exact user, workspace, client, owner kind, and owner ID
+receipt. A race loser returns `409` and cannot leave a stray learning mode.
+
+This repair does not infer or create consent. A client workspace still requires
+an explicit `customer_attested` note from the named customer before enrollment.
+
+### Verification And Staging Proof
+
+The new frontend and Worker regressions were observed failing before the repair.
+Verification after implementation at source commit
+`d5be49bd9ee8031677487f203d8933004ceaa23b`:
+
+- Frontend: 17 test files and 196 tests passed.
+- Worker: 90 test files and 1,161 tests passed.
+- Strict frontend and Worker TypeScript verification passed.
+- Production Vite build passed.
+- GitHub CI run `29570294337` passed frontend, Worker, Shopify, on-hold,
+  Facebook scheduling, and route-registration guards.
+- Draft PR `#209` remains unmerged.
+
+Staging Worker version `c8b53562-75e5-4a7f-a417-05f1066cffb5` returned health
+`200`. An unauthenticated enrollment request returned `401`. Read-only D1
+verification found zero posts, workspace learning settings, pilot enrollments,
+learning decisions, and critic verdicts, with `changed_db=false` and
+`rows_written=0`.
+
+Credential-free evidence:
+
+- Artifact:
+  `D:\GitHubBackup\SocialAi\release-evidence\staging-learning-pilot-consent-binding-proof-2026-07-17T09-37-19-778Z.json`
+- Artifact SHA-256:
+  `FEF336F2A382617CF18A973700F4F3635A32C3B8DD37AAD58460327BAD005CF6`
+- Canonical payload SHA-256:
+  `9087F0D28DB310E2D7F8CEAAA3C115CFA1AA7092FA138714FB1AA94DA8F3CC01`
+
+### Production Remains Unchanged And Not Ready
+
+No production deploy or mutation was performed. Production remains on Worker
+version `26c19f95-7bb2-40b2-ae72-12c2a6e330e5` with health `200`. The latest
+read-only D1 check reported one current-policy enrollment, five release
+decisions, zero adjudications, and zero current-policy release-evidence rows;
+both statements reported `changed_db=false` and `rows_written=0`. Hugheseys Que
+remains exactly `status='on_hold'`.
+
+This staging proof creates no customer consent, no pilot enrollment, no post,
+no schedule, and no publication, and it does not count toward promotion. The
+remaining gate still requires explicit client consent, 25 additional genuine
+decisions across the two-workspace cohort, 30 total independent adjudications,
+complete 168-hour real publication outcomes, and the documented release,
+replay, regression, tenancy, and kill-switch evidence.
