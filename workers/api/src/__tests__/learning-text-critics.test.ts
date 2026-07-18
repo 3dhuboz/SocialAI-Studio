@@ -238,6 +238,52 @@ describe('callIndependentJson', () => {
     expect(result.text).toBe('{"ok":true}');
   });
 
+  it('extracts a single balanced JSON object after harmless provider preamble', async () => {
+    const result = await callIndependentJson(
+      { ANTHROPIC_API_KEY: 'anthropic-key' } as Env,
+      'system',
+      'prompt',
+      {
+        operation: 'learning_harm_critic',
+        userId: 'u1',
+        clientId: null,
+        postId: 'p1',
+      },
+      {
+        callAnthropic: async () => ({
+          text: 'Here is the JSON:\n{"business_harm":{"verdict":"pass","severity":"advisory","confidence":0.92,"evidence":["checked"],"repairs":[]}}',
+        }),
+        callOpenRouter: async () => {
+          throw new Error('unexpected fallback');
+        },
+      },
+    );
+
+    expect(result.text).toBe('{"business_harm":{"verdict":"pass","severity":"advisory","confidence":0.92,"evidence":["checked"],"repairs":[]}}');
+  });
+
+  it('keeps ambiguous wrapped provider text invalid for strict parsing', async () => {
+    const result = await callIndependentJson(
+      { ANTHROPIC_API_KEY: 'anthropic-key' } as Env,
+      'system',
+      'prompt',
+      {
+        operation: 'learning_harm_critic',
+        userId: 'u1',
+        clientId: null,
+        postId: 'p1',
+      },
+      {
+        callAnthropic: async () => ({ text: 'I would use {"ok":true} for this post.' }),
+        callOpenRouter: async () => {
+          throw new Error('unexpected fallback');
+        },
+      },
+    );
+
+    expect(result.text).toBe('I would use {"ok":true} for this post.');
+  });
+
   it('fails closed when no independent provider is configured', async () => {
     await expect(
       callIndependentJson({} as Env, 'system', 'prompt', {

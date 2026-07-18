@@ -2132,3 +2132,43 @@ Protected Autopilot, and organic-reach application disabled.
 Production was not migrated, deployed, or written. It remains on Worker
 `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, and `hughesq-001` remains exactly
 `status='on_hold'`.
+
+## 2026-07-18 Pilot Continuation And Critic Adapter Hardening
+
+### Staging Status
+
+The canonical branch `codex/learning-pilot-progress` resumed from commit
+`0f0c483b20c4359e2a13546481bb4f99f120cdd0` with a clean worktree and PR
+`#209` still open, draft, merge-clean, and green.
+
+Read-only staging D1 checks found one record-only owner enrollment for
+`user_3B9YKodZsIQjLdGW8wtwd7mmBMQ`, with `mode='approval'`,
+`consent_basis='owner_self'`, and `monthly_ai_budget_usd_cents=500`.
+The latest readiness snapshots remain safely red with zero eligible pilot
+decisions, zero pilot workspaces, and `costWithinBudget=false` because there
+are no eligible decisions in the active window.
+
+The six staging Draft posts have all been evaluated once. Four produced
+`hold_amber` and two produced `block_red`; all six decisions have complete
+verdict-row parity and are explicitly disqualified as `synthetic_qa`, so they
+correctly do not count toward release readiness. The final natural cron
+decision remains the only metered pilot decision, with two attributed AI usage
+rows totaling `$0.004241`.
+
+This confirms the current blocker is not a missing cron run or accidental
+production drift. The rollout gate still requires genuine, consented,
+non-synthetic customer pilot posts with adjudicated outcomes; synthetic QA
+receipts remain audit-only.
+
+### Critic Adapter Hardening
+
+The independent critic adapter was tightened to reduce unnecessary
+`unavailable` results from harmless provider wrapping around JSON. It now
+accepts an exact JSON object, a complete Markdown JSON fence, or a single
+balanced JSON object after a harmless JSON/result preamble. Ambiguous prose
+around JSON remains invalid and continues to fail closed through the strict
+critic parser.
+
+Focused verification passed `src/__tests__/learning-text-critics.test.ts`
+with 29 tests. The full Worker suite passed 95 test files and 1,207 tests,
+and strict Worker TypeScript passed.

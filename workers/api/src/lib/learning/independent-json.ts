@@ -28,7 +28,49 @@ const INDEPENDENT_JSON_MAX_TOKENS = 2400;
 function normalizeJsonText(text: string): string {
   const trimmed = text.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return (fenced?.[1] ?? trimmed).trim();
+  const candidate = (fenced?.[1] ?? trimmed).trim();
+  if (candidate.startsWith('{') && candidate.endsWith('}')) return candidate;
+
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < candidate.length; index += 1) {
+    const char = candidate[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) start = index;
+      depth += 1;
+      continue;
+    }
+    if (char === '}') {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const objectText = candidate.slice(start, index + 1).trim();
+        const remainder = `${candidate.slice(0, start)}${candidate.slice(index + 1)}`.trim();
+        if (!remainder) return objectText;
+        if (/^(?:here(?:'s| is)?\s*(?:the\s*)?(?:json|result)?[:.\s-]*|json[:.\s-]*)$/i.test(remainder)) {
+          return objectText;
+        }
+        break;
+      }
+    }
+  }
+  return candidate;
 }
 
 export async function callIndependentJson(
