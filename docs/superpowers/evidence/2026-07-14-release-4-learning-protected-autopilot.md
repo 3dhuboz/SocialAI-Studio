@@ -2172,3 +2172,40 @@ critic parser.
 Focused verification passed `src/__tests__/learning-text-critics.test.ts`
 with 29 tests. The full Worker suite passed 95 test files and 1,207 tests,
 and strict Worker TypeScript passed.
+
+## 2026-07-18 SaaS Hardware-Drift Image Relevance Fix
+
+### Regression
+
+A Penny Wise I.T / SocialAI tech-agency post about off-the-shelf software,
+workflow mismatch, and custom app development was paired with an electronics
+repair image: a green circuit board, screwdriver, and hardware-bench styling.
+The caption was correctly classified as software/app development, but the
+`tech-saas-agency` image guardrail only rejected food, BBQ, automotive, gym,
+and similar cross-domain subjects. It did not reject PCB, microchip,
+soldering, or repair-bench imagery, so hardware-tech visuals could pass as
+"tech" while still being irrelevant to a software services post.
+
+### Fix
+
+The shared `tech-saas-agency` image guardrail now treats circuit boards, PCB,
+printed circuits, microchips, semiconductors, motherboards, soldering,
+electronics repair benches, screwdrivers, and pliers as off-domain. These
+prompts swap to the curated software/workflow scene bank before calling the
+image provider, and the negative prompt now suppresses the same hardware
+family. Caption sniffing was also widened for `custom app`, `app development`,
+`custom software`, and `off-the-shelf software` so unclassified workspaces
+still route these posts through the SaaS guardrail.
+
+The frontend archetype prompt guidance now explicitly tells generation to use
+workflow planning, content operations, office process, or customer admin
+scenes for custom app/software posts, not electronics imagery.
+
+Verification passed:
+
+- Focused Worker image safety and image-gen tests: 2 files, 127 tests.
+- Focused frontend archetype and Gemini prompt tests: 2 files, 131 tests.
+- Full Worker suite: 95 files, 1,209 tests.
+- Strict Worker TypeScript.
+- Full frontend suite: 17 files, 200 tests.
+- Production frontend build.

@@ -258,6 +258,30 @@ describe('generateImageWithGuardrails — archetype guardrails (defence-in-depth
     expect(body.negative_prompt.toLowerCase()).toContain('food');
   });
 
+  it('custom software caption + electronics image prompt swaps away from circuit-board hardware', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
+    );
+    const env = makeEnv({ userArchetype: null, photoUrls: [] });
+    const caption = [
+      "Here's the thing: off-the-shelf software is built for everyone, which means it's built for no one.",
+      "Custom app development sounds expensive until you realise how much time and money you're bleeding trying to force a generic tool to do what your business actually needs.",
+    ].join(' ');
+    await generateImageWithGuardrails(
+      env,
+      'user-1',
+      null,
+      {
+        prompt: 'macro photograph of a green circuit board beside a soldering iron and screwdriver on an electronics repair bench',
+        negativePrompt: 'people',
+      },
+      { caption, seedHint: 'custom-app-regression' },
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.prompt.toLowerCase()).not.toMatch(/\b(circuit|pcb|solder|screwdriver|repair bench|electronics repair)\b/);
+    expect(body.negative_prompt.toLowerCase()).toContain('circuit board');
+  });
+
   it('NULL archetype + non-distinctive caption → guardrails do not fire (no false-positive swap)', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ images: [{ url: 'https://x' }] }), { status: 200 }),
