@@ -3072,3 +3072,56 @@ disabled. Both environments have zero Protected Autopilot workspaces, and
 `hughesq-001` remains exactly `status='on_hold'`. No production deployment,
 migration, flag change, enrollment, publish-path change, or customer-data
 mutation occurred.
+
+### Fail-Closed Learning Cron Counter Receipts
+
+A bounded preflight audit of the natural weekly calibration path found a
+false-green telemetry edge in the shared cron dispatcher. `buildCronDetails`
+previously converted every missing, negative, fractional, non-finite, or
+otherwise invalid learning counter to zero. A malformed pilot, readiness, or
+calibration result could therefore be persisted as `success=1` with apparently
+healthy counters, even though the downstream rollout judge correctly required
+a complete non-negative integer schema.
+
+Commit `be3cb9f24ce716b9d51f803aef7ba0f74a276b45` removes that coercion.
+All allowlisted learning counters are now mandatory non-negative safe
+integers. If any counter is absent or malformed, `buildCronDetails` throws
+inside `trackCron`; the receipt is persisted with `success=0`, zero trusted
+posts, no details payload, and a bounded error. Non-learning cron behavior is
+unchanged. The integrated malformed-calibration receipt test is a mandatory
+release-proof invariant.
+
+Tests were written first and demonstrated five false-green cases. Verification
+then passed all 239 frontend/root tests, all 1,283 Worker tests, strict root
+and Worker TypeScript, and the 1,925-module production frontend build. The
+clean exact-commit proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T17-50-04-956Z.json`
+- Release-proof payload SHA-256: `109c40b3fe11f9965a9e9e4ff4da310693ebb70673fef7f93fd0a5ac578568d4`
+- Release-proof file SHA-256: `67ddfc580d31b7c556ee110505d7d4224d557b0116c2fc39cdaabfef4fe8aa38`
+
+The exact commit deployed only to staging as Worker
+`b90900b6-952a-424a-993f-8b0093f440a4`. Wrangler bound only
+`socialai-db-staging`; release enforcement, Protected Autopilot, and organic
+reach application remained disabled. The first natural post-deploy sequence
+completed successfully with strict details:
+
+- `health_sweep` receipt `id=10175` at `2026-07-19 18:00:23 UTC`
+- `learning_pilot` receipt `id=10178` at `2026-07-19 18:00:23 UTC`
+- `learning_readiness` receipt `id=10179` at `2026-07-19 18:00:24 UTC`
+
+The pilot receipt contained all nine required counters and the readiness
+receipt contained its required quarantine counter. The read-only audit
+reported `rows_written=0`. The exact live rollout judge remained `safe_hold`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T18-00-56-190Z.json`
+- Rollout payload SHA-256: `32f1433395a9b7bad6e6db0d36e4fb35ea3b12607eb0523aa027f936e836a8df`
+- Rollout file SHA-256: `b8e3b931a5108316cccd5d9c8225a68aea503c965661bb5df2e1024a5448a6c2`
+
+The first weekly calibration remains naturally scheduled for
+`2026-07-19 21:00:00 UTC` (`2026-07-20 07:00 AEST`) and was not manually
+invoked. Production remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, both environments retain zero
+Protected Autopilot workspaces, and `hughesq-001` remains exactly
+`status='on_hold'`. No production deployment, migration, flag change,
+enrollment, publish-path change, or customer-data mutation occurred.
