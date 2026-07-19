@@ -336,6 +336,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'weekly learning calibration audit records unavailable critic telemetry without treating it as an adjudication',
   },
   {
+    id: 'calibration_degraded_alert_resolution',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit resolves a degraded-run alert after a clean weekly no-op',
+  },
+  {
     id: 'calibration_weekly_order',
     suite: 'src/__tests__/learning-calibration-audit.test.ts',
     assertion: 'weekly learning calibration audit wires calibration before learning and weekly customer review',

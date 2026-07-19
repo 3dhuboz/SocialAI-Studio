@@ -1,5 +1,5 @@
 import type { Env } from '../env';
-import { fireAlert } from '../lib/alerts';
+import { fireAlert, resolveAlert } from '../lib/alerts';
 import {
   claimCalibrationAudit,
   completeCalibrationAudit,
@@ -19,6 +19,7 @@ import {
 
 const CALIBRATION_LEASE_MS = 15 * 60 * 1000;
 export const WEEKLY_CALIBRATION_BUDGET_RESERVE_CENTS = 50;
+export const LEARNING_CALIBRATION_DEGRADED_ALERT_KEY = 'learning_calibration_run_degraded';
 
 export interface EvaluateLearningCalibrationOptions {
   now?: Date;
@@ -31,6 +32,7 @@ export interface EvaluateLearningCalibrationOptions {
   markUnavailable?: typeof markCalibrationUnavailable;
   quarantine?: typeof quarantineSevereFalsePassWorkspaces;
   alert?: typeof fireAlert;
+  resolve?: typeof resolveAlert;
 }
 
 export interface LearningCalibrationResult {
@@ -86,6 +88,7 @@ export async function cronEvaluateLearningCalibration(
   const unavailable = options.markUnavailable ?? markCalibrationUnavailable;
   const quarantine = options.quarantine ?? quarantineSevereFalsePassWorkspaces;
   const alert = options.alert ?? fireAlert;
+  const resolve = options.resolve ?? resolveAlert;
 
   const candidates = await findCandidates(
     env.DB,
@@ -248,6 +251,18 @@ export async function cronEvaluateLearningCalibration(
         + 'after weekly independent calibration found a release-critical false pass; '
         + 'operator review required.',
     );
+  }
+  if (counters.unavailable > 0 || counters.errors > 0) {
+    await alert(
+      env,
+      LEARNING_CALIBRATION_DEGRADED_ALERT_KEY,
+      'warn',
+      `Weekly independent calibration run degraded: ${counters.completed} completed, `
+        + `${counters.unavailable} unavailable, ${counters.errors} errors across `
+        + `${counters.candidates_considered} candidates; operator review required.`,
+    );
+  } else {
+    await resolve(env, LEARNING_CALIBRATION_DEGRADED_ALERT_KEY);
   }
   return counters;
 }

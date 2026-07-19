@@ -9,7 +9,10 @@ import {
   markCalibrationUnavailable,
   type CalibrationCandidate,
 } from '../lib/learning/calibration-audit';
-import { cronEvaluateLearningCalibration } from '../cron/evaluate-learning-calibration';
+import {
+  LEARNING_CALIBRATION_DEGRADED_ALERT_KEY,
+  cronEvaluateLearningCalibration,
+} from '../cron/evaluate-learning-calibration';
 import type { ReleasePipelineResult } from '../lib/learning/release-pipeline';
 import { getWorkspaceMonthlyAiSpend } from '../lib/learning/workspace-mode';
 import {
@@ -362,7 +365,10 @@ describe('weekly learning calibration audit', () => {
 
   it('records unavailable critic telemetry without treating it as an adjudication', async () => {
     const item = candidate('a');
+    item.post.content = 'Private contact private.customer@example.com at https://private.example';
     const unavailable = vi.fn(async () => undefined);
+    const alert = vi.fn(async () => undefined);
+    const resolve = vi.fn(async () => undefined);
     const resultWithOutage = pipelineResult('hold_amber');
     resultWithOutage.judgeStatus = 'unavailable';
 
@@ -376,7 +382,8 @@ describe('weekly learning calibration audit', () => {
       completeAudit: async () => undefined,
       markUnavailable: unavailable,
       quarantine: async () => 0,
-      alert: async () => undefined,
+      alert,
+      resolve,
     });
 
     expect(unavailable).toHaveBeenCalledWith(
@@ -384,6 +391,41 @@ describe('weekly learning calibration audit', () => {
       expect.stringContaining('independent critic'), NOW.toISOString(),
     );
     expect(result).toMatchObject({ posts_processed: 0, unavailable: 1, errors: 0 });
+    expect(alert).toHaveBeenCalledWith(
+      expect.anything(),
+      LEARNING_CALIBRATION_DEGRADED_ALERT_KEY,
+      'warn',
+      expect.stringMatching(/0 completed.*1 unavailable.*0 errors.*1 candidates/i),
+    );
+    const alertBody = String(alert.mock.calls[0]?.[3]);
+    expect(alertBody).not.toContain('private.customer@example.com');
+    expect(alertBody).not.toContain('private.example');
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('resolves a degraded-run alert after a clean weekly no-op', async () => {
+    const alert = vi.fn(async () => undefined);
+    const resolve = vi.fn(async () => undefined);
+
+    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+      now: NOW,
+      listCandidates: async () => [],
+      quarantine: async () => 0,
+      alert,
+      resolve,
+    });
+
+    expect(result).toMatchObject({
+      candidates_considered: 0,
+      completed: 0,
+      unavailable: 0,
+      errors: 0,
+    });
+    expect(alert).not.toHaveBeenCalled();
+    expect(resolve).toHaveBeenCalledWith(
+      expect.anything(),
+      LEARNING_CALIBRATION_DEGRADED_ALERT_KEY,
+    );
   });
 
   it('does no critic work for an overlapping claim and preserves a genuine advisory hold', async () => {
