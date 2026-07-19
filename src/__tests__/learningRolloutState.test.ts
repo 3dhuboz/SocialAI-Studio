@@ -350,6 +350,47 @@ describe('learning live rollout state', () => {
     expect(() => assertReadOnlySql(PRODUCTION_ROLLOUT_SQL)).not.toThrow();
   });
 
+  it('counts only current-policy pilot samples backed by an eligible exact-hash decision', () => {
+    const [sampleEvidenceSql] = STAGING_ROLLOUT_SQL
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter(Boolean);
+
+    expect(sampleEvidenceSql).toContain('FROM learning_pilot_samples sample');
+    expect(sampleEvidenceSql).toContain('INNER JOIN learning_pilot_enrollments pen');
+    expect(sampleEvidenceSql).toContain("pen.policy_version = '2026-07-14-v1'");
+    expect(sampleEvidenceSql).toContain('INNER JOIN workspace_learning_settings w');
+    expect(sampleEvidenceSql).toContain("w.mode = 'approval'");
+    expect(sampleEvidenceSql).toContain(
+      'unixepoch(pen.consent_confirmed_at) <= unixepoch(sample.attested_at)',
+    );
+    expect(sampleEvidenceSql).toContain("sample.attestation_basis = 'customer_real_post'");
+    expect(sampleEvidenceSql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+    expect(sampleEvidenceSql).toContain('FROM learning_decisions d');
+    expect(sampleEvidenceSql).toContain('d.content_hash = sample.content_hash');
+    expect(sampleEvidenceSql).toContain("d.stage = 'release'");
+    expect(sampleEvidenceSql).toContain("d.mode = 'approval'");
+    expect(sampleEvidenceSql).toContain('FROM learning_decision_disqualifications disq');
+  });
+
+  it('counts customer consent only while its client and approval workspace remain eligible', () => {
+    const statements = STAGING_ROLLOUT_SQL
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter(Boolean);
+    const customerConsentSql = statements[4];
+
+    expect(customerConsentSql).toContain('FROM learning_pilot_enrollments pen');
+    expect(customerConsentSql).toContain('INNER JOIN workspace_learning_settings w');
+    expect(customerConsentSql).toContain('INNER JOIN clients c');
+    expect(customerConsentSql).toContain("w.mode = 'approval'");
+    expect(customerConsentSql).toContain('w.monthly_ai_budget_usd_cents > 0');
+    expect(customerConsentSql).toContain(
+      "unixepoch(pen.consent_confirmed_at) <= unixepoch('now')",
+    );
+    expect(customerConsentSql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+  });
+
   it('launches the local Wrangler CLI through Node without a Windows command shim', () => {
     const invocation = buildWranglerInvocation(['deployments', 'list']);
 

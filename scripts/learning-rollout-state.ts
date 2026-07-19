@@ -50,9 +50,81 @@ type RolloutResult = 'promotion_ready' | 'safe_hold' | 'unsafe_or_unverified';
 
 export const STAGING_ROLLOUT_SQL = `
 SELECT COUNT(*) AS pilot_samples,
-       COALESCE(SUM(CASE WHEN owner_kind = 'user' THEN 1 ELSE 0 END), 0) AS owner_samples,
-       COALESCE(SUM(CASE WHEN owner_kind = 'client' THEN 1 ELSE 0 END), 0) AS client_samples
-  FROM learning_pilot_samples;
+       COALESCE(SUM(CASE WHEN sample.owner_kind = 'user' THEN 1 ELSE 0 END), 0)
+         AS owner_samples,
+       COALESCE(SUM(CASE WHEN sample.owner_kind = 'client' THEN 1 ELSE 0 END), 0)
+         AS client_samples
+  FROM learning_pilot_samples sample
+  INNER JOIN learning_pilot_enrollments pen
+    ON pen.user_id = sample.user_id
+   AND pen.workspace_key = sample.workspace_key
+   AND pen.client_id IS sample.client_id
+   AND pen.owner_kind = sample.owner_kind
+   AND pen.owner_id = sample.owner_id
+   AND pen.policy_version = '${POLICY_VERSION}'
+   AND pen.record_only = 1
+  INNER JOIN workspace_learning_settings w
+    ON w.user_id = pen.user_id
+   AND w.workspace_key = pen.workspace_key
+   AND w.client_id IS pen.client_id
+   AND w.owner_kind = pen.owner_kind
+   AND w.owner_id = pen.owner_id
+   AND w.mode = 'approval'
+   AND w.monthly_ai_budget_usd_cents > 0
+   AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+  INNER JOIN users u
+    ON u.id = pen.user_id
+  LEFT JOIN clients c
+    ON c.id = pen.client_id
+   AND c.user_id = pen.user_id
+ WHERE unixepoch(pen.enrolled_at) <= unixepoch(sample.attested_at)
+   AND unixepoch(pen.consent_confirmed_at) <= unixepoch(sample.attested_at)
+   AND unixepoch(sample.attested_at) <= unixepoch('now')
+   AND (
+     (
+       sample.owner_kind = 'user'
+       AND sample.client_id IS NULL
+       AND sample.workspace_key = '__owner__'
+       AND sample.owner_id = sample.user_id
+       AND pen.consent_basis = 'owner_self'
+       AND sample.attestation_basis = 'owner_real_post'
+     )
+     OR (
+       sample.owner_kind = 'client'
+       AND sample.client_id IS NOT NULL
+       AND sample.workspace_key = sample.client_id
+       AND sample.owner_id = sample.client_id
+       AND pen.consent_basis = 'customer_attested'
+       AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+       AND sample.attestation_basis = 'customer_real_post'
+       AND c.id IS NOT NULL
+       AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+     )
+   )
+   AND EXISTS (
+     SELECT 1
+       FROM learning_decisions d
+      WHERE d.user_id = sample.user_id
+        AND d.workspace_key = sample.workspace_key
+        AND d.client_id IS sample.client_id
+        AND d.owner_kind = sample.owner_kind
+        AND d.owner_id = sample.owner_id
+        AND d.post_id = sample.post_id
+        AND d.content_hash = sample.content_hash
+        AND d.stage = 'release'
+        AND d.mode = 'approval'
+        AND unixepoch(d.created_at) >= unixepoch(sample.attested_at)
+        AND NOT EXISTS (
+          SELECT 1
+            FROM learning_decision_disqualifications disq
+           WHERE disq.decision_id = d.id
+             AND disq.user_id = d.user_id
+             AND disq.workspace_key = d.workspace_key
+             AND disq.client_id IS d.client_id
+             AND disq.owner_kind = d.owner_kind
+             AND disq.owner_id = d.owner_id
+        )
+   );
 SELECT COUNT(*) AS protected_workspaces
   FROM workspace_learning_settings
  WHERE mode = 'protected_autopilot';
@@ -76,11 +148,30 @@ SELECT policy_version, ready, checks_json, evaluated_at
  ORDER BY evaluated_at DESC
  LIMIT 1;
 SELECT COUNT(*) AS customer_enrollments
-  FROM learning_pilot_enrollments
- WHERE policy_version = '${POLICY_VERSION}'
-   AND owner_kind = 'client'
-   AND consent_basis = 'customer_attested'
-   AND record_only = 1;
+  FROM learning_pilot_enrollments pen
+  INNER JOIN workspace_learning_settings w
+    ON w.user_id = pen.user_id
+   AND w.workspace_key = pen.workspace_key
+   AND w.client_id IS pen.client_id
+   AND w.owner_kind = pen.owner_kind
+   AND w.owner_id = pen.owner_id
+  INNER JOIN clients c
+    ON c.id = pen.client_id
+   AND c.user_id = pen.user_id
+ WHERE pen.policy_version = '${POLICY_VERSION}'
+   AND pen.owner_kind = 'client'
+   AND pen.client_id IS NOT NULL
+   AND pen.workspace_key = pen.client_id
+   AND pen.owner_id = pen.client_id
+   AND pen.consent_basis = 'customer_attested'
+   AND pen.record_only = 1
+   AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+   AND unixepoch(pen.enrolled_at) <= unixepoch('now')
+   AND unixepoch(pen.consent_confirmed_at) <= unixepoch('now')
+   AND w.mode = 'approval'
+   AND w.monthly_ai_budget_usd_cents > 0
+   AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+   AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold';
 SELECT COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_calibration_audits' THEN 1 ELSE 0
        END), 0) AS calibration_tables,
