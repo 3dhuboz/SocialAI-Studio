@@ -2914,3 +2914,57 @@ writes, both environments have zero Protected Autopilot workspaces, and
 `hughesq-001` remains exactly `status='on_hold'`. This verifier-only change
 required no Worker deployment, database migration, flag change, enrollment,
 or customer-data mutation.
+
+### Current Consent And Exact-Sample Rollout Gate
+
+The live rollout judge previously counted every row in
+`learning_pilot_samples` and every current-policy client enrollment. The
+runtime pilot evaluator was already stricter, but the external promotion
+verifier could therefore overcount evidence that belonged to a disabled
+workspace, an on-hold client, an orphaned enrollment, a disqualified decision,
+or a sample hash that had never reached an approval-mode release decision.
+
+Commit `9cd1c1a5f42584e9efee569e79cf6d6362a97689` closes that verifier-only
+gap. The staging evidence query now counts a sample only when all of these
+conditions remain true:
+
+- the sample joins the exact canonical enrollment for policy
+  `2026-07-14-v1`;
+- its workspace remains in approval mode, has a positive monthly AI budget,
+  and has no disabled reason;
+- consent predates attestation, attestation is not future-dated, and the
+  owner/customer attestation basis matches the canonical owner kind;
+- the owner still exists and a client sample belongs to an existing non-held
+  client; and
+- an undisqualified approval-mode release decision exists for the same post
+  and exact content hash after attestation.
+
+The separate customer-consent count now also requires the exact current-policy
+client enrollment, canonical identity, non-empty consent note, non-future
+consent, an eligible approval workspace and budget, and an existing non-held
+client. Disabling the workspace, placing the client on hold, or removing the
+enrollment therefore removes it from promotion evidence without changing any
+post or publish path.
+
+Tests were written first and failed against the raw counts. Verification then
+passed 28 focused rollout tests, all 230 frontend/root tests, all 1,272 Worker
+tests, strict root and Worker TypeScript, and the 1,925-module production
+frontend build. The clean exact-commit proof passed all 106 mandatory checks
+and all 435 bound tests:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T16-44-01-883Z.json`
+- Release-proof payload SHA-256: `55c179680c17081329d62b949994618edcf998552ddf316140739e11e067c29f`
+- Release-proof file SHA-256: `f8d23807ee3d9223d0d6a45b0f06ab63271dd7cf3e9647b7adeb432fb418a565`
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T16-44-30-128Z.json`
+- Rollout payload SHA-256: `d1ee9ed0a1e12e38ab3606674976de1ae9ac7007e0438bb6478135dab98df25a`
+- Rollout file SHA-256: `1be73e0b6d3066ac7f08a3a0343c78776a5a3e0f15ce652907cd0273f907c167`
+
+The hardened SQL executed successfully against live staging and remained
+read-only. The result is `safe_hold` with zero failed safety checks, zero
+eligible samples, zero eligible customer enrollments, zero Protected Autopilot
+workspaces in both environments, and a successful natural health receipt at
+`2026-07-19 16:30:22 UTC`. Production remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; staging remains on Worker
+`6bb436cf-9d3e-414d-aaee-0a915f8a5c05`; and `hughesq-001` remains exactly
+`status='on_hold'`. No deployment, migration, flag change, enrollment,
+customer-data write, or production mutation occurred.
