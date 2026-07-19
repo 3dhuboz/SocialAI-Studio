@@ -32,7 +32,7 @@
 import type { Env } from '../env';
 import { fireAlert, resolveAlert } from '../lib/alerts';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
-import { hasCompleteGreenLearningReadinessChecks } from '../../../../shared/learning-readiness-checks';
+import { hasCompleteLearningReadinessChecksSchema } from '../../../../shared/learning-readiness-checks';
 
 /** Threshold knobs centralised here so calibration after the dark-launch
  *  week is a one-file change. Conservative defaults: prefer false-negatives
@@ -137,7 +137,7 @@ async function checkLearningReadinessReceiptSchema(env: Env): Promise<CheckResul
     // The shared schema validator below owns the fail-closed result.
   }
 
-  if (!hasCompleteGreenLearningReadinessChecks(checks)) {
+  if (!hasCompleteLearningReadinessChecksSchema(checks)) {
     throw new Error('Latest learning readiness receipt has an incomplete checks schema');
   }
 

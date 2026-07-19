@@ -371,6 +371,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'checkLearningReadinessReceiptSchema fails closed for a truncated readiness payload',
   },
   {
+    id: 'readiness_schema_health_hold_receipt',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkLearningReadinessReceiptSchema accepts a complete hold receipt with red readiness gates',
+  },
+  {
     id: 'health_sweep_failure_receipt',
     suite: 'src/__tests__/health-sweep.test.ts',
     assertion: 'cronHealthSweep continues remaining checks then fails the cron receipt when one check throws',

@@ -209,6 +209,18 @@ describe('checkLearningReadinessReceiptSchema', () => {
     });
   });
 
+  it('accepts a complete hold receipt with red readiness gates', async () => {
+    const checks = { ...learningReadinessChecks(), pilot: false, cost: false };
+    const env = makeEnv({
+      'FROM learning_release_readiness': { checks_json: JSON.stringify(checks) },
+    });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env)).resolves.toMatchObject({
+      fired: false,
+      detail: 'complete current schema',
+    });
+  });
+
   it('stays neutral before the first readiness receipt exists', async () => {
     const env = makeEnv({ 'FROM learning_release_readiness': null });
 

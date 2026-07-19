@@ -91,6 +91,7 @@ describe('buildReleaseProofArtifact', () => {
         'calibration_outage_not_label',
         'alert_schema_health_sentinel',
         'readiness_schema_health_sentinel',
+        'readiness_schema_health_hold_receipt',
         'health_sweep_failure_receipt',
         'calibration_weekly_order',
         'calibration_fresh_non_mutating',

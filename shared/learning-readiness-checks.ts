@@ -28,6 +28,10 @@ export const REQUIRED_LEARNING_READINESS_OWNER_KINDS = [
 type ReadinessCheckKey = typeof REQUIRED_LEARNING_READINESS_CHECK_KEYS[number];
 type ReadinessOwnerKind = typeof REQUIRED_LEARNING_READINESS_OWNER_KINDS[number];
 
+export type CompleteLearningReadinessChecks = Record<ReadinessCheckKey, boolean> & {
+  tenancyProofs: Record<ReadinessOwnerKind, boolean>;
+};
+
 export type CompleteGreenLearningReadinessChecks = Record<ReadinessCheckKey, true> & {
   tenancyProofs: Record<ReadinessOwnerKind, true>;
 };
@@ -36,9 +40,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function hasCompleteGreenLearningReadinessChecks(
+export function hasCompleteLearningReadinessChecksSchema(
   value: unknown,
-): value is CompleteGreenLearningReadinessChecks {
+): value is CompleteLearningReadinessChecks {
   if (!isRecord(value)) return false;
 
   const expectedKeys = new Set<string>([
@@ -51,7 +55,9 @@ export function hasCompleteGreenLearningReadinessChecks(
     || actualKeys.some((key) => !expectedKeys.has(key))
   ) return false;
 
-  if (REQUIRED_LEARNING_READINESS_CHECK_KEYS.some((key) => value[key] !== true)) {
+  if (REQUIRED_LEARNING_READINESS_CHECK_KEYS.some(
+    (key) => typeof value[key] !== 'boolean',
+  )) {
     return false;
   }
 
@@ -63,6 +69,16 @@ export function hasCompleteGreenLearningReadinessChecks(
       REQUIRED_LEARNING_READINESS_OWNER_KINDS.includes(ownerKind as ReadinessOwnerKind)
     ))
     && REQUIRED_LEARNING_READINESS_OWNER_KINDS.every(
-      (ownerKind) => tenancyProofs[ownerKind] === true,
+      (ownerKind) => typeof tenancyProofs[ownerKind] === 'boolean',
+    );
+}
+
+export function hasCompleteGreenLearningReadinessChecks(
+  value: unknown,
+): value is CompleteGreenLearningReadinessChecks {
+  return hasCompleteLearningReadinessChecksSchema(value)
+    && REQUIRED_LEARNING_READINESS_CHECK_KEYS.every((key) => value[key] === true)
+    && REQUIRED_LEARNING_READINESS_OWNER_KINDS.every(
+      (ownerKind) => value.tenancyProofs[ownerKind] === true,
     );
 }

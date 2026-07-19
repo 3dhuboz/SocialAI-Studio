@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   REQUIRED_LEARNING_READINESS_CHECK_KEYS,
+  hasCompleteLearningReadinessChecksSchema,
   hasCompleteGreenLearningReadinessChecks,
 } from '../../shared/learning-readiness-checks';
 
@@ -10,6 +11,20 @@ function greenChecks(): Record<string, unknown> {
     tenancyProofs: { user: true, client: true, shop: true },
   };
 }
+
+describe('complete learning readiness checks schema', () => {
+  it('accepts a complete hold receipt without treating it as promotion-ready', () => {
+    const checks = {
+      ...greenChecks(),
+      pilot: false,
+      cost: false,
+      tenancyProofs: { user: true, client: false, shop: true },
+    };
+
+    expect(hasCompleteLearningReadinessChecksSchema(checks)).toBe(true);
+    expect(hasCompleteGreenLearningReadinessChecks(checks)).toBe(false);
+  });
+});
 
 describe('complete green learning readiness checks', () => {
   it('accepts only the complete current readiness schema', () => {
