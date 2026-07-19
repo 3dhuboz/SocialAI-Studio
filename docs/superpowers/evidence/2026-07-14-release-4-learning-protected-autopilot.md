@@ -3459,3 +3459,92 @@ production apply flags remain false. The seven genuine evidence, consent,
 readiness, calibration, and production-schema blockers remain unsuppressed.
 No workspace was enrolled and no post, customer record, release flag, or
 production data was mutated.
+
+### Privacy-Safe Pilot Intake Diagnostics
+
+Mission Control scout receipt `workId=299` identified the remaining operator
+evidence gap: the rollout artifact counted final samples and customer consent
+but did not show the exact read-only intake preconditions needed to obtain
+those samples. A direct staging audit then established the real state:
+
+- one current-policy Penny Wise owner enrollment in record-only approval mode
+- a $5.00 monthly AI budget and no disabled reason
+- six bounded owner Draft rows
+- six immutable `synthetic_qa` exclusions covering all six Draft rows
+- zero owner attestation receipts and zero validated owner samples
+- zero client workspaces, customer enrollments, customer attestations, or
+  validated customer samples
+- zero Protected Autopilot workspaces
+
+The six drafts were authenticated staging QA fixtures. Their exclusion notes
+explicitly prohibit promotion evidence, and two deliberately contain
+impossible guaranteed-results claims. They were not reclassified, attested,
+or used as learning evidence.
+
+Commit `ed6780d` extends the existing read-only rollout verifier with a
+schema-v5, counts-only `pilotIntake` section. It records current-policy owner
+and customer enrollment receipts, active customer workspaces, attested and
+validated samples, exact enrolled-workspace candidate Draft counts, and
+synthetic-exclusion counts. Candidate and exclusion counts are bound to the
+same canonical tenant tuple as the eligible enrollment, so an enrollment for
+one workspace cannot make a different workspace appear ready.
+
+The verifier now fails its safety envelope when any intake counter is missing,
+negative, internally inconsistent, or violates the one-owner/one-customer
+pilot cohort. It distinguishes an immutable attestation receipt from a later
+validated positive sample and emits one deterministic next requirement for
+each cohort. All diagnostics are aggregate counts only and do not expose
+content, grant consent, enroll a workspace, or mutate data.
+
+Verification at the runtime commit passed:
+
+- 34 focused rollout and intake assertions
+- all 250 frontend/root tests
+- strict root TypeScript
+- `git diff --check`
+- all 114 mandatory release checks and all 479 release-proof tests
+
+The clean exact-commit proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T22-18-05-688Z.json`
+- Release-proof payload SHA-256: `501e899a0081bb458fa7047d11410efe1023e07269f08ea0fd84d919996935f9`
+- Release-proof file SHA-256: `13d2d9300e0f1f555a90f6ade7b91d3e460eaa13d6c7ccf06ec44b1f21e14bb1`
+
+The authoritative direct-command live verifier accepted all D1 results only
+after Cloudflare reported `changed_db=false` and `rows_written=0`. Its exact
+counts were owner enrollment `1`, owner candidates `0`, owner synthetic
+exclusions `6`, owner attestations `0`, owner validated samples `0`, active
+customer workspaces `0`, customer enrollments `0`, customer candidates `0`,
+customer attestations `0`, and customer validated samples `0`. It returned
+`safe_hold` with these deterministic next requirements:
+
+- owner: `create_genuine_owner_draft`
+- customer: `obtain_separately_consenting_active_customer`
+
+The normal rollout artifact is:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T22-18-42-229Z.json`
+- Rollout payload SHA-256: `9536902c7739bfdc9d6675f0482a46e794d997073eb4d38f4b7cd4b0eb88a1da`
+- Rollout file SHA-256: `edd663d984dd47c01dde5fdd2c78e4547ed7fac2e13a0a115505810015207af7`
+
+The same proof and live versions were evaluated with `--require-ready`. It
+preserved `safe_hold`, retained all seven real blockers, and returned process
+exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T22-19-34-037Z.json`
+- Require-ready payload SHA-256: `4293565cd91f310b411f0f2f8525d8a2f395d3211aff75faff8d7b253b463bb3`
+- Require-ready file SHA-256: `2b23412e55c0817ac6f056e14fd8d7955b59c52209e4942c872e2f7f7cb304fe`
+
+A discarded Wrangler file-mode probe reported `rows_written=0` but marked its
+import transaction `changed_db=true`, so it was not accepted as evidence. A
+subsequent direct SELECT audit confirmed the application state remained
+exactly one user, zero clients, six posts, one enrollment, zero samples, one
+workspace setting, six disqualifications, and zero protected workspaces. Its
+own metadata reported `changes=0`, `changed_db=false`, and `rows_written=0`.
+
+No Worker or frontend deployment, schema application, enrollment, consent,
+attestation, release-flag change, post mutation, publication, or production
+change occurred in this checkpoint. Staging remains on Worker
+`17cca808-bf93-49b6-9fc9-4b270b236a92`, production remains on Worker
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215`, and `hughesq-001` remains exactly
+`status='on_hold'`.
