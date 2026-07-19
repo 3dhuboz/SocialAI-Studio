@@ -2774,3 +2774,58 @@ No schema migration, production deployment, enrollment, content processing,
 or customer-data mutation occurred. Production remains on
 `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; both environments have zero
 Protected Autopilot workspaces and `hughesq-001` remains `status='on_hold'`.
+
+### Alert Persistence Schema Repair And Fail-Closed Gate
+
+The first post-watchdog staging audit exposed an important deployment drift:
+the Worker contained operational alert logic, but staging did not contain the
+`cron_alerts` persistence table. The alert helper had treated the missing-table
+failure as non-fatal, so health sweeps could succeed while alert incidents were
+not durable. Production was checked read-only and already contained the table
+and both required indexes.
+
+Before repairing staging, the complete staging D1 database was exported and
+hashed:
+
+- Backup: `D:\GitHubBackup\SocialAi\staging-db-exports\socialai-db-staging-pre-alert-schema-20260720-014013.sql`
+- Size: `2,555,088` bytes
+- SHA-256: `8BA619D5BE89A5BB7A2EB59A7BC9A02FBF79FC4CEDAD8B99A25044C9AF84995F`
+
+The existing idempotent `schema_v23_alerts.sql` migration was then applied to
+`socialai-db-staging` only. Cloudflare executed three statements successfully
+and returned bookmark
+`00000684-00000010-000050ad-ca93edb85d5e45ac74c2e1312a20d8ea`.
+Read-only verification confirmed `cron_alerts`,
+`idx_cron_alerts_last_fired`, and `idx_cron_alerts_unresolved`, with zero
+synthetic alert rows. The first natural 15-minute health sweep after the repair
+completed successfully as receipt `id=9999` at `2026-07-19 15:45:23 UTC`.
+The empty alert table is the correct healthy result: resolution does not invent
+rows, and calibration freshness remains neutral until the first successful
+weekly calibration receipt establishes its baseline.
+
+Commit `c22fe58b82cc5965822394c87eb7019eec3c0ffa` makes the schema invariant
+permanent in the authoritative read-only rollout judge. Artifact schema v3 now
+requires the alert table and both indexes in staging and production. Either
+environment missing any object returns `unsafe_or_unverified`; it can no longer
+silently pass as a healthy dormant rollout. Regression coverage includes both
+staging and production schema-loss cases.
+
+Verification passed 23 focused rollout tests, all 225 frontend/root tests, all
+1,269 Worker tests, strict Worker TypeScript, and the 1,925-module production
+frontend build. The clean exact-commit proof passed all 104 mandatory checks
+and all 432 bound tests:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T15-49-18-946Z.json`
+- Release-proof payload SHA-256: `f800524fbf0b868403de363948f28605aa9ab662e28178ded2c9f5dbd4490e93`
+- Release-proof file SHA-256: `85b5263d990df6807d8cfba5313541b63d334b4e84de68224e25849fe8a4d3be`
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T15-50-10-178Z.json`
+- Rollout payload SHA-256: `66e2f115df3bcdf98826a03578345c5c0f2e916d13bbb74301fbe08debbba63d`
+- Rollout file SHA-256: `e91668e1b2a47439573f09cfc3eb8f9dfadb556e5260517b26444d66cb969bd2`
+
+The live result remains `safe_hold` with zero failed safety checks. Both alert
+schema checks passed, both D1 inspections proved zero writes, both environments
+have zero Protected Autopilot workspaces, all behavior-changing flags remain
+disabled, and `hughesq-001` remains exactly `status='on_hold'`. Production
+remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; no production
+deployment, migration, flag change, enrollment, or customer-data mutation
+occurred.
