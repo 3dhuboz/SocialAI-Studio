@@ -78,8 +78,8 @@ export const ARCHETYPE_IMAGE_GUARDRAILS: Record<string, {
   fallbackScenes: string[];
 }> = {
   'tech-saas-agency': {
-    forbidden: /\b(?:food|restaurant|plated|plating|dining|kitchen|meal|breakfast|lunch|dinner|cuisine|cocktail|wine|pastry|pastries|loaf|loaves|sourdough|farm|paddock|livestock|cattle|sheep|tractor|crops|harvest|bbq|brisket|smoker|smoked|grill|grilled|charcoal|gym|treadmill|barbell|dumbbell|massage|salon|spa|garage|engine|axle|wrench)\b/i,
-    extraNegatives: 'food, plate, plated, restaurant, dining, kitchen, meal, beverage, candlelit, rustic wood board, bbq, smoker, grill, agriculture, farm, livestock, gym, yoga mat, automotive, garage',
+    forbidden: /\b(?:food|restaurant|plated|plating|dining|kitchen|meal|breakfast|lunch|dinner|cuisine|cocktail|wine|pastry|pastries|loaf|loaves|sourdough|farm|paddock|livestock|cattle|sheep|tractor|crops|harvest|bbq|brisket|smoker|smoked|grill|grilled|charcoal|gym|treadmill|barbell|dumbbell|massage|salon|spa|garage|engine|axle|wrench|circuit\s*board|pcb|printed\s+circuit|microchip|computer\s+chip|semiconductor|motherboard|solder|soldering|electronics?\s+(?:bench|repair|board|component)|repair\s+bench|screwdriver|pliers)\b/i,
+    extraNegatives: 'food, plate, plated, restaurant, dining, kitchen, meal, beverage, candlelit, rustic wood board, bbq, smoker, grill, agriculture, farm, livestock, gym, yoga mat, automotive, garage, electronics repair, circuit board, PCB, printed circuit board, motherboard, microchip, semiconductor, soldering iron, screwdriver, pliers, repair bench',
     // 14 photographable scenes covering: workspaces, hands-on-objects,
     // regional Australian context, books/reading, founder/maker moments,
     // travel, pure objects. Wider variety so a week of bulk-generated SaaS
@@ -323,6 +323,7 @@ export const CAPTION_ARCHETYPE_KEYWORDS: Record<string, string[]> = {
     'multi-client', 'whitelabel', 'agency dashboard', 'agency tools',
     'social media tip', 'social media owner', 'cms', 'crm',
     'subscription', 'app', 'tech company', 'i.t.',
+    'custom app', 'app development', 'custom software', 'off-the-shelf software',
     // 2026-05 widening — real SaaS marketing copy doesn't always use the
     // technical terms above. These catch posts that describe the FEATURES
     // and OUTCOMES customers buy (scheduling, engagement, publishing) so
