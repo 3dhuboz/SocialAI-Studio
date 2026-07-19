@@ -45,6 +45,13 @@ export type PublishTarget =
       videoUrl: string;
     }
   | {
+      backend: 'graph_reel';
+      pageId: string;
+      pageAccessToken: string;
+      description: string;
+      videoId: string;
+    }
+  | {
       backend: 'graph_instagram';
       accountId: string;
       pageAccessToken: string;
@@ -505,6 +512,33 @@ export async function publishPersistedPost(
         );
       }
       const base = 'https://graph.facebook.com/v21.0';
+      if ('videoId' in target) {
+        const finishUrl =
+          `${base}/${target.pageId}/video_reels`
+          + `?upload_phase=finish&video_id=${encodeURIComponent(target.videoId)}`
+          + `&video_state=PUBLISHED&description=${encodeURIComponent(target.description)}`
+          + `&access_token=${encodeURIComponent(target.pageAccessToken)}`;
+        const finishResponse = await deps.graphFetch(finishUrl, { method: 'POST' });
+        const finishData = await finishResponse.json() as {
+          success?: boolean;
+          error?: { message?: string };
+        };
+        if (!finishResponse.ok || finishData.error || finishData.success === false) {
+          throw new Error(
+            `FB reel publish: ${finishData.error?.message || finishResponse.status}`,
+          );
+        }
+        await recordDeliveryShadowEvent(env, deps, attempt, 'provider_accepted', {
+          remotePostId: target.videoId,
+          httpStatus: finishResponse.status,
+        });
+        return {
+          backend: 'graph_reel',
+          videoId: target.videoId,
+          preflight,
+        };
+      }
+
       const startResponse = await deps.graphFetch(
         `${base}/${target.pageId}/video_reels`,
         {

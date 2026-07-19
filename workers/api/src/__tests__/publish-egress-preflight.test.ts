@@ -44,6 +44,14 @@ const graphTarget = {
   init: { method: 'POST' },
 };
 
+const graphReelFinishTarget = {
+  backend: 'graph_reel' as const,
+  pageId: 'page-1',
+  pageAccessToken: 'page-token',
+  description: 'Safe reel caption',
+  videoId: 'video-1',
+};
+
 function safeDeps(calls: { critic: number; postproxy: number; graph: number }): Partial<PublishOrchestratorDeps> {
   return {
     validateWorkspace: async () => undefined,
@@ -129,6 +137,75 @@ describe('publishPersistedPost', () => {
     ).rejects.toThrow('release preflight');
 
     expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 0 });
+  });
+
+  it('runs a fresh preflight before the final Facebook reel publish phase', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    let finishUrl = '';
+    deps.graphFetch = async (input) => {
+      calls.graph += 1;
+      finishUrl = String(input);
+      return new Response('{"success":true}', { status: 200 });
+    };
+
+    const outcome = await publishPersistedPost(
+      {} as Env,
+      { ...fixturePost, post_type: 'video', video_status: 'ready' },
+      graphReelFinishTarget,
+      deps,
+    );
+
+    expect(outcome).toMatchObject({ backend: 'graph_reel', videoId: 'video-1' });
+    expect(finishUrl).toContain('/page-1/video_reels');
+    expect(finishUrl).toContain('upload_phase=finish');
+    expect(finishUrl).toContain('video_state=PUBLISHED');
+    expect(finishUrl).toContain('video_id=video-1');
+    expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 1 });
+  });
+
+  it('makes zero final Facebook reel calls when the fresh preflight holds', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    const persistHold = vi.fn(async () => undefined);
+    deps.evaluatePreflight = async () => {
+      calls.critic += 1;
+      return {
+        mode: 'enforce',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: 'reel-hold-1',
+      };
+    };
+    deps.persistHold = persistHold;
+
+    await expect(publishPersistedPost(
+      {} as Env,
+      { ...fixturePost, post_type: 'video', video_status: 'ready' },
+      graphReelFinishTarget,
+      deps,
+    )).rejects.toThrow('release preflight');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 0 });
+  });
+
+  it('makes zero final Facebook reel calls for an inactive workspace', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    deps.validateWorkspace = async () => {
+      throw new Error('workspace inactive: client is on hold');
+    };
+
+    await expect(publishPersistedPost(
+      {} as Env,
+      { ...fixturePost, post_type: 'video', video_status: 'ready' },
+      graphReelFinishTarget,
+      deps,
+    )).rejects.toThrow('workspace inactive');
+
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
   });
 
   it('preserves Postproxy and Graph delivery when preflight allows it', async () => {
@@ -584,6 +661,26 @@ describe('publish egress source contracts', () => {
     expect(source).not.toContain('kickFacebookReelUpload(');
     expect(source).not.toContain('fbRes = await fetch(`${base}/${pageId}/photos');
     expect(source).not.toContain('fbRes = await fetch(`${base}/${pageId}/feed');
+  });
+
+  it('routes the delayed Facebook reel finish phase through a fresh orchestrator preflight', () => {
+    const source = readFileSync(
+      resolve(workerRoot, 'cron/poll-pending-reels.ts'),
+      'utf8',
+    );
+
+    expect(source).toContain('publishPersistedPost');
+    expect(source).toContain("status = 'Publishing'");
+    expect(source).toContain('content, platform, hashtags, image_url');
+    expect(source).toContain('video_script, video_shots');
+    expect(source).toContain("backend: 'graph_reel'");
+    expect(source).toContain('videoId: post.fb_video_id');
+    expect(source).toContain("if (/workspace inactive/i.test(finishMessage))");
+    expect(source).toContain("SET status = 'Draft', scheduled_for = NULL");
+    expect(source).toContain("WHERE id = ? AND status = 'Draft'");
+    expect(source).not.toContain('finishFacebookReel');
+    expect(source).not.toContain('fb-page-reel-pending:');
+    expect(source).not.toContain('video_state=PUBLISHED');
   });
 
   it('records only confirmed publication completion paths for later outcome collection', () => {

@@ -2395,3 +2395,54 @@ separate authorization and customer-consent requirements for the next gate.
 The final read-only production check still showed Worker
 `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, no `learning_pilot_samples` table,
 `hughesq-001` exactly `status='on_hold'`, and `changed_db=false`.
+
+## 2026-07-19 Delayed Facebook Reel Egress Closure
+
+The publish-egress audit found one remaining delayed provider-write bypass.
+The initial Facebook Reel start and transfer phases used the centralized
+publisher, but `poll-pending-reels.ts` later sent the irreversible
+`video_state=PUBLISHED` finish request directly to Facebook. Because Facebook
+processing can take several minutes, that final call did not revalidate the
+current workspace, current post/media candidate, or current Release Judge
+decision. The poller also treated the truncated kick-time `reasoning` value as
+the publish caption and did not require the post to remain `Publishing`.
+
+The final Reel finish request now runs only through `publishPersistedPost`.
+That chokepoint validates the workspace, runs a fresh centralized release
+preflight against the current caption/media fields, writes delivery shadow
+receipts, and only then sends the Facebook finish request. The poller selects
+only `Publishing` rows, rebuilds the caption from current persisted content and
+hashtags, carries image/video/script/shot context into preflight, and never
+uses the kick-time diagnostic value as publish input. A critic hold remains a
+Draft with claims cleared; an inactive or on-hold workspace is moved to a
+non-scheduled Draft; neither path calls Facebook.
+
+Verification passed:
+
+- Focused publish-egress suite: 1 file, 28 tests.
+- Full Worker suite: 96 files, 1,222 tests.
+- Strict Worker TypeScript.
+- Full frontend suite: 17 files, 200 tests.
+- Frontend production build: 1,924 modules.
+- Strict Shopify TypeScript.
+- Shopify production build: 1,124 modules with no unresolved placeholders.
+- Static provider-write audit and `git diff --check`.
+
+Wrangler dry-run resolved only `socialai-db-staging` and confirmed release
+enforcement, Protected Autopilot, and organic-reach application all remained
+disabled. The reviewed Worker deployed only to staging as version
+`5215097e-817f-4a21-ac18-16ca5cedccf1`; `/api/health` returned
+`{"ok":true,"service":"socialai-api"}`.
+
+The first natural five-minute scheduler cycle after deployment ran at
+`2026-07-19 09:00:16` UTC. `poll_pending_reels` receipt `9485` succeeded with
+zero posts processed and no error. A paired read-only query found zero pending
+Reels and reported `changed_db=false`, so this proof made no Facebook request
+and published no customer content.
+
+Production was not migrated, deployed, or written. It remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, has no
+`learning_pilot_samples` table, and `hughesq-001` remains exactly
+`status='on_hold'`. This closes the code-level delayed-Reel bypass but does not
+supply real pilot evidence, expand the Penny Wise profile-only authorization,
+or satisfy the separate active-customer consent gate for production rollout.
