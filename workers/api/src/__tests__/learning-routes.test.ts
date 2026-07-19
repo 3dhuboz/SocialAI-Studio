@@ -477,6 +477,46 @@ describe('learning settings and release evidence routes', () => {
     }
   });
 
+  it('does not bank protected consent while operator review is pending', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 2500,
+        disabled_reason: 'severe_false_pass_pending_operator_review',
+      }],
+      'FROM learning_release_readiness': [{
+        ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+        evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'true',
+      LEARNING_AUTOPILOT_ENABLED: 'true',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/settings', {
+      method: 'PUT', headers: ownerHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 2500, experimentRate: 0,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'protected_autopilot_not_ready',
+    });
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
   it('does not skip the protected experiment ramp on first activation', async () => {
     const evaluatedAt = new Date().toISOString();
     const { db, calls } = makeRecordingD1({
@@ -565,6 +605,37 @@ describe('learning settings and release evidence routes', () => {
     const write = calls.find((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))!;
     expect(write.binds).toContain('shadow');
     await expect(response.json()).resolves.toMatchObject({ settings: { mode: 'shadow' } });
+  });
+
+  it('returns the preserved quarantine and zero experiment rate after a safer settings update', async () => {
+    const reason = 'severe_false_pass_pending_operator_review';
+    const { db } = makeRecordingD1({
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 2500, disabled_reason: reason,
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/settings', {
+      method: 'PUT', headers: ownerHeaders,
+      body: JSON.stringify({ mode: 'approval', experimentRate: 0.15 }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      settings: {
+        mode: 'shadow',
+        experimentRate: 0,
+        disabledReason: reason,
+      },
+    });
   });
 
   it('validates one real active-client draft in approval mode without mutating the post', async () => {

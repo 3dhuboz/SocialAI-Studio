@@ -33,6 +33,10 @@ describe('learning pilot cron telemetry', () => {
       errors: 0,
     });
     expect(buildCronDetails('publish', pilotResult)).toBeNull();
+    expect(JSON.parse(buildCronDetails('learning_readiness', {
+      posts_processed: 30,
+      workspaces_disabled: 2,
+    })!)).toEqual({ workspaces_disabled: 2 });
     expect(JSON.parse(buildCronDetails('learning_pilot', {
       posts_processed: -1,
       context_not_ready: Number.POSITIVE_INFINITY,
@@ -40,6 +44,18 @@ describe('learning pilot cron telemetry', () => {
       posts_processed: 0,
       context_not_ready: 0,
     });
+  });
+
+  it('persists only the quarantine count for readiness runs', async () => {
+    const { db, calls } = makeRecordingD1();
+
+    await trackCron({ DB: db } as Env, 'learning_readiness', async () => ({
+      posts_processed: 30,
+      workspaces_disabled: 2,
+    }));
+
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO cron_runs'))!;
+    expect(JSON.parse(String(insert.binds[5]))).toEqual({ workspaces_disabled: 2 });
   });
 
   it('persists the sanitized details alongside the normal cron receipt', async () => {

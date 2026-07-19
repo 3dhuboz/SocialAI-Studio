@@ -5,6 +5,7 @@ import {
   collectLearningReadiness,
   type LearningReadinessSnapshot,
 } from '../lib/learning/readiness';
+import { quarantineSevereFalsePassWorkspaces } from '../lib/learning/workspace-mode';
 
 type PreviousReadiness = { ready: number } | null;
 
@@ -18,6 +19,7 @@ export interface EvaluateLearningReadinessOptions {
   now?: Date;
   collect?: typeof collectLearningReadiness;
   loadPrevious?: (db: D1Database) => Promise<PreviousReadiness>;
+  quarantine?: typeof quarantineSevereFalsePassWorkspaces;
   persist?: (db: D1Database, input: PersistedReadinessInput) => Promise<void>;
   alert?: typeof fireAlert;
   randomId?: () => string;
@@ -64,31 +66,49 @@ function failedChecks(snapshot: LearningReadinessSnapshot): string[] {
 export async function cronEvaluateLearningReadiness(
   env: Env,
   options: EvaluateLearningReadinessOptions = {},
-): Promise<{ posts_processed: number; ready: boolean; id: string }> {
+): Promise<{
+  posts_processed: number;
+  ready: boolean;
+  id: string;
+  workspaces_disabled: number;
+}> {
   const now = options.now ?? new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('Readiness timestamp is invalid');
   const collect = options.collect ?? collectLearningReadiness;
   const readPrevious = options.loadPrevious ?? loadPrevious;
+  const quarantine = options.quarantine ?? quarantineSevereFalsePassWorkspaces;
   const persist = options.persist ?? persistReadiness;
   const alert = options.alert ?? fireAlert;
   const randomId = options.randomId ?? (() => crypto.randomUUID());
 
   const previous = await readPrevious(env.DB);
   const snapshot = await collect(env.DB, now);
+  const workspacesDisabled = await quarantine(env.DB, now.toISOString());
   const id = randomId();
   await persist(env.DB, { id, snapshot, evaluatedAt: now.toISOString() });
 
-  if (previous?.ready === 1 && !snapshot.ready) {
+  const turnedRed = previous?.ready === 1 && !snapshot.ready;
+  if (turnedRed) {
     await alert(
       env,
       'learning_readiness_green_to_red',
       'critical',
-      `Protected Autopilot readiness turned red: ${failedChecks(snapshot).join(', ')}`,
+      `Protected Autopilot readiness turned red: ${failedChecks(snapshot).join(', ')}; `
+        + `workspaces quarantined: ${workspacesDisabled}`,
+    );
+  } else if (workspacesDisabled > 0) {
+    await alert(
+      env,
+      'learning_severe_false_pass_quarantine',
+      'critical',
+      `Protected Autopilot automatically disabled for ${workspacesDisabled} workspace(s) `
+        + 'after a release-critical severe false pass; operator review required.',
     );
   }
   return {
     posts_processed: snapshot.metrics.pilotDecisions,
     ready: snapshot.ready,
     id,
+    workspaces_disabled: workspacesDisabled,
   };
 }

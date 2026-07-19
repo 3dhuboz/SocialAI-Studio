@@ -15,7 +15,13 @@ import {
   type WorkspaceCostTelemetry,
 } from '../lib/learning/readiness';
 import { cronEvaluateLearningReadiness } from '../cron/evaluate-learning-readiness';
-import { loadWorkspaceLearningMode } from '../lib/learning/workspace-mode';
+import {
+  hasWorkspaceSevereFalsePass,
+  loadWorkspaceLearningMode,
+  quarantineSevereFalsePassWorkspaces,
+  saveWorkspaceLearningSettings,
+  SEVERE_FALSE_PASS_DISABLED_REASON,
+} from '../lib/learning/workspace-mode';
 import type { LearningMode, WorkspaceOwnerKind } from '../lib/learning/types';
 
 type ModeOptions = {
@@ -28,6 +34,8 @@ type ModeOptions = {
   spendUsdCents?: number;
   telemetryCount?: number;
   tenancyProofs?: Partial<Record<WorkspaceOwnerKind, boolean>>;
+  disabledReason?: string | null;
+  severeFalsePass?: boolean;
   brain?: string;
   enforcement?: string;
   autopilot?: string;
@@ -48,7 +56,7 @@ function modeEnv(options: ModeOptions = {}): Env {
     monthly_ai_budget_usd_cents: options.budgetUsdCents === undefined
       ? 1000
       : options.budgetUsdCents,
-    disabled_reason: null,
+    disabled_reason: options.disabledReason ?? null,
   }];
   const { db } = makeRecordingD1({
     'FROM clients': [{ status: options.onHold ? 'on_hold' : 'active' }],
@@ -64,6 +72,9 @@ function modeEnv(options: ModeOptions = {}): Env {
       spend_usd: (options.spendUsdCents ?? 100) / 100,
       telemetry_count: options.telemetryCount ?? 1,
     }],
+    'INNER JOIN learning_adjudications a': options.severeFalsePass
+      ? [{ severe_false_pass: 1 }]
+      : [],
   });
   return {
     DB: db,
@@ -808,25 +819,36 @@ describe('readiness cron receipts', () => {
 
   it('persists every evaluation and alerts once when readiness turns green to red', async () => {
     const persist = vi.fn(async () => undefined);
+    const quarantine = vi.fn(async () => 2);
     const alert = vi.fn(async () => undefined);
     const env = { DB: {} as D1Database } as Env;
     const result = await cronEvaluateLearningReadiness(env, {
       now: new Date('2026-07-14T01:00:00.000Z'),
       collect: async () => redSnapshot,
       loadPrevious: async () => ({ ready: 1 }),
+      quarantine,
       persist,
       alert,
       randomId: () => 'readiness-1',
     });
 
-    expect(result).toMatchObject({ posts_processed: 30, ready: false, id: 'readiness-1' });
+    expect(result).toMatchObject({
+      posts_processed: 30,
+      ready: false,
+      id: 'readiness-1',
+      workspaces_disabled: 2,
+    });
+    expect(quarantine).toHaveBeenCalledWith(env.DB, '2026-07-14T01:00:00.000Z');
     expect(persist).toHaveBeenCalledOnce();
+    expect(quarantine.mock.invocationCallOrder[0]).toBeLessThan(
+      persist.mock.invocationCallOrder[0],
+    );
     expect(alert).toHaveBeenCalledOnce();
     expect(alert).toHaveBeenCalledWith(
       env,
       'learning_readiness_green_to_red',
       'critical',
-      expect.stringContaining('severeFalsePasses'),
+      expect.stringMatching(/severeFalsePasses.*workspaces quarantined: 2/),
     );
   });
 
@@ -845,6 +867,7 @@ describe('readiness cron receipts', () => {
         now: new Date('2026-07-14T01:00:00.000Z'),
         collect: async () => scenario.snapshot,
         loadPrevious: async () => scenario.previous,
+        quarantine: async () => 0,
         persist,
         alert,
         randomId: () => `readiness-${++sequence}`,
@@ -853,6 +876,32 @@ describe('readiness cron receipts', () => {
 
     expect(persist).toHaveBeenCalledTimes(3);
     expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('alerts when a quarantine occurs while readiness is already red', async () => {
+    const alert = vi.fn(async () => undefined);
+
+    const result = await cronEvaluateLearningReadiness(
+      { DB: {} as D1Database } as Env,
+      {
+        now: new Date('2026-07-14T01:00:00.000Z'),
+        collect: async () => redSnapshot,
+        loadPrevious: async () => ({ ready: 0 }),
+        quarantine: async () => 1,
+        persist: async () => undefined,
+        alert,
+        randomId: () => 'readiness-quarantine',
+      },
+    );
+
+    expect(result.workspaces_disabled).toBe(1);
+    expect(alert).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith(
+      expect.anything(),
+      'learning_severe_false_pass_quarantine',
+      'critical',
+      expect.stringMatching(/disabled for 1 workspace.*operator review required/),
+    );
   });
 
   it('writes no replacement receipt when evidence collection fails', async () => {
@@ -865,6 +914,72 @@ describe('readiness cron receipts', () => {
       randomId: () => 'never',
     })).rejects.toThrow('D1 unavailable');
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before persisting readiness when severe false-pass quarantine fails', async () => {
+    const persist = vi.fn(async () => undefined);
+    await expect(cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
+      collect: async () => redSnapshot,
+      loadPrevious: async () => ({ ready: 1 }),
+      quarantine: async () => { throw new Error('quarantine unavailable'); },
+      persist,
+      alert: async () => undefined,
+      randomId: () => 'never',
+    })).rejects.toThrow('quarantine unavailable');
+    expect(persist).not.toHaveBeenCalled();
+  });
+});
+
+describe('severe false-pass quarantine repository', () => {
+  const identity = {
+    userId: 'owner-1', workspaceKey: 'client-1', clientId: 'client-1',
+    ownerKind: 'client' as const, ownerId: 'client-1',
+  };
+
+  it('binds a severe false-pass lookup to the complete canonical tenant identity', async () => {
+    const { db, calls } = makeRecordingD1({
+      'INNER JOIN learning_adjudications a': [{ severe_false_pass: 1 }],
+    });
+
+    await expect(hasWorkspaceSevereFalsePass(db, identity)).resolves.toBe(true);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('a.workspace_key = d.workspace_key');
+    expect(calls[0].sql).toContain('a.client_id IS d.client_id');
+    expect(calls[0].sql).toContain("d.stage = 'release'");
+    expect(calls[0].binds).toEqual([
+      'owner-1', 'client-1', 'client-1', 'client', 'client-1',
+    ]);
+  });
+
+  it('downgrades only protected workspaces with a tenant-matched severe false pass', async () => {
+    const { db, calls } = makeRecordingD1();
+    const now = '2026-07-14T01:00:00.000Z';
+
+    await expect(quarantineSevereFalsePassWorkspaces(db, now)).resolves.toBe(0);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('run');
+    expect(calls[0].sql).toContain("WHERE mode = 'protected_autopilot'");
+    expect(calls[0].sql).toContain('d.user_id = workspace_learning_settings.user_id');
+    expect(calls[0].sql).toContain('d.client_id IS workspace_learning_settings.client_id');
+    expect(calls[0].sql).toContain("d.stage = 'release'");
+    expect(calls[0].binds).toEqual([SEVERE_FALSE_PASS_DISABLED_REASON, now]);
+  });
+
+  it('returns a sanitized count of newly quarantined workspaces', async () => {
+    const statement = {
+      bind() { return statement; },
+      async run() { return { meta: { changes: 2 } }; },
+    };
+    const db = {
+      prepare() { return statement; },
+    } as unknown as D1Database;
+
+    await expect(quarantineSevereFalsePassWorkspaces(
+      db,
+      '2026-07-14T01:00:00.000Z',
+    )).resolves.toBe(2);
   });
 });
 
@@ -895,6 +1010,14 @@ describe('protected autopilot mode gates', () => {
     const scenarios: ModeOptions[] = [
       { requested: 'protected_autopilot', consent: false },
       { requested: 'protected_autopilot', consent: true, readiness: false },
+      {
+        requested: 'protected_autopilot', consent: true,
+        disabledReason: 'severe_false_pass_pending_operator_review',
+      },
+      {
+        requested: 'protected_autopilot', consent: true,
+        severeFalsePass: true,
+      },
       {
         requested: 'protected_autopilot', consent: true,
         tenancyProofs: { client: false },
@@ -953,5 +1076,29 @@ describe('protected autopilot mode gates', () => {
       modeEnv({ requested: 'protected_autopilot', consent: true, shop }),
       shop, null, 'shop', shop, now,
     )).resolves.toBe('protected_autopilot');
+  });
+
+  it('does not let routine settings updates clear an operator-review quarantine', async () => {
+    const { db, calls } = makeRecordingD1();
+    await saveWorkspaceLearningSettings(
+      db,
+      {
+        userId: 'u1', workspaceKey: 'c1', clientId: 'c1',
+        ownerKind: 'client', ownerId: 'c1',
+      },
+      {
+        mode: 'approval',
+        autopublishConsentAt: null,
+        autopublishPolicyVersion: null,
+        experimentRate: 0,
+        monthlyAiBudgetUsdCents: 1000,
+      },
+      '2026-07-14T00:10:00.000Z',
+    );
+
+    const write = calls.find((call) => call.method === 'run');
+    expect(write?.sql).not.toContain('disabled_reason = NULL');
+    expect(write?.sql).toContain("AND excluded.mode = 'protected_autopilot' THEN 'approval'");
+    expect(write?.sql).toContain('IS NOT NULL THEN 0');
   });
 });

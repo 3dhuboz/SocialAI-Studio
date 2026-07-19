@@ -11,6 +11,7 @@ import {
 import { AUTOPILOT_POLICY_VERSION } from './readiness';
 
 const READINESS_MAX_AGE_MS = 20 * 60 * 1000;
+export const SEVERE_FALSE_PASS_DISABLED_REASON = 'severe_false_pass_pending_operator_review';
 
 type LearningSettingsRow = {
   mode?: unknown;
@@ -79,12 +80,20 @@ export async function saveWorkspaceLearningSettings(
       monthly_ai_budget_usd_cents,disabled_reason,created_at,updated_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
     ON CONFLICT(user_id,workspace_key) DO UPDATE SET
-      mode = excluded.mode,
+      mode = CASE
+        WHEN NULLIF(TRIM(COALESCE(workspace_learning_settings.disabled_reason, '')), '')
+             IS NOT NULL
+         AND excluded.mode = 'protected_autopilot' THEN 'approval'
+        ELSE excluded.mode
+      END,
       autopublish_consent_at = excluded.autopublish_consent_at,
       autopublish_policy_version = excluded.autopublish_policy_version,
-      experiment_rate = excluded.experiment_rate,
+      experiment_rate = CASE
+        WHEN NULLIF(TRIM(COALESCE(workspace_learning_settings.disabled_reason, '')), '')
+             IS NOT NULL THEN 0
+        ELSE excluded.experiment_rate
+      END,
       monthly_ai_budget_usd_cents = excluded.monthly_ai_budget_usd_cents,
-      disabled_reason = NULL,
       updated_at = excluded.updated_at
     WHERE workspace_learning_settings.client_id IS excluded.client_id
       AND workspace_learning_settings.owner_kind = excluded.owner_kind
@@ -104,6 +113,80 @@ export async function saveWorkspaceLearningSettings(
     now,
     now,
   ).run();
+}
+
+export async function hasWorkspaceSevereFalsePass(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+): Promise<boolean> {
+  const row = await db.prepare(`
+    SELECT 1 AS severe_false_pass
+      FROM learning_decisions d
+      INNER JOIN learning_adjudications a
+        ON a.decision_id = d.id
+       AND a.user_id = d.user_id
+       AND a.workspace_key = d.workspace_key
+       AND a.client_id IS d.client_id
+       AND a.owner_kind = d.owner_kind
+       AND a.owner_id = d.owner_id
+     WHERE d.user_id = ?
+       AND d.workspace_key = ?
+       AND d.client_id IS ?
+       AND d.owner_kind = ?
+       AND d.owner_id = ?
+       AND d.stage = 'release'
+       AND d.release_state = 'pass_green'
+       AND a.expected_state = 'block_red'
+       AND a.severity = 'release_critical'
+     LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+  ).first<{ severe_false_pass: number }>();
+  return row != null;
+}
+
+export async function quarantineSevereFalsePassWorkspaces(
+  db: D1Database,
+  now: string,
+): Promise<number> {
+  if (!Number.isFinite(Date.parse(now))) throw new Error('Quarantine timestamp is invalid');
+  const result = await db.prepare(`
+    UPDATE workspace_learning_settings
+       SET mode = 'approval',
+           experiment_rate = 0,
+           disabled_reason = COALESCE(
+             NULLIF(TRIM(disabled_reason), ''),
+             ?
+           ),
+           updated_at = ?
+     WHERE mode = 'protected_autopilot'
+       AND EXISTS (
+         SELECT 1
+           FROM learning_decisions d
+           INNER JOIN learning_adjudications a
+             ON a.decision_id = d.id
+            AND a.user_id = d.user_id
+            AND a.workspace_key = d.workspace_key
+            AND a.client_id IS d.client_id
+            AND a.owner_kind = d.owner_kind
+            AND a.owner_id = d.owner_id
+          WHERE d.user_id = workspace_learning_settings.user_id
+            AND d.workspace_key = workspace_learning_settings.workspace_key
+            AND d.client_id IS workspace_learning_settings.client_id
+            AND d.owner_kind = workspace_learning_settings.owner_kind
+            AND d.owner_id = workspace_learning_settings.owner_id
+            AND d.stage = 'release'
+            AND d.release_state = 'pass_green'
+            AND a.expected_state = 'block_red'
+            AND a.severity = 'release_critical'
+       )
+  `).bind(SEVERE_FALSE_PASS_DISABLED_REASON, now).run();
+  const changes = Number(result.meta?.changes ?? 0);
+  return Number.isSafeInteger(changes) && changes >= 0 ? changes : 0;
 }
 
 function currentMonthBounds(now: Date): [string, string] {
@@ -194,9 +277,12 @@ export async function isProtectedAutopilotEligible(
   if (
     settings.autopublishConsentAt == null
     || settings.autopublishPolicyVersion !== AUTOPILOT_POLICY_VERSION
+    || (typeof settings.disabledReason === 'string' && settings.disabledReason.trim() !== '')
     || !Number.isSafeInteger(budgetCents)
     || Number(budgetCents) <= 0
   ) return false;
+
+  if (await hasWorkspaceSevereFalsePass(env.DB, identity)) return false;
 
   const readiness = await env.DB.prepare(`
     SELECT ready, policy_version, checks_json, evaluated_at

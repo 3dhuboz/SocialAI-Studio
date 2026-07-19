@@ -732,6 +732,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         }, 409);
       }
       const current = await getWorkspaceLearningSettings(c.env.DB, identity);
+      const disabledReason = current.disabledReason?.trim() ? current.disabledReason : null;
       const rate = experimentRate(body.experimentRate, Number(current.experimentRate ?? 0));
       const budget = budgetCents(
         body.monthlyAiBudgetUsdCents,
@@ -764,7 +765,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
           autopublishPolicyVersion: AUTOPILOT_POLICY_VERSION,
           experimentRate: rate,
           monthlyAiBudgetUsdCents: budget,
-          disabledReason: null,
+          disabledReason,
         }, requestedAt)) {
           return c.json({
             error: 'Protected Autopilot is unavailable until every activation gate passes',
@@ -791,9 +792,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         mode,
         autopublishConsentAt: consentAt,
         autopublishPolicyVersion: policyVersion,
-        experimentRate: rate,
+        experimentRate: disabledReason ? 0 : rate,
         monthlyAiBudgetUsdCents: budget,
-        disabledReason: null,
+        disabledReason,
       };
       const effectiveMode = await loadWorkspaceLearningMode(
         c.env,

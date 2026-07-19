@@ -381,6 +381,44 @@ describe('Shopify learning settings and readiness', () => {
     expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
+  it('does not bank shop consent while operator review is pending', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 1800,
+        disabled_reason: 'severe_false_pass_pending_operator_review',
+      }],
+      'FROM learning_release_readiness': [{
+        ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        checks_json: JSON.stringify({ tenancyProofs: { shop: true } }),
+        evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'true';
+    env.LEARNING_AUTOPILOT_ENABLED = 'true';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT', headers: validHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 1800, experimentRate: 0,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'protected_autopilot_not_ready',
+    });
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
   it('does not skip the shop experiment ramp on first activation', async () => {
     const evaluatedAt = new Date().toISOString();
     const { db, calls } = makeRecordingD1({
@@ -452,6 +490,35 @@ describe('Shopify learning settings and readiness', () => {
     expect(write.binds).toContain(AUTOPILOT_POLICY_VERSION);
     expect(write.binds).not.toContain('evil.myshopify.com');
     expect(write.binds).not.toContain('forged');
+  });
+
+  it('returns the preserved shop quarantine and zero experiment rate after a safer update', async () => {
+    const reason = 'severe_false_pass_pending_operator_review';
+    const { db } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 1800, disabled_reason: reason,
+      }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'false';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT', headers: validHeaders,
+      body: JSON.stringify({ mode: 'approval', experimentRate: 0.15 }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      settings: {
+        mode: 'shadow',
+        experimentRate: 0,
+        disabledReason: reason,
+      },
+    });
   });
 
   it('returns the current policy receipt and effective shop mode', async () => {

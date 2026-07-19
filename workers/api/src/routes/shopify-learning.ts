@@ -244,6 +244,7 @@ export function registerShopifyLearningRoutes(
         return c.json({ error: 'mode must be approval or protected_autopilot' }, 400);
       }
       const current = await getWorkspaceLearningSettings(c.env.DB, identity);
+      const disabledReason = current.disabledReason?.trim() ? current.disabledReason : null;
       const rate = body.experimentRate === undefined
         ? Number(current.experimentRate ?? 0)
         : Number(body.experimentRate);
@@ -288,7 +289,7 @@ export function registerShopifyLearningRoutes(
           autopublishPolicyVersion: AUTOPILOT_POLICY_VERSION,
           experimentRate: rate,
           monthlyAiBudgetUsdCents: budget as number,
-          disabledReason: null,
+          disabledReason,
         }, requestedAt)) {
           return c.json({
             error: 'Protected Autopilot is unavailable until every activation gate passes',
@@ -315,9 +316,9 @@ export function registerShopifyLearningRoutes(
         mode,
         autopublishConsentAt: consentAt,
         autopublishPolicyVersion: policyVersion,
-        experimentRate: rate,
+        experimentRate: disabledReason ? 0 : rate,
         monthlyAiBudgetUsdCents: budget as number | null,
-        disabledReason: null,
+        disabledReason,
       };
       const effectiveMode = await loadWorkspaceLearningMode(
         c.env,

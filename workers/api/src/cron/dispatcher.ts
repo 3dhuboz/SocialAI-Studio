@@ -49,8 +49,13 @@ const LEARNING_PILOT_DETAIL_KEYS = [
   'errors',
 ] as const;
 
+const LEARNING_READINESS_DETAIL_KEYS = [
+  'workspaces_disabled',
+] as const;
+
 type TrackedCronResult = {
   posts_processed?: number;
+  workspaces_disabled?: number;
 };
 
 function safeCounter(value: unknown): number {
@@ -65,10 +70,16 @@ export function buildCronDetails(
   cronType: string,
   result: TrackedCronResult | void,
 ): string | null {
-  if (cronType !== 'learning_pilot' || !result) return null;
+  if (!result) return null;
+  const detailKeys: readonly string[] = cronType === 'learning_pilot'
+    ? LEARNING_PILOT_DETAIL_KEYS
+    : cronType === 'learning_readiness'
+      ? LEARNING_READINESS_DETAIL_KEYS
+      : [];
+  if (detailKeys.length === 0) return null;
   const counters = result as Record<string, unknown>;
   return JSON.stringify(Object.fromEntries(
-    LEARNING_PILOT_DETAIL_KEYS.map((key) => [key, safeCounter(counters[key])]),
+    detailKeys.map((key) => [key, safeCounter(counters[key])]),
   ));
 }
 
