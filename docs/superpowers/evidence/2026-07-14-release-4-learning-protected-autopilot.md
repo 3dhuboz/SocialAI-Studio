@@ -3339,3 +3339,45 @@ The remaining blockers are explicit and independent:
 No failed safety check was suppressed. No production or staging deployment,
 migration, enrollment, release-flag change, publishing change, or customer-data
 mutation was performed for this checkpoint.
+
+### Require-Ready Operator Exit Gate
+
+Mission Control scout receipt `workId=298` re-audited the remaining rollout
+surface without editing or deploying. Existing tests already covered missing
+positive samples, customer consent, calibration evidence, production schemas,
+flag drift, stale receipts, read-only evidence, and the Hugheseys Que hold. The
+remaining uncovered operator edge was the command exit contract: a healthy
+`safe_hold` may be inspected normally, but the same state must fail automation
+when the operator explicitly supplies `--require-ready`.
+
+The two tests were written first and failed because the command decision was
+not independently callable. Commit
+`d816b1fcaebb16d46de8b6248f8c32a418a81fbe` extracts the existing exit
+expression into `shouldFailRolloutCommand` and routes the CLI through it. The
+decision semantics are unchanged. Focused verification passed 31 assertions,
+the full frontend/root suite passed 241 tests, and strict root TypeScript
+passed.
+
+The clean exact-commit proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T21-20-23-573Z.json`
+- Release-proof payload SHA-256: `7d134369c07861d7540ef8bbd12d134b1d89411e0aab78436542ff40029be06d`
+- Release-proof file SHA-256: `0a72ccbb1eeb4bf5fa66b32fd5142f62657bd6950cf50b014811b93d8883d6fc`
+
+The normal live read-only command remained a successful `safe_hold`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T21-20-52-974Z.json`
+- Rollout payload SHA-256: `cb5fba315673a6e0e4409e562eaa8584a606406b96b2756888100ba4d2e999c0`
+- Rollout file SHA-256: `a402dd39d69e5a6c76de08c552aad114c66da12c4d2a0029371b84eb99c26afc`
+
+The same exact proof and live versions were then evaluated with
+`--require-ready`. The judge still reported `safe_hold`, preserved all seven
+real blockers, wrote a separate immutable artifact, and returned the required
+process exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T21-21-19-591Z.json`
+- Require-ready payload SHA-256: `04d98e031ffeaaae7161197dd9caae7c044c70e4d94e57d9b8456e6599905eb0`
+- Require-ready file SHA-256: `af03e2b311e265bb2efa284ca5767f7264d330f9c438d5bb1293f3eaf485614e`
+
+Both commands were read-only. No schema, deployment, consent, sample,
+workspace mode, release flag, publication state, or customer data changed.
