@@ -2627,3 +2627,49 @@ schema is intentionally absent from production. The first natural weekly
 calibration cron receipt is also pending; the deployed selector currently has
 zero eligible decisions, so no customer content was processed or fabricated to
 manufacture evidence. Promotion and production behavior remain gate-closed.
+
+### Calibration-Aware Rollout Verifier Recheck
+
+Commit `849f979fde1145748554b8cdff4d02c1ba2d7692` closes the operational
+verification gap that previously mentioned calibration only in prose. The
+read-only rollout verifier now independently gates:
+
+- staging presence of `learning_calibration_audits` as a dormant safety
+  requirement;
+- the latest natural weekly calibration receipt, including a bounded eight-day
+  freshness window and all privacy-safe counter fields;
+- zero execution errors, unavailable rechecks, severe false passes, and
+  automatic workspace quarantines in that receipt;
+- at least one completed, source-verified calibration row with no unresolved
+  or severe result before promotion; and
+- production presence of both the positive-sample and calibration schemas
+  before production can ever be reported promotion-ready.
+
+The verifier queries the latest receipt for each cron type independently, so
+the frequent five-minute pilot and readiness receipts cannot push the weekly
+calibration receipt out of the evidence window. If the staging calibration
+table is missing, row evidence is not queried and the state fails closed as
+`unsafe_or_unverified`. A missing or stale weekly receipt remains a promotion
+blocker while the dormant boundaries are otherwise proven, so the result stays
+`safe_hold` rather than encouraging an unsafe intervention.
+
+Verification passed 21 focused rollout-contract tests, all 223 frontend/root
+tests, all 1,263 Worker tests, strict root and Worker TypeScript, and the
+1,925-module frontend production build. The clean release proof returned
+`offline_pass` with all 99 mandatory checks passed.
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T14-57-39-907Z.json`
+- Release-proof payload SHA-256: `55a670ee3d4558739a96500c1d58068550c903c0c0b47cf086668f5acdfc0f71`
+- Release-proof file SHA-256: `7bd6cdd4aca14415e466fa95d9cf7b0e5bca97cb0647ba0c82776e3eaa9fe7f0`
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T14-58-01-442Z.json`
+- Rollout payload SHA-256: `0f7e1d212280b75f16530a52daf28c944c07ade452183fb83168f09f7ead98a4`
+- Rollout file SHA-256: `c01e507ecff70347100e32bdcb0da36bea3e3aeca4df7a66bb4151371f1602db`
+
+The live result remains `safe_hold`. Both D1 checks proved zero writes, both
+deployed versions matched their expected IDs, all behavior-changing flags
+remain dormant, both environments have zero Protected Autopilot workspaces,
+and `hughesq-001` remains `status='on_hold'`. Staging has the v47 calibration
+schema but no natural weekly receipt or completed calibration rows yet.
+Production still intentionally lacks both later evidence schemas. No Worker
+deployment, schema migration, flag change, enrollment, post mutation, or
+customer-content processing occurred during this recheck.
