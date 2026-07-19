@@ -2968,3 +2968,107 @@ workspaces in both environments, and a successful natural health receipt at
 `6bb436cf-9d3e-414d-aaee-0a915f8a5c05`; and `hughesq-001` remains exactly
 `status='on_hold'`. No deployment, migration, flag change, enrollment,
 customer-data write, or production mutation occurred.
+
+### Complete Readiness Receipt Promotion Gate
+
+The runtime and external rollout verifier previously treated a readiness row
+with `ready=1` as sufficient even when `checks_json` contained only a subset
+of the current readiness contract. A truncated receipt such as a single
+tenancy proof could therefore fail open if the row-level ready bit was
+incorrectly set.
+
+Commit `b007058bb511d29a505830d66f4bf17bde59f5f5` introduces one shared,
+exact-schema validator for all 18 required Boolean checks and the `user`,
+`client`, and `shop` tenancy proofs. Both the permanent runtime preflight and
+the read-only rollout judge now require the complete current schema and every
+value to be true before Protected Autopilot or `promotion_ready` is possible.
+Missing, false, extra, or malformed fields fail closed. The validator is
+covered directly and through the runtime and rollout boundaries.
+
+Verification passed all 238 frontend/root tests, all 1,273 Worker tests,
+strict root and Worker TypeScript, and the 1,925-module production frontend
+build. The clean exact-commit proof passed all 107 then-required mandatory
+checks:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T17-02-58-943Z.json`
+- Release-proof payload SHA-256: `8cd343a03e399d847b2cfe2a278c76e2a181d7f62a4cb698e6c9ee98f6051099`
+- Release-proof file SHA-256: `eb39e2c3b08b161697b5b172bbb06d92ee88df48e4a7281866567d044455a`
+
+The exact commit deployed only to staging as Worker
+`d9f662ac-ebbc-48c1-b238-3e2d69bde622`. Its dry-run bound only
+`socialai-db-staging`, and all behavior-changing flags remained disabled. The
+immediate live read-only judge returned `safe_hold`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T17-04-11-512Z.json`
+- Rollout payload SHA-256: `9c2bf326e0200478b2b62c63926776b2ccc891bd2c156de002397c428587adb7`
+- Rollout file SHA-256: `0d0abe1a25d6c1e92a09e64d1c5f512df8a0fddb927032c261e109a6a1c718bb`
+
+No production deployment, migration, enrollment, publishing change, or
+customer-data mutation occurred.
+
+### Readiness Schema Health Sentinel And Staging Correction
+
+The strict promotion gate prevented activation, but operators also needed a
+natural receipt to reveal malformed readiness evidence before a release
+review. Commit `847044a3c2dc0bdd50c965bbc1b7e8ca9f3a8652` added a fifth
+15-minute health-sweep check. It is neutral before the first readiness row,
+accepts only the exact current schema after monitoring is established, and
+causes the natural `health_sweep` receipt to fail if the latest row is
+truncated or malformed. The invariant is bound into the mandatory release
+proof.
+
+The first exact-commit proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T17-13-31-897Z.json`
+- Release-proof payload SHA-256: `7a4ea7b94d0bfc2f545de757b6c5e045da555a346874b33500c35ff9d631c2cc`
+- Release-proof file SHA-256: `6c3d22378130cbc2743b15cc8cddd781df0d5d2b973d242789ef89b1878727fe`
+
+Staging Worker `24709412-ff7e-4b3b-9e43-e9a9244438f9` then produced a
+natural failed health receipt, `id=10115` at
+`2026-07-19 17:15:23 UTC`. The failure exposed a semantic error in the new
+sentinel: it was requiring every gate to be green instead of requiring every
+field to exist. The staging readiness receipt was structurally complete but
+correctly red (`ready=0`). The failure was safe: the health lane reported
+`success=0`, publishing was untouched, all apply flags were off, and no
+workspace was promoted.
+
+Commit `04b9e36cabc1b223438caf8304d17539971fe0c0` separates the two
+contracts. `hasCompleteLearningReadinessChecksSchema` accepts an exact schema
+whose values may truthfully be red, while
+`hasCompleteGreenLearningReadinessChecks` still requires every readiness and
+tenancy value to be true for promotion. Mandatory proof tests now cover both
+the complete-red health case and the truncated fail-closed case.
+
+Verification passed all 239 frontend/root tests, all 1,278 Worker tests,
+strict root and Worker TypeScript, and the 1,925-module production frontend
+build. The clean exact-commit proof passed with both sentinel guarantees:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T17-20-52-924Z.json`
+- Release-proof payload SHA-256: `ee06b753efac8adc5bd4240769587021de57b762a5de6c26d1719bb44095a36b`
+- Release-proof file SHA-256: `4c82e5c96186fe46f25c1589a203f1db5e2a6d00c4958b424e31ebdf3db2f4fe`
+
+The corrected commit deployed only to staging as Worker
+`005b4c79-1575-4a93-b496-6621be736ae4`. The first natural post-deploy
+sequence succeeded:
+
+- `health_sweep` receipt `id=10133` at `2026-07-19 17:30:23 UTC`
+- `learning_pilot` receipt `id=10136` at `2026-07-19 17:30:23 UTC`
+- `learning_readiness` receipt `id=10137` at `2026-07-19 17:30:25 UTC`
+
+The receipt audit was read-only and reported `rows_written=0`. The exact
+live rollout judge remained `safe_hold`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T17-31-33-029Z.json`
+- Rollout payload SHA-256: `085bcdb9d710c154ad801a6d9132d65b61691cad66a26706d85318590587e2c0`
+- Rollout file SHA-256: `6ec2cfda0dbb60429788c5cea4cd43aadec8446d7b7ec4e7145a7ef3345262dd`
+
+Expected blockers remain: staging and production readiness are not green,
+there are no eligible positive pilot samples or separately consenting active
+customer, the first weekly calibration receipt has not yet arrived, and the
+later pilot/calibration schemas are intentionally absent from production.
+Production remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5` with
+release enforcement, Protected Autopilot, and organic-reach application all
+disabled. Both environments have zero Protected Autopilot workspaces, and
+`hughesq-001` remains exactly `status='on_hold'`. No production deployment,
+migration, flag change, enrollment, publish-path change, or customer-data
+mutation occurred.
