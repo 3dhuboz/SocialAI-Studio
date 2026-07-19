@@ -9,8 +9,9 @@
 //   - publish_zombie        : posts stuck in status='Publishing' for >30 min
 //   - learning_calibration_receipt_stale : established weekly receipt stopped arriving
 //   - alert_persistence_schema : the incident ledger and both indexes exist
+//   - learning_readiness_receipt_schema : latest readiness receipt uses the full schema
 //
-// Four checks for v1 - deliberately small. Each incident is dark-launched by default
+// Five checks for v1 - deliberately small. Each incident is dark-launched by default
 // per the cron_alerts schema, so the first week is calibration-only (rows
 // get written, no emails go out). Steve flips the per-key dark_launch flag
 // after the noise level is known.
@@ -30,6 +31,8 @@
 
 import type { Env } from '../env';
 import { fireAlert, resolveAlert } from '../lib/alerts';
+import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import { hasCompleteGreenLearningReadinessChecks } from '../../../../shared/learning-readiness-checks';
 
 /** Threshold knobs centralised here so calibration after the dark-launch
  *  week is a one-file change. Conservative defaults: prefer false-negatives
@@ -55,6 +58,7 @@ export async function cronHealthSweep(env: Env): Promise<{ posts_processed: numb
   const failedChecks: string[] = [];
   for (const check of [
     checkAlertPersistenceSchema,
+    checkLearningReadinessReceiptSchema,
     checkPublishFailureBurst,
     checkPublishZombie,
     checkLearningCalibrationFreshness,
@@ -107,6 +111,37 @@ async function checkAlertPersistenceSchema(env: Env): Promise<CheckResult> {
     throw new Error(`Alert persistence schema is incomplete (${detail})`);
   }
   return { key, fired: false, detail };
+}
+
+// Before the first readiness receipt, the rollout gate remains the authority.
+// Once receipts exist, malformed or truncated checks must surface as a failed
+// natural health receipt rather than silently reducing operator visibility.
+async function checkLearningReadinessReceiptSchema(env: Env): Promise<CheckResult> {
+  const key = 'learning_readiness_receipt_schema';
+  const row = await env.DB.prepare(
+    `SELECT checks_json
+       FROM learning_release_readiness
+      WHERE policy_version = ?
+      ORDER BY evaluated_at DESC, id DESC
+      LIMIT 1`,
+  ).bind(AUTOPILOT_POLICY_VERSION).first<{ checks_json: string | null }>();
+
+  if (!row) {
+    return { key, fired: false, detail: 'monitor not established' };
+  }
+
+  let checks: unknown = null;
+  try {
+    checks = JSON.parse(row.checks_json ?? '');
+  } catch {
+    // The shared schema validator below owns the fail-closed result.
+  }
+
+  if (!hasCompleteGreenLearningReadinessChecks(checks)) {
+    throw new Error('Latest learning readiness receipt has an incomplete checks schema');
+  }
+
+  return { key, fired: false, detail: 'complete current schema' };
 }
 
 // ── Check: publish_failure_burst ────────────────────────────────────────
@@ -217,6 +252,7 @@ async function checkLearningCalibrationFreshness(
 export const __test = {
   THRESHOLDS,
   checkAlertPersistenceSchema,
+  checkLearningReadinessReceiptSchema,
   checkPublishFailureBurst,
   checkPublishZombie,
   checkLearningCalibrationFreshness,

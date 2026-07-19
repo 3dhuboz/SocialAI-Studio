@@ -366,6 +366,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'checkAlertPersistenceSchema accepts the alert table only when both operational indexes exist',
   },
   {
+    id: 'readiness_schema_health_sentinel',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkLearningReadinessReceiptSchema fails closed for a truncated readiness payload',
+  },
+  {
     id: 'health_sweep_failure_receipt',
     suite: 'src/__tests__/health-sweep.test.ts',
     assertion: 'cronHealthSweep continues remaining checks then fails the cron receipt when one check throws',

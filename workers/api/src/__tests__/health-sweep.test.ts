@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Env } from '../env';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 
 const alertCalls: Array<{ key: string; severity: string; body: string }> = [];
 const resolveCalls: string[] = [];
@@ -24,17 +25,21 @@ vi.mock('../lib/alerts', () => ({
 
 import { cronHealthSweep, __test } from '../cron/health-sweep';
 
-type CannedRow = number | Record<string, unknown>;
+type CannedRow = number | Record<string, unknown> | null;
 
 function makeEnv(rowByPattern: Record<string, CannedRow>): Env {
   const prepare = vi.fn().mockImplementation((sql: string) => {
-    const cannedRow = (): Record<string, unknown> => {
+    const cannedRow = (): Record<string, unknown> | null => {
       for (const [pattern, value] of Object.entries(rowByPattern)) {
         if (!sql.includes(pattern)) continue;
+        if (value == null) return null;
         return typeof value === 'number' ? { n: value } : value;
       }
       if (sql.includes('FROM sqlite_master')) {
         return { alert_tables: 1, alert_indexes: 2 };
+      }
+      if (sql.includes('FROM learning_release_readiness')) {
+        return { checks_json: JSON.stringify(learningReadinessChecks()) };
       }
       return { n: 0 };
     };
@@ -193,6 +198,47 @@ describe('checkAlertPersistenceSchema', () => {
   });
 });
 
+describe('checkLearningReadinessReceiptSchema', () => {
+  it('accepts a complete current readiness receipt', async () => {
+    const result = await __test.checkLearningReadinessReceiptSchema(makeEnv({}));
+
+    expect(result).toMatchObject({
+      key: 'learning_readiness_receipt_schema',
+      fired: false,
+      detail: 'complete current schema',
+    });
+  });
+
+  it('stays neutral before the first readiness receipt exists', async () => {
+    const env = makeEnv({ 'FROM learning_release_readiness': null });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env)).resolves.toMatchObject({
+      fired: false,
+      detail: 'monitor not established',
+    });
+  });
+
+  it('fails closed for a truncated readiness payload', async () => {
+    const env = makeEnv({
+      'FROM learning_release_readiness': {
+        checks_json: JSON.stringify({ tenancyProofs: { client: true } }),
+      },
+    });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env))
+      .rejects.toThrow('Latest learning readiness receipt has an incomplete checks schema');
+  });
+
+  it('fails closed for malformed readiness JSON', async () => {
+    const env = makeEnv({
+      'FROM learning_release_readiness': { checks_json: '{not-json' },
+    });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env))
+      .rejects.toThrow('Latest learning readiness receipt has an incomplete checks schema');
+  });
+});
+
 // ── Sweep orchestration ─────────────────────────────────────────────────
 
 describe('cronHealthSweep', () => {
@@ -202,7 +248,7 @@ describe('cronHealthSweep', () => {
       "status = 'Publishing'": 2,
     });
     const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(4);
+    expect(result.checks).toHaveLength(5);
     expect(result.posts_processed).toBe(2);
     expect(alertCalls.map((a) => a.key).sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
@@ -210,22 +256,24 @@ describe('cronHealthSweep', () => {
   it('quiet day: zero alerts fired, both resolve', async () => {
     const env = makeEnv({});
     const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(4);
+    expect(result.checks).toHaveLength(5);
     expect(result.posts_processed).toBe(0);
     expect(alertCalls).toHaveLength(0);
     expect(resolveCalls.sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
 
   it('continues remaining checks then fails the cron receipt when one check throws', async () => {
-    // First check throws; second still runs. We simulate this by making
-    // the burst query throw via a bad prepare implementation, but still
-    // return a clean zombie count.
+    // The burst check throws, while the surrounding checks still run. The
+    // readiness fixture remains valid so this isolates the simulated failure.
     let firstCallSeen = false;
     const prepare = vi.fn().mockImplementation((sql: string) => ({
       bind: () => ({
         first: async () => {
           if (sql.includes('FROM sqlite_master')) {
             return { alert_tables: 1, alert_indexes: 2 };
+          }
+          if (sql.includes('FROM learning_release_readiness')) {
+            return { checks_json: JSON.stringify(learningReadinessChecks()) };
           }
           if (sql.includes("status = 'Missed'") && !firstCallSeen) {
             firstCallSeen = true;
