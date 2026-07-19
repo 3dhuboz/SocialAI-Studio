@@ -615,6 +615,16 @@ function stagingEnvironment(env: Env): boolean {
   return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
 }
 
+function pilotStagingError(env: Env): {
+  error: string;
+  code: 'pilot_staging_only';
+} | null {
+  return stagingEnvironment(env) ? null : {
+    error: 'Approval-pilot operations are available only in isolated staging',
+    code: 'pilot_staging_only',
+  };
+}
+
 function existingPilotDisqualification(
   db: D1Database,
   decisionId: string,
@@ -780,6 +790,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot enrollment is available only while learning enforcement and autopilot are disabled',
@@ -963,6 +975,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot candidates are available only while learning enforcement and autopilot are disabled',
@@ -1102,6 +1116,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot attestation is available only while learning enforcement and autopilot are disabled',
@@ -1348,6 +1364,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot validation is available only while learning enforcement and autopilot are disabled',
@@ -1607,11 +1625,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
-    if (!stagingEnvironment(c.env)) {
-      return c.json({
-        error: 'Synthetic pilot disqualification is available only in isolated staging',
-      }, 409);
-    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot disqualification is available only while enforcement and autopilot are disabled',

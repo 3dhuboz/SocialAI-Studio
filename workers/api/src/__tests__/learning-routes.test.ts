@@ -60,6 +60,7 @@ async function adjudicationSourceFields(
 }
 
 function makeApp(env: Env) {
+  env.ENVIRONMENT ??= 'staging';
   const app = new Hono<{ Bindings: Env }>();
   registerLearningRoutes(app);
   return { app, env };
@@ -74,6 +75,63 @@ describe('learning receipt routes', () => {
 
     expect(response.status).toBe(401);
     expect(calls).toEqual([]);
+  });
+
+  it('keeps every approval-pilot operation isolated to staging', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const env = {
+      DB: db,
+      ENVIRONMENT: 'production',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+    const adminRequestHeaders = {
+      'X-Test-Uid': 'owner_1',
+      'Content-Type': 'application/json',
+    };
+    const requests: Array<[string, RequestInit]> = [
+      ['/api/learning/pilot/enroll', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({ monthlyAiBudgetUsdCents: 500 }),
+      }],
+      ['/api/learning/pilot/candidates', { headers: adminRequestHeaders }],
+      ['/api/learning/pilot/attest/post-1', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({
+          realPostConfirmed: true,
+          note: 'Confirmed as a genuine owner post.',
+        }),
+      }],
+      ['/api/learning/pilot/validate/post-1', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+      }],
+      ['/api/learning/pilot/disqualify/decision-1', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({
+          reason: 'synthetic_qa',
+          note: 'Synthetic staging evidence only.',
+        }),
+      }],
+    ];
+
+    for (const [path, init] of requests) {
+      const response = await app.request(path, init, env);
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: 'Approval-pilot operations are available only in isolated staging',
+        code: 'pilot_staging_only',
+      });
+    }
+    expect(calls).toHaveLength(requests.length);
+    expect(calls.every((call) => call.sql.includes('SELECT email, is_admin'))).toBe(true);
   });
 
   it('returns receipts only after verifying owner-post ownership', async () => {
