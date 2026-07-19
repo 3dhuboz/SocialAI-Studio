@@ -2876,3 +2876,41 @@ zero Protected Autopilot workspaces and no later pilot/calibration schemas,
 and `hughesq-001` remains exactly `status='on_hold'`. All production checks
 were read-only with zero writes; no production deployment, migration, flag
 change, enrollment, or customer-data mutation occurred.
+
+### Rollout Health Receipt Gate
+
+The fail-closed health sweep made monitoring failures durable, but the live
+rollout judge still consumed only the frequent pilot and readiness receipts.
+A missing, failed, or stale `health_sweep` receipt therefore would not have
+invalidated an otherwise safe-looking rollout observation.
+
+Commit `66646f1b13f619f80f80f92c28a82aef72edf0b0` closes the consumer-side
+gap. The read-only rollout query now selects the latest natural
+`health_sweep` receipt independently, and artifact schema v4 exposes it as
+`latestHealthSweepCron`. A dedicated safety check,
+`staging_health_sweep_fresh`, requires the receipt to exist, report success
+without an error, and be no older than the existing 20-minute scheduler
+window. Missing, failed, future-dated, malformed, or stale evidence returns
+`unsafe_or_unverified` rather than `safe_hold` or `promotion_ready`.
+
+Verification passed 26 focused rollout tests, all 228 frontend/root tests,
+all 1,272 Worker tests, strict root and Worker TypeScript, and the 1,925-module
+production frontend build. The exact-commit proof passed all 106 mandatory
+checks and all 435 bound tests:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T16-26-32-179Z.json`
+- Release-proof payload SHA-256: `68a129d2bb865c8d77ed917c231942681d8680f698f7f4fffa799ebdfddb6f4b`
+- Release-proof file SHA-256: `2e34406e644f1c9e640d1025a41a45a6e001b03f5319ce4d2efabca440a9fd80`
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T16-26-52-449Z.json`
+- Rollout payload SHA-256: `a96e210873b9aa68253c192820892c993f09e082e281677863e0e0a648b7f23c`
+- Rollout file SHA-256: `6fc1589e6e5c53396a22764d4326c0d4e202e1a41dd9ffd8729b2888ed3fce69`
+
+The live result remains `safe_hold` with zero failed safety checks. It binds
+the successful natural health receipt `id=10038` at
+`2026-07-19 16:15:23 UTC`, staging Worker
+`6bb436cf-9d3e-414d-aaee-0a915f8a5c05`, and production Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`. Both D1 inspections proved zero
+writes, both environments have zero Protected Autopilot workspaces, and
+`hughesq-001` remains exactly `status='on_hold'`. This verifier-only change
+required no Worker deployment, database migration, flag change, enrollment,
+or customer-data mutation.
