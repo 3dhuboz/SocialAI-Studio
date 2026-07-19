@@ -3381,3 +3381,81 @@ process exit code `1`:
 
 Both commands were read-only. No schema, deployment, consent, sample,
 workspace mode, release flag, publication state, or customer data changed.
+
+### Exact-Draft Pilot Attestation Gate
+
+The pilot intake review exposed a final operational gap: the admin control
+asked an operator to confirm a server-selected real draft without displaying
+that exact draft. Commit
+`eb46a9b980e1d2ed5e7abfd2fe6a0fb65d7b74dd` closes that gap without changing
+publication behavior or production.
+
+The staging-only candidate contract now returns a bounded exact preview only
+for an already-enrolled record-only workspace. The preview contains the
+selected post ID, content, platform, post type, media, hashtags, and canonical
+release-content hash. Unenrolled workspaces receive `sampleDraft=null`, so
+customer content is not exposed before the existing consent and enrollment
+gate. The admin UI displays the exact evidence and binds its confirmation to
+that hash. Missing previews, malformed hashes, changed post IDs, empty
+content, and refreshed draft hashes all disable attestation.
+
+The Worker independently requires the 64-character expected hash, reloads the
+tenant-scoped current Draft, enforces nonblank content of at most 5,000
+characters, and compares the canonical current hash before any synthetic-QA
+lookup or pilot-sample write. A changed draft returns HTTP 409 with
+`pilot_sample_preview_stale`. The final append-only insert retains its exact
+field, enrollment, consent, approval-mode, budget, on-hold, synthetic-QA, and
+archetype guards. It still cannot approve, schedule, publish, or mutate the
+post.
+
+Verification at the exact commit passed:
+
+- 38 focused frontend, transport, UI, and proof assertions
+- 48 focused Worker route assertions
+- all 247 frontend/root tests
+- all 1,287 Worker tests
+- strict root and Worker TypeScript
+- the 1,925-module production frontend build
+- `git diff --check`
+
+The release manifest now names blind-preview rejection, stale-preview
+rejection, and bounded-content rejection as permanent mandatory checks. The
+clean exact-commit proof passed all 114 checks and all 479 tests:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T21-48-54-325Z.json`
+- Release-proof payload SHA-256: `a57b24f9117478d5ae1d3adcd44be3634dce3cc5d764872d88cc546d0728c0c6`
+- Release-proof file SHA-256: `33aca3bfba05ff982516f25a7c8e1cffef59be5b4f1abb483cf440c7cf6b55bf`
+
+Only the staging Worker was deployed, as version
+`17cca808-bf93-49b6-9fc9-4b270b236a92`. Its dry run and deployed bindings
+retained `LEARNING_RELEASE_ENFORCEMENT=false`,
+`LEARNING_AUTOPILOT_ENABLED=false`, and
+`ORGANIC_REACH_APPLY_ENABLED=false`. The staging D1 binding remained
+`socialai-db-staging` (`0ce38359-c7d6-4d6e-b278-7ca1a719dbb4`). Both live
+health endpoints returned HTTP 200 with `ok=true`. Production remained on
+Worker `3b963ed1-c9e1-42d6-9bff-68da2efa9215`; no production deployment or
+schema change occurred.
+
+The exact proof was then supplied to the live read-only rollout judge. It
+returned `safe_hold` with `promotion_ready=false`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T21-50-35-649Z.json`
+- Rollout payload SHA-256: `d63bfd5e2f8945e51b03923d6a2bfc1ebc9d719285ce8c45acdf2a03c29fc2d3`
+- Rollout file SHA-256: `eeb114357e0643b32747e769d73c9656d9b060cd5a3a3629ef030a1b9dcb2637`
+
+The same exact versions and proof were evaluated with `--require-ready`. The
+judge preserved `safe_hold`, wrote a separate immutable artifact, and returned
+the required process exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T21-51-08-696Z.json`
+- Require-ready payload SHA-256: `86604090f7b94f3864a9df3b4ffb894eeac6bfffe0661d40e237b51c9d6f9f84`
+- Require-ready file SHA-256: `920f6347027ba7d542213d1749da628e08884d5411c50405f1264c687b632624`
+
+The live audit remained read-only and recorded zero Protected Autopilot
+workspaces, zero pilot samples, zero owner samples, zero client samples, and
+zero customer enrollments. `hughesq-001` remains exactly `status='on_hold'`.
+Production pilot and calibration schemas remain intentionally absent, and all
+production apply flags remain false. The seven genuine evidence, consent,
+readiness, calibration, and production-schema blockers remain unsuppressed.
+No workspace was enrolled and no post, customer record, release flag, or
+production data was mutated.
