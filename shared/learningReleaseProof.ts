@@ -171,6 +171,31 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning release readiness collects a strict consecutive pilot window and current evidence from D1',
   },
   {
+    id: 'pilot_positive_sample_schema',
+    suite: 'src/__tests__/learning-pilot-sample-schema.test.ts',
+    assertion: 'learning pilot sample schema creates immutable positive evidence for exact real pilot post versions',
+  },
+  {
+    id: 'pilot_positive_sample_attestation',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes appends a positive real-post attestation without mutating the draft',
+  },
+  {
+    id: 'pilot_positive_sample_hash_binding',
+    suite: 'src/__tests__/learning-pilot-collector.test.ts',
+    assertion: 'record-only pilot evaluation lease rejects a pilot evaluation when the positive sample hash no longer matches',
+  },
+  {
+    id: 'pilot_positive_sample_quarantine_route',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes refuses to attest a post quarantined as synthetic QA',
+  },
+  {
+    id: 'pilot_positive_sample_quarantine_collector',
+    suite: 'src/__tests__/learning-pilot-collector.test.ts',
+    assertion: 'record-only pilot evaluation lease rejects a known synthetic-QA post before receipt lookup, lease, or critic work',
+  },
+  {
     id: 'pilot_cost_attribution_schema',
     suite: 'src/__tests__/learning-ai-usage-attribution-schema.test.ts',
     assertion: 'learning AI usage attribution schema adds immutable tenant-and-post scoped decision attribution',
@@ -259,6 +284,26 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     id: 'egress_cron_path',
     suite: 'src/__tests__/publish-egress-preflight.test.ts',
     assertion: 'publish egress source contracts routes cron Postproxy and final Graph publishing through the orchestrator',
+  },
+  {
+    id: 'publish_reel_finish_preflight',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publishPersistedPost runs a fresh preflight before the final Facebook reel publish phase',
+  },
+  {
+    id: 'publish_reel_finish_hold_zero_egress',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publishPersistedPost makes zero final Facebook reel calls when the fresh preflight holds',
+  },
+  {
+    id: 'publish_reel_finish_inactive_zero_egress',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publishPersistedPost makes zero final Facebook reel calls for an inactive workspace',
+  },
+  {
+    id: 'egress_delayed_reel_finish',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publish egress source contracts routes the delayed Facebook reel finish phase through a fresh orchestrator preflight',
   },
   {
     id: 'egress_frontend_worker_only',
