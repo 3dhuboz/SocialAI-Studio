@@ -132,8 +132,10 @@ describe('weekly learning calibration audit', () => {
     expect(read.sql).toContain("d.content_hash NOT GLOB '*[^0-9a-f]*'");
     expect(read.sql).toContain("unixepoch(d.created_at) >= unixepoch(?, '-8 days')");
     expect(read.sql).toContain('OR audit.id IS NOT NULL');
-    expect(read.sql).toContain("client.status = 'active'");
-    expect(read.sql).toContain('COALESCE(client.on_hold, 0) = 0');
+    expect(read.sql).toContain(
+      "LOWER(TRIM(COALESCE(client.status, 'active'))) = 'active'",
+    );
+    expect(read.sql).not.toContain('client.on_hold');
     expect(read.sql).toContain('LEFT JOIN users owner');
     expect(read.sql).toContain('ON owner.id = d.user_id');
     expect(read.sql).not.toContain("ON d.owner_kind = 'user'");

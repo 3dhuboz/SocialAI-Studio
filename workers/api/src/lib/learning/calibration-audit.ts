@@ -172,8 +172,7 @@ export async function listCalibrationCandidates(
           (d.owner_kind = 'user' AND owner.id IS NOT NULL)
           OR (
             d.owner_kind = 'client'
-            AND client.status = 'active'
-            AND COALESCE(client.on_hold, 0) = 0
+            AND LOWER(TRIM(COALESCE(client.status, 'active'))) = 'active'
           )
           OR (
             d.owner_kind = 'shop'
