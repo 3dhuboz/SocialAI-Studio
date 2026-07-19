@@ -111,6 +111,50 @@ function judgeCandidate(candidate: CandidateInput): CandidateInput {
   };
 }
 
+function sameKeys(left: object, right: object): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index]);
+}
+
+function sameStringArray(left: string[] | undefined, right: string[] | undefined): boolean {
+  const normalizedLeft = left ?? [];
+  const normalizedRight = right ?? [];
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function repairPreservesPublishBoundary(
+  before: CandidateInput,
+  after: CandidateInput,
+): boolean {
+  if (!after || typeof after !== 'object' || !sameKeys(before, after)) return false;
+  if (typeof after.content !== 'string' || !after.content.trim()) return false;
+  if (
+    !Array.isArray(after.hashtags)
+    || after.hashtags.some((value) => typeof value !== 'string' || !value.trim())
+  ) return false;
+  if (!after.media || typeof after.media !== 'object') return false;
+  if (!sameKeys(before.media, after.media)) return false;
+
+  return before.userId === after.userId
+    && before.clientId === after.clientId
+    && before.ownerKind === after.ownerKind
+    && before.ownerId === after.ownerId
+    && before.postId === after.postId
+    && before.mode === after.mode
+    && before.platform === after.platform
+    && before.media.kind === after.media.kind
+    && before.media.url === after.media.url
+    && before.media.thumbnailUrl === after.media.thumbnailUrl
+    && before.media.status === after.media.status
+    && before.media.archetypeSlug === after.media.archetypeSlug
+    && before.requestedMediaKind === after.requestedMediaKind
+    && before.videoScript === after.videoScript
+    && sameStringArray(before.videoShots, after.videoShots);
+}
+
 function unavailableMedia(kind: CriticKind): CriticResult {
   return {
     kind,
@@ -223,9 +267,11 @@ export async function runReleasePipeline(
 
     repairHistory.push([...reduced.repairs]);
     try {
-      candidate = judgeCandidate(
-        await deps.repair(candidate, reduced.repairs, context),
-      );
+      const repaired = await deps.repair(candidate, reduced.repairs, context);
+      if (!repairPreservesPublishBoundary(candidate, repaired)) {
+        throw new Error('Repair changed publish-critical candidate fields');
+      }
+      candidate = judgeCandidate(repaired);
     } catch {
       return {
         state: 'hold_amber', candidate, attempts, repairHistory, judgeStatus: 'not_run',

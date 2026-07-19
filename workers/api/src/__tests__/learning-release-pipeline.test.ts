@@ -93,6 +93,59 @@ describe('runReleasePipeline', () => {
     expect(result.repairHistory).toEqual([['remove unsupported superlative']]);
   });
 
+  it('holds when a repair mutates any publish-critical field', async () => {
+    const mutations: Array<[string, (input: CandidateInput) => CandidateInput]> = [
+      ['user identity', (input) => ({ ...input, userId: 'u2' })],
+      ['client ownership', (input) => ({
+        ...input, clientId: 'c2', ownerKind: 'client', ownerId: 'c2',
+      })],
+      ['post identity', (input) => ({ ...input, postId: 'p2' })],
+      ['learning mode', (input) => ({ ...input, mode: 'protected_autopilot' })],
+      ['platform', (input) => ({ ...input, platform: 'instagram' })],
+      ['selected media', (input) => ({
+        ...input,
+        media: {
+          kind: 'image',
+          url: 'https://cdn.example/unreviewed.jpg',
+          thumbnailUrl: null,
+        },
+      })],
+      ['requested media', (input) => ({ ...input, requestedMediaKind: 'video' })],
+      ['video script', (input) => ({ ...input, videoScript: 'Unreviewed script' })],
+      ['video shots', (input) => ({ ...input, videoShots: ['Unreviewed shot'] })],
+    ];
+
+    for (const [field, mutate] of mutations) {
+      let textAttempts = 0;
+      let judgeCalls = 0;
+      const deps = passingDeps();
+      deps.runTextCouncil = async () => {
+        textAttempts += 1;
+        return textAttempts === 1
+          ? [
+              verdict('brand', {
+                verdict: 'warn_repairable',
+                repairs: ['rewrite caption'],
+              }),
+              ...passingText().slice(1),
+            ]
+          : passingText();
+      };
+      deps.repair = async (input) => mutate(input);
+      deps.judge = async () => {
+        judgeCalls += 1;
+        return { state: 'pass_green', status: 'available' };
+      };
+
+      const result = await runReleasePipeline(candidate, context, deps);
+
+      expect(result.state, field).toBe('hold_amber');
+      expect(result.judgeStatus, field).toBe('not_run');
+      expect(result.candidate, field).toMatchObject(candidate);
+      expect(judgeCalls, field).toBe(0);
+    }
+  });
+
   it('caps repairs at two and then holds', async () => {
     let repairs = 0;
     const deps = passingDeps();

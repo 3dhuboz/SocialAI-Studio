@@ -46,6 +46,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'runReleasePipeline caps repairs at two and then holds',
   },
   {
+    id: 'bounded_repair_publish_boundary',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'runReleasePipeline holds when a repair mutates any publish-critical field',
+  },
+  {
     id: 'wrong_geography',
     suite: 'src/__tests__/reach-plan.test.ts',
     assertion: 'reach plan orchestration rejects an out-of-area geographic focus',

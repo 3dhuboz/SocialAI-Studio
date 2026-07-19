@@ -42,6 +42,7 @@ describe('buildReleaseProofArtifact', () => {
       expect.arrayContaining([
         'shadow_receipt_no_mutation',
         'bounded_self_repair',
+        'bounded_repair_publish_boundary',
         'critic_lane_independence',
         'deterministic_block_path',
         'selected_media_critic',
