@@ -76,10 +76,21 @@ SELECT COUNT(*) AS customer_enrollments
    AND owner_kind = 'client'
    AND consent_basis = 'customer_attested'
    AND record_only = 1;
-SELECT COUNT(*) AS calibration_tables
+SELECT COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'learning_calibration_audits' THEN 1 ELSE 0
+       END), 0) AS calibration_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'cron_alerts' THEN 1 ELSE 0
+       END), 0) AS alert_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'index'
+          AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
+         THEN 1 ELSE 0
+       END), 0) AS alert_indexes
   FROM sqlite_master
- WHERE type = 'table'
-   AND name = 'learning_calibration_audits';
+ WHERE (type = 'table' AND name IN ('learning_calibration_audits', 'cron_alerts'))
+    OR (type = 'index'
+        AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
 `;
 
 export const STAGING_CALIBRATION_ROLLOUT_SQL = `
@@ -112,10 +123,20 @@ SELECT COUNT(*) AS protected_workspaces
 SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END), 0)
          AS pilot_sample_tables,
        COALESCE(SUM(CASE WHEN name = 'learning_calibration_audits' THEN 1 ELSE 0 END), 0)
-         AS calibration_tables
+         AS calibration_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'cron_alerts' THEN 1 ELSE 0
+       END), 0) AS alert_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'index'
+          AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
+         THEN 1 ELSE 0
+       END), 0) AS alert_indexes
   FROM sqlite_master
- WHERE type = 'table'
-   AND name IN ('learning_pilot_samples', 'learning_calibration_audits');
+ WHERE (type = 'table'
+        AND name IN ('learning_pilot_samples', 'learning_calibration_audits', 'cron_alerts'))
+    OR (type = 'index'
+        AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
 SELECT policy_version, ready, checks_json, evaluated_at
   FROM learning_release_readiness
  WHERE policy_version = '${POLICY_VERSION}'
@@ -166,6 +187,7 @@ export interface RolloutObservation {
     latestPilotCron: CronObservation | null;
     latestReadinessCron: CronObservation | null;
     calibrationTablePresent: boolean;
+    alertSchemaReady: boolean;
     latestCalibrationCron: CronObservation | null;
     calibrationRows: number;
     verifiedCalibrations: number;
@@ -177,6 +199,7 @@ export interface RolloutObservation {
     hugheseysQueStatus: string | null;
     pilotSampleTablePresent: boolean;
     calibrationTablePresent: boolean;
+    alertSchemaReady: boolean;
     readiness: ReadinessObservation | null;
   };
 }
@@ -445,6 +468,8 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
     'safety',
   );
   add('staging_calibration_schema', input.staging.calibrationTablePresent, 'safety');
+  add('staging_alert_schema', input.staging.alertSchemaReady, 'safety');
+  add('production_alert_schema', input.production.alertSchemaReady, 'safety');
   add(
     'zero_protected_workspaces',
     input.staging.protectedWorkspaces === 0 && input.production.protectedWorkspaces === 0,
@@ -782,6 +807,8 @@ async function main(): Promise<void> {
   const stagingEnrollments = firstRow(stagingD1.rows[4]);
   const stagingSchema = firstRow(stagingD1.rows[5]);
   const stagingCalibrationTablePresent = numberField(stagingSchema, 'calibration_tables') === 1;
+  const stagingAlertSchemaReady = numberField(stagingSchema, 'alert_tables') === 1
+    && numberField(stagingSchema, 'alert_indexes') === 2;
   const stagingCalibrationD1 = stagingCalibrationTablePresent
     ? executeReadOnlyD1(
       'socialai-db-staging',
@@ -821,6 +848,7 @@ async function main(): Promise<void> {
       latestPilotCron: parseCron(stagingCrons, 'learning_pilot'),
       latestReadinessCron: parseCron(stagingCrons, 'learning_readiness'),
       calibrationTablePresent: stagingCalibrationTablePresent,
+      alertSchemaReady: stagingAlertSchemaReady,
       latestCalibrationCron: parseCron(stagingCrons, 'learning_calibration'),
       calibrationRows: numberField(stagingCalibration, 'calibration_rows'),
       verifiedCalibrations: numberField(stagingCalibration, 'verified_calibrations'),
@@ -841,12 +869,14 @@ async function main(): Promise<void> {
       hugheseysQueStatus: stringField(productionHughes, 'status'),
       pilotSampleTablePresent: numberField(productionSchema, 'pilot_sample_tables') === 1,
       calibrationTablePresent: numberField(productionSchema, 'calibration_tables') === 1,
+      alertSchemaReady: numberField(productionSchema, 'alert_tables') === 1
+        && numberField(productionSchema, 'alert_indexes') === 2,
       readiness: parseReadiness(productionReadiness),
     },
   };
   const evaluation = evaluateRolloutState(observation);
   const payload = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,

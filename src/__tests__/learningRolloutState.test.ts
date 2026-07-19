@@ -81,6 +81,7 @@ function observation(): RolloutObservation {
         details: null,
       },
       calibrationTablePresent: true,
+      alertSchemaReady: true,
       latestCalibrationCron: {
         success: true,
         error: null,
@@ -116,6 +117,7 @@ function observation(): RolloutObservation {
       hugheseysQueStatus: 'on_hold',
       pilotSampleTablePresent: true,
       calibrationTablePresent: true,
+      alertSchemaReady: true,
       readiness: greenReadiness(),
     },
   };
@@ -186,6 +188,12 @@ describe('learning live rollout state', () => {
     }],
     ['the staging calibration schema is missing', (input: RolloutObservation) => {
       input.staging.calibrationTablePresent = false;
+    }],
+    ['the staging alert persistence schema is incomplete', (input: RolloutObservation) => {
+      input.staging.alertSchemaReady = false;
+    }],
+    ['the production alert persistence schema is incomplete', (input: RolloutObservation) => {
+      input.production.alertSchemaReady = false;
     }],
   ])('returns unsafe_or_unverified when %s', (_label, mutate) => {
     const input = observation();
