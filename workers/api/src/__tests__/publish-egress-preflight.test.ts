@@ -36,6 +36,10 @@ function productionTypeScriptSources(root: string): ProductionSource[] {
   return sources;
 }
 
+function productionPublicationSources(roots: readonly string[]): ProductionSource[] {
+  return roots.flatMap((root) => productionTypeScriptSources(root));
+}
+
 function requestMethod(call: ts.CallExpression): string {
   const init = call.arguments[1];
   if (!init || !ts.isObjectLiteralExpression(init)) return init ? 'UNKNOWN' : 'GET';
@@ -870,6 +874,7 @@ describe('recordPublishedPostBestEffort', () => {
 describe('publish egress source contracts', () => {
   const workerRoot = resolve(process.cwd(), 'src');
   const repoRoot = resolve(process.cwd(), '../..');
+  const frontendRoot = resolve(repoRoot, 'src');
 
   it('defines additive, tenant-scoped, append-only v42 delivery shadow receipts', () => {
     const migration = readFileSync(
@@ -917,7 +922,10 @@ describe('publish egress source contracts', () => {
   });
 
   it('rejects provider publication calls outside the centralized orchestrator', () => {
-    expect(providerPublicationBypasses(productionTypeScriptSources(workerRoot)))
+    expect(providerPublicationBypasses(productionPublicationSources([
+      workerRoot,
+      frontendRoot,
+    ])))
       .toEqual([]);
   });
 
