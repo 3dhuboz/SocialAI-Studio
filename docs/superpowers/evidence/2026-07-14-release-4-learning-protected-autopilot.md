@@ -2252,3 +2252,101 @@ Production was not deployed or migrated. It remains on Worker version
 pre-learning-attribution column set only (`id` through `ok`) and no
 `learning_decision_id` column. `hughesq-001` remains exactly
 `status='on_hold'`.
+
+## 2026-07-19 Positive Real-Pilot Evidence Gate
+
+### Integrity Gap Closed
+
+Pilot readiness previously excluded rows only after an explicit synthetic-QA
+disqualification. That negative-only rule could not positively prove that an
+otherwise undisqualified decision came from genuine owner/customer content.
+Prediction readiness also required a complete 168-hour outcome for every one
+of the 30 pilot decisions, including drafts correctly blocked before
+publication and therefore incapable of producing an outcome.
+
+Schema v46 adds `learning_pilot_samples`, an append-only exact-content-hash
+receipt for a real owner or consenting-customer Draft. The authenticated admin
+action requires an explicit real-post confirmation, records the administrator,
+owner-specific basis, note, and timestamp, and never changes the post. The
+manual route and natural pilot collector independently re-hash the current
+Draft and fail closed before context loading, budget reservation, or critic
+spend if the receipt is absent, malformed, stale, future-dated, or belongs to a
+different tenant. Readiness and adjudication sampling require the same exact
+positive receipt; synthetic disqualification remains a second independent
+exclusion.
+
+The temporary admin UI now performs one explicit `attest` then `validate`
+sequence and states that the action does not approve, schedule, or publish the
+post. This is pilot evidence collection only, not a permanent per-post human
+approval requirement for Protected Autopilot.
+
+Prediction quality now requires at least 20 complete 168-hour outcomes across
+both pilot workspaces, with at least 8 outcomes from each. Only green decisions
+with a confirmed publication and `source_status='complete'` count. All 30
+exact-version decisions and all 30 independent adjudications remain mandatory,
+so correctly blocked drafts still prove critic accuracy without being assigned
+impossible engagement outcomes.
+
+### Verification
+
+Test-driven verification passed:
+
+- Focused positive-sample Worker tests: 6 files, 90 tests.
+- Learning route tests: 39 tests.
+- Learning readiness tests: 27 tests.
+- Full Worker suite: 96 files, 1,215 tests.
+- Strict Worker TypeScript.
+- Full frontend suite: 17 files, 200 tests.
+- Frontend production build.
+- `git diff --check`.
+
+The bounded independent Mission Control review dispatch returned HTTP 502 before
+accepting work, so it produced no execution receipt and was not retried. The lead
+performed the required three-file fallback review across the attestation route,
+natural collector, and readiness calculation and found no release-blocking path
+around exact-version attestation, tenancy, Draft status, on-hold exclusion, or
+the release thresholds.
+
+A brand-new isolated local D1 state accepted v46 and one valid owner sample.
+The immutable trigger rejected an update, deleting the test post cascaded its
+sample to zero rows, and no remote database was involved in that exercise.
+
+Before staging migration, a full staging D1 export was saved outside the
+working tree at:
+
+- `D:\GitHubBackup\SocialAI\staging-db-exports\socialai-db-staging-pre-v46-20260719-1740.sql`
+- Size: `2,392,403` bytes
+- SHA-256: `AAF1D80077CE18A0329F1531E6A9CD44C97F7B4A801CE7D3FA22DBE941AEC1D4`
+
+Schema v46 then applied to staging. Read-only verification found the table,
+workspace index, immutable update trigger, zero sample rows, no foreign-key
+violations, and unchanged counts of 1 enrollment, 6 decisions, 6 synthetic-QA
+disqualifications, and 6 Draft posts.
+
+Wrangler dry-run resolved only `socialai-db-staging` and confirmed release
+enforcement, Protected Autopilot, and organic-reach application were disabled.
+The final reviewed staging Worker deployed as version
+`5a24507c-2a9d-4319-be71-9aef6b50acba`; `/api/health` returned HTTP 200 with
+`{"ok":true,"service":"socialai-api"}`.
+
+The first natural 15-minute lane after the final reviewed deploy ran at
+`2026-07-19 08:00:16` UTC. `learning_pilot` receipt `9410` succeeded with zero
+candidates, zero evaluations, zero invalid records, zero errors, and zero sample
+rows. Paired readiness receipt `9411` persisted red snapshot
+`9b9921c6-3055-4d51-812d-2db5ff53059d` with zero pilot decisions and
+`predictionCoverage=false`. Both verification queries reported
+`changed_db=false`. This proves unattested Drafts cannot enter the pilot merely
+because they are enrolled or undisqualified.
+
+### Production Boundary And Next Gate
+
+Production was not migrated, deployed, or written. It remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, has no
+`learning_pilot_samples` table, and `hughesq-001` remains exactly
+`status='on_hold'`.
+
+No production Draft was copied to staging and no real post was attested or
+critiqued in this step. Existing authorization covers Penny Wise I.T's
+non-secret business profile only, not post content. Real record-only evidence
+therefore remains blocked pending explicit authorization for a bounded Penny
+Wise Draft copy and separate explicit consent for one active customer pilot.

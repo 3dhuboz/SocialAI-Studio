@@ -234,6 +234,7 @@ export interface LearningReadinessChecks {
   releaseJudgeAvailability?: boolean;
   releaseJudgeTelemetry?: boolean;
   receipts?: boolean;
+  predictionCoverage?: boolean;
   predictionLift?: boolean;
   rankCorrelation?: boolean;
   criticalBypasses?: boolean;
@@ -258,6 +259,9 @@ export interface LearningReadinessMetrics {
   releaseJudgeTelemetryCoverage?: number;
   releaseJudgeInvocations?: number;
   decisionReceiptCoverage?: number;
+  predictionSampleCount?: number;
+  predictionWorkspaceCount?: number;
+  predictionMinWorkspaceSamples?: number;
   predictionLift?: number;
   rankCorrelation?: number;
   criticalBypasses?: number;
@@ -396,6 +400,16 @@ export interface LearningPilotEnrollment {
   pilotEnrollmentId: string;
   pilotPolicyVersion: string;
   enrolledAt: string;
+}
+
+export interface LearningPilotSampleAttestation {
+  sampleId: string;
+  postId: string;
+  contentHash: string;
+  attestationBasis: 'owner_real_post' | 'customer_real_post';
+  attestedAt: string;
+  created: boolean;
+  postMutated: false;
 }
 
 export interface LearningPilotValidation {
@@ -705,6 +719,17 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
         customerConsentNote: customerConsent?.note,
       }));
       return res.json() as Promise<LearningPilotEnrollment>;
+    },
+
+    async attestLearningPilotDraft(
+      postId: string,
+      note: string,
+    ): Promise<LearningPilotSampleAttestation> {
+      const res = await f(
+        `/api/learning/pilot/attest/${encodeURIComponent(postId)}`,
+        j({ realPostConfirmed: true, note }),
+      );
+      return res.json() as Promise<LearningPilotSampleAttestation>;
     },
 
     async validateLearningPilotDraft(postId: string): Promise<LearningPilotValidation> {

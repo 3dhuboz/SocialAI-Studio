@@ -171,11 +171,12 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
-  const validateLearningPilotDraft = async (postId: string) => {
+  const validateLearningPilotDraft = async (postId: string, attestationNote: string) => {
     const actionKey = `validate:${postId}`;
     setLearningPilotActionKey(actionKey);
     setLearningError(null);
     try {
+      await db.attestLearningPilotDraft(postId, attestationNote);
       await db.validateLearningPilotDraft(postId);
       await reloadLearningPanels();
     } catch (reason) {
@@ -376,6 +377,8 @@ export const AdminCustomers: React.FC = () => {
 const fmtRate = (value: number | null) => value == null ? 'No sample' : `${(value * 100).toFixed(1)}%`;
 const PILOT_DECISION_TARGET = 30;
 const PILOT_WORKSPACE_TARGET = 2;
+const PREDICTION_SAMPLE_TARGET = 20;
+const PREDICTION_WORKSPACE_MINIMUM = 8;
 const RELEASE_EVIDENCE_TARGET = 9;
 
 const safeMetricCount = (value: number | undefined): number => (
@@ -571,7 +574,7 @@ export const LearningOperationsCard: React.FC<{
     budgetCents: number,
     customerConsent?: LearningPilotCustomerConsent,
   ) => Promise<void>;
-  onPilotValidate?: (postId: string) => Promise<void>;
+  onPilotValidate?: (postId: string, attestationNote: string) => Promise<void>;
 }> = ({
   operations,
   pilotQueue = null,
@@ -590,6 +593,13 @@ export const LearningOperationsCard: React.FC<{
   const pilotUserDecisions = safeMetricCount(operations?.readiness.metrics.pilotUserDecisions);
   const pilotClientDecisions = safeMetricCount(operations?.readiness.metrics.pilotClientDecisions);
   const adjudicatedDecisions = safeMetricCount(operations?.readiness.metrics.adjudicatedDecisions);
+  const predictionSampleCount = safeMetricCount(operations?.readiness.metrics.predictionSampleCount);
+  const predictionWorkspaceCount = safeMetricCount(
+    operations?.readiness.metrics.predictionWorkspaceCount,
+  );
+  const predictionMinWorkspaceSamples = safeMetricCount(
+    operations?.readiness.metrics.predictionMinWorkspaceSamples,
+  );
   const pilotRemaining = Math.max(0, PILOT_DECISION_TARGET - pilotDecisions);
   const pilotProgress = Math.min(100, (pilotDecisions / PILOT_DECISION_TARGET) * 100);
   const releaseEvidence = operations?.releaseEvidence ?? {
@@ -603,6 +613,9 @@ export const LearningOperationsCard: React.FC<{
   const [pilotBudgetDollars, setPilotBudgetDollars] = useState('5.00');
   const [pilotCustomerConsentByWorkspace, setPilotCustomerConsentByWorkspace] = useState<
     Record<string, { confirmed: boolean; note: string }>
+  >({});
+  const [pilotDraftConfirmedByWorkspace, setPilotDraftConfirmedByWorkspace] = useState<
+    Record<string, boolean>
   >({});
   const budgetNumber = Number(pilotBudgetDollars);
   const pilotBudgetCents = Number.isFinite(budgetNumber)
@@ -680,12 +693,18 @@ export const LearningOperationsCard: React.FC<{
                 style={{ width: `${pilotProgress}%` }}
               />
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
               {[
                 ['Workspaces', `${pilotWorkspaceCount} / ${PILOT_WORKSPACE_TARGET}`],
                 ['User decisions', String(pilotUserDecisions)],
                 ['Client decisions', String(pilotClientDecisions)],
                 ['Adjudicated', `${adjudicatedDecisions} / ${PILOT_DECISION_TARGET}`],
+                ['7-day outcomes', `${predictionSampleCount} / ${PREDICTION_SAMPLE_TARGET}`],
+                ['Outcome workspaces', `${predictionWorkspaceCount} / ${PILOT_WORKSPACE_TARGET}`],
+                [
+                  'Minimum per workspace',
+                  `${predictionMinWorkspaceSamples} / ${PREDICTION_WORKSPACE_MINIMUM}`,
+                ],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-white/[0.05] bg-black/15 p-2.5">
                   <p className="text-[9px] leading-tight text-white/30">{label}</p>
@@ -789,6 +808,7 @@ export const LearningOperationsCard: React.FC<{
                   && trimmedCustomerConsentNote.length >= 10
                   && trimmedCustomerConsentNote.length <= 500;
                 const needsCustomerConsent = !candidate.enrolled && candidate.clientId !== null;
+                const draftConfirmed = pilotDraftConfirmedByWorkspace[candidate.workspaceKey] === true;
                 const contextReady = candidate.contextReady === true;
                 const contextLabel = candidate.contextReason === 'verified_facts'
                   ? `${candidate.verifiedFactCount} verified fact${
@@ -885,10 +905,36 @@ export const LearningOperationsCard: React.FC<{
                         </p>
                       </div>
                     )}
+                    {candidate.enrolled && (
+                      <div className="mt-2.5 rounded-lg border border-cyan-400/15 bg-cyan-500/[0.035] p-2.5">
+                        <p className="text-[10px] font-black text-cyan-100/80">
+                          Confirm exact real draft
+                        </p>
+                        <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
+                          <input
+                            type="checkbox"
+                            checked={draftConfirmed}
+                            onChange={(event) => setPilotDraftConfirmedByWorkspace((current) => ({
+                              ...current,
+                              [candidate.workspaceKey]: event.target.checked,
+                            }))}
+                            className="mt-0.5 accent-cyan-400"
+                            aria-label={`Confirm exact real draft for ${candidate.label}`}
+                          />
+                          I confirm the server-selected draft is real business content, not
+                          synthetic or QA data.
+                        </label>
+                        <p className="mt-1.5 text-[9px] leading-relaxed text-white/30">
+                          This creates an immutable pilot receipt for this exact draft version.
+                          It does not approve, schedule, or publish the post.
+                        </p>
+                      </div>
+                    )}
                     <button
                       type="button"
                       disabled={pilotActionKey !== null || (
                         !contextReady
+                        || (candidate.enrolled && !draftConfirmed)
                         || (
                           !candidate.enrolled
                           && (
@@ -897,23 +943,34 @@ export const LearningOperationsCard: React.FC<{
                           )
                         )
                       )}
-                      onClick={() => candidate.enrolled
-                        ? onPilotValidate?.(candidate.samplePostId)
-                        : onPilotEnroll?.(
+                      onClick={async () => {
+                        if (candidate.enrolled) {
+                          await onPilotValidate?.(
+                            candidate.samplePostId,
+                            `Admin explicitly confirmed ${candidate.label}'s server-selected draft ${candidate.samplePostId} is real business content, not synthetic or QA data, for record-only pilot critique. This does not approve, schedule, or publish it.`,
+                          );
+                          setPilotDraftConfirmedByWorkspace((current) => ({
+                            ...current,
+                            [candidate.workspaceKey]: false,
+                          }));
+                          return;
+                        }
+                        await onPilotEnroll?.(
                           candidate.clientId,
                           pilotBudgetCents,
                           candidate.clientId === null ? undefined : {
                             confirmed: true,
                             note: trimmedCustomerConsentNote,
                           },
-                        )}
+                        );
+                      }}
                       className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
                     >
                       {busy ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
                       {!contextReady
                         ? 'Business context required'
                         : candidate.enrolled
-                          ? 'Validate next real draft'
+                          ? 'Confirm and validate real draft'
                           : `Enroll with ${pilotBudgetLabel} cap`}
                     </button>
                   </div>

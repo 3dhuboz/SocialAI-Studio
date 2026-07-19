@@ -19,6 +19,8 @@ const operations: AdminLearningOperations = {
     metrics: {
       pilotDecisions: 12, pilotWorkspaceCount: 2,
       pilotUserDecisions: 5, pilotClientDecisions: 7, adjudicatedDecisions: 8,
+      predictionSampleCount: 6, predictionWorkspaceCount: 2,
+      predictionMinWorkspaceSamples: 2,
     },
   },
   workspaces: [{
@@ -87,6 +89,11 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('Client decisions');
     expect(html).toContain('Adjudicated');
     expect(html).toContain('8 / 30');
+    expect(html).toContain('7-day outcomes');
+    expect(html).toContain('6 / 20');
+    expect(html).toContain('Outcome workspaces');
+    expect(html).toContain('Minimum per workspace');
+    expect(html).toContain('2 / 8');
     expect(html).toContain('9 / 9 valid receipts');
     expect(html).toContain('Read-only status: this panel cannot enable autopilot, schedule, or publish posts');
     expect(html).toContain('On hold');
@@ -221,7 +228,11 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('5 eligible real drafts');
     expect(html).toContain('4 eligible real drafts');
     expect(html).toContain('Enroll with $5.00 cap');
-    expect(html).toContain('Validate next real draft');
+    expect(html).toContain('Confirm exact real draft');
+    expect(html).toContain('Confirm and validate real draft');
+    expect(html).toContain('This creates an immutable pilot receipt for this exact draft version');
+    expect(html).toContain('It does not approve, schedule, or publish the post');
+    expect(html).toContain('aria-label="Confirm exact real draft for My workspace"');
     expect(html).toContain('Context ready');
     expect(html).toContain('Critic context ready: 2 business profile fields');
     expect(html).toContain('Critic context ready: 3 verified facts');
@@ -299,6 +310,6 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('Critics and AI spend remain blocked');
     expect(html).toContain('<button type="button" disabled=""');
     expect(html).toContain('Business context required</button>');
-    expect(html).not.toContain('Validate next real draft');
+    expect(html).not.toContain('Confirm and validate real draft');
   });
 });

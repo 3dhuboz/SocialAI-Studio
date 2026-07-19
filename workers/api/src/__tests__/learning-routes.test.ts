@@ -420,6 +420,7 @@ describe('learning settings and release evidence routes', () => {
       video_url: null, video_status: null, video_script: null, video_shots: null,
       archetype_slug: 'bbq-smokehouse', client_status: 'active',
     };
+    const sampleHash = await buildReleaseContentHash(draft as PublishablePost);
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'FROM posts p': [draft],
@@ -431,6 +432,9 @@ describe('learning settings and release evidence routes', () => {
       }],
       'FROM learning_pilot_enrollments pen': [{
         id: 'pilot-enrollment-1', monthly_ai_budget_usd_cents: 500,
+        pilot_sample_content_hash: sampleHash,
+        pilot_sample_basis: 'customer_real_post',
+        pilot_sample_attested_at: '2026-07-17T00:00:00.000Z',
       }],
       'SELECT profile FROM clients': [{
         profile: '{"productsServices":"Brisket catering and smoked meats"}',
@@ -493,18 +497,86 @@ describe('learning settings and release evidence routes', () => {
     const enrollmentRead = calls.find((call) =>
       call.sql.includes('FROM learning_pilot_enrollments pen'))!;
     expect(enrollmentRead.sql).toContain("pen.consent_basis = 'customer_attested'");
+    expect(enrollmentRead.sql).toContain('LEFT JOIN learning_pilot_samples sample');
+    expect(enrollmentRead.sql).toContain('sample.post_id = ?');
+    expect(enrollmentRead.sql).toContain(
+      'unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)',
+    );
+    expect(enrollmentRead.sql).toContain('unixepoch(sample.attested_at) <= unixepoch(?)');
     expect(enrollmentRead.sql).toContain("w.mode = 'approval'");
     expect(enrollmentRead.sql).toContain('w.monthly_ai_budget_usd_cents > 0');
     expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(true);
   });
 
-  it('stops pilot validation before critic spend when the budget reserve is unavailable', async () => {
+  it('appends a positive real-post attestation without mutating the draft', async () => {
+    const draft = {
+      id: 'draft-real-client', user_id: 'owner_1', client_id: 'client-1',
+      owner_kind: 'client', owner_id: 'client-1', status: 'Draft',
+      content: 'Real customer catering post.', platform: 'Facebook', hashtags: '[]',
+      image_url: null, post_type: 'text', video_url: null, video_status: null,
+      video_script: null, video_shots: null, archetype_slug: 'bbq-smokehouse',
+      client_status: 'active',
+    };
+    const contentHash = await buildReleaseContentHash(draft as PublishablePost);
+    const sample = {
+      id: 'pilot-sample-1', post_id: draft.id, user_id: 'owner_1',
+      workspace_key: 'client-1', client_id: 'client-1', owner_kind: 'client',
+      owner_id: 'client-1', content_hash: contentHash,
+      attestation_basis: 'customer_real_post',
+      note: 'Customer confirmed this is a genuine business-page draft.',
+      attested_by: 'owner_1', attested_at: '2026-07-19T07:00:00.000Z',
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'INSERT OR IGNORE INTO learning_pilot_samples': [sample],
+      'FROM posts p': [draft],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/attest/draft-real-client', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        realPostConfirmed: true,
+        note: sample.note,
+      }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      sampleId: sample.id,
+      postId: draft.id,
+      contentHash,
+      attestationBasis: 'customer_real_post',
+      attestedAt: sample.attested_at,
+      created: true,
+      postMutated: false,
+    });
+    const write = calls.find((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO learning_pilot_samples'))!;
+    expect(write.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
+    expect(write.sql).toContain("pen.consent_basis = 'customer_attested'");
+    expect(write.sql).toContain('unixepoch(pen.consent_confirmed_at) <= unixepoch(?)');
+    expect(write.sql).toContain('COALESCE(c.archetype_slug, u.archetype_slug) IS ?');
+    expect(write.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+    expect(write.binds).toContain(contentHash);
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('refuses validation before context or spend when the exact draft is not attested', async () => {
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'FROM posts p': [{
-        id: 'draft-budget-stop', user_id: 'owner_1', client_id: null,
+        id: 'draft-unattested', user_id: 'owner_1', client_id: null,
         owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
-        content: 'Owner draft', platform: 'Facebook', hashtags: '[]',
+        content: 'Real owner draft.', platform: 'Facebook', hashtags: '[]',
         image_url: null, post_type: 'text', video_url: null, video_status: null,
         video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
         client_status: null,
@@ -516,6 +588,56 @@ describe('learning settings and release evidence routes', () => {
       }],
       'FROM learning_pilot_enrollments pen': [{
         id: 'pilot-enrollment-owner', monthly_ai_budget_usd_cents: 500,
+        pilot_sample_content_hash: null,
+        pilot_sample_basis: null,
+        pilot_sample_attested_at: null,
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/validate/draft-unattested', {
+      method: 'POST', headers: adminHeaders,
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Exact draft version has no positive real-post pilot attestation',
+      code: 'pilot_sample_not_attested',
+    });
+    expect(calls.some((call) => call.sql.includes('SELECT profile FROM users'))).toBe(false);
+    expect(calls.some((call) => call.sql.includes('FROM ai_usage'))).toBe(false);
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
+  });
+
+  it('stops pilot validation before critic spend when the budget reserve is unavailable', async () => {
+    const draft = {
+      id: 'draft-budget-stop', user_id: 'owner_1', client_id: null,
+      owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+      content: 'Owner draft', platform: 'Facebook', hashtags: '[]',
+      image_url: null, post_type: 'text', video_url: null, video_status: null,
+      video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
+      client_status: null,
+    };
+    const sampleHash = await buildReleaseContentHash(draft as PublishablePost);
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [draft],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 500, disabled_reason: null,
+      }],
+      'FROM learning_pilot_enrollments pen': [{
+        id: 'pilot-enrollment-owner', monthly_ai_budget_usd_cents: 500,
+        pilot_sample_content_hash: sampleHash,
+        pilot_sample_basis: 'owner_real_post',
+        pilot_sample_attested_at: '2026-07-17T00:00:00.000Z',
       }],
       'SELECT profile FROM users': [{
         profile: '{"description":"Custom software and workflow automation"}',
@@ -547,16 +669,18 @@ describe('learning settings and release evidence routes', () => {
   });
 
   it('refuses pilot validation before budget or critic spend when business context is empty', async () => {
+    const draft = {
+      id: 'draft-empty-context', user_id: 'owner_1', client_id: null,
+      owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+      content: 'A claim-free workflow observation.', platform: 'Facebook', hashtags: '[]',
+      image_url: null, post_type: 'text', video_url: null, video_status: null,
+      video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
+      client_status: null,
+    };
+    const sampleHash = await buildReleaseContentHash(draft as PublishablePost);
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
-      'FROM posts p': [{
-        id: 'draft-empty-context', user_id: 'owner_1', client_id: null,
-        owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
-        content: 'A claim-free workflow observation.', platform: 'Facebook', hashtags: '[]',
-        image_url: null, post_type: 'text', video_url: null, video_status: null,
-        video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
-        client_status: null,
-      }],
+      'FROM posts p': [draft],
       'FROM workspace_learning_settings': [{
         mode: 'approval', autopublish_consent_at: null,
         autopublish_policy_version: null, experiment_rate: 0,
@@ -564,6 +688,9 @@ describe('learning settings and release evidence routes', () => {
       }],
       'FROM learning_pilot_enrollments pen': [{
         id: 'pilot-enrollment-owner', monthly_ai_budget_usd_cents: 500,
+        pilot_sample_content_hash: sampleHash,
+        pilot_sample_basis: 'owner_real_post',
+        pilot_sample_attested_at: '2026-07-17T00:00:00.000Z',
       }],
       'SELECT profile FROM users': [{
         profile: '{"name":"Penny Wise I.T","tone":"Professional","location":"Gladstone"}',
@@ -1203,6 +1330,8 @@ describe('learning settings and release evidence routes', () => {
     expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
     const sourceRead = calls.find((call) => call.sql.includes('FROM learning_decisions'))!;
     expect(sourceRead.sql).toContain('INNER JOIN learning_pilot_enrollments');
+    expect(sourceRead.sql).toContain('INNER JOIN learning_pilot_samples sample');
+    expect(sourceRead.sql).toContain('sample.content_hash = d.content_hash');
     expect(sourceRead.sql).toContain('pen.policy_version = ?');
     expect(sourceRead.sql).toContain('LEFT JOIN learning_decision_disqualifications disq');
     expect(sourceRead.sql).toContain('disq.id IS NULL');
@@ -1545,6 +1674,8 @@ describe('learning settings and release evidence routes', () => {
     expect(operations.sql).toContain('a.id IS NULL');
     expect(operations.sql).toContain('sample_rank = 1');
     expect(operations.sql).toContain('INNER JOIN learning_pilot_enrollments pen');
+    expect(operations.sql).toContain('INNER JOIN learning_pilot_samples sample');
+    expect(operations.sql).toContain('sample.content_hash = d.content_hash');
     expect(operations.sql).toContain('pen.policy_version = ?');
     expect(operations.sql).toContain('LEFT JOIN learning_decision_disqualifications disq');
     expect(operations.sql).toContain('disq.id IS NULL');

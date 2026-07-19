@@ -8,7 +8,10 @@ import {
   getRecordOnlyPilotBudgetStatus,
   runClaimedPilotEvaluation,
 } from '../lib/learning/pilot-evaluation';
-import type { PublishablePost } from '../lib/learning/release-preflight';
+import {
+  buildReleaseContentHash,
+  type PublishablePost,
+} from '../lib/learning/release-preflight';
 import type { WorkspaceIdentity } from '../lib/learning/types';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
@@ -29,6 +32,27 @@ const ownerPost: PublishablePost = {
   video_shots: null,
   archetype_slug: 'tech-saas-agency',
 };
+
+const clientPost: PublishablePost = {
+  id: 'draft-client-1',
+  user_id: 'owner-1',
+  client_id: 'client-1',
+  owner_kind: 'client',
+  owner_id: 'client-1',
+  content: 'A verified customer offer.',
+  platform: 'instagram',
+  hashtags: '["#GladstoneEats"]',
+  image_url: 'https://images.example.test/customer.jpg',
+  post_type: 'image',
+  video_url: null,
+  video_status: null,
+  video_script: null,
+  video_shots: null,
+  archetype_slug: 'restaurant',
+};
+
+const OWNER_CONTENT_HASH = await buildReleaseContentHash(ownerPost);
+const CLIENT_CONTENT_HASH = await buildReleaseContentHash(clientPost);
 
 const ownerIdentity: WorkspaceIdentity = {
   userId: 'owner-1',
@@ -61,32 +85,24 @@ function ownerCandidate() {
     consent_note: 'Owner approved the record-only pilot.',
     monthly_ai_budget_usd_cents: 500,
     client_status: null,
+    pilot_sample_content_hash: OWNER_CONTENT_HASH,
+    pilot_sample_basis: 'owner_real_post',
+    pilot_sample_attested_at: '2026-07-17T00:00:00.000Z',
   };
 }
 
 function clientCandidate() {
   return {
-    id: 'draft-client-1',
-    user_id: 'owner-1',
-    client_id: 'client-1',
-    owner_kind: 'client',
-    owner_id: 'client-1',
+    ...clientPost,
     workspace_key: 'client-1',
-    content: 'A verified customer offer.',
-    platform: 'instagram',
-    hashtags: '["#GladstoneEats"]',
-    image_url: 'https://images.example.test/customer.jpg',
-    post_type: 'image',
-    video_url: null,
-    video_status: null,
-    video_script: null,
-    video_shots: null,
-    archetype_slug: 'restaurant',
     consent_basis: 'customer_attested',
     consent_confirmed_at: '2026-07-17T00:00:00.000Z',
     consent_note: 'Customer explicitly approved record-only quality review.',
     monthly_ai_budget_usd_cents: 500,
     client_status: 'active',
+    pilot_sample_content_hash: CLIENT_CONTENT_HASH,
+    pilot_sample_basis: 'customer_real_post',
+    pilot_sample_attested_at: '2026-07-17T00:00:00.000Z',
   };
 }
 
@@ -176,6 +192,21 @@ describe('record-only pilot evaluation lease', () => {
       .toBe(false);
     const usage = calls.find((call) => call.sql.includes('INSERT INTO ai_usage'))!;
     expect(usage.binds.at(-2)).toBe('decision-claim-1');
+  });
+
+  it('rejects a pilot evaluation when the positive sample hash no longer matches', async () => {
+    const { db, calls } = makeRecordingD1();
+    const actualHash = await buildReleaseContentHash(ownerPost);
+
+    await expect(runClaimedPilotEvaluation(
+      { DB: db } as Env,
+      ownerPost,
+      undefined,
+      new Date('2026-07-17T01:00:00.000Z'),
+      `${actualHash}-stale`,
+    )).rejects.toThrow('Pilot sample content changed after attestation');
+
+    expect(calls).toEqual([]);
   });
 
   it('fails closed if the completed receipt differs from the claimed metering scope', async () => {
@@ -322,12 +353,72 @@ describe('record-only pilot collector', () => {
     expect(candidateQuery.sql).toContain("pen.consent_basis = 'owner_self'");
     expect(candidateQuery.sql).toContain("pen.consent_basis = 'customer_attested'");
     expect(candidateQuery.sql).toContain("w.mode = 'approval'");
+    expect(candidateQuery.sql).toContain('INNER JOIN learning_pilot_samples sample');
+    expect(candidateQuery.sql).toContain('sample.post_id = p.id');
     expect(candidateQuery.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");
     expect(candidateQuery.sql).toContain('PARTITION BY owner_kind');
     expect(candidateQuery.sql).toMatch(/owner_kind_rank\s+<=\s+5/i);
     expect(candidateQuery.sql).toMatch(/LIMIT\s+10/i);
     expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
       .toBe(false);
+  });
+
+  it('refuses an unattested draft even if a malformed query adapter returns it', async () => {
+    const unattested = {
+      ...ownerCandidate(),
+      pilot_sample_content_hash: null,
+      pilot_sample_basis: null,
+      pilot_sample_attested_at: null,
+    };
+    const runEvaluation = vi.fn();
+
+    const result = await cronEvaluateLearningPilot({
+      DB: {} as D1Database,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env, {
+      loadCandidates: vi.fn(async () => [unattested]),
+      runEvaluation,
+    });
+
+    expect(result).toMatchObject({
+      posts_processed: 0,
+      invalid_skipped: 1,
+      errors: 0,
+    });
+    expect(runEvaluation).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale exact-version receipt before context, budget, or critic work', async () => {
+    const stale = {
+      ...ownerCandidate(),
+      pilot_sample_content_hash: 'a'.repeat(64),
+    };
+    const loadContext = vi.fn();
+    const getBudgetStatus = vi.fn();
+    const runEvaluation = vi.fn();
+
+    const result = await cronEvaluateLearningPilot({
+      DB: {} as D1Database,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env, {
+      loadCandidates: vi.fn(async () => [stale]),
+      loadContext,
+      getBudgetStatus,
+      runEvaluation,
+    });
+
+    expect(result).toMatchObject({
+      posts_processed: 0,
+      invalid_skipped: 1,
+      errors: 0,
+    });
+    expect(loadContext).not.toHaveBeenCalled();
+    expect(getBudgetStatus).not.toHaveBeenCalled();
+    expect(runEvaluation).not.toHaveBeenCalled();
   });
 
   it('skips empty context before budget checks without starving later ready workspaces', async () => {
@@ -338,6 +429,7 @@ describe('record-only pilot collector', () => {
       owner_id: 'owner-2',
       content: 'A second owner draft with real business context.',
     };
+    secondOwner.pilot_sample_content_hash = await buildReleaseContentHash(secondOwner);
     const { db, calls } = makeRecordingD1();
     const loadContext = vi.fn(async (_env: Env, identity: WorkspaceIdentity) =>
       identity.ownerKind === 'user' && identity.userId === 'owner-1'
@@ -453,6 +545,8 @@ describe('record-only pilot collector', () => {
     expect(runEvaluation).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ id: 'draft-owner-budget-ready' }),
+      OWNER_CONTENT_HASH,
+      expect.any(Date),
     );
     expect(calls).toEqual([]);
   });

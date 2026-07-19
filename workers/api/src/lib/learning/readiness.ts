@@ -13,6 +13,9 @@ import type { ReleaseJudgeStatus } from './release-pipeline';
 
 export const AUTOPILOT_POLICY_VERSION = '2026-07-14-v1';
 export const RELEASE_EVIDENCE_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const MIN_PREDICTION_SAMPLE_COUNT = 20;
+export const MIN_PREDICTION_SAMPLES_PER_WORKSPACE = 8;
+export const REQUIRED_PREDICTION_WORKSPACE_COUNT = 2;
 
 export type ReleaseEvidenceKind =
   | 'replay_red_team'
@@ -42,6 +45,9 @@ export interface ReadinessMetrics {
   releaseJudgeTelemetryCoverage: number;
   releaseJudgeInvocations: number;
   decisionReceiptCoverage: number;
+  predictionSampleCount: number;
+  predictionWorkspaceCount: number;
+  predictionMinWorkspaceSamples: number;
   predictionLift: number;
   rankCorrelation: number;
   criticalBypasses: number;
@@ -62,6 +68,7 @@ export interface PilotDecisionRow {
   summary_json: string;
   publication_event_id: string | null;
   normalized_score: number | string | null;
+  outcome_source_status?: 'complete' | 'partial' | 'unavailable' | null;
   expected_state: ReleaseState | null;
   adjudication_severity: 'advisory' | 'release_critical' | null;
 }
@@ -103,6 +110,7 @@ export interface ReadinessChecks {
   releaseJudgeAvailability: boolean;
   releaseJudgeTelemetry: boolean;
   receipts: boolean;
+  predictionCoverage: boolean;
   predictionLift: boolean;
   rankCorrelation: boolean;
   criticalBypasses: boolean;
@@ -139,6 +147,9 @@ export function evaluateReadiness(metrics: ReadinessMetrics): {
     releaseJudgeAvailability: metrics.releaseJudgeAvailability >= 0.995,
     releaseJudgeTelemetry: metrics.releaseJudgeTelemetryCoverage === 1,
     receipts: metrics.decisionReceiptCoverage === 1,
+    predictionCoverage: metrics.predictionSampleCount >= MIN_PREDICTION_SAMPLE_COUNT
+      && metrics.predictionWorkspaceCount === REQUIRED_PREDICTION_WORKSPACE_COUNT
+      && metrics.predictionMinWorkspaceSamples >= MIN_PREDICTION_SAMPLES_PER_WORKSPACE,
     predictionLift: metrics.predictionLift >= 0.15,
     rankCorrelation: metrics.rankCorrelation > 0,
     criticalBypasses: metrics.criticalBypasses === 0,
@@ -355,6 +366,13 @@ export function buildReadinessMetrics(
   let judgeInvocations = 0;
   let judgeTelemetryCount = 0;
   const predictionSamples: PredictionSample[] = [];
+  const predictionSamplesByWorkspace = new Map<string, number>();
+  for (const decision of pilotDecisions) {
+    predictionSamplesByWorkspace.set(
+      workspaceTelemetryKey(decision.user_id, decision.workspace_key),
+      0,
+    );
+  }
   for (const decision of pilotDecisions) {
     const summary = parseSummary(decision.summary_json);
     const deterministicRequired = DETERMINISTIC_REQUIRED_CRITICS.map((kind) => ({
@@ -394,12 +412,23 @@ export function buildReadinessMetrics(
     const actual = decision.normalized_score == null
       ? Number.NaN
       : Number(decision.normalized_score);
-    if (Number.isFinite(predicted) && Number.isFinite(actual)) {
+    if (
+      decision.release_state === 'pass_green'
+      && decision.publication_event_id != null
+      && decision.outcome_source_status === 'complete'
+      && Number.isFinite(predicted)
+      && Number.isFinite(actual)
+    ) {
+      const workspaceKey = workspaceTelemetryKey(decision.user_id, decision.workspace_key);
       predictionSamples.push({
-        workspaceKey: workspaceTelemetryKey(decision.user_id, decision.workspace_key),
+        workspaceKey,
         predicted,
         actual,
       });
+      predictionSamplesByWorkspace.set(
+        workspaceKey,
+        (predictionSamplesByWorkspace.get(workspaceKey) ?? 0) + 1,
+      );
     }
   }
 
@@ -454,7 +483,15 @@ export function buildReadinessMetrics(
     );
   });
 
-  const quality = predictionSamples.length === pilotDecisions.length && pilotDecisions.length >= 30
+  const predictionWorkspaceCounts = [...predictionSamplesByWorkspace.values()];
+  const predictionWorkspaceCount = predictionWorkspaceCounts.filter((count) => count > 0).length;
+  const predictionMinWorkspaceSamples = predictionWorkspaceCounts.length === 0
+    ? 0
+    : Math.min(...predictionWorkspaceCounts);
+  const hasPredictionCoverage = predictionSamples.length >= MIN_PREDICTION_SAMPLE_COUNT
+    && predictionWorkspaceCount === REQUIRED_PREDICTION_WORKSPACE_COUNT
+    && predictionMinWorkspaceSamples >= MIN_PREDICTION_SAMPLES_PER_WORKSPACE;
+  const quality = hasPredictionCoverage
     ? calculatePredictionQuality(predictionSamples)
     : { predictionLift: 0, rankCorrelation: 0 };
   return {
@@ -474,6 +511,9 @@ export function buildReadinessMetrics(
     decisionReceiptCoverage: pilotDecisions.length === 0
       ? 0
       : completeReceipts / pilotDecisions.length,
+    predictionSampleCount: predictionSamples.length,
+    predictionWorkspaceCount,
+    predictionMinWorkspaceSamples,
     predictionLift: quality.predictionLift,
     rankCorrelation: quality.rankCorrelation,
     criticalBypasses,
@@ -551,7 +591,8 @@ export async function collectLearningReadiness(
       d.mode, d.release_state, d.summary_json,
       a.expected_state, a.severity AS adjudication_severity,
       pe.id AS publication_event_id,
-      lo.normalized_score
+      lo.normalized_score,
+      lo.source_status AS outcome_source_status
     FROM learning_decisions d
     INNER JOIN learning_pilot_enrollments pen
       ON pen.user_id = d.user_id
@@ -566,6 +607,20 @@ export async function collectLearningReadiness(
      AND (
        (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
        OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
+     )
+    INNER JOIN learning_pilot_samples sample
+      ON sample.user_id = d.user_id
+     AND sample.workspace_key = d.workspace_key
+     AND sample.client_id IS d.client_id
+     AND sample.owner_kind = d.owner_kind
+     AND sample.owner_id = d.owner_id
+     AND sample.post_id = d.post_id
+     AND sample.content_hash = d.content_hash
+     AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+     AND unixepoch(sample.attested_at) <= unixepoch(d.created_at)
+     AND (
+       (d.owner_kind = 'user' AND sample.attestation_basis = 'owner_real_post')
+       OR (d.owner_kind = 'client' AND sample.attestation_basis = 'customer_real_post')
      )
     LEFT JOIN users u
       ON d.owner_kind = 'user' AND u.id = d.user_id

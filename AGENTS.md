@@ -154,7 +154,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
-| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, consent-attested record-only pilot enrollment/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
+| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, exact-version real-post pilot attestation/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
 | `tracking.ts` | Public HTTPS-only short-link redirects with aggregate, bot-filtered click counts and no personal tracking |
 | `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
 | `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
@@ -182,7 +182,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `paypal.ts` | PayPal API helpers |
 | `lib/learning/` | Tenant-scoped critic council, bounded repair, Release Judge, decision receipts, immutable outcomes, bounded strategy learning, and safe experiment policy |
 | `lib/learning/archetype-aggregates.ts` | Privacy-gated coarse fleet learning with 10-workspace/100-post thresholds and atomic per-archetype rebuilds |
-| `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, prediction quality, and strict tenant-scoped metric collection |
+| `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, complete 168-hour outcome coverage and prediction quality, and strict tenant-scoped metric collection |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 | `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
@@ -194,7 +194,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
 | `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
-| `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Lease-guarded record-only critique of at most one new Draft per explicitly consented pilot workspace |
+| `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Lease-guarded record-only critique of at most one exact-version, positively attested Draft per explicitly consented pilot workspace |
 | `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
 | `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
 | `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
@@ -211,11 +211,20 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v45
+**Current source schema version:** v46
 
 **Current production schema version:** v42.
 
-**Current staging schema version:** v45.
+**Current staging schema version:** v46.
+
+Positive pilot sample migration:
+`workers/api/schema_v46_learning_pilot_samples.sql`.
+It adds append-only, exact-content-hash receipts proving that a Draft is real
+owner/customer business content rather than synthetic QA. Pilot validation,
+cron evaluation, readiness, and adjudication sampling all require the positive
+receipt in addition to consent; absence or content drift fails closed before AI
+spend. The migration and matching Worker are live in staging only; production
+remains on schema v42 and must not receive either until the release gates pass.
 
 Pilot AI cost attribution migration:
 `workers/api/schema_v45_learning_ai_usage_attribution.sql`.
@@ -314,6 +323,7 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `learning_decision_disqualifications` | Immutable staging QA exclusions that keep synthetic decisions out of readiness and adjudication |
 | `ai_usage` | Workspace-wide AI spend ledger with optional exact learning-decision attribution |
 | `learning_pilot_enrollments` | Policy-versioned record-only pilot cohort and consent receipts; update-blocked but privacy-deletable |
+| `learning_pilot_samples` | Immutable positive receipts for exact real owner/customer Draft versions admitted to the temporary record-only pilot |
 | `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
 | `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
 
@@ -348,7 +358,7 @@ Release 2 runs the Customer Learning Brain in shadow mode in production and stag
 
 Release 3 enables organic reach planning in shadow with `ORGANIC_REACH_ENABLED="true"` and keeps application disabled with `ORGANIC_REACH_APPLY_ENABLED="false"` in production and staging. Recommendation timing changes additionally require an explicit `dryRun=false` request and a confirmed reach profile, so the disabled apply flag prevents schedule writes even when a caller requests application.
 
-Release 4 controls are deployed but activation remains gated. Keep `LEARNING_RELEASE_ENFORCEMENT="false"`, `LEARNING_AUTOPILOT_ENABLED="false"`, and `ORGANIC_REACH_APPLY_ENABLED="false"` until the current-policy readiness snapshot passes every documented check with at least 30 real pilot decisions and 30 sampled adjudications. Never manufacture readiness rows or insert release evidence directly into D1; use the authenticated admin evidence route. On-hold clients, including Hugheseys Que, remain ineligible and must retain normal app access without learning release activation. Higgsfield remains a separate production gate and is not enabled by learning readiness.
+Release 4 controls are deployed but activation remains gated. Keep `LEARNING_RELEASE_ENFORCEMENT="false"`, `LEARNING_AUTOPILOT_ENABLED="false"`, and `ORGANIC_REACH_APPLY_ENABLED="false"` until the current-policy readiness snapshot passes every documented check with at least 30 real pilot decisions, 30 sampled adjudications, and 20 complete 168-hour outcomes across both pilot workspaces with at least 8 per workspace. Never manufacture readiness rows or insert release evidence directly into D1; use the authenticated admin evidence route. On-hold clients, including Hugheseys Que, remain ineligible and must retain normal app access without learning release activation. Higgsfield remains a separate production gate and is not enabled by learning readiness.
 
 ---
 

@@ -270,7 +270,7 @@ describe('learning decision client', () => {
     expect(result).toEqual({ adjudicationId: 'adjudication_1' });
   });
 
-  it('uses the bounded pilot queue and explicit single-draft validation endpoints', async () => {
+  it('uses the bounded pilot queue and attests the exact real draft before validation', async () => {
     const calls: Array<{ url: string; method: string; body: unknown }> = [];
     const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
@@ -293,6 +293,13 @@ describe('learning decision client', () => {
               mode: 'approval', monthlyAiBudgetUsdCents: 500,
               autopublishConsentAt: null, recordOnly: true,
             }
+          : url.includes('/pilot/attest')
+            ? {
+                sampleId: 'sample_1', postId: 'draft_1', contentHash: 'a'.repeat(64),
+                attestationBasis: 'customer_real_post',
+                attestedAt: '2026-07-19T00:00:00.000Z', created: true,
+                postMutated: false,
+              }
           : {
               decisionId: 'decision_1', releaseState: 'pass_green',
               postId: 'draft_1', sourceStatus: 'Draft', postMutated: false,
@@ -309,11 +316,18 @@ describe('learning decision client', () => {
       confirmed: true,
       note: 'Customer confirmed record-only pilot participation by phone.',
     });
+    const attested = await db.attestLearningPilotDraft(
+      'draft 1',
+      'Admin confirmed this exact server-selected draft is a real business draft.',
+    );
     const validated = await db.validateLearningPilotDraft('draft 1');
 
     expect(queue.recordOnly).toBe(true);
     expect(queue.candidates[0].samplePostId).toBe('draft_1');
     expect(enrolled).toMatchObject({ mode: 'approval', recordOnly: true });
+    expect(attested).toMatchObject({
+      sampleId: 'sample_1', created: true, postMutated: false,
+    });
     expect(validated).toMatchObject({
       decisionId: 'decision_1', postMutated: false, sourceStatus: 'Draft',
     });
@@ -330,6 +344,14 @@ describe('learning decision client', () => {
           monthlyAiBudgetUsdCents: 500,
           customerConsentConfirmed: true,
           customerConsentNote: 'Customer confirmed record-only pilot participation by phone.',
+        },
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/attest/draft%201'),
+        method: 'POST',
+        body: {
+          realPostConfirmed: true,
+          note: 'Admin confirmed this exact server-selected draft is a real business draft.',
         },
       },
       {

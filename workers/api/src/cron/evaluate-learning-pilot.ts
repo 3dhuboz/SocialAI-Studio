@@ -11,7 +11,10 @@ import {
   type PilotBudgetStatus,
 } from '../lib/learning/pilot-evaluation';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
-import type { PublishablePost } from '../lib/learning/release-preflight';
+import {
+  buildReleaseContentHash,
+  type PublishablePost,
+} from '../lib/learning/release-preflight';
 import {
   normalizeWorkspaceIdentity,
   type WorkspaceIdentity,
@@ -40,6 +43,9 @@ interface PilotCandidateRow {
   consent_note: string | null;
   monthly_ai_budget_usd_cents: number | string | null;
   client_status: string | null;
+  pilot_sample_content_hash: string | null;
+  pilot_sample_basis: string | null;
+  pilot_sample_attested_at: string | null;
 }
 
 interface PilotCollectorDeps {
@@ -51,7 +57,12 @@ interface PilotCollectorDeps {
     now: Date,
   ): Promise<PilotBudgetStatus>;
   loadContext(env: Env, identity: WorkspaceIdentity): Promise<CriticContext>;
-  runEvaluation(env: Env, post: PublishablePost): Promise<ClaimedPilotEvaluationResult>;
+  runEvaluation(
+    env: Env,
+    post: PublishablePost,
+    expectedContentHash: string,
+    now: Date,
+  ): Promise<ClaimedPilotEvaluationResult>;
 }
 
 export interface PilotCollectorResult {
@@ -95,6 +106,9 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
         pen.consent_note,
         w.monthly_ai_budget_usd_cents,
         c.status AS client_status,
+        sample.content_hash AS pilot_sample_content_hash,
+        sample.attestation_basis AS pilot_sample_basis,
+        sample.attested_at AS pilot_sample_attested_at,
         ROW_NUMBER() OVER (
           PARTITION BY pen.user_id, pen.workspace_key
           ORDER BY p.created_at ASC, p.id ASC
@@ -111,6 +125,25 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
         ON p.user_id = pen.user_id
        AND p.client_id IS pen.client_id
        AND p.status = 'Draft'
+      INNER JOIN learning_pilot_samples sample
+        ON sample.user_id = pen.user_id
+       AND sample.workspace_key = pen.workspace_key
+       AND sample.client_id IS pen.client_id
+       AND sample.owner_kind = pen.owner_kind
+       AND sample.owner_id = pen.owner_id
+       AND sample.post_id = p.id
+       AND sample.id = (
+         SELECT latest_sample.id
+         FROM learning_pilot_samples latest_sample
+         WHERE latest_sample.user_id = pen.user_id
+           AND latest_sample.workspace_key = pen.workspace_key
+           AND latest_sample.client_id IS pen.client_id
+           AND latest_sample.owner_kind = pen.owner_kind
+           AND latest_sample.owner_id = pen.owner_id
+           AND latest_sample.post_id = p.id
+         ORDER BY latest_sample.attested_at DESC, latest_sample.id DESC
+         LIMIT 1
+       )
       LEFT JOIN clients c
         ON c.id = pen.client_id
        AND c.user_id = pen.user_id
@@ -118,6 +151,8 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
         AND pen.record_only = 1
         AND pen.consent_confirmed_at IS NOT NULL
         AND pen.consent_confirmed_at <= ?
+        AND sample.attested_at >= pen.consent_confirmed_at
+        AND sample.attested_at <= ?
         AND w.mode = 'approval'
         AND w.monthly_ai_budget_usd_cents > 0
         AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
@@ -128,6 +163,7 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
             AND pen.client_id IS NULL
             AND pen.workspace_key = '__owner__'
             AND pen.owner_id = pen.user_id
+            AND sample.attestation_basis = 'owner_real_post'
             AND p.client_id IS NULL
             AND (p.owner_kind IS NULL OR p.owner_kind = 'user')
             AND (p.owner_id IS NULL OR TRIM(p.owner_id) = '' OR p.owner_id = pen.user_id)
@@ -139,6 +175,7 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
             AND pen.client_id IS NOT NULL
             AND pen.workspace_key = pen.client_id
             AND pen.owner_id = pen.client_id
+            AND sample.attestation_basis = 'customer_real_post'
             AND c.id IS NOT NULL
             AND LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'
             AND (p.owner_kind IS NULL OR p.owner_kind = 'client')
@@ -191,6 +228,7 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
   `).bind(
     AUTOPILOT_POLICY_VERSION,
     now.toISOString(),
+    now.toISOString(),
   ).all<PilotCandidateRow>();
   return rows.results ?? [];
 }
@@ -205,7 +243,8 @@ const defaultDeps: PilotCollectorDeps = {
     identity.ownerKind,
     identity.ownerId,
   ),
-  runEvaluation: runClaimedPilotEvaluation,
+  runEvaluation: (env, post, expectedContentHash, now) =>
+    runClaimedPilotEvaluation(env, post, undefined, now, expectedContentHash),
 };
 
 function dormantPilotEnabled(env: Env): boolean {
@@ -217,7 +256,12 @@ function dormantPilotEnabled(env: Env): boolean {
 function candidatePost(
   row: PilotCandidateRow,
   now: Date,
-): { post: PublishablePost; identity: WorkspaceIdentity; budgetUsdCents: number } | null {
+): {
+  post: PublishablePost;
+  identity: WorkspaceIdentity;
+  budgetUsdCents: number;
+  expectedContentHash: string;
+} | null {
   const ownerKind: WorkspaceOwnerKind | null =
     row.owner_kind === 'user' || row.owner_kind === 'client'
       ? row.owner_kind
@@ -246,11 +290,26 @@ function candidatePost(
 
   const consentAt = Date.parse(row.consent_confirmed_at ?? '');
   if (!Number.isFinite(consentAt) || consentAt > now.getTime()) return null;
-  if (ownerKind === 'user' && row.consent_basis !== 'owner_self') return null;
+  const sampleAt = Date.parse(row.pilot_sample_attested_at ?? '');
+  const expectedContentHash = row.pilot_sample_content_hash?.trim() ?? '';
+  if (
+    !Number.isFinite(sampleAt)
+    || sampleAt < consentAt
+    || sampleAt > now.getTime()
+    || !/^[0-9a-f]{64}$/.test(expectedContentHash)
+  ) return null;
+  if (
+    ownerKind === 'user'
+    && (
+      row.consent_basis !== 'owner_self'
+      || row.pilot_sample_basis !== 'owner_real_post'
+    )
+  ) return null;
   if (
     ownerKind === 'client'
     && (
       row.consent_basis !== 'customer_attested'
+      || row.pilot_sample_basis !== 'customer_real_post'
       || !row.consent_note?.trim()
       || !row.client_status
       || row.client_status.trim().toLowerCase() === 'on_hold'
@@ -262,6 +321,7 @@ function candidatePost(
   return {
     identity,
     budgetUsdCents,
+    expectedContentHash,
     post: {
       id: row.id,
       user_id: identity.userId,
@@ -319,6 +379,16 @@ export async function cronEvaluateLearningPilot(
     }
 
     try {
+      if (await buildReleaseContentHash(candidate.post) !== candidate.expectedContentHash) {
+        result.invalid_skipped += 1;
+        continue;
+      }
+    } catch {
+      result.invalid_skipped += 1;
+      continue;
+    }
+
+    try {
       const context = await deps.loadContext(env, candidate.identity);
       if (!assessCriticContextReadiness(context).ready) {
         result.context_not_ready += 1;
@@ -339,7 +409,12 @@ export async function cronEvaluateLearningPilot(
       seenWorkspaces.add(row.workspace_key);
       seenOwnerKinds.add(candidate.identity.ownerKind);
 
-      const evaluation = await deps.runEvaluation(env, candidate.post);
+      const evaluation = await deps.runEvaluation(
+        env,
+        candidate.post,
+        candidate.expectedContentHash,
+        now,
+      );
       if (evaluation.status === 'evaluated') {
         result.evaluated += 1;
         result.posts_processed += 1;

@@ -86,6 +86,9 @@ const readyMetrics: ReadinessMetrics = {
   releaseJudgeTelemetryCoverage: 1,
   releaseJudgeInvocations: 30,
   decisionReceiptCoverage: 1,
+  predictionSampleCount: 20,
+  predictionWorkspaceCount: 2,
+  predictionMinWorkspaceSamples: 10,
   predictionLift: 0.15,
   rankCorrelation: 0.1,
   criticalBypasses: 0,
@@ -138,6 +141,9 @@ describe('learning release readiness', () => {
       { releaseJudgeAvailability: 0.994 },
       { releaseJudgeTelemetryCoverage: 0.999 },
       { decisionReceiptCoverage: 0.999 },
+      { predictionSampleCount: 19 },
+      { predictionWorkspaceCount: 1 },
+      { predictionMinWorkspaceSamples: 7 },
       { predictionLift: 0.149 },
       { rankCorrelation: 0 },
       { criticalBypasses: 1 },
@@ -247,22 +253,29 @@ describe('learning release readiness', () => {
         owner_kind: clientPilot ? 'client' : 'user',
         owner_id: clientPilot ? 'client-1' : 'owner-1',
         mode: 'approval',
-        release_state: 'pass_green',
+        release_state: index % 15 < 10 ? 'pass_green' : 'block_red',
         summary_json: JSON.stringify({
           persistenceState: 'complete',
-          pipelineState: 'pass_green',
+          pipelineState: index % 15 < 10 ? 'pass_green' : 'block_red',
           mediaKind: 'none',
-          judgeStatus: 'available',
+          judgeStatus: index % 15 < 10 ? 'available' : 'not_run',
           predictedOutcomeScore: (index % 15) + 1,
         }),
-        publication_event_id: `publication-${index}`,
-        normalized_score: (index % 15) + 1,
-        expected_state: 'pass_green',
+        publication_event_id: index % 15 < 10 ? `publication-${index}` : null,
+        normalized_score: index % 15 < 10 ? (index % 15) + 1 : null,
+        outcome_source_status: index % 15 < 10 ? 'complete' : null,
+        expected_state: index % 15 < 10 ? 'pass_green' : 'block_red',
         adjudication_severity: 'advisory',
       };
     });
-    const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
-      completeTextVerdicts(decision.id));
+    const verdicts: PilotVerdictRow[] = decisions.flatMap((decision, index) =>
+      completeTextVerdicts(decision.id).map((verdict) => (
+        index % 15 >= 10
+        && verdict.provider === 'deterministic'
+        && verdict.critic_kind === 'fact'
+          ? { ...verdict, verdict: 'block' as const }
+          : verdict
+      )));
     const costs: WorkspaceCostTelemetry[] = [
       {
         userId: 'owner-1',
@@ -302,8 +315,11 @@ describe('learning release readiness', () => {
       requiredAvailability: 1,
       releaseJudgeAvailability: 1,
       releaseJudgeTelemetryCoverage: 1,
-      releaseJudgeInvocations: 30,
+      releaseJudgeInvocations: 20,
       decisionReceiptCoverage: 1,
+      predictionSampleCount: 20,
+      predictionWorkspaceCount: 2,
+      predictionMinWorkspaceSamples: 10,
       rankCorrelation: 1,
       criticalBypasses: 0,
       costWithinBudget: true,
@@ -694,6 +710,7 @@ describe('learning release readiness', () => {
         }),
         publication_event_id: `publication-${index}`,
         normalized_score: (index % 15) + 1,
+        outcome_source_status: 'complete',
         expected_state: 'pass_green',
         adjudication_severity: 'advisory',
       };
@@ -756,9 +773,15 @@ describe('learning release readiness', () => {
     expect(pilotCall.sql).toContain(
       'LEFT JOIN learning_decision_disqualifications disq',
     );
+    expect(pilotCall.sql).toContain('INNER JOIN learning_pilot_samples sample');
+    expect(pilotCall.sql).toContain('sample.content_hash = d.content_hash');
+    expect(pilotCall.sql).toContain(
+      'unixepoch(sample.attested_at) <= unixepoch(d.created_at)',
+    );
     expect(pilotCall.sql).toContain('disq.id IS NULL');
     expect(pilotCall.sql).toContain('a.user_id = d.user_id');
     expect(pilotCall.sql).toContain('pe.owner_id = d.owner_id');
+    expect(pilotCall.sql).toContain('lo.source_status AS outcome_source_status');
     const attributedCalls = calls.filter((call) =>
       call.sql.includes('INNER JOIN learning_decisions usage_decision'));
     expect(attributedCalls).toHaveLength(2);

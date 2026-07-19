@@ -222,6 +222,7 @@ export async function runClaimedPilotEvaluation(
   post: PublishablePost,
   deps: PilotEvaluationDeps = defaultDeps,
   now: Date = new Date(),
+  expectedContentHash?: string,
 ): Promise<ClaimedPilotEvaluationResult> {
   const identity = normalizeWorkspaceIdentity(
     post.user_id,
@@ -230,6 +231,9 @@ export async function runClaimedPilotEvaluation(
     post.owner_id,
   );
   const contentHash = await buildReleaseContentHash(post);
+  if (expectedContentHash !== undefined && contentHash !== expectedContentHash) {
+    throw new Error('Pilot sample content changed after attestation');
+  }
   const fresh = await deps.findFreshReceipt(
     env.DB,
     identity.userId,
