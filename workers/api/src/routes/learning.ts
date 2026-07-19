@@ -27,6 +27,7 @@ import {
 } from '../lib/learning/release-preflight';
 import {
   getRecordOnlyPilotBudgetStatus,
+  isSyntheticQaPilotPost,
   runClaimedPilotEvaluation,
 } from '../lib/learning/pilot-evaluation';
 import {
@@ -1045,6 +1046,27 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
               AS INTEGER
             ) > 0
         )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM learning_decisions synthetic_decision
+          INNER JOIN learning_decision_disqualifications synthetic_disq
+            ON synthetic_disq.decision_id = synthetic_decision.id
+           AND synthetic_disq.user_id = synthetic_decision.user_id
+           AND synthetic_disq.workspace_key = synthetic_decision.workspace_key
+           AND synthetic_disq.client_id IS synthetic_decision.client_id
+           AND synthetic_disq.owner_kind = synthetic_decision.owner_kind
+           AND synthetic_disq.owner_id = synthetic_decision.owner_id
+          WHERE synthetic_decision.user_id = p.user_id
+            AND synthetic_decision.workspace_key = CASE
+              WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+            AND synthetic_decision.client_id IS p.client_id
+            AND synthetic_decision.owner_kind = CASE
+              WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+            AND synthetic_decision.owner_id = CASE
+              WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+            AND synthetic_decision.post_id = p.id
+            AND synthetic_disq.reason = 'synthetic_qa'
+        )
       GROUP BY p.user_id,p.client_id
       ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
       LIMIT 50
@@ -1159,6 +1181,12 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       archetype_slug: row.archetype_slug,
     };
     const contentHash = await buildReleaseContentHash(post);
+    if (await isSyntheticQaPilotPost(c.env.DB, identity, postId)) {
+      return c.json({
+        error: 'Known synthetic-QA posts cannot enter real pilot evidence',
+        code: 'pilot_sample_synthetic_qa',
+      }, 409);
+    }
     const existing = await existingPilotSample(c.env.DB, identity, postId, contentHash);
     if (existing) {
       return c.json({
@@ -1225,6 +1253,24 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
           OR p.owner_id = ?
         )
         AND COALESCE(c.archetype_slug, u.archetype_slug) IS ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM learning_decisions synthetic_decision
+          INNER JOIN learning_decision_disqualifications synthetic_disq
+            ON synthetic_disq.decision_id = synthetic_decision.id
+           AND synthetic_disq.user_id = synthetic_decision.user_id
+           AND synthetic_disq.workspace_key = synthetic_decision.workspace_key
+           AND synthetic_disq.client_id IS synthetic_decision.client_id
+           AND synthetic_disq.owner_kind = synthetic_decision.owner_kind
+           AND synthetic_disq.owner_id = synthetic_decision.owner_id
+          WHERE synthetic_decision.user_id = pen.user_id
+            AND synthetic_decision.workspace_key = pen.workspace_key
+            AND synthetic_decision.client_id IS pen.client_id
+            AND synthetic_decision.owner_kind = pen.owner_kind
+            AND synthetic_decision.owner_id = pen.owner_id
+            AND synthetic_decision.post_id = p.id
+            AND synthetic_disq.reason = 'synthetic_qa'
+        )
         AND (
           (
             pen.owner_kind = 'user'
@@ -1466,6 +1512,12 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({
         error: 'Draft changed after its real-post pilot attestation',
         code: 'pilot_sample_stale',
+      }, 409);
+    }
+    if (await isSyntheticQaPilotPost(c.env.DB, identity, postId)) {
+      return c.json({
+        error: 'Known synthetic-QA posts cannot enter real pilot evidence',
+        code: 'pilot_sample_synthetic_qa',
       }, 409);
     }
     let contextReadiness;

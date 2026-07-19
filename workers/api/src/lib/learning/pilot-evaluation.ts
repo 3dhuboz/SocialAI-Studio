@@ -46,6 +46,40 @@ const defaultDeps: PilotEvaluationDeps = {
   runPipeline: runAndPersistReleasePipeline,
 };
 
+export async function isSyntheticQaPilotPost(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  postId: string,
+): Promise<boolean> {
+  const row = await db.prepare(`
+    SELECT 1 AS quarantined
+      FROM learning_decisions d
+      INNER JOIN learning_decision_disqualifications synthetic_disq
+        ON synthetic_disq.decision_id = d.id
+       AND synthetic_disq.user_id = d.user_id
+       AND synthetic_disq.workspace_key = d.workspace_key
+       AND synthetic_disq.client_id IS d.client_id
+       AND synthetic_disq.owner_kind = d.owner_kind
+       AND synthetic_disq.owner_id = d.owner_id
+     WHERE d.user_id = ?
+       AND d.workspace_key = ?
+       AND d.client_id IS ?
+       AND d.owner_kind = ?
+       AND d.owner_id = ?
+       AND d.post_id = ?
+       AND synthetic_disq.reason = 'synthetic_qa'
+     LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    postId,
+  ).first<{ quarantined: number }>();
+  return row != null;
+}
+
 function currentMonthBounds(now: Date): [string, string] {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
@@ -233,6 +267,12 @@ export async function runClaimedPilotEvaluation(
   const contentHash = await buildReleaseContentHash(post);
   if (expectedContentHash !== undefined && contentHash !== expectedContentHash) {
     throw new Error('Pilot sample content changed after attestation');
+  }
+  if (
+    expectedContentHash !== undefined
+    && await isSyntheticQaPilotPost(env.DB, identity, post.id)
+  ) {
+    throw new Error('Known synthetic-QA posts cannot enter real pilot evidence');
   }
   const fresh = await deps.findFreshReceipt(
     env.DB,

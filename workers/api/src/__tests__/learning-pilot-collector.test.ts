@@ -209,6 +209,28 @@ describe('record-only pilot evaluation lease', () => {
     expect(calls).toEqual([]);
   });
 
+  it('rejects a known synthetic-QA post before receipt lookup, lease, or critic work', async () => {
+    const { db, calls } = makeRecordingD1({
+      'INNER JOIN learning_decision_disqualifications synthetic_disq': [{ quarantined: 1 }],
+    });
+    const findFreshReceipt = vi.fn();
+    const runPipeline = vi.fn();
+
+    await expect(runClaimedPilotEvaluation(
+      { DB: db } as Env,
+      ownerPost,
+      { findFreshReceipt, runPipeline },
+      new Date('2026-07-17T01:00:00.000Z'),
+      OWNER_CONTENT_HASH,
+    )).rejects.toThrow('Known synthetic-QA posts cannot enter real pilot evidence');
+
+    expect(findFreshReceipt).not.toHaveBeenCalled();
+    expect(runPipeline).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain("synthetic_disq.reason = 'synthetic_qa'");
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
+  });
+
   it('fails closed if the completed receipt differs from the claimed metering scope', async () => {
     const { db } = makeRecordingD1({
       'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
@@ -355,6 +377,10 @@ describe('record-only pilot collector', () => {
     expect(candidateQuery.sql).toContain("w.mode = 'approval'");
     expect(candidateQuery.sql).toContain('INNER JOIN learning_pilot_samples sample');
     expect(candidateQuery.sql).toContain('sample.post_id = p.id');
+    expect(candidateQuery.sql).toContain(
+      'INNER JOIN learning_decision_disqualifications synthetic_disq',
+    );
+    expect(candidateQuery.sql).toContain("synthetic_disq.reason = 'synthetic_qa'");
     expect(candidateQuery.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");
     expect(candidateQuery.sql).toContain('PARTITION BY owner_kind');
     expect(candidateQuery.sql).toMatch(/owner_kind_rank\s+<=\s+5/i);
@@ -421,6 +447,36 @@ describe('record-only pilot collector', () => {
     expect(runEvaluation).not.toHaveBeenCalled();
   });
 
+  it('rejects a quarantined synthetic-QA post before context, budget, or critic work', async () => {
+    const loadContext = vi.fn();
+    const getBudgetStatus = vi.fn();
+    const runEvaluation = vi.fn();
+    const isSyntheticQaPost = vi.fn(async () => true);
+
+    const result = await cronEvaluateLearningPilot({
+      DB: {} as D1Database,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env, {
+      loadCandidates: vi.fn(async () => [ownerCandidate()]),
+      isSyntheticQaPost,
+      loadContext,
+      getBudgetStatus,
+      runEvaluation,
+    });
+
+    expect(result).toMatchObject({
+      posts_processed: 0,
+      invalid_skipped: 1,
+      errors: 0,
+    });
+    expect(isSyntheticQaPost).toHaveBeenCalledTimes(1);
+    expect(loadContext).not.toHaveBeenCalled();
+    expect(getBudgetStatus).not.toHaveBeenCalled();
+    expect(runEvaluation).not.toHaveBeenCalled();
+  });
+
   it('skips empty context before budget checks without starving later ready workspaces', async () => {
     const secondOwner = {
       ...ownerCandidate(),
@@ -460,6 +516,7 @@ describe('record-only pilot collector', () => {
         secondOwner,
         clientCandidate(),
       ]),
+      isSyntheticQaPost: vi.fn(async () => false),
       loadContext,
       getBudgetStatus,
       runEvaluation,
@@ -527,6 +584,7 @@ describe('record-only pilot collector', () => {
       LEARNING_AUTOPILOT_ENABLED: 'false',
     } as Env, {
       loadCandidates: vi.fn(async () => [ownerCandidate(), secondOwner]),
+      isSyntheticQaPost: vi.fn(async () => false),
       loadContext: vi.fn(async () => readyContext),
       getBudgetStatus,
       runEvaluation,

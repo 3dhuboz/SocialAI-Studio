@@ -2350,3 +2350,48 @@ critiqued in this step. Existing authorization covers Penny Wise I.T's
 non-secret business profile only, not post content. Real record-only evidence
 therefore remains blocked pending explicit authorization for a bounded Penny
 Wise Draft copy and separate explicit consent for one active customer pilot.
+
+## 2026-07-19 Known Synthetic-QA Post Quarantine
+
+The positive real-post attestation gate previously relied on the explicit admin
+confirmation and excluded completed decisions from the candidate queue, but the
+direct endpoint did not independently reject a post ID already disqualified as
+`synthetic_qa`. That left an operator-error path where a known fixture could be
+mistakenly attested through a direct API request.
+
+The pilot now treats any tenant-scoped post ID linked to a synthetic-QA
+disqualification as quarantined. The guard is applied in the candidate queue,
+the natural collector query, the pre-attestation check, the atomic sample
+insert, manual validation before context or budget work, and again inside the
+claimed evaluator before receipt lookup or lease acquisition. A failed
+quarantine lookup fails closed. The change remains confined to record-only
+pilot evidence and cannot approve, schedule, publish, or mutate a post.
+
+Verification passed:
+
+- Focused route and collector suite: 2 files, 56 tests.
+- Full Worker suite: 96 files, 1,218 tests.
+- Strict Worker TypeScript.
+- Strict Shopify TypeScript.
+- Shopify production build: 1,124 modules with no unresolved placeholders.
+- `git diff --check`.
+
+Read-only staging verification found six distinct quarantined synthetic-QA post
+IDs and zero positive pilot samples. Wrangler dry-run resolved only
+`socialai-db-staging`; release enforcement, Protected Autopilot, and organic
+reach application all remained disabled. The reviewed Worker deployed only to
+staging as version `5279ce66-546e-4f17-bfd1-80e7d0eb66ae`, and `/api/health`
+returned `{"ok":true,"service":"socialai-api"}`.
+
+The first natural post-deploy cycle ran at `2026-07-19 08:30:16` UTC. Pilot
+receipt `9448` recorded zero candidates, zero evaluations, zero invalid rows,
+and zero errors; readiness receipt `9449` succeeded immediately afterward.
+The sample table remained at zero rows, and the verification query reported
+`changed_db=false`.
+
+No schema migration or production deployment was performed. This hardening
+does not supply the missing real-world pilot evidence and does not change the
+separate authorization and customer-consent requirements for the next gate.
+The final read-only production check still showed Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, no `learning_pilot_samples` table,
+`hughesq-001` exactly `status='on_hold'`, and `changed_db=false`.

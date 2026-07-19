@@ -565,7 +565,53 @@ describe('learning settings and release evidence routes', () => {
     expect(write.sql).toContain('unixepoch(pen.consent_confirmed_at) <= unixepoch(?)');
     expect(write.sql).toContain('COALESCE(c.archetype_slug, u.archetype_slug) IS ?');
     expect(write.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+    expect(write.sql).toContain(
+      'INNER JOIN learning_decision_disqualifications synthetic_disq',
+    );
+    expect(write.sql).toContain("synthetic_disq.reason = 'synthetic_qa'");
     expect(write.binds).toContain(contentHash);
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('refuses to attest a post quarantined as synthetic QA', async () => {
+    const draft = {
+      id: 'draft-synthetic-qa', user_id: 'owner_1', client_id: null,
+      owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+      content: 'Synthetic fixture content.', platform: 'Facebook', hashtags: '[]',
+      image_url: null, post_type: 'text', video_url: null, video_status: null,
+      video_script: null, video_shots: null, archetype_slug: 'tech-saas-agency',
+      client_status: null,
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [draft],
+      'INNER JOIN learning_decision_disqualifications synthetic_disq': [{ quarantined: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/attest/draft-synthetic-qa', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        realPostConfirmed: true,
+        note: 'This fixture must never count as genuine pilot evidence.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Known synthetic-QA posts cannot enter real pilot evidence',
+      code: 'pilot_sample_synthetic_qa',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT OR IGNORE INTO learning_pilot_samples')))
+      .toBe(false);
     expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
       .toBe(false);
   });
@@ -1294,6 +1340,10 @@ describe('learning settings and release evidence routes', () => {
     expect(query.sql).toContain('NOT EXISTS');
     expect(query.sql).toContain("d.stage = 'release'");
     expect(query.sql).toContain("d.release_state IN ('pass_green','hold_amber','block_red')");
+    expect(query.sql).toContain(
+      'INNER JOIN learning_decision_disqualifications synthetic_disq',
+    );
+    expect(query.sql).toContain("synthetic_disq.reason = 'synthetic_qa'");
     expect(query.sql).toContain("$.verdictCount");
     expect(query.sql).toContain('CASE WHEN p.client_id IS NULL THEN u.profile ELSE c.profile END');
     expect(query.sql).toContain('json_group_array(f.content)');

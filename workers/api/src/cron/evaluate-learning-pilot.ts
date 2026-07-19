@@ -6,6 +6,7 @@ import {
 } from '../lib/learning/critic-context';
 import {
   getRecordOnlyPilotBudgetStatus,
+  isSyntheticQaPilotPost,
   runClaimedPilotEvaluation,
   type ClaimedPilotEvaluationResult,
   type PilotBudgetStatus,
@@ -56,6 +57,11 @@ interface PilotCollectorDeps {
     budgetUsdCents: number,
     now: Date,
   ): Promise<PilotBudgetStatus>;
+  isSyntheticQaPost(
+    db: D1Database,
+    identity: WorkspaceIdentity,
+    postId: string,
+  ): Promise<boolean>;
   loadContext(env: Env, identity: WorkspaceIdentity): Promise<CriticContext>;
   runEvaluation(
     env: Env,
@@ -206,6 +212,24 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
                AS INTEGER
              ) > 0
         )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM learning_decisions synthetic_decision
+            INNER JOIN learning_decision_disqualifications synthetic_disq
+              ON synthetic_disq.decision_id = synthetic_decision.id
+             AND synthetic_disq.user_id = synthetic_decision.user_id
+             AND synthetic_disq.workspace_key = synthetic_decision.workspace_key
+             AND synthetic_disq.client_id IS synthetic_decision.client_id
+             AND synthetic_disq.owner_kind = synthetic_decision.owner_kind
+             AND synthetic_disq.owner_id = synthetic_decision.owner_id
+           WHERE synthetic_decision.user_id = pen.user_id
+             AND synthetic_decision.workspace_key = pen.workspace_key
+             AND synthetic_decision.client_id IS pen.client_id
+             AND synthetic_decision.owner_kind = pen.owner_kind
+             AND synthetic_decision.owner_id = pen.owner_id
+             AND synthetic_decision.post_id = p.id
+             AND synthetic_disq.reason = 'synthetic_qa'
+        )
     ),
     balanced AS (
       SELECT
@@ -236,6 +260,7 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
 const defaultDeps: PilotCollectorDeps = {
   loadCandidates: loadPilotCandidates,
   getBudgetStatus: getRecordOnlyPilotBudgetStatus,
+  isSyntheticQaPost: isSyntheticQaPilotPost,
   loadContext: (env, identity) => loadCriticContext(
     env,
     identity.userId,
@@ -385,6 +410,20 @@ export async function cronEvaluateLearningPilot(
       }
     } catch {
       result.invalid_skipped += 1;
+      continue;
+    }
+
+    try {
+      if (await deps.isSyntheticQaPost(env.DB, candidate.identity, candidate.post.id)) {
+        result.invalid_skipped += 1;
+        continue;
+      }
+    } catch (error) {
+      result.errors += 1;
+      console.warn('[learning-pilot] synthetic-QA quarantine check failed closed', {
+        postId: candidate.post.id,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
       continue;
     }
 
