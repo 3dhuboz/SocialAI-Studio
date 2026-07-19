@@ -10,6 +10,7 @@ import {
   evaluateRolloutState,
   parseCron,
   shouldFailRolloutCommand,
+  summarizePilotIntake,
   validateReadOnlyD1Results,
   type RolloutObservation,
 } from '../../scripts/learning-rollout-state';
@@ -75,7 +76,15 @@ function observation(): RolloutObservation {
       pilotSamples: 30,
       ownerSamples: 15,
       clientSamples: 15,
+      ownerEnrollments: 1,
       customerEnrollments: 1,
+      activeCustomerWorkspaces: 1,
+      ownerAttestedSamples: 15,
+      clientAttestedSamples: 15,
+      ownerCandidateDrafts: 2,
+      clientCandidateDrafts: 2,
+      ownerSyntheticExcludedDrafts: 0,
+      clientSyntheticExcludedDrafts: 0,
       latestPilotCron: {
         success: true,
         error: null,
@@ -184,9 +193,71 @@ describe('learning live rollout state', () => {
     ]));
   });
 
+  it('reports the exact privacy-safe pilot intake precondition that is still missing', () => {
+    const staging = observation().staging;
+    staging.pilotSamples = 0;
+    staging.ownerSamples = 0;
+    staging.clientSamples = 0;
+    staging.ownerEnrollments = 1;
+    staging.customerEnrollments = 0;
+    staging.activeCustomerWorkspaces = 0;
+    staging.ownerAttestedSamples = 0;
+    staging.clientAttestedSamples = 0;
+    staging.ownerCandidateDrafts = 0;
+    staging.clientCandidateDrafts = 0;
+    staging.ownerSyntheticExcludedDrafts = 6;
+    staging.clientSyntheticExcludedDrafts = 0;
+
+    expect(summarizePilotIntake(staging)).toEqual({
+      countsOnly: true,
+      owner: {
+        enrollmentReceipts: 1,
+        candidateDrafts: 0,
+        syntheticExcludedDrafts: 6,
+        attestedSamples: 0,
+        validatedSamples: 0,
+        readyForOperatorAttestation: false,
+        nextRequired: 'create_genuine_owner_draft',
+      },
+      customer: {
+        activeWorkspaces: 0,
+        enrollmentReceipts: 0,
+        candidateDrafts: 0,
+        syntheticExcludedDrafts: 0,
+        attestedSamples: 0,
+        validatedSamples: 0,
+        readyForOperatorAttestation: false,
+        nextRequired: 'obtain_separately_consenting_active_customer',
+      },
+    });
+  });
+
+  it('moves intake guidance from exact review to validation without counting attestation as proof', () => {
+    const staging = observation().staging;
+    staging.ownerSamples = 0;
+    staging.pilotSamples = staging.clientSamples;
+    staging.ownerAttestedSamples = 0;
+    staging.ownerCandidateDrafts = 1;
+    expect(summarizePilotIntake(staging).owner).toMatchObject({
+      readyForOperatorAttestation: true,
+      nextRequired: 'review_exact_owner_draft',
+    });
+
+    staging.ownerAttestedSamples = 1;
+    expect(summarizePilotIntake(staging).owner).toMatchObject({
+      readyForOperatorAttestation: true,
+      nextRequired: 'validate_attested_owner_sample',
+      validatedSamples: 0,
+    });
+  });
+
   it('makes --require-ready fail closed while a rollout remains on safe_hold', () => {
     const input = observation();
     input.staging.pilotSamples = 0;
+    input.staging.ownerSamples = 0;
+    input.staging.clientSamples = 0;
+    input.staging.ownerAttestedSamples = 0;
+    input.staging.clientAttestedSamples = 0;
     const evaluation = evaluateRolloutState(input);
 
     expect(evaluation.result).toBe('safe_hold');
@@ -228,6 +299,9 @@ describe('learning live rollout state', () => {
     }],
     ['the production alert persistence schema is incomplete', (input: RolloutObservation) => {
       input.production.alertSchemaReady = false;
+    }],
+    ['a pilot intake counter is missing', (input: RolloutObservation) => {
+      input.staging.ownerCandidateDrafts = -1;
     }],
   ])('returns unsafe_or_unverified when %s', (_label, mutate) => {
     const input = observation();
@@ -418,7 +492,7 @@ describe('learning live rollout state', () => {
     expect(sampleEvidenceSql).toContain('FROM learning_decision_disqualifications disq');
   });
 
-  it('counts customer consent only while its client and approval workspace remain eligible', () => {
+  it('reports only current-policy, canonical, non-held pilot intake preconditions', () => {
     const statements = STAGING_ROLLOUT_SQL
       .split(';')
       .map((statement) => statement.trim())
@@ -427,13 +501,28 @@ describe('learning live rollout state', () => {
 
     expect(customerConsentSql).toContain('FROM learning_pilot_enrollments pen');
     expect(customerConsentSql).toContain('INNER JOIN workspace_learning_settings w');
-    expect(customerConsentSql).toContain('INNER JOIN clients c');
+    expect(customerConsentSql).toContain('LEFT JOIN clients c');
     expect(customerConsentSql).toContain("w.mode = 'approval'");
     expect(customerConsentSql).toContain('w.monthly_ai_budget_usd_cents > 0');
     expect(customerConsentSql).toContain(
       "unixepoch(pen.consent_confirmed_at) <= unixepoch('now')",
     );
     expect(customerConsentSql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+    expect(customerConsentSql).toContain('FROM learning_pilot_samples sample');
+    expect(customerConsentSql).toContain('FROM eligible_enrollments enrolled');
+    expect(customerConsentSql).toContain('enrolled.client_id IS p.client_id');
+    expect(customerConsentSql).toContain('enrolled_workspace = 1');
+    expect(customerConsentSql).toContain(
+      'INNER JOIN learning_decision_disqualifications disq',
+    );
+    expect(customerConsentSql).toContain("LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'");
+    expect(customerConsentSql).toContain(
+      "LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000",
+    );
+    expect(customerConsentSql).toContain('owner_candidate_drafts');
+    expect(customerConsentSql).toContain('client_candidate_drafts');
+    expect(customerConsentSql).toContain('owner_synthetic_excluded_drafts');
+    expect(customerConsentSql).toContain('client_synthetic_excluded_drafts');
   });
 
   it('launches the local Wrangler CLI through Node without a Windows command shim', () => {

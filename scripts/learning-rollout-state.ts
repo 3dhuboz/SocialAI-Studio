@@ -148,31 +148,168 @@ SELECT policy_version, ready, checks_json, evaluated_at
  WHERE policy_version = '${POLICY_VERSION}'
  ORDER BY evaluated_at DESC
  LIMIT 1;
-SELECT COUNT(*) AS customer_enrollments
-  FROM learning_pilot_enrollments pen
-  INNER JOIN workspace_learning_settings w
-    ON w.user_id = pen.user_id
-   AND w.workspace_key = pen.workspace_key
-   AND w.client_id IS pen.client_id
-   AND w.owner_kind = pen.owner_kind
-   AND w.owner_id = pen.owner_id
-  INNER JOIN clients c
-    ON c.id = pen.client_id
-   AND c.user_id = pen.user_id
- WHERE pen.policy_version = '${POLICY_VERSION}'
-   AND pen.owner_kind = 'client'
-   AND pen.client_id IS NOT NULL
-   AND pen.workspace_key = pen.client_id
-   AND pen.owner_id = pen.client_id
-   AND pen.consent_basis = 'customer_attested'
-   AND pen.record_only = 1
-   AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
-   AND unixepoch(pen.enrolled_at) <= unixepoch('now')
-   AND unixepoch(pen.consent_confirmed_at) <= unixepoch('now')
-   AND w.mode = 'approval'
-   AND w.monthly_ai_budget_usd_cents > 0
-   AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
-   AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold';
+WITH eligible_enrollments AS (
+  SELECT pen.*
+    FROM learning_pilot_enrollments pen
+    INNER JOIN workspace_learning_settings w
+      ON w.user_id = pen.user_id
+     AND w.workspace_key = pen.workspace_key
+     AND w.client_id IS pen.client_id
+     AND w.owner_kind = pen.owner_kind
+     AND w.owner_id = pen.owner_id
+    LEFT JOIN clients c
+      ON c.id = pen.client_id
+     AND c.user_id = pen.user_id
+   WHERE pen.policy_version = '${POLICY_VERSION}'
+     AND pen.record_only = 1
+     AND unixepoch(pen.enrolled_at) <= unixepoch('now')
+     AND unixepoch(pen.consent_confirmed_at) <= unixepoch('now')
+     AND w.mode = 'approval'
+     AND w.monthly_ai_budget_usd_cents > 0
+     AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+     AND (
+       (
+         pen.owner_kind = 'user'
+         AND pen.client_id IS NULL
+         AND pen.workspace_key = '__owner__'
+         AND pen.owner_id = pen.user_id
+         AND pen.consent_basis = 'owner_self'
+       )
+       OR (
+         pen.owner_kind = 'client'
+         AND pen.client_id IS NOT NULL
+         AND pen.workspace_key = pen.client_id
+         AND pen.owner_id = pen.client_id
+         AND pen.consent_basis = 'customer_attested'
+         AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+         AND c.id IS NOT NULL
+         AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+       )
+     )
+), bounded_drafts AS (
+  SELECT p.id,
+         p.user_id,
+         p.client_id,
+         CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END AS owner_kind,
+         CASE WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+           AS workspace_key,
+         CASE WHEN EXISTS (
+           SELECT 1
+             FROM learning_decisions d
+             INNER JOIN learning_decision_disqualifications disq
+               ON disq.decision_id = d.id
+              AND disq.user_id = d.user_id
+              AND disq.workspace_key = d.workspace_key
+              AND disq.client_id IS d.client_id
+              AND disq.owner_kind = d.owner_kind
+              AND disq.owner_id = d.owner_id
+            WHERE d.user_id = p.user_id
+              AND d.workspace_key = CASE
+                WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+              AND d.client_id IS p.client_id
+              AND d.owner_kind = CASE
+                WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+              AND d.owner_id = CASE
+                WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+              AND d.post_id = p.id
+              AND disq.reason = 'synthetic_qa'
+         ) THEN 1 ELSE 0 END AS synthetic_qa,
+         CASE WHEN EXISTS (
+           SELECT 1
+             FROM learning_decisions d
+            WHERE d.user_id = p.user_id
+              AND d.workspace_key = CASE
+                WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+              AND d.client_id IS p.client_id
+              AND d.owner_kind = CASE
+                WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+              AND d.owner_id = CASE
+                WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+              AND d.post_id = p.id
+              AND d.stage = 'release'
+              AND d.release_state IN ('pass_green','hold_amber','block_red')
+              AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), -1)
+                AS INTEGER) = (
+                SELECT COUNT(*)
+                  FROM learning_critic_verdicts v
+                 WHERE v.decision_id = d.id
+              )
+              AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), 0)
+                AS INTEGER) > 0
+         ) THEN 1 ELSE 0 END AS release_evaluated,
+         CASE WHEN EXISTS (
+           SELECT 1
+             FROM eligible_enrollments enrolled
+            WHERE enrolled.user_id = p.user_id
+              AND enrolled.workspace_key = CASE
+                WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+              AND enrolled.client_id IS p.client_id
+              AND enrolled.owner_kind = CASE
+                WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+              AND enrolled.owner_id = CASE
+                WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+         ) THEN 1 ELSE 0 END AS enrolled_workspace
+    FROM posts p
+    LEFT JOIN clients c
+      ON c.id = p.client_id
+     AND c.user_id = p.user_id
+   WHERE LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+     AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
+     AND (
+       (p.client_id IS NULL AND (p.owner_kind IS NULL OR p.owner_kind = 'user'))
+       OR (
+         p.client_id IS NOT NULL
+         AND c.id IS NOT NULL
+         AND (p.owner_kind IS NULL OR p.owner_kind = 'client')
+         AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+       )
+     )
+), attested_samples AS (
+  SELECT sample.owner_kind, COUNT(*) AS sample_count
+    FROM learning_pilot_samples sample
+    INNER JOIN eligible_enrollments pen
+      ON pen.user_id = sample.user_id
+     AND pen.workspace_key = sample.workspace_key
+     AND pen.client_id IS sample.client_id
+     AND pen.owner_kind = sample.owner_kind
+     AND pen.owner_id = sample.owner_id
+   WHERE unixepoch(pen.enrolled_at) <= unixepoch(sample.attested_at)
+     AND unixepoch(pen.consent_confirmed_at) <= unixepoch(sample.attested_at)
+     AND unixepoch(sample.attested_at) <= unixepoch('now')
+     AND (
+       (sample.owner_kind = 'user' AND sample.attestation_basis = 'owner_real_post')
+       OR (sample.owner_kind = 'client'
+           AND sample.attestation_basis = 'customer_real_post')
+     )
+   GROUP BY sample.owner_kind
+)
+SELECT
+  (SELECT COUNT(*) FROM eligible_enrollments WHERE owner_kind = 'user')
+    AS owner_enrollments,
+  (SELECT COUNT(*) FROM eligible_enrollments WHERE owner_kind = 'client')
+    AS customer_enrollments,
+  (SELECT COUNT(*) FROM clients c
+    WHERE COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold')
+    AS active_customer_workspaces,
+  COALESCE((SELECT sample_count FROM attested_samples WHERE owner_kind = 'user'), 0)
+    AS owner_attested_samples,
+  COALESCE((SELECT sample_count FROM attested_samples WHERE owner_kind = 'client'), 0)
+    AS client_attested_samples,
+  COALESCE(SUM(CASE WHEN owner_kind = 'user'
+    AND enrolled_workspace = 1
+    AND synthetic_qa = 0 AND release_evaluated = 0 THEN 1 ELSE 0 END), 0)
+    AS owner_candidate_drafts,
+  COALESCE(SUM(CASE WHEN owner_kind = 'client'
+    AND enrolled_workspace = 1
+    AND synthetic_qa = 0 AND release_evaluated = 0 THEN 1 ELSE 0 END), 0)
+    AS client_candidate_drafts,
+  COALESCE(SUM(CASE WHEN owner_kind = 'user'
+    AND enrolled_workspace = 1 AND synthetic_qa = 1 THEN 1 ELSE 0 END), 0)
+    AS owner_synthetic_excluded_drafts,
+  COALESCE(SUM(CASE WHEN owner_kind = 'client'
+    AND enrolled_workspace = 1 AND synthetic_qa = 1 THEN 1 ELSE 0 END), 0)
+    AS client_synthetic_excluded_drafts
+FROM bounded_drafts;
 SELECT COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_calibration_audits' THEN 1 ELSE 0
        END), 0) AS calibration_tables,
@@ -280,7 +417,15 @@ export interface RolloutObservation {
     pilotSamples: number;
     ownerSamples: number;
     clientSamples: number;
+    ownerEnrollments: number;
     customerEnrollments: number;
+    activeCustomerWorkspaces: number;
+    ownerAttestedSamples: number;
+    clientAttestedSamples: number;
+    ownerCandidateDrafts: number;
+    clientCandidateDrafts: number;
+    ownerSyntheticExcludedDrafts: number;
+    clientSyntheticExcludedDrafts: number;
     latestHealthSweepCron: CronObservation | null;
     latestPilotCron: CronObservation | null;
     latestReadinessCron: CronObservation | null;
@@ -299,6 +444,100 @@ export interface RolloutObservation {
     calibrationTablePresent: boolean;
     alertSchemaReady: boolean;
     readiness: ReadinessObservation | null;
+  };
+}
+
+const PILOT_INTAKE_COUNTERS = [
+  'pilotSamples',
+  'ownerSamples',
+  'clientSamples',
+  'ownerEnrollments',
+  'customerEnrollments',
+  'activeCustomerWorkspaces',
+  'ownerAttestedSamples',
+  'clientAttestedSamples',
+  'ownerCandidateDrafts',
+  'clientCandidateDrafts',
+  'ownerSyntheticExcludedDrafts',
+  'clientSyntheticExcludedDrafts',
+] as const;
+
+type PilotIntakeNextRequired =
+  | 'unverified'
+  | 'cohort_minimum_met'
+  | 'owner_consent_and_enrollment'
+  | 'create_genuine_owner_draft'
+  | 'review_exact_owner_draft'
+  | 'validate_attested_owner_sample'
+  | 'obtain_separately_consenting_active_customer'
+  | 'record_customer_consent_and_enroll'
+  | 'create_genuine_customer_draft'
+  | 'review_exact_customer_draft'
+  | 'validate_attested_customer_sample';
+
+function pilotIntakeCountersAreValid(staging: RolloutObservation['staging']): boolean {
+  return PILOT_INTAKE_COUNTERS.every((key) => (
+    Number.isSafeInteger(staging[key]) && staging[key] >= 0
+  ))
+    && staging.pilotSamples === staging.ownerSamples + staging.clientSamples
+    && staging.ownerAttestedSamples >= staging.ownerSamples
+    && staging.clientAttestedSamples >= staging.clientSamples
+    && staging.ownerEnrollments <= 1
+    && staging.customerEnrollments <= 1;
+}
+
+export function summarizePilotIntake(staging: RolloutObservation['staging']) {
+  const valid = pilotIntakeCountersAreValid(staging);
+  const ownerNext: PilotIntakeNextRequired = !valid
+    ? 'unverified'
+    : staging.ownerSamples >= 8
+      ? 'cohort_minimum_met'
+      : staging.ownerEnrollments < 1
+        ? 'owner_consent_and_enrollment'
+        : staging.ownerAttestedSamples > staging.ownerSamples
+          ? 'validate_attested_owner_sample'
+          : staging.ownerCandidateDrafts > 0
+            ? 'review_exact_owner_draft'
+            : 'create_genuine_owner_draft';
+  const customerNext: PilotIntakeNextRequired = !valid
+    ? 'unverified'
+    : staging.clientSamples >= 8
+      ? 'cohort_minimum_met'
+      : staging.activeCustomerWorkspaces < 1
+        ? 'obtain_separately_consenting_active_customer'
+        : staging.customerEnrollments < 1
+          ? 'record_customer_consent_and_enroll'
+          : staging.clientAttestedSamples > staging.clientSamples
+            ? 'validate_attested_customer_sample'
+            : staging.clientCandidateDrafts > 0
+              ? 'review_exact_customer_draft'
+              : 'create_genuine_customer_draft';
+
+  return {
+    countsOnly: true,
+    owner: {
+      enrollmentReceipts: staging.ownerEnrollments,
+      candidateDrafts: staging.ownerCandidateDrafts,
+      syntheticExcludedDrafts: staging.ownerSyntheticExcludedDrafts,
+      attestedSamples: staging.ownerAttestedSamples,
+      validatedSamples: staging.ownerSamples,
+      readyForOperatorAttestation: valid
+        && staging.ownerEnrollments > 0
+        && staging.ownerCandidateDrafts > 0,
+      nextRequired: ownerNext,
+    },
+    customer: {
+      activeWorkspaces: staging.activeCustomerWorkspaces,
+      enrollmentReceipts: staging.customerEnrollments,
+      candidateDrafts: staging.clientCandidateDrafts,
+      syntheticExcludedDrafts: staging.clientSyntheticExcludedDrafts,
+      attestedSamples: staging.clientAttestedSamples,
+      validatedSamples: staging.clientSamples,
+      readyForOperatorAttestation: valid
+        && staging.customerEnrollments > 0
+        && staging.clientCandidateDrafts > 0,
+      nextRequired: customerNext,
+    },
   };
 }
 
@@ -428,7 +667,7 @@ export function assertReadOnlySql(sql: string): void {
   const statements = sql.split(';').map((statement) => statement.trim()).filter(Boolean);
   const mutation = /\b(?:INSERT|UPDATE|DELETE|ALTER|DROP|CREATE|REPLACE|VACUUM|PRAGMA|ATTACH|DETACH)\b/i;
   if (statements.length === 0 || statements.some(
-    (statement) => !/^SELECT\b/i.test(statement) || mutation.test(statement),
+    (statement) => !/^(?:SELECT|WITH)\b/i.test(statement) || mutation.test(statement),
   )) {
     throw new Error('Rollout verification permits read-only SELECT statements only');
   }
@@ -530,6 +769,11 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   add('production_health', input.production.healthOk, 'safety');
   add('staging_d1_read_only', input.staging.d1ReadOnly, 'safety');
   add('production_d1_read_only', input.production.d1ReadOnly, 'safety');
+  add(
+    'staging_pilot_intake_observed',
+    pilotIntakeCountersAreValid(input.staging),
+    'safety',
+  );
   add(
     'staging_bindings',
     input.staging.environmentBinding === 'staging'
@@ -940,7 +1184,24 @@ async function main(): Promise<void> {
       pilotSamples: numberField(stagingSamples, 'pilot_samples'),
       ownerSamples: numberField(stagingSamples, 'owner_samples'),
       clientSamples: numberField(stagingSamples, 'client_samples'),
+      ownerEnrollments: numberField(stagingEnrollments, 'owner_enrollments'),
       customerEnrollments: numberField(stagingEnrollments, 'customer_enrollments'),
+      activeCustomerWorkspaces: numberField(
+        stagingEnrollments,
+        'active_customer_workspaces',
+      ),
+      ownerAttestedSamples: numberField(stagingEnrollments, 'owner_attested_samples'),
+      clientAttestedSamples: numberField(stagingEnrollments, 'client_attested_samples'),
+      ownerCandidateDrafts: numberField(stagingEnrollments, 'owner_candidate_drafts'),
+      clientCandidateDrafts: numberField(stagingEnrollments, 'client_candidate_drafts'),
+      ownerSyntheticExcludedDrafts: numberField(
+        stagingEnrollments,
+        'owner_synthetic_excluded_drafts',
+      ),
+      clientSyntheticExcludedDrafts: numberField(
+        stagingEnrollments,
+        'client_synthetic_excluded_drafts',
+      ),
       latestHealthSweepCron: parseCron(stagingCrons, 'health_sweep'),
       latestPilotCron: parseCron(stagingCrons, 'learning_pilot'),
       latestReadinessCron: parseCron(stagingCrons, 'learning_readiness'),
@@ -973,7 +1234,7 @@ async function main(): Promise<void> {
   };
   const evaluation = evaluateRolloutState(observation);
   const payload = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,
@@ -985,11 +1246,13 @@ async function main(): Promise<void> {
     offlineProof,
     staging: observation.staging,
     production: observation.production,
+    pilotIntake: summarizePilotIntake(observation.staging),
     checks: evaluation.checks,
     failedSafetyChecks: evaluation.failedSafetyChecks,
     blockers: evaluation.blockers,
     limitations: [
       'This command performs read-only Cloudflare D1, deployment, version, and health checks.',
+      'Pilot intake diagnostics contain aggregate counts only and do not grant consent.',
       'safe_hold proves dormant boundaries, not consent or permission to activate production.',
       'promotion_ready still requires an operator-reviewed change window and rollback plan.',
     ],
@@ -1013,6 +1276,7 @@ async function main(): Promise<void> {
     `Artifact file SHA-256: ${fileSha256}`,
     `Staging version: ${stagingVersion.versionId}`,
     `Production version: ${productionVersion.versionId}`,
+    `Pilot intake: owner=${payload.pilotIntake.owner.nextRequired}, customer=${payload.pilotIntake.customer.nextRequired}`,
     `Blockers: ${evaluation.blockers.join(', ') || 'none'}`,
   ].join('\n') + '\n');
 
