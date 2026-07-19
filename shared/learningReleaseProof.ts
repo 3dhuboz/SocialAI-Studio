@@ -341,6 +341,26 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'weekly learning calibration audit resolves a degraded-run alert after a clean weekly no-op',
   },
   {
+    id: 'calibration_freshness_monitor_activation',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkLearningCalibrationFreshness stays neutral before the first successful weekly receipt establishes monitoring',
+  },
+  {
+    id: 'calibration_freshness_monitor_recovery',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkLearningCalibrationFreshness resolves the stale-receipt alert while the latest success is within the weekly window',
+  },
+  {
+    id: 'calibration_freshness_monitor_stale',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkLearningCalibrationFreshness fires critical after one weekly interval plus the one-hour grace period',
+  },
+  {
+    id: 'calibration_freshness_monitor_fail_closed',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkLearningCalibrationFreshness fails closed for invalid or future receipt timestamp not-a-timestamp',
+  },
+  {
     id: 'calibration_weekly_order',
     suite: 'src/__tests__/learning-calibration-audit.test.ts',
     assertion: 'weekly learning calibration audit wires calibration before learning and weekly customer review',

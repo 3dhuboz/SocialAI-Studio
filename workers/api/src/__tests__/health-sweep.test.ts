@@ -1,7 +1,8 @@
 /**
  * Unit tests for cron/health-sweep.ts — the threshold-based sweep that
  * complements lib/alerts.ts's crash alerting with statistical failure
- * detection (5+ Missed in 30min, posts stuck Publishing > 30min).
+ * detection (5+ Missed in 30min, posts stuck Publishing > 30min, and stale
+ * weekly calibration receipts after the monitor has been established).
  *
  * Each test exercises ONE check in isolation by mocking the D1 COUNT
  * response, then asserts whether fireAlert OR resolveAlert was called
@@ -23,24 +24,22 @@ vi.mock('../lib/alerts', () => ({
 
 import { cronHealthSweep, __test } from '../cron/health-sweep';
 
-function makeEnv(countByPattern: Record<string, number>): Env {
+type CannedRow = number | Record<string, unknown>;
+
+function makeEnv(rowByPattern: Record<string, CannedRow>): Env {
   const prepare = vi.fn().mockImplementation((sql: string) => {
+    const cannedRow = (): Record<string, unknown> => {
+      for (const [pattern, value] of Object.entries(rowByPattern)) {
+        if (!sql.includes(pattern)) continue;
+        return typeof value === 'number' ? { n: value } : value;
+      }
+      return { n: 0 };
+    };
     return {
       bind: () => ({
-        first: async () => {
-          // Match the test SQL against canned counts by substring.
-          for (const [pattern, n] of Object.entries(countByPattern)) {
-            if (sql.includes(pattern)) return { n };
-          }
-          return { n: 0 };
-        },
+        first: async () => cannedRow(),
       }),
-      first: async () => {
-        for (const [pattern, n] of Object.entries(countByPattern)) {
-          if (sql.includes(pattern)) return { n };
-        }
-        return { n: 0 };
-      },
+      first: async () => cannedRow(),
     };
   });
   return { DB: { prepare } } as unknown as Env;
@@ -110,17 +109,74 @@ describe('checkPublishZombie', () => {
   });
 });
 
+describe('checkLearningCalibrationFreshness', () => {
+  const now = new Date('2026-07-26T22:01:00.000Z');
+
+  it('stays neutral before the first successful weekly receipt establishes monitoring', async () => {
+    const env = makeEnv({ FROM_cron_runs_never_matches: 0 });
+
+    const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+    expect(result).toMatchObject({ fired: false, detail: 'monitor not established' });
+    expect(alertCalls).toHaveLength(0);
+    expect(resolveCalls).not.toContain('learning_calibration_receipt_stale');
+  });
+
+  it('resolves the stale-receipt alert while the latest success is within the weekly window', async () => {
+    const env = makeEnv({
+      'FROM cron_runs': { last_success_at: '2026-07-19 21:01:00' },
+    });
+
+    const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+    expect(result.fired).toBe(false);
+    expect(alertCalls).toHaveLength(0);
+    expect(resolveCalls).toContain('learning_calibration_receipt_stale');
+  });
+
+  it('fires critical after one weekly interval plus the one-hour grace period', async () => {
+    const env = makeEnv({
+      'FROM cron_runs': { last_success_at: '2026-07-19 21:00:00' },
+    });
+
+    const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+    expect(result.fired).toBe(true);
+    expect(alertCalls).toEqual([expect.objectContaining({
+      key: 'learning_calibration_receipt_stale',
+      severity: 'critical',
+      body: expect.stringMatching(/last successful.*older than.*operator review/i),
+    })]);
+    expect(resolveCalls).not.toContain('learning_calibration_receipt_stale');
+  });
+
+  it.each(['not-a-timestamp', '2026-07-27 00:00:00'])(
+    'fails closed for invalid or future receipt timestamp %s',
+    async (lastSuccessAt) => {
+      const env = makeEnv({ 'FROM cron_runs': { last_success_at: lastSuccessAt } });
+
+      const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+      expect(result.fired).toBe(true);
+      expect(alertCalls[0]).toMatchObject({
+        key: 'learning_calibration_receipt_stale',
+        severity: 'critical',
+      });
+    },
+  );
+});
+
 // ── Sweep orchestration ─────────────────────────────────────────────────
 
 describe('cronHealthSweep', () => {
-  it('runs both checks and reports fire count', async () => {
+  it('runs all checks and reports fire count', async () => {
     const env = makeEnv({
       "status = 'Missed'": __test.THRESHOLDS.publishFailuresIn30Min + 1,
       "status = 'Publishing'": 2,
     });
     const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(2);
-    expect(result.posts_processed).toBe(2); // both fired
+    expect(result.checks).toHaveLength(3);
+    expect(result.posts_processed).toBe(2);
     expect(alertCalls.map((a) => a.key).sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
 
@@ -159,7 +215,7 @@ describe('cronHealthSweep', () => {
     }));
     const env = { DB: { prepare } } as unknown as Env;
     const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(2);
+    expect(result.checks).toHaveLength(3);
     // The throwing check produces a `health_sweep_check_failed:...` alert,
     // and the other check still ran and resolved.
     expect(alertCalls.find((a) => a.key.startsWith('health_sweep_check_failed:'))).toBeDefined();

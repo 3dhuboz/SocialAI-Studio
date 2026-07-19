@@ -7,15 +7,16 @@
 //
 //   - publish_failure_burst : N posts marked Missed in the last 30 min
 //   - publish_zombie        : posts stuck in status='Publishing' for >30 min
+//   - learning_calibration_receipt_stale : established weekly receipt stopped arriving
 //
-// Two checks for v1 — deliberately small. Each is dark-launched by default
+// Three checks for v1 — deliberately small. Each is dark-launched by default
 // per the cron_alerts schema, so the first week is calibration-only (rows
 // get written, no emails go out). Steve flips the per-key dark_launch flag
 // after the noise level is known.
 //
 // 15-min cadence matches the spec from the alerting plan: "within an hour"
 // detection budget with 4 sweeps per hour and headroom for the deploy window.
-// One cheap COUNT(*) query per check, so even when there's nothing to alert
+// One cheap aggregate query per check, so even when there's nothing to alert
 // the sweep is near-free.
 //
 // If you add a check, also add it to `dispatchScheduled` via `trackCron`
@@ -37,6 +38,7 @@ const THRESHOLDS = {
   publishFailuresIn30Min: 5,
   /** Stuck-Publishing threshold — minutes since claim. */
   publishZombieMinutes: 30,
+  learningCalibrationMaxAgeMinutes: (7 * 24 * 60) + 60,
 };
 
 interface CheckResult {
@@ -50,7 +52,11 @@ interface CheckResult {
  *  also catches, but we want partial results in the happy-ish case. */
 export async function cronHealthSweep(env: Env): Promise<{ posts_processed: number; checks: CheckResult[] }> {
   const checks: CheckResult[] = [];
-  for (const check of [checkPublishFailureBurst, checkPublishZombie]) {
+  for (const check of [
+    checkPublishFailureBurst,
+    checkPublishZombie,
+    checkLearningCalibrationFreshness,
+  ]) {
     try {
       checks.push(await check(env));
     } catch (e: any) {
@@ -121,9 +127,59 @@ async function checkPublishZombie(env: Env): Promise<CheckResult> {
   return { key, fired: false, detail: '0 stuck' };
 }
 
+// Once the first successful weekly receipt exists, it must keep arriving.
+// Before that point, the promotion verifier remains the activation authority.
+async function checkLearningCalibrationFreshness(
+  env: Env,
+  now = new Date(),
+): Promise<CheckResult> {
+  const key = 'learning_calibration_receipt_stale';
+  const row = await env.DB.prepare(
+    `SELECT MAX(run_at) AS last_success_at
+       FROM cron_runs
+      WHERE cron_type = 'learning_calibration'
+        AND success = 1`,
+  ).first<{ last_success_at: string | null }>();
+  const lastSuccessAt = typeof row?.last_success_at === 'string'
+    ? row.last_success_at.trim()
+    : '';
+  if (!lastSuccessAt) {
+    return { key, fired: false, detail: 'monitor not established' };
+  }
+
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(lastSuccessAt)
+    ? lastSuccessAt
+    : `${lastSuccessAt.replace(' ', 'T')}Z`;
+  const observedAt = Date.parse(normalized);
+  const ageMinutes = (now.getTime() - observedAt) / 60_000;
+  if (!Number.isFinite(observedAt) || !Number.isFinite(ageMinutes) || ageMinutes < 0) {
+    const detail = 'The last successful weekly independent calibration receipt has an invalid '
+      + 'or future timestamp; operator review required.';
+    await fireAlert(env, key, 'critical', detail);
+    return { key, fired: true, detail };
+  }
+
+  if (ageMinutes > THRESHOLDS.learningCalibrationMaxAgeMinutes) {
+    const roundedAge = Math.floor(ageMinutes);
+    const detail = `The last successful weekly independent calibration receipt is ${roundedAge} `
+      + `minutes old, older than the ${THRESHOLDS.learningCalibrationMaxAgeMinutes}-minute `
+      + 'limit; operator review required.';
+    await fireAlert(env, key, 'critical', detail);
+    return { key, fired: true, detail };
+  }
+
+  await resolveAlert(env, key);
+  return {
+    key,
+    fired: false,
+    detail: `${Math.floor(ageMinutes)}/${THRESHOLDS.learningCalibrationMaxAgeMinutes} minutes`,
+  };
+}
+
 // Exported for unit tests to reach into without re-running the whole sweep.
 export const __test = {
   THRESHOLDS,
   checkPublishFailureBurst,
   checkPublishZombie,
+  checkLearningCalibrationFreshness,
 };
