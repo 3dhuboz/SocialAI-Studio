@@ -2446,3 +2446,66 @@ Production was not migrated, deployed, or written. It remains on Worker
 `status='on_hold'`. This closes the code-level delayed-Reel bypass but does not
 supply real pilot evidence, expand the Penny Wise profile-only authorization,
 or satisfy the separate active-customer consent gate for production rollout.
+
+## 2026-07-19 Release-Proof Coverage For Later Safety Gates
+
+### Completion-Audit Finding
+
+The offline `verify:learning-release` contract predated two later safety
+increments. It could still report `offline_pass` without requiring the v46
+positive real-post sample controls or the delayed Facebook Reel finish-phase
+egress controls. The underlying code and tests existed, but omission from the
+required proof manifest meant a future promotion artifact could silently stop
+running those tests and still look complete.
+
+The required proof set now includes nine exact assertions covering:
+
+- immutable tenant-scoped positive pilot sample schema;
+- real-post attestation without post mutation;
+- exact content-hash freshness before pilot evaluation;
+- synthetic-QA quarantine at both attestation and collector boundaries;
+- fresh preflight before Facebook's irreversible Reel finish request;
+- zero final Facebook calls on a critic hold or inactive workspace; and
+- source-level routing of the delayed finish phase through centralized egress.
+
+The release-proof envelope test was written first and failed because all nine
+IDs were absent. After the contract update, the focused envelope suite passed
+10 tests and the four bound Worker suites passed 85 tests.
+
+### Authoritative Offline Artifact
+
+The contract was committed as `bbad5e97aee9405e2089159127aff8810d89e68c`
+before running the clean-tree verifier. `npm run verify:learning-release`
+returned `offline_pass` with 71 required checks, 342 of 342 tests passed, zero
+missing checks, and zero failed checks. The artifact explicitly records
+`liveStagingProven=false`, `authenticatedEvidenceSubmitted=false`,
+`productionMutationPerformed=false`, and `releaseFlagsChanged=false`.
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T09-11-21-475Z.json`
+- Payload SHA-256: `8aa8a84959c0458ca17c36cd5e6935ebc0e68044768c2aa91679879c9f572187`
+- Artifact file SHA-256: `8b1637de6feea7d8fbc51ce496692188d6fa9fbab1870fe660ffe464f969ebcc`
+- Raw report SHA-256: `649f43c70c95141ea1243b6db3f263610d504be09f8cf6e6f516c789c35553f0`
+
+Full regression verification also passed: 96 Worker files and 1,222 tests,
+strict Worker TypeScript, 17 frontend files and 200 tests, the 1,924-module
+frontend production build, and the 1,124-module verified Shopify build.
+
+### Live Boundary Recheck
+
+No Worker runtime changed, so no staging or production deployment was made.
+Staging health remained green. Natural receipts `9486` (`learning_pilot`) and
+`9487` (`learning_readiness`) ran at `2026-07-19 09:00:16-17` UTC with zero
+posts processed and no errors. Read-only staging queries found zero positive
+pilot samples and zero Protected Autopilot workspaces. Release enforcement,
+Protected Autopilot, and organic-reach application remain disabled.
+
+Production remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, has zero
+Protected Autopilot workspaces, has no `learning_pilot_samples` table, and
+`hughesq-001` remains exactly `status='on_hold'`. Every successful verification
+query reported `changed_db=false` and wrote zero rows.
+
+This closes an evidence-integrity gap only. It does not create genuine pilot
+evidence or customer consent. The rollout remains gate-closed pending explicit
+authorization for a bounded real Penny Wise Draft and separate explicit
+consent from one active client, followed by the documented volume,
+adjudication, quality, cost, outcome, and prediction thresholds.
