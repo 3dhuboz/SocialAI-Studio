@@ -183,6 +183,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `lib/learning/` | Tenant-scoped critic council, bounded repair, Release Judge, decision receipts, immutable outcomes, bounded strategy learning, and safe experiment policy |
 | `lib/learning/archetype-aggregates.ts` | Privacy-gated coarse fleet learning with 10-workspace/100-post thresholds and atomic per-archetype rebuilds |
 | `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, complete 168-hour outcome coverage and prediction quality, and strict tenant-scoped metric collection |
+| `lib/learning/calibration-audit.ts` | Bounded tenant-scoped weekly calibration claims and privacy-safe independent recheck receipts, kept separate from human adjudication |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 | `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
@@ -196,6 +197,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
 | `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Lease-guarded record-only critique of at most one exact-version, positively attested Draft per explicitly consented pilot workspace |
 | `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
+| `cron/evaluate-learning-calibration.ts` | `0 21 * * SUN` | Recheck a bounded fair sample of unchanged green decisions before strategy learning and quarantine severe false passes |
 | `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
 | `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
@@ -211,7 +213,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v46
+**Current source schema version:** v47
 
 **Current production schema version:** v42.
 

@@ -121,25 +121,54 @@ export async function hasWorkspaceSevereFalsePass(
 ): Promise<boolean> {
   const row = await db.prepare(`
     SELECT 1 AS severe_false_pass
-      FROM learning_decisions d
-      INNER JOIN learning_adjudications a
-        ON a.decision_id = d.id
-       AND a.user_id = d.user_id
-       AND a.workspace_key = d.workspace_key
-       AND a.client_id IS d.client_id
-       AND a.owner_kind = d.owner_kind
-       AND a.owner_id = d.owner_id
-     WHERE d.user_id = ?
-       AND d.workspace_key = ?
-       AND d.client_id IS ?
-       AND d.owner_kind = ?
-       AND d.owner_id = ?
-       AND d.stage = 'release'
-       AND d.release_state = 'pass_green'
-       AND a.expected_state = 'block_red'
-       AND a.severity = 'release_critical'
+     WHERE EXISTS (
+       SELECT 1
+         FROM learning_decisions d
+         INNER JOIN learning_adjudications a
+           ON a.decision_id = d.id
+          AND a.user_id = d.user_id
+          AND a.workspace_key = d.workspace_key
+          AND a.client_id IS d.client_id
+          AND a.owner_kind = d.owner_kind
+          AND a.owner_id = d.owner_id
+        WHERE d.user_id = ?
+          AND d.workspace_key = ?
+          AND d.client_id IS ?
+          AND d.owner_kind = ?
+          AND d.owner_id = ?
+          AND d.stage = 'release'
+          AND d.release_state = 'pass_green'
+          AND a.expected_state = 'block_red'
+          AND a.severity = 'release_critical'
+     )
+        OR EXISTS (
+          SELECT 1
+            FROM learning_calibration_audits audit
+            INNER JOIN learning_decisions calibrated
+              ON calibrated.id = audit.decision_id
+             AND calibrated.user_id = audit.user_id
+             AND calibrated.workspace_key = audit.workspace_key
+             AND calibrated.client_id IS audit.client_id
+             AND calibrated.owner_kind = audit.owner_kind
+             AND calibrated.owner_id = audit.owner_id
+           WHERE audit.user_id = ?
+             AND audit.workspace_key = ?
+             AND audit.client_id IS ?
+             AND audit.owner_kind = ?
+             AND audit.owner_id = ?
+             AND audit.audit_status = 'completed'
+             AND audit.source_status = 'verified'
+             AND audit.original_state = 'pass_green'
+             AND audit.expected_state = 'block_red'
+             AND audit.severity = 'release_critical'
+        )
      LIMIT 1
   `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
     identity.userId,
     identity.workspaceKey,
     identity.clientId,
@@ -164,25 +193,48 @@ export async function quarantineSevereFalsePassWorkspaces(
            ),
            updated_at = ?
      WHERE mode = 'protected_autopilot'
-       AND EXISTS (
-         SELECT 1
-           FROM learning_decisions d
-           INNER JOIN learning_adjudications a
-             ON a.decision_id = d.id
-            AND a.user_id = d.user_id
-            AND a.workspace_key = d.workspace_key
-            AND a.client_id IS d.client_id
-            AND a.owner_kind = d.owner_kind
-            AND a.owner_id = d.owner_id
-          WHERE d.user_id = workspace_learning_settings.user_id
-            AND d.workspace_key = workspace_learning_settings.workspace_key
-            AND d.client_id IS workspace_learning_settings.client_id
-            AND d.owner_kind = workspace_learning_settings.owner_kind
-            AND d.owner_id = workspace_learning_settings.owner_id
-            AND d.stage = 'release'
-            AND d.release_state = 'pass_green'
-            AND a.expected_state = 'block_red'
-            AND a.severity = 'release_critical'
+       AND (
+         EXISTS (
+           SELECT 1
+             FROM learning_decisions d
+             INNER JOIN learning_adjudications a
+               ON a.decision_id = d.id
+              AND a.user_id = d.user_id
+              AND a.workspace_key = d.workspace_key
+              AND a.client_id IS d.client_id
+              AND a.owner_kind = d.owner_kind
+              AND a.owner_id = d.owner_id
+            WHERE d.user_id = workspace_learning_settings.user_id
+              AND d.workspace_key = workspace_learning_settings.workspace_key
+              AND d.client_id IS workspace_learning_settings.client_id
+              AND d.owner_kind = workspace_learning_settings.owner_kind
+              AND d.owner_id = workspace_learning_settings.owner_id
+              AND d.stage = 'release'
+              AND d.release_state = 'pass_green'
+              AND a.expected_state = 'block_red'
+              AND a.severity = 'release_critical'
+         )
+         OR EXISTS (
+           SELECT 1
+             FROM learning_calibration_audits audit
+             INNER JOIN learning_decisions calibrated
+               ON calibrated.id = audit.decision_id
+              AND calibrated.user_id = audit.user_id
+              AND calibrated.workspace_key = audit.workspace_key
+              AND calibrated.client_id IS audit.client_id
+              AND calibrated.owner_kind = audit.owner_kind
+              AND calibrated.owner_id = audit.owner_id
+            WHERE audit.user_id = workspace_learning_settings.user_id
+              AND audit.workspace_key = workspace_learning_settings.workspace_key
+              AND audit.client_id IS workspace_learning_settings.client_id
+              AND audit.owner_kind = workspace_learning_settings.owner_kind
+              AND audit.owner_id = workspace_learning_settings.owner_id
+              AND audit.audit_status = 'completed'
+              AND audit.source_status = 'verified'
+              AND audit.original_state = 'pass_green'
+              AND audit.expected_state = 'block_red'
+              AND audit.severity = 'release_critical'
+         )
        )
   `).bind(SEVERE_FALSE_PASS_DISABLED_REASON, now).run();
   const changes = Number(result.meta?.changes ?? 0);
@@ -207,32 +259,44 @@ export async function getWorkspaceMonthlyAiSpend(
 ): Promise<WorkspaceMonthlyAiSpend> {
   const [monthStart, monthEnd] = currentMonthBounds(now);
   const sql = identity.clientId === null
-    ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+    ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+              COUNT(*) AS telemetry_count,
+              SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+                AS invalid_telemetry_count
          FROM ai_usage
-        WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
-    : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+        WHERE user_id = ? AND client_id IS NULL
+          AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`
+    : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+              COUNT(*) AS telemetry_count,
+              SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+                AS invalid_telemetry_count
          FROM ai_usage
-        WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
+        WHERE user_id = ? AND client_id = ?
+          AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`;
   const bindings = identity.clientId === null
     ? [identity.userId, monthStart, monthEnd]
     : [identity.userId, identity.clientId, monthStart, monthEnd];
   const row = await db.prepare(sql).bind(...bindings).first<{
     spend_usd: number | null;
     telemetry_count: number;
+    invalid_telemetry_count: number;
   }>();
   const spendUsd = Number(row?.spend_usd);
   const telemetryCount = Number(row?.telemetry_count ?? 0);
+  const invalidTelemetryCount = Number(row?.invalid_telemetry_count ?? 0);
   if (
     !row
     || !Number.isSafeInteger(telemetryCount)
     || telemetryCount <= 0
+    || !Number.isSafeInteger(invalidTelemetryCount)
+    || invalidTelemetryCount !== 0
     || !Number.isFinite(spendUsd)
     || spendUsd < 0
   ) {
     return { monthlyAiSpendUsdCents: null, telemetryCount: Math.max(0, telemetryCount || 0) };
   }
   return {
-    monthlyAiSpendUsdCents: Math.round(spendUsd * 100),
+    monthlyAiSpendUsdCents: Math.max(0, Math.ceil((spendUsd * 100) - 1e-7)),
     telemetryCount,
   };
 }

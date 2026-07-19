@@ -271,6 +271,91 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'readiness cron receipts writes no replacement receipt when evidence collection fails',
   },
   {
+    id: 'severe_false_pass_quarantine_repository',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'severe false-pass quarantine repository downgrades only protected workspaces with a tenant-matched severe false pass',
+  },
+  {
+    id: 'severe_false_pass_quarantine_fail_closed',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'readiness cron receipts fails closed before persisting readiness when severe false-pass quarantine fails',
+  },
+  {
+    id: 'severe_false_pass_quarantine_persistent',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'protected autopilot mode gates does not let routine settings updates clear an operator-review quarantine',
+  },
+  {
+    id: 'calibration_ledger_schema',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit ships a bounded tenant-scoped calibration ledger separate from human adjudication',
+  },
+  {
+    id: 'calibration_bounded_selection',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit selects unchanged green release decisions fairly and excludes unsafe workspaces',
+  },
+  {
+    id: 'calibration_idempotent_claim',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit claims and completes only the exact tenant decision',
+  },
+  {
+    id: 'calibration_stale_source_hold',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit records stale source evidence without calling the independent evaluator',
+  },
+  {
+    id: 'calibration_cost_ceiling',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit performs zero claim or critic work without healthy tenant cost telemetry',
+  },
+  {
+    id: 'calibration_cost_integrity',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit rejects invalid spend telemetry and rounds provider cost upward',
+  },
+  {
+    id: 'calibration_severe_false_pass_quarantine',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit records independent results and immediately quarantines a severe false pass',
+  },
+  {
+    id: 'calibration_repair_false_pass',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit treats a repaired recheck as an advisory false pass of the original green decision',
+  },
+  {
+    id: 'calibration_tenant_failure_isolation',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit isolates tenant telemetry failures and still quarantines completed false passes',
+  },
+  {
+    id: 'calibration_outage_not_label',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit records unavailable critic telemetry without treating it as an adjudication',
+  },
+  {
+    id: 'calibration_weekly_order',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit wires calibration before learning and weekly customer review',
+  },
+  {
+    id: 'calibration_fresh_non_mutating',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit reruns fresh preflight without mutating posts, decisions, or human adjudications',
+  },
+  {
+    id: 'calibration_error_privacy',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit marks unavailable audit rows through complete tenant identity without persisting raw errors',
+  },
+  {
+    id: 'calibration_deletion',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit deletes calibration receipts before parent decisions for every tenant erasure',
+  },
+  {
     id: 'protected_consent_gate',
     suite: 'src/__tests__/learning-readiness.test.ts',
     assertion: 'protected autopilot mode gates downgrades without current consent, fresh readiness, or an owner-kind proof',

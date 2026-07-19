@@ -399,6 +399,15 @@ async function executeReleasePipeline(
   });
 }
 
+export async function evaluateReleaseCandidateFresh(
+  env: Env,
+  post: PublishablePost,
+  mode: LearningMode,
+): Promise<ReleasePipelineResult> {
+  const context = await loadReleaseContext(env, post);
+  return executeReleasePipeline(env, buildCandidate(post, mode), context);
+}
+
 const defaultRunnerDeps: ReleasePipelineRunnerDeps = {
   findFreshReceipt: findFreshReleaseReceipt,
   loadContext: loadReleaseContext,

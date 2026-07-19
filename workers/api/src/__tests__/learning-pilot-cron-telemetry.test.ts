@@ -19,6 +19,12 @@ const pilotResult = {
   caption: 'must never enter telemetry',
 };
 
+const calibrationResult = {
+  posts_processed: 2,
+  workspaces_disabled: 1,
+  caption: 'must never enter telemetry',
+};
+
 describe('learning pilot cron telemetry', () => {
   it('serializes only allowlisted non-negative integer counters', () => {
     expect(JSON.parse(buildCronDetails('learning_pilot', pilotResult)!)).toEqual({
@@ -37,6 +43,17 @@ describe('learning pilot cron telemetry', () => {
       posts_processed: 30,
       workspaces_disabled: 2,
     })!)).toEqual({ workspaces_disabled: 2 });
+    expect(JSON.parse(buildCronDetails('learning_calibration', calibrationResult)!)).toEqual({
+      posts_processed: 2,
+      candidates_considered: 0,
+      completed: 0,
+      unavailable: 0,
+      claimed_elsewhere: 0,
+      budget_skipped: 0,
+      severe_false_passes: 0,
+      workspaces_disabled: 1,
+      errors: 0,
+    });
     expect(JSON.parse(buildCronDetails('learning_pilot', {
       posts_processed: -1,
       context_not_ready: Number.POSITIVE_INFINITY,

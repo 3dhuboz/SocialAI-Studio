@@ -32,6 +32,7 @@ import { cronEvaluateLearningPilot } from './evaluate-learning-pilot';
 import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
 import { cronLearnStrategies } from './learn-strategies';
 import { cronEvaluateLearningReadiness } from './evaluate-learning-readiness';
+import { cronEvaluateLearningCalibration } from './evaluate-learning-calibration';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
@@ -51,6 +52,18 @@ const LEARNING_PILOT_DETAIL_KEYS = [
 
 const LEARNING_READINESS_DETAIL_KEYS = [
   'workspaces_disabled',
+] as const;
+
+const LEARNING_CALIBRATION_DETAIL_KEYS = [
+  'posts_processed',
+  'candidates_considered',
+  'completed',
+  'unavailable',
+  'claimed_elsewhere',
+  'budget_skipped',
+  'severe_false_passes',
+  'workspaces_disabled',
+  'errors',
 ] as const;
 
 type TrackedCronResult = {
@@ -75,7 +88,9 @@ export function buildCronDetails(
     ? LEARNING_PILOT_DETAIL_KEYS
     : cronType === 'learning_readiness'
       ? LEARNING_READINESS_DETAIL_KEYS
-      : [];
+      : cronType === 'learning_calibration'
+        ? LEARNING_CALIBRATION_DETAIL_KEYS
+        : [];
   if (detailKeys.length === 0) return null;
   const counters = result as Record<string, unknown>;
   return JSON.stringify(Object.fromEntries(
@@ -212,6 +227,7 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
   if (cron === '0 21 * * SUN') {
     if (env.LEARNING_BRAIN_ENABLED === 'true') {
+      await trackCron(env, 'learning_calibration', () => cronEvaluateLearningCalibration(env));
       await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
     }
     await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));

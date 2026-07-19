@@ -947,7 +947,11 @@ describe('severe false-pass quarantine repository', () => {
     expect(calls[0].sql).toContain('a.workspace_key = d.workspace_key');
     expect(calls[0].sql).toContain('a.client_id IS d.client_id');
     expect(calls[0].sql).toContain("d.stage = 'release'");
+    expect(calls[0].sql).toContain('FROM learning_calibration_audits audit');
+    expect(calls[0].sql).toContain("audit.audit_status = 'completed'");
+    expect(calls[0].sql).toContain("audit.source_status = 'verified'");
     expect(calls[0].binds).toEqual([
+      'owner-1', 'client-1', 'client-1', 'client', 'client-1',
       'owner-1', 'client-1', 'client-1', 'client', 'client-1',
     ]);
   });
@@ -964,6 +968,9 @@ describe('severe false-pass quarantine repository', () => {
     expect(calls[0].sql).toContain('d.user_id = workspace_learning_settings.user_id');
     expect(calls[0].sql).toContain('d.client_id IS workspace_learning_settings.client_id');
     expect(calls[0].sql).toContain("d.stage = 'release'");
+    expect(calls[0].sql).toContain('FROM learning_calibration_audits audit');
+    expect(calls[0].sql).toContain("audit.audit_status = 'completed'");
+    expect(calls[0].sql).toContain("audit.source_status = 'verified'");
     expect(calls[0].binds).toEqual([SEVERE_FALSE_PASS_DISABLED_REASON, now]);
   });
 
