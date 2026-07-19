@@ -381,6 +381,41 @@ describe('Shopify learning settings and readiness', () => {
     expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
+  it('does not skip the shop experiment ramp on first activation', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [],
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        metrics_json: '{}',
+        checks_json: JSON.stringify({ tenancyProofs: { shop: true } }),
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'true';
+    env.LEARNING_AUTOPILOT_ENABLED = 'true';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT',
+      headers: validHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 1800, experimentRate: 0.15,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Protected Autopilot experiments must start at 0 and advance only to 0.10 then 0.15',
+      code: 'protected_autopilot_experiment_ramp',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
   it('stores protected consent under the signed shop and ignores forged identity fields', async () => {
     const evaluatedAt = new Date().toISOString();
     const { db, calls } = makeRecordingD1({

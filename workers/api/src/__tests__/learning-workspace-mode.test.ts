@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../env';
+import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
 import { normalizeWorkspaceIdentity, workspaceKey } from '../lib/learning/types';
-import { loadWorkspaceLearningMode, resolveLearningMode } from '../lib/learning/workspace-mode';
+import {
+  isProtectedExperimentRateTransitionAllowed,
+  loadWorkspaceLearningMode,
+  resolveLearningMode,
+} from '../lib/learning/workspace-mode';
 
 type ModeRows = {
   client?: { status: string | null } | null;
@@ -58,6 +63,24 @@ describe('learning workspace mode', () => {
 
   it('rejects malformed profile values', () => {
     expect(resolveLearningMode('true', { mode: 'anything' })).toBe('shadow');
+  });
+
+  it('enforces the zero, 0.10, 0.15 protected experiment sequence with rollback', () => {
+    const protectedSettings = (experimentRate: number) => ({
+      mode: 'protected_autopilot' as const,
+      autopublishConsentAt: '2026-07-19T00:00:00.000Z',
+      autopublishPolicyVersion: AUTOPILOT_POLICY_VERSION,
+      experimentRate,
+    });
+
+    expect(isProtectedExperimentRateTransitionAllowed({ mode: 'approval' }, 0)).toBe(true);
+    expect(isProtectedExperimentRateTransitionAllowed({ mode: 'approval' }, 0.1)).toBe(false);
+    expect(isProtectedExperimentRateTransitionAllowed(protectedSettings(0), 0.1)).toBe(true);
+    expect(isProtectedExperimentRateTransitionAllowed(protectedSettings(0), 0.15)).toBe(false);
+    expect(isProtectedExperimentRateTransitionAllowed(protectedSettings(0.1), 0.15)).toBe(true);
+    expect(isProtectedExperimentRateTransitionAllowed(protectedSettings(0.15), 0.1)).toBe(true);
+    expect(isProtectedExperimentRateTransitionAllowed(protectedSettings(0.15), 0)).toBe(true);
+    expect(isProtectedExperimentRateTransitionAllowed(protectedSettings(0.15), 0.2)).toBe(false);
   });
 
   it('defaults an owner without settings to shadow', async () => {

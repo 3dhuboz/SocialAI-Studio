@@ -461,7 +461,7 @@ describe('learning settings and release evidence routes', () => {
         headers: ownerHeaders,
         body: JSON.stringify({
           mode: 'protected_autopilot', consent: true,
-          monthlyAiBudgetUsdCents: 2500, experimentRate: 0.1,
+          monthlyAiBudgetUsdCents: 2500, experimentRate: 0,
         }),
       }, env);
 
@@ -475,6 +475,42 @@ describe('learning settings and release evidence routes', () => {
         gate,
       ).toBe(false);
     }
+  });
+
+  it('does not skip the protected experiment ramp on first activation', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        metrics_json: '{}',
+        checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'true',
+      LEARNING_AUTOPILOT_ENABLED: 'true',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/settings', {
+      method: 'PUT',
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 2500, experimentRate: 0.1,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Protected Autopilot experiments must start at 0 and advance only to 0.10 then 0.15',
+      code: 'protected_autopilot_experiment_ramp',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
   it('stores one-time policy consent under the server-derived owner tuple', async () => {
@@ -500,7 +536,7 @@ describe('learning settings and release evidence routes', () => {
       headers: ownerHeaders,
       body: JSON.stringify({
         mode: 'protected_autopilot', consent: true,
-        monthlyAiBudgetUsdCents: 2500, experimentRate: 0.1,
+        monthlyAiBudgetUsdCents: 2500, experimentRate: 0,
         userId: 'attacker', workspaceKey: 'forged',
       }),
     }, env);

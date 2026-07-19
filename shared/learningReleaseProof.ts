@@ -286,6 +286,21 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'Shopify learning settings and readiness does not bank shop consent before every activation gate passes',
   },
   {
+    id: 'protected_experiment_transition_policy',
+    suite: 'src/__tests__/learning-workspace-mode.test.ts',
+    assertion: 'learning workspace mode enforces the zero, 0.10, 0.15 protected experiment sequence with rollback',
+  },
+  {
+    id: 'protected_experiment_activation_main',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes does not skip the protected experiment ramp on first activation',
+  },
+  {
+    id: 'protected_experiment_activation_shopify',
+    suite: 'src/__tests__/shopify-learning-routes.test.ts',
+    assertion: 'Shopify learning settings and readiness does not skip the shop experiment ramp on first activation',
+  },
+  {
     id: 'on_hold_zero_processing',
     suite: 'src/__tests__/learning-permanent-preflight.test.ts',
     assertion: 'permanent release preflight makes zero critic and network calls for malformed or on-hold workspaces',

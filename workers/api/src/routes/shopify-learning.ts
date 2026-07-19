@@ -12,6 +12,7 @@ import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
   isProtectedAutopilotEligible,
+  isProtectedExperimentRateTransitionAllowed,
   loadWorkspaceLearningMode,
   saveWorkspaceLearningSettings,
   type StoredWorkspaceLearningSettings,
@@ -273,6 +274,12 @@ export function registerShopifyLearningRoutes(
         }
         if (!Number.isSafeInteger(budget) || Number(budget) <= 0) {
           return c.json({ error: 'Protected Autopilot requires a positive monthly AI budget' }, 400);
+        }
+        if (!isProtectedExperimentRateTransitionAllowed(current, rate)) {
+          return c.json({
+            error: 'Protected Autopilot experiments must start at 0 and advance only to 0.10 then 0.15',
+            code: 'protected_autopilot_experiment_ramp',
+          }, 409);
         }
         const requestedConsentAt = alreadyConsented ? current.autopublishConsentAt! : now;
         if (!await isProtectedAutopilotEligible(c.env, identity, {
