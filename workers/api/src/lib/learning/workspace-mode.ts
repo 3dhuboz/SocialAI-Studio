@@ -163,6 +163,66 @@ export function resolveLearningMode(
     : 'shadow';
 }
 
+export async function isProtectedAutopilotEligible(
+  env: Env,
+  identity: WorkspaceIdentity,
+  settings: WorkspaceLearningSettings,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (
+    env.LEARNING_BRAIN_ENABLED !== 'true'
+    || env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
+    || env.LEARNING_AUTOPILOT_ENABLED !== 'true'
+  ) return false;
+
+  const budgetCents = settings.monthlyAiBudgetUsdCents;
+  if (
+    settings.autopublishConsentAt == null
+    || settings.autopublishPolicyVersion !== AUTOPILOT_POLICY_VERSION
+    || !Number.isSafeInteger(budgetCents)
+    || Number(budgetCents) <= 0
+  ) return false;
+
+  const readiness = await env.DB.prepare(`
+    SELECT ready, policy_version, checks_json, evaluated_at
+      FROM learning_release_readiness
+     WHERE policy_version = ?
+     ORDER BY evaluated_at DESC, id DESC
+     LIMIT 1
+  `).bind(AUTOPILOT_POLICY_VERSION).first<{
+    ready: number;
+    policy_version: string;
+    checks_json: string;
+    evaluated_at: string;
+  }>();
+  if (!readiness || readiness.ready !== 1 || readiness.policy_version !== AUTOPILOT_POLICY_VERSION) {
+    return false;
+  }
+  const evaluatedAt = Date.parse(readiness.evaluated_at);
+  const age = now.getTime() - evaluatedAt;
+  if (!Number.isFinite(evaluatedAt) || age < 0 || age > READINESS_MAX_AGE_MS) {
+    return false;
+  }
+  let parsedChecks: unknown;
+  try {
+    parsedChecks = JSON.parse(readiness.checks_json);
+  } catch {
+    return false;
+  }
+  if (!parsedChecks || typeof parsedChecks !== 'object' || Array.isArray(parsedChecks)) return false;
+  const tenancyProofs = (parsedChecks as {
+    tenancyProofs?: Partial<Record<WorkspaceOwnerKind, boolean>>;
+  }).tenancyProofs;
+  if (!tenancyProofs || typeof tenancyProofs !== 'object' || Array.isArray(tenancyProofs)) {
+    return false;
+  }
+  if (tenancyProofs[identity.ownerKind] !== true) return false;
+
+  const cost = await getWorkspaceMonthlyAiSpend(env.DB, identity, now);
+  return cost.monthlyAiSpendUsdCents != null
+    && cost.monthlyAiSpendUsdCents < Number(budgetCents);
+}
+
 export async function loadWorkspaceLearningMode(
   env: Env,
   userId: string,
@@ -205,53 +265,7 @@ export async function loadWorkspaceLearningMode(
     return resolveLearningMode(env.LEARNING_BRAIN_ENABLED, settings);
   }
 
-  if (
-    env.LEARNING_BRAIN_ENABLED !== 'true'
-    || env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
-    || env.LEARNING_AUTOPILOT_ENABLED !== 'true'
-  ) return 'approval';
-
-  const budgetCents = settings.monthlyAiBudgetUsdCents;
-  if (
-    settings.autopublishConsentAt == null
-    || settings.autopublishPolicyVersion !== AUTOPILOT_POLICY_VERSION
-    || !Number.isSafeInteger(budgetCents)
-    || Number(budgetCents) <= 0
-  ) return 'approval';
-
-  const readiness = await env.DB.prepare(`
-    SELECT ready, policy_version, checks_json, evaluated_at
-      FROM learning_release_readiness
-     WHERE policy_version = ?
-     ORDER BY evaluated_at DESC
-     LIMIT 1
-  `).bind(AUTOPILOT_POLICY_VERSION).first<{
-    ready: number;
-    policy_version: string;
-    checks_json: string;
-    evaluated_at: string;
-  }>();
-  if (!readiness || readiness.ready !== 1 || readiness.policy_version !== AUTOPILOT_POLICY_VERSION) {
-    return 'approval';
-  }
-  const evaluatedAt = Date.parse(readiness.evaluated_at);
-  const age = now.getTime() - evaluatedAt;
-  if (!Number.isFinite(evaluatedAt) || age < 0 || age > READINESS_MAX_AGE_MS) {
-    return 'approval';
-  }
-  let checks: { tenancyProofs?: Partial<Record<WorkspaceOwnerKind, boolean>> };
-  try {
-    checks = JSON.parse(readiness.checks_json) as typeof checks;
-  } catch {
-    return 'approval';
-  }
-  if (checks.tenancyProofs?.[identity.ownerKind] !== true) return 'approval';
-
-  const cost = await getWorkspaceMonthlyAiSpend(env.DB, identity, now);
-  if (
-    cost.monthlyAiSpendUsdCents == null
-    || cost.monthlyAiSpendUsdCents >= Number(budgetCents)
-  ) return 'approval';
-
-  return 'protected_autopilot';
+  return await isProtectedAutopilotEligible(env, identity, settings, now)
+    ? 'protected_autopilot'
+    : 'approval';
 }

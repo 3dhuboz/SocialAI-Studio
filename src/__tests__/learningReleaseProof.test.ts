@@ -77,6 +77,8 @@ describe('buildReleaseProofArtifact', () => {
         'readiness_monitoring_alert',
         'readiness_failure_stale',
         'protected_consent_gate',
+        'protected_consent_activation_gate_main',
+        'protected_consent_activation_gate_shopify',
         'on_hold_zero_processing',
         'egress_manual_path',
         'egress_cron_path',

@@ -33,6 +33,7 @@ import {
 import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
+  isProtectedAutopilotEligible,
   loadWorkspaceLearningMode,
   saveWorkspaceLearningSettings,
   type StoredWorkspaceLearningSettings,
@@ -735,7 +736,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         body.monthlyAiBudgetUsdCents,
         current.monthlyAiBudgetUsdCents ?? null,
       );
-      const now = new Date().toISOString();
+      const requestedAt = new Date();
+      const now = requestedAt.toISOString();
       let mode: LearningMode;
       let consentAt: string | null;
       let policyVersion: string | null;
@@ -748,8 +750,22 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         if (!Number.isSafeInteger(budget) || Number(budget) <= 0) {
           return c.json({ error: 'Protected Autopilot requires a positive monthly AI budget' }, 400);
         }
+        const requestedConsentAt = alreadyConsented ? current.autopublishConsentAt! : now;
+        if (!await isProtectedAutopilotEligible(c.env, identity, {
+          mode: 'protected_autopilot',
+          autopublishConsentAt: requestedConsentAt,
+          autopublishPolicyVersion: AUTOPILOT_POLICY_VERSION,
+          experimentRate: rate,
+          monthlyAiBudgetUsdCents: budget,
+          disabledReason: null,
+        }, requestedAt)) {
+          return c.json({
+            error: 'Protected Autopilot is unavailable until every activation gate passes',
+            code: 'protected_autopilot_not_ready',
+          }, 409);
+        }
         mode = 'protected_autopilot';
-        consentAt = alreadyConsented ? current.autopublishConsentAt! : now;
+        consentAt = requestedConsentAt;
         policyVersion = AUTOPILOT_POLICY_VERSION;
       } else {
         mode = c.env.LEARNING_RELEASE_ENFORCEMENT === 'true' ? 'approval' : 'shadow';

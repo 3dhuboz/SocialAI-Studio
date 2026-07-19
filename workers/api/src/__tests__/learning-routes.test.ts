@@ -429,9 +429,71 @@ describe('learning settings and release evidence routes', () => {
     expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
+  it('does not bank protected consent before every activation gate passes', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const disabledGates: Array<[string, Partial<Env>]> = [
+      ['learning brain', { LEARNING_BRAIN_ENABLED: 'false' }],
+      ['release enforcement', { LEARNING_RELEASE_ENFORCEMENT: 'false' }],
+      ['protected autopilot', { LEARNING_AUTOPILOT_ENABLED: 'false' }],
+    ];
+
+    for (const [gate, disabled] of disabledGates) {
+      const { db, calls } = makeRecordingD1({
+        'FROM learning_release_readiness': [{
+          id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+          metrics_json: '{}',
+          checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+          evaluated_by: 'cron', evaluated_at: evaluatedAt,
+        }],
+        'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+      });
+      const env = {
+        DB: db,
+        LEARNING_BRAIN_ENABLED: 'true',
+        LEARNING_RELEASE_ENFORCEMENT: 'true',
+        LEARNING_AUTOPILOT_ENABLED: 'true',
+        ...disabled,
+      } as Env;
+      const { app } = makeApp(env);
+
+      const response = await app.request('/api/learning/settings', {
+        method: 'PUT',
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          mode: 'protected_autopilot', consent: true,
+          monthlyAiBudgetUsdCents: 2500, experimentRate: 0.1,
+        }),
+      }, env);
+
+      expect(response.status, gate).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: 'Protected Autopilot is unavailable until every activation gate passes',
+        code: 'protected_autopilot_not_ready',
+      });
+      expect(
+        calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings')),
+        gate,
+      ).toBe(false);
+    }
+  });
+
   it('stores one-time policy consent under the server-derived owner tuple', async () => {
-    const { db, calls } = makeRecordingD1();
-    const env = { DB: db, LEARNING_RELEASE_ENFORCEMENT: 'true' } as Env;
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        metrics_json: '{}',
+        checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'true',
+      LEARNING_AUTOPILOT_ENABLED: 'true',
+    } as Env;
     const { app } = makeApp(env);
     const response = await app.request('/api/learning/settings', {
       method: 'PUT',
