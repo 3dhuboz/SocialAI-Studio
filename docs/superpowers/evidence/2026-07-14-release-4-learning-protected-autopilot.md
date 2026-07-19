@@ -3250,9 +3250,10 @@ The first natural staging sequence after the final protected-branch Worker
 
 The pilot receipt contained all nine required counters, the readiness receipt
 contained `workspaces_disabled=0`, and the read-only audit reported
-`rows_written=0`. Subsequent natural sequences through `2026-07-19 19:45:24
-UTC` remained successful with the same complete schemas and zero processed
-posts. The weekly calibration remains untouched and naturally scheduled for
+`rows_written=0`. Subsequent natural sequences through
+`2026-07-19 19:45:24 UTC` remained successful with the same complete schemas
+and zero processed posts. The weekly calibration remains untouched and
+naturally scheduled for
 `2026-07-19 21:00:00 UTC` (`2026-07-20 07:00 AEST`).
 
 ### First Natural Weekly Calibration Receipt
@@ -3294,3 +3295,47 @@ release enforcement, Protected Autopilot, and organic-reach application remain
 disabled. This natural receipt closes the scheduler/telemetry observation gap;
 it does not satisfy the separate positive-sample, calibration-quality,
 customer-consent, production-readiness, or promotion gates.
+
+### Post-Calibration Exact Proof And Safe Hold
+
+The first clean post-calibration proof run correctly failed closed because the
+frontend-inclusive global publication source scan reached Vitest's default
+10-second test timeout under full-suite D-drive contention. Its direct focused
+rerun passed all 34 assertions, proving this was proof-harness latency rather
+than a publication-egress bypass or application regression.
+
+Commit `c3e1dbf358e7d0fb8593794c5b517649aedb21aa` gives only that recursive
+source-contract assertion an explicit bounded 30-second timeout. It changes no
+runtime source, deployment configuration, release criterion, or assertion.
+Verification at that commit passed all 239 frontend/root tests, all 1,284
+Worker tests, strict root and Worker TypeScript, and the 1,925-module
+production frontend build.
+
+The clean exact-commit proof then passed all 111 mandatory checks:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T21-06-59-567Z.json`
+- Release-proof payload SHA-256: `ae3e63f8b11d7aafef092e97feacd313999481e4917aea40c1883de865ca6ed4`
+- Release-proof file SHA-256: `c8fdfcf00af019fc401dc583fa40b63feec9f48a65c59a52b252b7408ac0c48d`
+
+The exact proof was supplied to the live read-only rollout judge with staging
+Worker `47e8e521-efdd-4d4e-a816-e4c39c2fd97f` and production Worker
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215`. All 26 live safety checks passed, and
+the judge returned `safe_hold` with `promotion_ready=false`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T21-07-49-014Z.json`
+- Rollout payload SHA-256: `462b22453b9daa5ffa9a9a826f927feaab441d4cfb0ff72587ffa26deefc3c10`
+- Rollout file SHA-256: `b7859905bfa43ba3152a58ecca4c763a9ae78c5e21203d5a306102043e83b2db`
+
+The remaining blockers are explicit and independent:
+
+- staging readiness is not green
+- production readiness is not green
+- no eligible positive pilot samples exist
+- no separately consenting active customer is enrolled
+- no sample-backed staging calibration evidence exists
+- the production positive-sample schema is intentionally absent
+- the production calibration schema is intentionally absent
+
+No failed safety check was suppressed. No production or staging deployment,
+migration, enrollment, release-flag change, publishing change, or customer-data
+mutation was performed for this checkpoint.
