@@ -12,6 +12,7 @@
     "eval:ai": "tsx scripts/eval-ai-quality.mjs --offline",
     "smoke": "tsx scripts/audit-smoke-test.ts",
     "verify:learning-release": "tsx scripts/learning-release-proof.ts",
+    "verify:learning-rollout": "tsx scripts/learning-rollout-state.ts",
     "verify:portal-bundle": "node scripts/verify-portal-bundle.mjs",
     "codex:save": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/codex-save.ps1"
   },
