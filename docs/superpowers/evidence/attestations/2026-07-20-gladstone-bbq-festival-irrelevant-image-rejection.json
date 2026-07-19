@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "pilot-attestation-gladstonebbq-001-3150a9a8cd5d0ffd9ae735f4",
+  "capturedAt": "2026-07-19T23:38:21.460Z",
+  "source": {
+    "kind": "user_provided_attestation",
+    "threadId": "019ed317-7f47-7b22-ae5e-0fab6b0218c6"
+  },
+  "statement": "I attest pilot-copy-3150a9a8cd5d0ffd9ae735f4 is a genuine Gladstone SocialAI output for record-only evaluation. It is rejected for publishing because the image is irrelevant.",
+  "scope": {
+    "environment": "staging",
+    "recordOnly": true,
+    "genuineSocialAiOutput": true,
+    "publishDisposition": "rejected",
+    "rejectionReason": "irrelevant_image",
+    "scheduleAllowed": false,
+    "publishAllowed": false,
+    "learningApplyAllowed": false
+  },
+  "candidate": {
+    "postId": "pilot-copy-3150a9a8cd5d0ffd9ae735f4",
+    "clientId": "gladstonebbq-001",
+    "ownerKind": "client",
+    "ownerId": "gladstonebbq-001",
+    "contentHash": "de28de79d3eac039dc76e9234deed2e8ace40d894155b364aaf1335a9a948e6d",
+    "platform": "Facebook",
+    "postType": "image",
+    "content": "When the glaze hits just right. \u2728 BBQ ribs aren't just food-they're a statement. Smoked low, glazed perfect, charred on the edges. This is what you're hunting for at the Gladstone BBQ Festival. What's your glaze move? Spicy, sweet, or smoky?",
+    "hashtags": [
+      "#SmokedMeat",
+      "#Gladstone"
+    ],
+    "imageUrl": "https://v3b.fal.media/files/b/0a9a1d9e/NRZcWGmeePyx84yj3FSVB.jpg"
+  },
+  "attestationReceipt": {
+    "sampleId": "e16416aa-c563-46d1-a1fd-c428bf74e333",
+    "attestationBasis": "customer_real_post",
+    "created": true,
+    "postMutated": false
+  },
+  "criticDecision": {
+    "decisionId": "c36212f6-dede-42f4-87dd-391f7c725012",
+    "releaseState": "block_red",
+    "sourceStatus": "Draft",
+    "postMutated": false,
+    "verdictCount": 10,
+    "imageCritic": {
+      "verdict": "block",
+      "severity": "release_critical",
+      "confidence": 1,
+      "score": 2,
+      "reason": "The caption promotes glazed BBQ ribs and the festival, while the image is a blurred coffee-cup and smartphone workspace scene unrelated to BBQ, food, or the event.",
+      "repair": "Regenerate the image against the caption and brand exclusions."
+    }
+  },
+  "independentDatabaseAudit": {
+    "postStatus": "Draft",
+    "scheduledFor": null,
+    "publishAttempts": 0,
+    "providerPublishFieldsPresent": false,
+    "publicationEventCount": 0,
+    "deliveryReceiptCount": 0,
+    "workspaceMode": "approval",
+    "autopublishConsentAt": null,
+    "autopublishPolicyVersion": null,
+    "experimentRate": 0,
+    "protectedAutopilotWorkspaceCount": 0,
+    "rowsWritten": 0,
+    "changedDb": false
+  },
+  "deploymentBoundary": {
+    "stagingWorkerVersion": "17cca808-bf93-49b6-9fc9-4b270b236a92",
+    "productionWorkerVersion": "3b963ed1-c9e1-42d6-9bff-68da2efa9215",
+    "productionDeploymentPerformed": false,
+    "schemaApplied": false,
+    "releaseEnforcementEnabled": false,
+    "protectedAutopilotEnabled": false,
+    "organicReachApplyEnabled": false
+  }
+}

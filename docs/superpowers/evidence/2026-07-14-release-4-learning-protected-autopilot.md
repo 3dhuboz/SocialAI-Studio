@@ -3660,3 +3660,75 @@ occurred. Staging remains on Worker
 flags remain off. The only persistent application-data change is the
 explicitly consented, isolated, withdrawable staging record copy and its
 record-only enrollment.
+
+### Exact Gladstone Rejection and Critic Validation
+
+The customer/operator then supplied an exact, post-ID-bound attestation for
+`pilot-copy-3150a9a8cd5d0ffd9ae735f4`. The statement confirms only that the
+Draft is a genuine Gladstone SocialAI output suitable for record-only
+evaluation. It explicitly rejects publishing because the image is
+irrelevant. This statement is provenance plus a negative quality label; it is
+not publishing consent, approval, or a positive performance sample. The
+tracked receipt is:
+
+- `docs/superpowers/evidence/attestations/2026-07-20-gladstone-bbq-festival-irrelevant-image-rejection.json`
+- receipt file SHA-256 `8095d749495da5a62573f55ba0c9dc8b5044bffaa231f62f20741e9ed38d8232`
+- exact content SHA-256 `de28de79d3eac039dc76e9234deed2e8ace40d894155b364aaf1335a9a948e6d`
+- immutable staging sample ID `e16416aa-c563-46d1-a1fd-c428bf74e333`
+- attestation basis `customer_real_post`
+
+Immediately before the write, the authenticated staging candidate endpoint
+reloaded the current Draft and returned the same post ID, caption, image URL,
+and content hash. The staging-only attestation endpoint reloaded it again,
+recomputed the canonical hash, rejected synthetic-QA candidates, and wrote
+the immutable sample receipt with `postMutated=false`.
+
+The independent staging critics then evaluated that exact hash. Decision
+`c36212f6-dede-42f4-87dd-391f7c725012` completed in approval mode with final
+state `block_red`. Nine deterministic/LLM verdicts passed the caption's brand,
+fact, platform, harm, and repetition checks. The release-critical image
+critic correctly blocked it with confidence `1.0` and image score `2`: the
+caption promotes glazed BBQ ribs and the Gladstone BBQ Festival, but the
+image is a blurred coffee-cup and smartphone workspace scene unrelated to
+BBQ, food, or the event. Its prescribed repair is to regenerate against the
+caption and brand exclusions. No automatic repair was attempted, and the
+rejected source Draft was not changed.
+
+An independent read-only D1 audit accepted its result only after Cloudflare
+reported `changed_db=false` and `rows_written=0`. It proved:
+
+- the post remains `Draft` with `scheduled_for=NULL`
+- all claim, Facebook, Postproxy, and QA mutation fields remain null
+- `publish_attempts=0`
+- zero publication events and zero delivery receipts exist for the post
+- the Gladstone workspace remains `approval` with experiment rate `0`
+- autopublish consent and policy remain null
+- zero staging workspaces are in Protected Autopilot mode
+
+The clean-commit release proof remained `offline_pass`:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T23-43-29-767Z.json`
+- Release-proof payload SHA-256: `3b151a0469e8d004a8ecebfe2ef3d0b69b74eaa206e2ea4eecb71bd63e80e8d1`
+- Release-proof file SHA-256: `f13f527d11db942824079f67ede2ca99490ee84975395f52611f2a73bbdf9189`
+
+The live read-only rollout judge counted one customer attestation and one
+validated customer sample, retained `safe_hold`, and kept
+`promotion_ready=false`. The blocked sample does not activate publishing or
+learning apply:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T23-44-10-465Z.json`
+- Rollout payload SHA-256: `896e0e2614957856b248d996443dc3920178129f6b24b2bc7193fe7ce5ddd82a`
+- Rollout file SHA-256: `41dbaa46ba287c693175bc302f33bdd2d98ddb77ddda7a104eacda3cccb64607`
+
+The same proof and versions were evaluated with `--require-ready`. The judge
+again retained `safe_hold` and returned the required process exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T23-45-04-462Z.json`
+- Require-ready payload SHA-256: `0f3d5ab0b6fedc7ec95ea0ace164cc14dfc940df51be3be133bf58e8ebd1d906`
+- Require-ready file SHA-256: `9070f1bcb4c7893056c9df3a6d278f5885e247d1df29468851aed740921a77b0`
+
+No Worker or frontend deployment, schema application, schedule, publication,
+production mutation, release-flag change, or learning-apply change occurred.
+Staging remains on Worker `17cca808-bf93-49b6-9fc9-4b270b236a92`, production
+remains on Worker `3b963ed1-c9e1-42d6-9bff-68da2efa9215`, and
+`hughesq-001` remains on hold.
