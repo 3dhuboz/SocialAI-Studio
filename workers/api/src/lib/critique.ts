@@ -101,6 +101,14 @@ HARD RULES — any of these conditions force a score of 1-2, no exceptions:
 - Caption is about a butcher, farm, BBQ joint, or any food-adjacent business
   AND the image shows gym equipment, yoga mats, dashboards, or office UI →
   score 1-2.${denylistRule}
+- SOFTWARE-VS-HARDWARE HARD RULE: Caption or archetype is about SaaS,
+  software, custom apps, custom software, websites, automation, or digital
+  services AND the image's main subject is electronics hardware such as a
+  circuit board, PCB, motherboard, microchip, soldering iron, screwdriver,
+  component repair, or an electronics workbench → score 1-2 with match="no".
+  Hardware is not an acceptable visual metaphor for software. Apply this rule
+  unless the caption explicitly discusses hardware, electronics, device
+  repair, embedded systems, semiconductor work, or electronics manufacturing.
 - Caption or archetype is BBQ / smokehouse / brisket-focused AND the image
   shows impossible meat anatomy: citrus-like segments, concentric rings,
   radial patterns, organ-like cross-sections, raw-medical-looking slabs, or

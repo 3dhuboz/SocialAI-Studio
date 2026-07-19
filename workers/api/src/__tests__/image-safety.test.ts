@@ -344,6 +344,25 @@ describe('applyArchetypeGuardrails', () => {
     expect(result.swappedForFallback).toBe(true);
   });
 
+  it('swaps electronics hardware imagery away from tech-saas-agency software posts', () => {
+    const falsePrompt = {
+      prompt: 'macro photo of a green circuit board with soldering iron and screwdriver on a repair bench',
+      negativePrompt: 'text',
+    };
+    const caption = 'Off-the-shelf software is built for everyone. Custom app development fits the workflow.';
+    const result = applyArchetypeGuardrails(
+      falsePrompt,
+      'tech-saas-agency',
+      caption,
+      'custom-app-regression',
+    );
+
+    expect(result.swappedForFallback).toBe(true);
+    expect(result.prompt.toLowerCase()).not.toMatch(/\b(circuit|pcb|solder|screwdriver|repair bench)\b/);
+    expect(result.negativePrompt.toLowerCase()).toContain('circuit board');
+    expect(result.prompt).toContain(FLUX_STYLE_SUFFIX);
+  });
+
   it('fallback scenes always include FLUX_STYLE_SUFFIX', () => {
     const falsePrompt = {
       prompt: 'gym equipment and treadmills for a SaaS post',
