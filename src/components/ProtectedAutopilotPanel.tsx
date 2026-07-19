@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
+  nextProtectedAutopilotExperimentRate,
+  type ProtectedAutopilotExperimentIncrease,
+  type ProtectedAutopilotExperimentRate,
+} from '../../shared/protectedAutopilotExperiment';
+import {
   AlertTriangle,
   CheckCircle2,
   DollarSign,
@@ -28,6 +33,7 @@ interface ProtectedAutopilotControlProps {
   error?: string | null;
   onBudgetChange: (value: string) => void;
   onRequestProtected: () => void;
+  onSetExperimentRate: (rate: ProtectedAutopilotExperimentIncrease) => void;
   onUseApproval: () => void;
 }
 
@@ -108,6 +114,7 @@ export const ProtectedAutopilotControl: React.FC<ProtectedAutopilotControlProps>
   error = null,
   onBudgetChange,
   onRequestProtected,
+  onSetExperimentRate,
   onUseApproval,
 }) => {
   const switches = readiness.globalSwitches;
@@ -140,6 +147,14 @@ export const ProtectedAutopilotControl: React.FC<ProtectedAutopilotControlProps>
   ].filter((reason): reason is string => Boolean(reason));
   const gates = gateRows(readiness);
   const budgetCents = dollarsToCents(budgetDollars);
+  const experimentRate = Number(settings.settings.experimentRate);
+  const currentExperimentRate = Number.isFinite(experimentRate) && experimentRate >= 0
+    ? experimentRate
+    : 0;
+  const nextExperimentRate = active
+    ? nextProtectedAutopilotExperimentRate(currentExperimentRate)
+    : null;
+  const canRequestProtected = !requested && blockers.length === 0;
 
   return (
     <section className={`glass-card overflow-hidden rounded-2xl border ${
@@ -243,6 +258,39 @@ export const ProtectedAutopilotControl: React.FC<ProtectedAutopilotControlProps>
           </div>
         </div>
 
+        {requested && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-400/15 bg-emerald-500/[0.035] p-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-200/70">
+                Protected experiment rollout
+              </p>
+              <p className="mt-1 text-sm font-black text-white">
+                Current experiment rate: {Math.round(currentExperimentRate * 100)}%
+              </p>
+              <p className="mt-1 text-[10px] text-white/35">Approved sequence: 0% -&gt; 10% -&gt; 15%</p>
+            </div>
+            {active && nextExperimentRate != null ? (
+              <button
+                type="button"
+                onClick={() => onSetExperimentRate(nextExperimentRate)}
+                disabled={saving || blockers.length > 0}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/25 bg-emerald-500/15 px-4 py-2 text-[11px] font-black text-emerald-100 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
+                {nextExperimentRate === 0.1 ? 'Increase to 10%' : 'Increase to 15%'}
+              </button>
+            ) : active ? (
+              <p className="text-[10px] font-bold text-emerald-200/70">
+                Maximum protected experiment rate reached
+              </p>
+            ) : (
+              <p className="max-w-xs text-[10px] text-white/35">
+                The experiment remains at 0% until Protected Autopilot is active.
+              </p>
+            )}
+          </div>
+        )}
+
         <div>
           <div className="mb-2.5 flex items-center justify-between gap-3">
             <p className="text-[11px] font-bold uppercase tracking-wider text-white/40">Permanent release gates</p>
@@ -273,7 +321,9 @@ export const ProtectedAutopilotControl: React.FC<ProtectedAutopilotControlProps>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-4">
           <p className="max-w-2xl text-[10px] leading-relaxed text-white/35">
-            Your request will not activate until every release gate passes. Unsafe, uncertain, or unavailable-critic posts are held automatically.
+            {!canRequestProtected && !requested
+              ? 'Activation unlocks only after every gate is green. Your request will not activate until every release gate passes. Unsafe, uncertain, or unavailable-critic posts are held automatically.'
+              : 'Your request will not activate until every release gate passes. Unsafe, uncertain, or unavailable-critic posts are held automatically.'}
           </p>
           {requested ? (
             <button
@@ -289,7 +339,7 @@ export const ProtectedAutopilotControl: React.FC<ProtectedAutopilotControlProps>
             <button
               type="button"
               onClick={onRequestProtected}
-              disabled={saving || isOff || !positiveBudget(budgetDollars)}
+              disabled={saving || !canRequestProtected}
               className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/25 bg-emerald-500/15 px-4 py-2 text-[11px] font-black text-emerald-100 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {saving ? <Loader2 size={11} className="animate-spin" /> : <ShieldCheck size={11} />}
@@ -356,7 +406,10 @@ export const ProtectedAutopilotPanel: React.FC<ProtectedAutopilotPanelProps> = (
     return () => { cancelled = true; };
   }, [db, clientId]);
 
-  const updateMode = async (mode: 'approval' | 'protected_autopilot') => {
+  const updateMode = async (
+    mode: 'approval' | 'protected_autopilot',
+    requestedExperimentRate?: ProtectedAutopilotExperimentRate,
+  ) => {
     const budget = dollarsToCents(budgetDollars);
     if (mode === 'protected_autopilot' && budget == null) {
       setError('Enter a positive monthly AI ceiling with no more than two decimal places.');
@@ -368,7 +421,8 @@ export const ProtectedAutopilotPanel: React.FC<ProtectedAutopilotPanelProps> = (
       await db.updateLearningSettings({
         clientId,
         mode,
-        consent: mode === 'protected_autopilot' ? true : undefined,
+        consent: mode === 'protected_autopilot' && requestedExperimentRate === 0 ? true : undefined,
+        experimentRate: mode === 'protected_autopilot' ? requestedExperimentRate : undefined,
         monthlyAiBudgetUsdCents: mode === 'protected_autopilot' ? budget : undefined,
       });
       await load();
@@ -403,7 +457,8 @@ export const ProtectedAutopilotPanel: React.FC<ProtectedAutopilotPanelProps> = (
       saving={saving}
       error={error}
       onBudgetChange={setBudgetDollars}
-      onRequestProtected={() => { void updateMode('protected_autopilot'); }}
+      onRequestProtected={() => { void updateMode('protected_autopilot', 0); }}
+      onSetExperimentRate={(rate) => { void updateMode('protected_autopilot', rate); }}
       onUseApproval={() => { void updateMode('approval'); }}
     />
   );

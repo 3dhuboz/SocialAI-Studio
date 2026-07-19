@@ -1,4 +1,5 @@
 import type { Env } from '../../env';
+import { isProtectedAutopilotExperimentTransitionAllowed } from '../../../../../shared/protectedAutopilotExperiment';
 import {
   LEARNING_MODES,
   normalizeWorkspaceIdentity,
@@ -10,7 +11,6 @@ import {
 import { AUTOPILOT_POLICY_VERSION } from './readiness';
 
 const READINESS_MAX_AGE_MS = 20 * 60 * 1000;
-const PROTECTED_EXPERIMENT_RATE_STEPS = [0, 0.1, 0.15] as const;
 
 type LearningSettingsRow = {
   mode?: unknown;
@@ -168,19 +168,14 @@ export function isProtectedExperimentRateTransitionAllowed(
   current: WorkspaceLearningSettings,
   requestedRate: number,
 ): boolean {
-  if (!PROTECTED_EXPERIMENT_RATE_STEPS.some((rate) => rate === requestedRate)) return false;
-
   const hasCurrentConsent = current.mode === 'protected_autopilot'
     && current.autopublishConsentAt != null
     && current.autopublishPolicyVersion === AUTOPILOT_POLICY_VERSION;
-  if (!hasCurrentConsent) return requestedRate === 0;
-
-  const currentRate = Number(current.experimentRate);
-  if (!Number.isFinite(currentRate) || currentRate < 0) return requestedRate === 0;
-  if (requestedRate <= currentRate) return true;
-  if (currentRate < 0.1) return requestedRate === 0.1;
-  if (currentRate < 0.15) return requestedRate === 0.15;
-  return false;
+  return isProtectedAutopilotExperimentTransitionAllowed({
+    hasCurrentConsent,
+    currentRate: current.experimentRate,
+    requestedRate,
+  });
 }
 
 export async function isProtectedAutopilotEligible(

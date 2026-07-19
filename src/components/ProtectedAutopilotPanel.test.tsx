@@ -56,6 +56,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -79,6 +80,10 @@ describe('ProtectedAutopilotControl', () => {
     expect(html).toContain('Consent and request Protected Autopilot');
     expect((html.match(/Consent and request Protected Autopilot/g) ?? [])).toHaveLength(1);
     expect(html).toContain('will not activate until every release gate passes');
+    expect(html).toContain('Activation unlocks only after every gate is green');
+    const consentLabel = html.indexOf('Consent and request Protected Autopilot');
+    const consentButton = html.slice(html.lastIndexOf('<button', consentLabel), consentLabel);
+    expect(consentButton).toContain('disabled=""');
     expect(html).not.toContain('Approve post');
     expect(html).not.toContain('Review every post');
   });
@@ -109,14 +114,87 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
 
     expect(html).toContain('Protected Autopilot active');
     expect(html).toContain('Safe posts can publish unattended');
+    expect(html).toContain('Current experiment rate: 0%');
+    expect(html).toContain('Increase to 10%');
     expect(html).toContain('Switch to Approval mode');
     expect(html).not.toContain('Consent and request Protected Autopilot');
+  });
+
+  it('enables the consent action once every activation gate is green', () => {
+    const html = renderToStaticMarkup(
+      <ProtectedAutopilotControl
+        settings={{ ...settings, effectiveMode: 'approval' }}
+        readiness={{
+          ...readiness,
+          ready: true,
+          effectiveMode: 'approval',
+          globalSwitches: {
+            learningBrain: true, releaseEnforcement: true, protectedAutopilot: true,
+          },
+        }}
+        budgetDollars="20.00"
+        saving={false}
+        onBudgetChange={() => undefined}
+        onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
+        onUseApproval={() => undefined}
+      />,
+    );
+
+    const consentLabel = html.indexOf('Consent and request Protected Autopilot');
+    const consentButton = html.slice(html.lastIndexOf('<button', consentLabel), consentLabel);
+    expect(consentButton).not.toContain('disabled=""');
+    expect(html).not.toContain('Activation unlocks only after every gate is green');
+  });
+
+  it('shows only the next approved experiment step and stops at 15%', () => {
+    const activeReadiness: LearningReadinessResponse = {
+      ...readiness,
+      ready: true,
+      effectiveMode: 'protected_autopilot',
+      globalSwitches: {
+        learningBrain: true, releaseEnforcement: true, protectedAutopilot: true,
+      },
+    };
+    const activeSettings = (experimentRate: number): LearningSettingsResponse => ({
+      settings: {
+        ...settings.settings,
+        mode: 'protected_autopilot',
+        autopublishConsentAt: '2026-07-14T08:00:00.000Z',
+        autopublishPolicyVersion: '2026-07-14-v1',
+        experimentRate,
+      },
+      effectiveMode: 'protected_autopilot',
+    });
+    const render = (experimentRate: number) => renderToStaticMarkup(
+      <ProtectedAutopilotControl
+        settings={activeSettings(experimentRate)}
+        readiness={activeReadiness}
+        budgetDollars="20.00"
+        saving={false}
+        onBudgetChange={() => undefined}
+        onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
+        onUseApproval={() => undefined}
+      />,
+    );
+
+    const tenPercent = render(0.1);
+    expect(tenPercent).toContain('Current experiment rate: 10%');
+    expect(tenPercent).toContain('Increase to 15%');
+    expect(tenPercent).not.toContain('Increase to 20%');
+
+    const fifteenPercent = render(0.15);
+    expect(fifteenPercent).toContain('Current experiment rate: 15%');
+    expect(fifteenPercent).toContain('Maximum protected experiment rate reached');
+    expect(fifteenPercent).not.toContain('Increase to 20%');
   });
 
   it('fails closed when spend telemetry is unavailable', () => {
@@ -136,6 +214,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -153,6 +232,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -171,6 +251,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -196,6 +277,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -234,5 +316,9 @@ describe('Shopify Protected Autopilot parity', () => {
     expect(settings).toContain("['Owner + client pilot cohort'");
     expect(settings).toContain("['Release Judge availability'");
     expect(settings).toContain("['Release Judge telemetry coverage'");
+    expect(settings).toContain('Activation unlocks only after every gate is green');
+    expect(settings).toContain("experimentRate: mode === 'protected_autopilot'");
+    expect(settings).toContain('Increase to 10%');
+    expect(settings).toContain('Increase to 15%');
   });
 });
