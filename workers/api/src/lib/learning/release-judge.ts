@@ -8,17 +8,17 @@ import { callIndependentJson } from './independent-json';
 import type {
   CandidateInput,
   ReleaseJudgeInput,
-  ReleaseJudgeStatus,
+  ReleaseJudgeOutcome,
 } from './release-pipeline';
 import type { CriticJsonCaller } from './text-critic-council';
 
-const RELEASE_STATES = new Set(['pass_green', 'hold_amber', 'block_red']);
-type ReleaseJudgeState = 'pass_green' | 'hold_amber' | 'block_red';
+const RELEASE_STATES = new Set<string>([
+  'pass_green',
+  'hold_amber',
+  'block_red',
+]);
 
-export interface ReleaseJudgeTelemetry {
-  state: ReleaseJudgeState;
-  status: Exclude<ReleaseJudgeStatus, 'unknown'>;
-}
+export type ReleaseJudgeTelemetry = ReleaseJudgeOutcome;
 
 function safeCandidate(candidate: CandidateInput): Record<string, unknown> {
   return {
@@ -95,7 +95,7 @@ export async function runReleaseJudgeWithTelemetry(
       return { state: 'hold_amber', status: 'unavailable' };
     }
     return {
-      state: parsed.state as ReleaseJudgeState,
+      state: parsed.state as ReleaseJudgeOutcome['state'],
       status: 'available',
     };
   } catch {
@@ -107,6 +107,6 @@ export async function runReleaseJudge(
   env: Env,
   input: ReleaseJudgeInput,
   injectedCall?: CriticJsonCaller,
-): Promise<ReleaseJudgeState> {
+): Promise<ReleaseJudgeOutcome['state']> {
   return (await runReleaseJudgeWithTelemetry(env, input, injectedCall)).state;
 }

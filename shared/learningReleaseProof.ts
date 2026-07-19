@@ -96,6 +96,16 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning release readiness fails closed on unavailable or ambiguous Release Judge telemetry',
   },
   {
+    id: 'release_judge_pipeline_failure',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'runReleasePipeline fails closed with unavailable telemetry when the Release Judge throws',
+  },
+  {
+    id: 'release_judge_status_binding',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'runReleasePipeline never accepts a green state with unavailable judge telemetry',
+  },
+  {
     id: 'release_judge_input_independence',
     suite: 'src/__tests__/learning-release-pipeline.test.ts',
     assertion: 'runReleasePipeline never sends generator reasoning to the Release Judge',

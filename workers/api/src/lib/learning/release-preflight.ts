@@ -21,7 +21,6 @@ import {
   type CandidateInput,
   type ReleaseContext,
   type ReleasePipelineResult,
-  type ReleaseJudgeStatus,
 } from './release-pipeline';
 import { runReleaseJudgeWithTelemetry } from './release-judge';
 import {
@@ -380,8 +379,7 @@ async function executeReleasePipeline(
   context: ReleaseContext,
 ): Promise<ReleasePipelineResult> {
   const call = independentCaller(env);
-  let judgeStatus: ReleaseJudgeStatus = 'not_run';
-  const result = await runReleasePipeline(candidate, context, {
+  return runReleasePipeline(candidate, context, {
     runDeterministicCritics: async (input, releaseContext) =>
       runDeterministicCritics(input, releaseContext),
     runTextCouncil: (input, releaseContext) =>
@@ -397,13 +395,8 @@ async function executeReleasePipeline(
       }),
     repair: (input, repairs, releaseContext) =>
       repairTextCandidate(env, input, repairs, releaseContext),
-    judge: async (judgeInput) => {
-      const judgment = await runReleaseJudgeWithTelemetry(env, judgeInput);
-      judgeStatus = judgment.status;
-      return judgment.state;
-    },
+    judge: (judgeInput) => runReleaseJudgeWithTelemetry(env, judgeInput),
   });
-  return { ...result, judgeStatus };
 }
 
 const defaultRunnerDeps: ReleasePipelineRunnerDeps = {
@@ -461,7 +454,7 @@ export async function runAndPersistReleasePipeline(
     verdictCount,
     predictedOutcomeScore,
     judgeTelemetryVersion: 1,
-    judgeStatus: result.judgeStatus ?? 'unknown',
+    judgeStatus: result.judgeStatus,
   };
   const receiptInput: DecisionReceiptInput = {
     userId: post.user_id,

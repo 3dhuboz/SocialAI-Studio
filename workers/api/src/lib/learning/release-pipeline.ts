@@ -50,12 +50,20 @@ export type ReleaseJudgeStatus =
   | 'not_run'
   | 'unknown';
 
+type ReleaseState = 'pass_green' | 'hold_amber' | 'block_red';
+export type ReleaseJudgeExecutionStatus = Exclude<ReleaseJudgeStatus, 'unknown'>;
+
+export interface ReleaseJudgeOutcome {
+  state: ReleaseState;
+  status: ReleaseJudgeExecutionStatus;
+}
+
 export interface ReleasePipelineResult {
-  state: 'pass_green' | 'hold_amber' | 'block_red';
+  state: ReleaseState;
   candidate: CandidateInput;
   attempts: CriticResult[][];
   repairHistory: string[][];
-  judgeStatus?: ReleaseJudgeStatus;
+  judgeStatus: ReleaseJudgeExecutionStatus;
 }
 
 export interface ReleasePipelineDeps {
@@ -82,7 +90,7 @@ export interface ReleasePipelineDeps {
   ): Promise<CandidateInput>;
   judge(
     input: ReleaseJudgeInput,
-  ): Promise<'pass_green' | 'hold_amber' | 'block_red'>;
+  ): Promise<ReleaseJudgeOutcome>;
 }
 
 function judgeCandidate(candidate: CandidateInput): CandidateInput {
@@ -133,6 +141,7 @@ export async function runReleasePipeline(
         candidate,
         attempts: [[...deterministic]],
         repairHistory,
+        judgeStatus: 'not_run',
       };
     }
 
@@ -160,22 +169,56 @@ export async function runReleasePipeline(
       : BASE_REQUIRED_CRITICS;
     const reduced = reduceCriticResults(results, requiredKinds);
     if (reduced.state === 'block_red') {
-      return { state: 'block_red', candidate, attempts, repairHistory };
+      return {
+        state: 'block_red', candidate, attempts, repairHistory, judgeStatus: 'not_run',
+      };
     }
     if (reduced.state === 'hold_amber') {
-      return { state: 'hold_amber', candidate, attempts, repairHistory };
+      return {
+        state: 'hold_amber', candidate, attempts, repairHistory, judgeStatus: 'not_run',
+      };
     }
     if (reduced.state === 'pass_green') {
-      const state = await deps.judge({
-        candidate: judgeCandidate(candidate),
-        context,
-        results,
-        repairHistory,
-      });
-      return { state, candidate, attempts, repairHistory };
+      try {
+        const judgment = await deps.judge({
+          candidate: judgeCandidate(candidate),
+          context,
+          results,
+          repairHistory,
+        });
+        if (
+          judgment.status !== 'available'
+          || !['pass_green', 'hold_amber', 'block_red'].includes(judgment.state)
+        ) {
+          return {
+            state: 'hold_amber',
+            candidate,
+            attempts,
+            repairHistory,
+            judgeStatus: judgment.status === 'not_run' ? 'not_run' : 'unavailable',
+          };
+        }
+        return {
+          state: judgment.state,
+          candidate,
+          attempts,
+          repairHistory,
+          judgeStatus: 'available',
+        };
+      } catch {
+        return {
+          state: 'hold_amber',
+          candidate,
+          attempts,
+          repairHistory,
+          judgeStatus: 'unavailable',
+        };
+      }
     }
     if (repairAttempt === 2) {
-      return { state: 'hold_amber', candidate, attempts, repairHistory };
+      return {
+        state: 'hold_amber', candidate, attempts, repairHistory, judgeStatus: 'not_run',
+      };
     }
 
     repairHistory.push([...reduced.repairs]);
@@ -184,9 +227,13 @@ export async function runReleasePipeline(
         await deps.repair(candidate, reduced.repairs, context),
       );
     } catch {
-      return { state: 'hold_amber', candidate, attempts, repairHistory };
+      return {
+        state: 'hold_amber', candidate, attempts, repairHistory, judgeStatus: 'not_run',
+      };
     }
   }
 
-  return { state: 'hold_amber', candidate, attempts, repairHistory };
+  return {
+    state: 'hold_amber', candidate, attempts, repairHistory, judgeStatus: 'not_run',
+  };
 }

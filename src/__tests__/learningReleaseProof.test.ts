@@ -46,6 +46,8 @@ describe('buildReleaseProofArtifact', () => {
         'deterministic_block_path',
         'selected_media_critic',
         'release_judge_telemetry',
+        'release_judge_pipeline_failure',
+        'release_judge_status_binding',
         'release_judge_input_independence',
         'release_judge_no_override',
         'pilot_two_workspace_cohort',

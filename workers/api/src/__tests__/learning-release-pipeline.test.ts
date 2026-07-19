@@ -63,7 +63,7 @@ const passingDeps = (): ReleasePipelineDeps => ({
   runMediaCritic: async (input) =>
     verdict(input.media.kind === 'video' ? 'video_manifest' : 'image'),
   repair: async (input) => input,
-  judge: async () => 'pass_green',
+  judge: async () => ({ state: 'pass_green', status: 'available' }),
 });
 
 describe('runReleasePipeline', () => {
@@ -131,10 +131,13 @@ describe('runReleasePipeline', () => {
     };
     deps.judge = async () => {
       calls.judge += 1;
-      return 'pass_green';
+      return { state: 'pass_green', status: 'available' };
     };
 
-    expect((await runReleasePipeline(candidate, context, deps)).state).toBe('block_red');
+    expect(await runReleasePipeline(candidate, context, deps)).toMatchObject({
+      state: 'block_red',
+      judgeStatus: 'not_run',
+    });
     expect(calls).toEqual({ text: 0, harm: 0, judge: 0 });
   });
 
@@ -149,7 +152,7 @@ describe('runReleasePipeline', () => {
     ];
     deps.judge = async () => {
       judgeCalls += 1;
-      return 'pass_green';
+      return { state: 'pass_green', status: 'available' };
     };
 
     expect((await runReleasePipeline(candidate, context, deps)).state).toBe('block_red');
@@ -158,9 +161,34 @@ describe('runReleasePipeline', () => {
 
   it('holds when the separate Release Judge cannot decide', async () => {
     const deps = passingDeps();
-    deps.judge = async () => 'hold_amber';
+    deps.judge = async () => ({ state: 'hold_amber', status: 'available' });
 
-    expect((await runReleasePipeline(candidate, context, deps)).state).toBe('hold_amber');
+    expect(await runReleasePipeline(candidate, context, deps)).toMatchObject({
+      state: 'hold_amber',
+      judgeStatus: 'available',
+    });
+  });
+
+  it('never accepts a green state with unavailable judge telemetry', async () => {
+    const deps = passingDeps();
+    deps.judge = async () => ({ state: 'pass_green', status: 'unavailable' });
+
+    await expect(runReleasePipeline(candidate, context, deps)).resolves.toMatchObject({
+      state: 'hold_amber',
+      judgeStatus: 'unavailable',
+    });
+  });
+
+  it('fails closed with unavailable telemetry when the Release Judge throws', async () => {
+    const deps = passingDeps();
+    deps.judge = async () => {
+      throw new Error('judge provider unavailable');
+    };
+
+    await expect(runReleasePipeline(candidate, context, deps)).resolves.toMatchObject({
+      state: 'hold_amber',
+      judgeStatus: 'unavailable',
+    });
   });
 
   it('never sends generator reasoning to the Release Judge', async () => {
@@ -168,7 +196,7 @@ describe('runReleasePipeline', () => {
     const deps = passingDeps();
     deps.judge = async (input) => {
       judgeInput = JSON.stringify(input);
-      return 'pass_green';
+      return { state: 'pass_green', status: 'available' };
     };
     const untrusted = {
       ...candidate,

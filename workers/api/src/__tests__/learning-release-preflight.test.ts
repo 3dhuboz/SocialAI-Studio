@@ -369,6 +369,7 @@ describe('runAndPersistReleasePipeline', () => {
           candidate: { ...candidate, content: 'Repaired but not persisted' },
           attempts: [[verdict]],
           repairHistory: [['rewrite']],
+          judgeStatus: 'available',
         }),
         createReceipt: async (_db, input) => {
           receiptState = input.releaseState;
