@@ -3206,3 +3206,91 @@ Production remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`.
 No production deployment, migration, flag change, enrollment, publication,
 or customer-data mutation occurred. Both environments retain zero Protected
 Autopilot workspaces, and `hughesq-001` remains exactly `status='on_hold'`.
+
+### Isolated Production Image-Relevance Hotfix
+
+The software-versus-hardware correction was subsequently isolated from this
+protected learning branch and applied to `origin/main` through pull request
+`#210`. The hotfix source commit was
+`1ef6665a6459ac2ee963efed8290f4ffb9f4663e`; GitHub CI run
+`29701167027` passed that exact commit, and GitHub merged it as
+`489761a47f045a6488e090c6a6267879abe2ebed`. The reviewed source and merged
+main commits have the identical Git tree
+`9b5b5d45d9ab0edd9a9a6977225fd924af26e096`.
+
+The production deployment intentionally contained only the six image
+classification, prompt-guard, critic, and regression-test files. It contained
+no learning schema, enrollment, release-proof, authentication, scheduling, or
+publication-path change. The clean-main verification passed 152 focused image
+and critic tests, all 193 frontend/root tests, all 1,153 Worker tests, strict
+root and Worker TypeScript, and the 1,924-module production frontend build.
+
+Production Worker version
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215` now applies the prompt correction and
+the final software-versus-hardware critic. Its live health endpoint returned
+`ok=true`. Cloudflare Pages production deployment
+`2f5abf87-5c37-4913-88b2-370e1a15c951` serves merge `489761a` from `main`.
+The production dry-run retained `LEARNING_RELEASE_ENFORCEMENT=false`,
+`LEARNING_AUTOPILOT_ENABLED=false`, and
+`ORGANIC_REACH_APPLY_ENABLED=false`; it required no D1 migration. A read-only
+production audit confirmed zero Protected Autopilot workspaces,
+`hughesq-001` still on hold, and `rows_written=0`.
+
+This targeted production safety deployment is independent of the Customer
+Learning Brain rollout. It fixes the reported irrelevant circuit-board image
+failure now without promoting, enabling, or deploying the protected learning
+system to production.
+
+The first natural staging sequence after the final protected-branch Worker
+`47e8e521-efdd-4d4e-a816-e4c39c2fd97f` also completed successfully:
+
+- `health_sweep` receipt `id=10232` at `2026-07-19 18:45:23 UTC`
+- `learning_pilot` receipt `id=10235` at `2026-07-19 18:45:23 UTC`
+- `learning_readiness` receipt `id=10236` at `2026-07-19 18:45:24 UTC`
+
+The pilot receipt contained all nine required counters, the readiness receipt
+contained `workspaces_disabled=0`, and the read-only audit reported
+`rows_written=0`. Subsequent natural sequences through `2026-07-19 19:45:24
+UTC` remained successful with the same complete schemas and zero processed
+posts. The weekly calibration remains untouched and naturally scheduled for
+`2026-07-19 21:00:00 UTC` (`2026-07-20 07:00 AEST`).
+
+### First Natural Weekly Calibration Receipt
+
+Cloudflare invoked the unforced weekly schedule at its configured time. The
+staging `learning_calibration` receipt `id=10401` completed successfully at
+`2026-07-19 21:00:22 UTC`, before the coincident 15-minute learning sequence.
+Its exact bounded details payload contained every mandatory non-negative
+integer counter:
+
+```json
+{"posts_processed":0,"candidates_considered":0,"completed":0,"unavailable":0,"claimed_elsewhere":0,"budget_skipped":0,"severe_false_passes":0,"workspaces_disabled":0,"errors":0}
+```
+
+Zero candidates is the expected truthful result: staging has no eligible
+positive pilot samples and no separately consenting active customer. The
+calibration audit table therefore remained at zero rows, with zero verified
+calibrations, zero unavailable calibrations, and zero severe false passes.
+The calibration did not promote or disable any workspace and did not emit a
+degraded learning alert.
+
+The surrounding natural sequence also completed successfully:
+
+- `health_sweep` receipt `id=10404` at `2026-07-19 21:00:23 UTC`
+- `learn_strategies` receipt `id=10405` at `2026-07-19 21:00:23 UTC`
+- `weekly_review` receipt `id=10407` at `2026-07-19 21:00:23 UTC`
+- `learning_pilot` receipt `id=10409` at `2026-07-19 21:00:23 UTC`
+- `learning_readiness` receipt `id=10410` at `2026-07-19 21:00:24 UTC`
+
+The pilot receipt again contained all nine pilot counters, and readiness
+reported `workspaces_disabled=0`. Every staging and production audit statement
+reported `changed_db=false` and `rows_written=0`. Both live health endpoints
+returned `ok=true`.
+
+The post-calibration production audit confirmed `hughesq-001` remains exactly
+`status='on_hold'`, Protected Autopilot workspaces remain zero, and the later
+pilot/calibration schemas remain intentionally absent. Production learning
+release enforcement, Protected Autopilot, and organic-reach application remain
+disabled. This natural receipt closes the scheduler/telemetry observation gap;
+it does not satisfy the separate positive-sample, calibration-quality,
+customer-consent, production-readiness, or promotion gates.
