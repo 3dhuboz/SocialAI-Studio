@@ -93,6 +93,7 @@ describe('buildReleaseProofArtifact', () => {
         'readiness_schema_health_sentinel',
         'readiness_schema_health_hold_receipt',
         'health_sweep_failure_receipt',
+        'calibration_malformed_telemetry_fail_closed',
         'calibration_weekly_order',
         'calibration_fresh_non_mutating',
         'calibration_error_privacy',

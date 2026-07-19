@@ -381,6 +381,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'cronHealthSweep continues remaining checks then fails the cron receipt when one check throws',
   },
   {
+    id: 'calibration_malformed_telemetry_fail_closed',
+    suite: 'src/__tests__/learning-pilot-cron-telemetry.test.ts',
+    assertion: 'learning pilot cron telemetry records a failed receipt when learning calibration emits malformed counters',
+  },
+  {
     id: 'calibration_weekly_order',
     suite: 'src/__tests__/learning-calibration-audit.test.ts',
     assertion: 'weekly learning calibration audit wires calibration before learning and weekly customer review',

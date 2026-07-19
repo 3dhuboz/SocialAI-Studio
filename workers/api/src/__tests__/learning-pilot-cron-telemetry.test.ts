@@ -21,7 +21,14 @@ const pilotResult = {
 
 const calibrationResult = {
   posts_processed: 2,
+  candidates_considered: 2,
+  completed: 2,
+  unavailable: 0,
+  claimed_elsewhere: 0,
+  budget_skipped: 0,
+  severe_false_passes: 0,
   workspaces_disabled: 1,
+  errors: 0,
   caption: 'must never enter telemetry',
 };
 
@@ -45,8 +52,8 @@ describe('learning pilot cron telemetry', () => {
     })!)).toEqual({ workspaces_disabled: 2 });
     expect(JSON.parse(buildCronDetails('learning_calibration', calibrationResult)!)).toEqual({
       posts_processed: 2,
-      candidates_considered: 0,
-      completed: 0,
+      candidates_considered: 2,
+      completed: 2,
       unavailable: 0,
       claimed_elsewhere: 0,
       budget_skipped: 0,
@@ -54,13 +61,17 @@ describe('learning pilot cron telemetry', () => {
       workspaces_disabled: 1,
       errors: 0,
     });
-    expect(JSON.parse(buildCronDetails('learning_pilot', {
-      posts_processed: -1,
-      context_not_ready: Number.POSITIVE_INFINITY,
-    })!)).toMatchObject({
-      posts_processed: 0,
-      context_not_ready: 0,
-    });
+  });
+
+  it.each([
+    ['learning_pilot', { ...pilotResult, errors: undefined }],
+    ['learning_readiness', { posts_processed: 0 }],
+    ['learning_calibration', { ...calibrationResult, errors: -1 }],
+    ['learning_calibration', { ...calibrationResult, completed: 0.5 }],
+  ])('fails closed when %s emits an invalid or missing counter', (cronType, result) => {
+    expect(() => buildCronDetails(cronType, result)).toThrow(
+      new RegExp(`^${cronType} returned invalid counter`),
+    );
   });
 
   it('persists only the quarantine count for readiness runs', async () => {
@@ -90,6 +101,22 @@ describe('learning pilot cron telemetry', () => {
       context_not_ready: 2,
     });
     expect(String(insert.binds[5])).not.toContain('caption');
+  });
+
+  it('records a failed receipt when learning calibration emits malformed counters', async () => {
+    const { db, calls } = makeRecordingD1();
+
+    await trackCron({ DB: db } as Env, 'learning_calibration', async () => ({
+      ...calibrationResult,
+      errors: Number.NaN,
+    }));
+
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO cron_runs'))!;
+    expect(insert.binds[0]).toBe('learning_calibration');
+    expect(insert.binds[1]).toBe(0);
+    expect(insert.binds[2]).toBe(0);
+    expect(insert.binds[3]).toMatch(/invalid counter errors/);
+    expect(insert.binds[5]).toBeNull();
   });
 
   it('ships a one-time bounded JSON migration for existing cron receipts', () => {

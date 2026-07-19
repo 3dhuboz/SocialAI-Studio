@@ -71,12 +71,15 @@ type TrackedCronResult = {
   workspaces_disabled?: number;
 };
 
-function safeCounter(value: unknown): number {
-  return typeof value === 'number'
-    && Number.isSafeInteger(value)
-    && value >= 0
-    ? value
-    : 0;
+function requiredCounter(cronType: string, key: string, value: unknown): number {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || value < 0
+  ) {
+    throw new Error(`${cronType} returned invalid counter ${key}`);
+  }
+  return value;
 }
 
 export function buildCronDetails(
@@ -94,7 +97,7 @@ export function buildCronDetails(
   if (detailKeys.length === 0) return null;
   const counters = result as Record<string, unknown>;
   return JSON.stringify(Object.fromEntries(
-    detailKeys.map((key) => [key, safeCounter(counters[key])]),
+    detailKeys.map((key) => [key, requiredCounter(cronType, key, counters[key])]),
   ));
 }
 
@@ -116,6 +119,8 @@ export async function trackCron(
     detailsJson = buildCronDetails(cronType, result);
   } catch (e: any) {
     success = 0;
+    posts = 0;
+    detailsJson = null;
     error = (e?.message || String(e)).slice(0, 1000);
     console.error(`[CRON ${cronType}] FAILED:`, error);
     // Fire a critical alert so Steve learns about cron crashes within an
