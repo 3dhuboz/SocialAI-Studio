@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import { logAiUsage } from '../lib/ai-usage';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
 vi.mock('../auth', () => ({
@@ -442,7 +443,7 @@ describe('learning settings and release evidence routes', () => {
         'FROM learning_release_readiness': [{
           id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
           metrics_json: '{}',
-          checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+          checks_json: JSON.stringify(learningReadinessChecks()),
           evaluated_by: 'cron', evaluated_at: evaluatedAt,
         }],
         'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
@@ -488,7 +489,7 @@ describe('learning settings and release evidence routes', () => {
       }],
       'FROM learning_release_readiness': [{
         ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
-        checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
@@ -523,7 +524,7 @@ describe('learning settings and release evidence routes', () => {
       'FROM learning_release_readiness': [{
         id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
         metrics_json: '{}',
-        checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
@@ -559,7 +560,7 @@ describe('learning settings and release evidence routes', () => {
       'FROM learning_release_readiness': [{
         id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
         metrics_json: '{}',
-        checks_json: JSON.stringify({ tenancyProofs: { user: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],

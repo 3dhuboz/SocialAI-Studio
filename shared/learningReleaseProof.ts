@@ -396,6 +396,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'protected autopilot mode gates downgrades without current consent, fresh readiness, or an owner-kind proof',
   },
   {
+    id: 'protected_readiness_schema_complete',
+    suite: 'src/__tests__/learning-permanent-preflight.test.ts',
+    assertion: 'permanent release preflight downgrades protected autopilot when a ready receipt has truncated checks',
+  },
+  {
     id: 'protected_consent_activation_gate_main',
     suite: 'src/__tests__/learning-routes.test.ts',
     assertion: 'learning settings and release evidence routes does not bank protected consent before every activation gate passes',

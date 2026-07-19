@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
 const mocks = vi.hoisted(() => ({
@@ -354,7 +355,7 @@ describe('Shopify learning settings and readiness', () => {
       'FROM learning_release_readiness': [{
         id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
         metrics_json: '{}',
-        checks_json: JSON.stringify({ tenancyProofs: { shop: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
@@ -393,7 +394,7 @@ describe('Shopify learning settings and readiness', () => {
       }],
       'FROM learning_release_readiness': [{
         ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
-        checks_json: JSON.stringify({ tenancyProofs: { shop: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
@@ -427,7 +428,7 @@ describe('Shopify learning settings and readiness', () => {
       'FROM learning_release_readiness': [{
         id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
         metrics_json: '{}',
-        checks_json: JSON.stringify({ tenancyProofs: { shop: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
@@ -462,7 +463,7 @@ describe('Shopify learning settings and readiness', () => {
       'FROM learning_release_readiness': [{
         id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
         metrics_json: '{}',
-        checks_json: JSON.stringify({ tenancyProofs: { shop: true } }),
+        checks_json: JSON.stringify(learningReadinessChecks()),
         evaluated_by: 'cron', evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],

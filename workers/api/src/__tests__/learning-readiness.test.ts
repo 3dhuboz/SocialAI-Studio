@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 import {
   AUTOPILOT_POLICY_VERSION,
@@ -65,7 +66,7 @@ function modeEnv(options: ModeOptions = {}): Env {
     'FROM learning_release_readiness': [{
       ready: options.readiness === false ? 0 : 1,
       policy_version: AUTOPILOT_POLICY_VERSION,
-      checks_json: JSON.stringify({ tenancyProofs }),
+      checks_json: JSON.stringify(learningReadinessChecks(tenancyProofs)),
       evaluated_at: '2026-07-14T00:00:00.000Z',
     }],
     'FROM ai_usage': [{

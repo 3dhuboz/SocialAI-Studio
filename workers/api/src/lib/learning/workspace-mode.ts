@@ -1,5 +1,6 @@
 import type { Env } from '../../env';
 import { isProtectedAutopilotExperimentTransitionAllowed } from '../../../../../shared/protectedAutopilotExperiment';
+import { hasCompleteGreenLearningReadinessChecks } from '../../../../../shared/learning-readiness-checks';
 import {
   LEARNING_MODES,
   normalizeWorkspaceIdentity,
@@ -374,14 +375,8 @@ export async function isProtectedAutopilotEligible(
   } catch {
     return false;
   }
-  if (!parsedChecks || typeof parsedChecks !== 'object' || Array.isArray(parsedChecks)) return false;
-  const tenancyProofs = (parsedChecks as {
-    tenancyProofs?: Partial<Record<WorkspaceOwnerKind, boolean>>;
-  }).tenancyProofs;
-  if (!tenancyProofs || typeof tenancyProofs !== 'object' || Array.isArray(tenancyProofs)) {
-    return false;
-  }
-  if (tenancyProofs[identity.ownerKind] !== true) return false;
+  if (!hasCompleteGreenLearningReadinessChecks(parsedChecks)) return false;
+  if (parsedChecks.tenancyProofs[identity.ownerKind] !== true) return false;
 
   const cost = await getWorkspaceMonthlyAiSpend(env.DB, identity, now);
   return cost.monthlyAiSpendUsdCents != null

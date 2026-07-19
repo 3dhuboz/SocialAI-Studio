@@ -13,6 +13,7 @@ import {
   type PublishOrchestratorDeps,
 } from '../lib/publishing/publish-orchestrator';
 import { ensureWorkspaceLearningSettings } from '../lib/provisioning';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
 const userPost: PublishablePost = {
@@ -45,6 +46,7 @@ function modeEnv(options: {
   activeClient?: boolean;
   consent?: boolean;
   readiness?: boolean;
+  readinessChecks?: unknown;
 } = {}): Env {
   const fixtures: Record<string, unknown[]> = {
     'FROM clients': options.activeClient === false ? [] : [{ status: 'active' }],
@@ -59,7 +61,7 @@ function modeEnv(options: {
     'FROM learning_release_readiness': options.readiness === false ? [] : [{
       ready: 1,
       policy_version: AUTOPILOT_POLICY_VERSION,
-      checks_json: JSON.stringify({ tenancyProofs: { client: true } }),
+      checks_json: JSON.stringify(options.readinessChecks ?? learningReadinessChecks()),
       evaluated_at: new Date().toISOString(),
     }],
     'FROM ai_usage': [{ spend_usd: 1, telemetry_count: 1 }],
@@ -151,6 +153,22 @@ describe('permanent release preflight', () => {
       clientPost,
       'pass_green',
     );
+    expect(result.mode).toBe('approval');
+    expect(modes).toEqual(['approval']);
+  });
+
+  it('downgrades protected autopilot when a ready receipt has truncated checks', async () => {
+    const { result, modes } = await evaluateWithState(
+      modeEnv({
+        requested: 'protected_autopilot',
+        consent: true,
+        readiness: true,
+        readinessChecks: { tenancyProofs: { client: true } },
+      }),
+      clientPost,
+      'pass_green',
+    );
+
     expect(result.mode).toBe('approval');
     expect(modes).toEqual(['approval']);
   });

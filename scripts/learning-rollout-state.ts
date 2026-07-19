@@ -14,6 +14,7 @@ import {
   hashReleaseProofPayload,
   type ReleaseProofArtifact,
 } from '../shared/learningReleaseProof';
+import { hasCompleteGreenLearningReadinessChecks } from '../shared/learning-readiness-checks';
 
 const POLICY_VERSION = '2026-07-14-v1';
 const STAGING_DATABASE_ID = '0ce38359-c7d6-4d6e-b278-7ca1a719dbb4';
@@ -466,21 +467,6 @@ function isFresh(timestamp: string | null | undefined, now: Date, maxAgeMinutes:
     && ageMs <= maxAgeMinutes * 60_000;
 }
 
-function everyBooleanTrue(value: unknown): boolean {
-  const booleans: boolean[] = [];
-  const visit = (item: unknown): void => {
-    if (typeof item === 'boolean') {
-      booleans.push(item);
-      return;
-    }
-    if (item && typeof item === 'object') {
-      for (const child of Object.values(item as Record<string, unknown>)) visit(child);
-    }
-  };
-  visit(value);
-  return booleans.length > 0 && booleans.every(Boolean);
-}
-
 function readinessIsGreen(
   readiness: ReadinessObservation | null,
   now: Date,
@@ -489,7 +475,7 @@ function readinessIsGreen(
   return readiness?.policyVersion === POLICY_VERSION
     && readiness.ready
     && isFresh(readiness.evaluatedAt, now, maxAgeMinutes)
-    && everyBooleanTrue(readiness.checks);
+    && hasCompleteGreenLearningReadinessChecks(readiness.checks);
 }
 
 function cronIsHealthy(

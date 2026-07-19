@@ -31,6 +31,8 @@ function greenReadiness() {
       pilot: true,
       pilotCohort: true,
       adjudications: true,
+      severeFalsePasses: true,
+      falseHolds: true,
       availability: true,
       releaseJudgeAvailability: true,
       releaseJudgeTelemetry: true,
@@ -38,7 +40,12 @@ function greenReadiness() {
       predictionCoverage: true,
       predictionLift: true,
       rankCorrelation: true,
+      criticalBypasses: true,
+      publishingRegressions: true,
       cost: true,
+      killSwitch: true,
+      replayRedTeam: true,
+      publishRegression: true,
       tenancyProofs: { user: true, client: true, shop: true },
     },
   };
@@ -252,6 +259,23 @@ describe('learning live rollout state', () => {
     expect(result.result).toBe('safe_hold');
     expect(result.failedSafetyChecks).toEqual([]);
     expect(result.blockers).toContain('staging_calibration_cron_fresh');
+  });
+
+  it('blocks promotion when a ready receipt has a truncated checks schema', () => {
+    const input = observation();
+    input.staging.readiness = {
+      ...greenReadiness(),
+      checks: {
+        pilot: true,
+        tenancyProofs: { user: true, client: true, shop: true },
+      },
+    };
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('safe_hold');
+    expect(result.failedSafetyChecks).toEqual([]);
+    expect(result.blockers).toContain('staging_readiness_green');
   });
 
   it.each([

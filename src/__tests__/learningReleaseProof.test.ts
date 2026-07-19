@@ -96,6 +96,7 @@ describe('buildReleaseProofArtifact', () => {
         'calibration_error_privacy',
         'calibration_deletion',
         'protected_consent_gate',
+        'protected_readiness_schema_complete',
         'protected_consent_activation_gate_main',
         'protected_consent_activation_gate_shopify',
         'protected_experiment_transition_policy',
