@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EXPECTED_CLIENT_ID,
   EXPECTED_USER_ID,
+  assertStagingWriteProcess,
   buildApplySql,
   buildStagingWriteArgs,
   buildWithdrawalSql,
@@ -202,6 +203,19 @@ describe('learning pilot staging copy', () => {
       'd1', 'execute', 'socialai-db-staging', '--remote', '--env', 'staging',
       '--config', 'wrangler.toml', '--file', 'C:/Temp/import.sql',
     ]);
+  });
+
+  it('accepts Wrangler file-mode success without requiring JSON output', () => {
+    expect(() => assertStagingWriteProcess({
+      status: 0,
+      stdout: 'Executed 5 commands in 1.2ms',
+      stderr: '',
+    })).not.toThrow();
+    expect(() => assertStagingWriteProcess({
+      status: 1,
+      stdout: '',
+      stderr: 'D1 write failed',
+    })).toThrow('D1 write failed');
   });
 
   it('builds a withdrawal purge scoped to only the imported workspace and rows', () => {

@@ -773,18 +773,35 @@ function executeReadOnlyD1(database: string, sql: string, environment?: 'staging
   return raw as D1StatementResult[];
 }
 
-function executeStagingSql(sql: string): D1StatementResult[] {
+export function assertStagingWriteProcess(result: {
+  status: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  error?: { message?: string } | null;
+}): void {
+  if (result.status === 0 && !result.error) return;
+  const detail = [result.error?.message, result.stderr?.trim(), result.stdout?.trim()]
+    .filter(Boolean)
+    .join('; ') || `exit status ${String(result.status)}`;
+  throw new Error(`Staging D1 write failed: ${detail}`);
+}
+
+function executeStagingSql(sql: string): void {
   const tempDirectory = mkdtempSync(resolve(tmpdir(), 'socialai-pilot-'));
   const sqlFile = resolve(tempDirectory, 'staging.sql');
   try {
     writeFileSync(sqlFile, sql, { encoding: 'utf8', flag: 'wx' });
-    const raw = runWranglerJson(buildStagingWriteArgs(sqlFile));
-    if (!Array.isArray(raw) || raw.length === 0 || raw.some((item) => {
-      return !isRecord(item) || item.success !== true;
-    })) {
-      throw new Error('Staging D1 write did not return an all-success result set');
+    const invocation = buildWranglerInvocation(buildStagingWriteArgs(sqlFile));
+    if (!existsSync(invocation.args[0])) {
+      throw new Error(`Local Wrangler CLI not found at ${invocation.args[0]}`);
     }
-    return raw as D1StatementResult[];
+    const result = spawnSync(invocation.command, invocation.args, {
+      cwd: workerRoot,
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    assertStagingWriteProcess(result);
   } finally {
     rmSync(tempDirectory, { recursive: true, force: true });
   }
