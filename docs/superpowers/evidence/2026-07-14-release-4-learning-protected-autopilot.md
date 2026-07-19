@@ -2829,3 +2829,50 @@ disabled, and `hughesq-001` remains exactly `status='on_hold'`. Production
 remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; no production
 deployment, migration, flag change, enrollment, or customer-data mutation
 occurred.
+
+### Fail-Closed Health Receipt Staging Checkpoint
+
+The alert-schema repair exposed a second observability boundary: the shared
+alert helper deliberately swallows persistence and email failures so an alert
+outage cannot interrupt customer publishing. The health sweep also caught each
+check error and returned normally, however, which allowed a failed monitoring
+check to be recorded as a successful natural cron receipt.
+
+Commit `d6344b82b124a26ece91d09d8536f7b7c9362583` closes that gap without
+changing any publishing path. The 15-minute health sweep now:
+
+- verifies `cron_alerts`, `idx_cron_alerts_last_fired`, and
+  `idx_cron_alerts_unresolved` through one read-only schema sentinel;
+- continues running every independent check after an individual failure;
+- attempts the existing best-effort incident alert for each failed check; and
+- throws one aggregate error after all checks finish, causing `trackCron` to
+  persist `success=0` instead of a false-green health receipt.
+
+The two new invariants are mandatory release-proof checks. Verification passed
+17 focused health-sweep tests, all 225 frontend/root tests, all 1,272 Worker
+tests, strict Worker TypeScript, and the 1,925-module production frontend
+build. The exact-commit proof passed all 106 mandatory checks and all 435 bound
+tests:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T16-12-16-442Z.json`
+- Release-proof payload SHA-256: `8236cea80e00abf86271c378857df3f3d7e965f8818dc9800dba4736889b421c`
+- Release-proof file SHA-256: `9661402059b37e8d0c9d8adf3f5741cf3759c65958ac9c51194ffcbb5debf123`
+
+The staging dry-run bound only `socialai-db-staging`, with release
+enforcement, Protected Autopilot, and organic-reach application disabled.
+Staging deployed as Worker version
+`6bb436cf-9d3e-414d-aaee-0a915f8a5c05`. The immediate read-only rollout
+judge remained `safe_hold` with zero failed safety checks:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T16-13-11-514Z.json`
+- Rollout payload SHA-256: `aaa81fce5d7107d53dd174c19b7e05bf148df7007d69f4cf261959d1492b4332`
+- Rollout file SHA-256: `8c3e8fbe6e81a3d2d69f64e0c03ff7e38e21899490573c3872e89cc79f5ac51c`
+
+The first natural post-deploy health sweep completed successfully as receipt
+`id=10038` at `2026-07-19 16:15:23 UTC`, proving the live sentinel accepted
+the repaired table and both indexes. No synthetic alert row was created.
+Production remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, has
+zero Protected Autopilot workspaces and no later pilot/calibration schemas,
+and `hughesq-001` remains exactly `status='on_hold'`. All production checks
+were read-only with zero writes; no production deployment, migration, flag
+change, enrollment, or customer-data mutation occurred.
