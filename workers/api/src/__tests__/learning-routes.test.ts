@@ -772,6 +772,7 @@ describe('learning settings and release evidence routes', () => {
       headers: adminHeaders,
       body: JSON.stringify({
         realPostConfirmed: true,
+        expectedContentHash: contentHash,
         note: sample.note,
       }),
     }, env);
@@ -792,6 +793,9 @@ describe('learning settings and release evidence routes', () => {
     expect(write.sql).toContain("pen.consent_basis = 'customer_attested'");
     expect(write.sql).toContain('unixepoch(pen.consent_confirmed_at) <= unixepoch(?)');
     expect(write.sql).toContain('COALESCE(c.archetype_slug, u.archetype_slug) IS ?');
+    expect(write.sql).toContain(
+      "COALESCE(NULLIF(TRIM(p.platform), ''), 'facebook') = ?",
+    );
     expect(write.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
     expect(write.sql).toContain(
       'INNER JOIN learning_decision_disqualifications synthetic_disq',
@@ -800,6 +804,121 @@ describe('learning settings and release evidence routes', () => {
     expect(write.binds).toContain(contentHash);
     expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
       .toBe(false);
+  });
+
+  it('rejects a blind attestation without an exact preview hash before reading the draft', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/attest/draft-blind', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        realPostConfirmed: true,
+        note: 'This request did not prove which exact draft was reviewed.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Attestation requires only realPostConfirmed=true, expectedContentHash, and note',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('SELECT email, is_admin');
+  });
+
+  it('rejects a real-post attestation when the draft changed after preview', async () => {
+    const draft = {
+      id: 'draft-preview-changed', user_id: 'owner_1', client_id: null,
+      owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+      content: 'The draft now contains different real business content.',
+      platform: 'Facebook', hashtags: '[]', image_url: null, post_type: 'text',
+      video_url: null, video_status: null, video_script: null, video_shots: null,
+      archetype_slug: 'tech-saas-agency', client_status: null,
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'FROM posts p': [draft],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/attest/draft-preview-changed', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        realPostConfirmed: true,
+        expectedContentHash: '0'.repeat(64),
+        note: 'Admin reviewed the earlier preview, not this changed draft.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Draft changed after preview; refresh before attesting',
+      code: 'pilot_sample_preview_stale',
+    });
+    expect(calls.some((call) => call.sql.includes('learning_pilot_samples'))).toBe(false);
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('rejects empty or oversized draft content before creating pilot evidence', async () => {
+    for (const [postId, content] of [
+      ['draft-empty', '   '],
+      ['draft-oversized', 'x'.repeat(5001)],
+    ] as const) {
+      const draft = {
+        id: postId, user_id: 'owner_1', client_id: null,
+        owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+        content, platform: 'facebook', hashtags: '[]', image_url: null,
+        post_type: 'text', video_url: null, video_status: null,
+        video_script: null, video_shots: null,
+        archetype_slug: 'tech-saas-agency', client_status: null,
+      };
+      const { db, calls } = makeRecordingD1({
+        'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+        'FROM posts p': [draft],
+      });
+      const env = {
+        DB: db,
+        LEARNING_BRAIN_ENABLED: 'true',
+        LEARNING_RELEASE_ENFORCEMENT: 'false',
+        LEARNING_AUTOPILOT_ENABLED: 'false',
+      } as Env;
+      const { app } = makeApp(env);
+
+      const response = await app.request(`/api/learning/pilot/attest/${postId}`, {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({
+          realPostConfirmed: true,
+          expectedContentHash: '0'.repeat(64),
+          note: 'Admin cannot attest a draft outside the bounded content contract.',
+        }),
+      }, env);
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: 'Pilot attestation requires draft content between 1 and 5000 characters',
+      });
+      expect(calls.some((call) => call.sql.includes('learning_pilot_samples'))).toBe(false);
+      expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+        .toBe(false);
+    }
   });
 
   it('refuses to attest a post quarantined as synthetic QA', async () => {
@@ -823,12 +942,14 @@ describe('learning settings and release evidence routes', () => {
       LEARNING_AUTOPILOT_ENABLED: 'false',
     } as Env;
     const { app } = makeApp(env);
+    const contentHash = await buildReleaseContentHash(draft as PublishablePost);
 
     const response = await app.request('/api/learning/pilot/attest/draft-synthetic-qa', {
       method: 'POST',
       headers: adminHeaders,
       body: JSON.stringify({
         realPostConfirmed: true,
+        expectedContentHash: contentHash,
         note: 'This fixture must never count as genuine pilot evidence.',
       }),
     }, env);
@@ -1506,9 +1627,28 @@ describe('learning settings and release evidence routes', () => {
   });
 
   it('returns a server-selected queue of eligible non-held drafts and their enrollment state', async () => {
+    const ownerPreview = {
+      id: 'draft-owner', user_id: 'owner_1', client_id: null,
+      owner_kind: 'user', owner_id: 'owner_1', status: 'Draft',
+      content: 'A real owner post about a completed workflow automation project.',
+      platform: 'facebook', hashtags: '["#Automation"]',
+      image_url: 'https://cdn.example.test/owner-project.jpg', post_type: 'image',
+      video_url: null, video_status: null, video_script: null, video_shots: null,
+      archetype_slug: 'tech-saas-agency', client_status: null,
+    };
+    const clientPreview = {
+      id: 'draft-client', user_id: 'owner_1', client_id: 'client-1',
+      owner_kind: 'client', owner_id: 'client-1', status: 'Draft',
+      content: 'A genuine customer lunch special prepared for their business page.',
+      platform: 'instagram', hashtags: '["#LunchSpecial"]',
+      image_url: 'https://cdn.example.test/client-lunch.jpg', post_type: 'image',
+      video_url: null, video_status: null, video_script: null, video_shots: null,
+      archetype_slug: 'restaurant-cafe', client_status: 'active',
+    };
+    const ownerContentHash = await buildReleaseContentHash(ownerPreview as PublishablePost);
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
-      'FROM posts p': [
+      'GROUP BY p.user_id,p.client_id': [
         {
           user_id: 'owner_1', client_id: null, owner_kind: 'user',
           owner_id: 'owner_1', workspace_key: '__owner__', label: 'My workspace',
@@ -1526,6 +1666,7 @@ describe('learning settings and release evidence routes', () => {
           verified_fact_contents_json: '["Verified trading location."]',
         },
       ],
+      '/* pilot_candidate_previews */': [ownerPreview, clientPreview],
     });
     const env = {
       DB: db,
@@ -1549,6 +1690,12 @@ describe('learning settings and release evidence routes', () => {
           samplePostId: 'draft-owner', enrolled: true, monthlyAiBudgetUsdCents: 500,
           contextReady: true, contextReason: 'business_profile',
           meaningfulProfileFieldCount: 1, verifiedFactCount: 0,
+          sampleDraft: {
+            postId: 'draft-owner', content: ownerPreview.content,
+            platform: 'facebook', hashtags: '["#Automation"]',
+            imageUrl: 'https://cdn.example.test/owner-project.jpg',
+            postType: 'image', videoUrl: null, contentHash: ownerContentHash,
+          },
         },
         {
           clientId: 'client-1', ownerKind: 'client', ownerId: 'client-1',
@@ -1556,10 +1703,11 @@ describe('learning settings and release evidence routes', () => {
           samplePostId: 'draft-client', enrolled: false, monthlyAiBudgetUsdCents: null,
           contextReady: true, contextReason: 'verified_facts',
           meaningfulProfileFieldCount: 0, verifiedFactCount: 1,
+          sampleDraft: null,
         },
       ],
     });
-    const query = calls.find((call) => call.sql.includes('FROM posts p'))!;
+    const query = calls.find((call) => call.sql.includes('GROUP BY p.user_id,p.client_id'))!;
     expect(query.binds).toEqual([AUTOPILOT_POLICY_VERSION, 'owner_1']);
     expect(query.sql).toContain('LEFT JOIN learning_pilot_enrollments pen');
     expect(query.sql).toContain('pen.policy_version = ?');
@@ -1575,6 +1723,14 @@ describe('learning settings and release evidence routes', () => {
     expect(query.sql).toContain("$.verdictCount");
     expect(query.sql).toContain('CASE WHEN p.client_id IS NULL THEN u.profile ELSE c.profile END');
     expect(query.sql).toContain('json_group_array(f.content)');
+    expect(query.sql).toContain(
+      'LENGTH(TRIM(COALESCE(p.content, \'\'))) BETWEEN 1 AND 5000',
+    );
+    const previewRead = calls.find((call) =>
+      call.sql.includes('/* pilot_candidate_previews */'))!;
+    expect(previewRead.binds).toEqual(['owner_1', 'draft-owner']);
+    expect(previewRead.sql).toContain("LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'");
+    expect(previewRead.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
   });
 
   it('lets only an admin adjudicate a release decision and derives its tenant tuple', async () => {

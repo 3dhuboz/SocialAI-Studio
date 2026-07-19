@@ -377,6 +377,16 @@ export interface LearningPilotCandidate {
   contextReason: 'business_profile' | 'verified_facts' | 'missing_business_context';
   meaningfulProfileFieldCount: number;
   verifiedFactCount: number;
+  sampleDraft?: {
+    postId: string;
+    content: string;
+    platform: string;
+    hashtags: string | null;
+    imageUrl: string | null;
+    postType: string | null;
+    videoUrl: string | null;
+    contentHash: string;
+  } | null;
 }
 
 export interface LearningPilotQueue {
@@ -723,11 +733,12 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async attestLearningPilotDraft(
       postId: string,
+      expectedContentHash: string,
       note: string,
     ): Promise<LearningPilotSampleAttestation> {
       const res = await f(
         `/api/learning/pilot/attest/${encodeURIComponent(postId)}`,
-        j({ realPostConfirmed: true, note }),
+        j({ realPostConfirmed: true, expectedContentHash, note }),
       );
       return res.json() as Promise<LearningPilotSampleAttestation>;
     },

@@ -11,6 +11,7 @@ import type {
   AdminPostFeedback,
   AdminLearningOperations, LearningAdjudicationEvidence, LearningAdjudicationInput,
   LearningPilotCustomerConsent,
+  LearningPilotCandidate,
   LearningPilotQueue,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
@@ -33,6 +34,24 @@ import { PaymentList } from './PaymentList';
  */
 
 type Filter = 'all' | 'trial' | 'paid' | 'cancelled';
+
+export function isReviewablePilotDraft(
+  candidate: Pick<LearningPilotCandidate, 'samplePostId' | 'sampleDraft'>,
+): boolean {
+  const draft = candidate.sampleDraft;
+  return draft != null
+    && draft.postId === candidate.samplePostId
+    && draft.content.trim().length > 0
+    && /^[a-f0-9]{64}$/.test(draft.contentHash);
+}
+
+export function isCurrentPilotDraftConfirmation(
+  candidate: Pick<LearningPilotCandidate, 'samplePostId' | 'sampleDraft'>,
+  confirmedContentHash: string | undefined,
+): boolean {
+  return isReviewablePilotDraft(candidate)
+    && confirmedContentHash === candidate.sampleDraft?.contentHash;
+}
 
 const FILTERS: { id: Filter; label: string; tone: string }[] = [
   { id: 'all',       label: 'All',       tone: 'amber'   },
@@ -171,12 +190,16 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
-  const validateLearningPilotDraft = async (postId: string, attestationNote: string) => {
+  const validateLearningPilotDraft = async (
+    postId: string,
+    expectedContentHash: string,
+    attestationNote: string,
+  ) => {
     const actionKey = `validate:${postId}`;
     setLearningPilotActionKey(actionKey);
     setLearningError(null);
     try {
-      await db.attestLearningPilotDraft(postId, attestationNote);
+      await db.attestLearningPilotDraft(postId, expectedContentHash, attestationNote);
       await db.validateLearningPilotDraft(postId);
       await reloadLearningPanels();
     } catch (reason) {
@@ -574,7 +597,11 @@ export const LearningOperationsCard: React.FC<{
     budgetCents: number,
     customerConsent?: LearningPilotCustomerConsent,
   ) => Promise<void>;
-  onPilotValidate?: (postId: string, attestationNote: string) => Promise<void>;
+  onPilotValidate?: (
+    postId: string,
+    expectedContentHash: string,
+    attestationNote: string,
+  ) => Promise<void>;
 }> = ({
   operations,
   pilotQueue = null,
@@ -615,7 +642,7 @@ export const LearningOperationsCard: React.FC<{
     Record<string, { confirmed: boolean; note: string }>
   >({});
   const [pilotDraftConfirmedByWorkspace, setPilotDraftConfirmedByWorkspace] = useState<
-    Record<string, boolean>
+    Record<string, string>
   >({});
   const budgetNumber = Number(pilotBudgetDollars);
   const pilotBudgetCents = Number.isFinite(budgetNumber)
@@ -808,7 +835,12 @@ export const LearningOperationsCard: React.FC<{
                   && trimmedCustomerConsentNote.length >= 10
                   && trimmedCustomerConsentNote.length <= 500;
                 const needsCustomerConsent = !candidate.enrolled && candidate.clientId !== null;
-                const draftConfirmed = pilotDraftConfirmedByWorkspace[candidate.workspaceKey] === true;
+                const sampleDraft = candidate.sampleDraft ?? null;
+                const sampleDraftReady = isReviewablePilotDraft(candidate);
+                const draftConfirmed = isCurrentPilotDraftConfirmation(
+                  candidate,
+                  pilotDraftConfirmedByWorkspace[candidate.workspaceKey],
+                );
                 const contextReady = candidate.contextReady === true;
                 const contextLabel = candidate.contextReason === 'verified_facts'
                   ? `${candidate.verifiedFactCount} verified fact${
@@ -907,22 +939,73 @@ export const LearningOperationsCard: React.FC<{
                     )}
                     {candidate.enrolled && (
                       <div className="mt-2.5 rounded-lg border border-cyan-400/15 bg-cyan-500/[0.035] p-2.5">
-                        <p className="text-[10px] font-black text-cyan-100/80">
-                          Confirm exact real draft
-                        </p>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[10px] font-black text-cyan-100/80">
+                            Exact server-selected draft
+                          </p>
+                          {sampleDraftReady && sampleDraft && (
+                            <span className="rounded-full border border-cyan-400/15 bg-black/20 px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-cyan-100/55">
+                              {sampleDraft.platform} / {sampleDraft.postType ?? 'post'}
+                            </span>
+                          )}
+                        </div>
+                        {sampleDraftReady && sampleDraft ? (
+                          <div className="mt-2 overflow-hidden rounded-lg border border-white/[0.07] bg-black/25">
+                            {(sampleDraft.imageUrl || sampleDraft.videoUrl) && (
+                              <div className="space-y-2 border-b border-white/[0.06] bg-black/30 p-2">
+                                {sampleDraft.imageUrl && (
+                                  <img
+                                    src={sampleDraft.imageUrl}
+                                    alt={`${candidate.label} exact pilot draft preview`}
+                                    loading="lazy"
+                                    className="max-h-48 w-full rounded-md object-contain"
+                                  />
+                                )}
+                                {sampleDraft.videoUrl && (
+                                  <video
+                                    src={sampleDraft.videoUrl}
+                                    controls
+                                    preload="metadata"
+                                    className="max-h-48 w-full rounded-md"
+                                  />
+                                )}
+                              </div>
+                            )}
+                            <div className="p-2.5">
+                              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[10px] leading-relaxed text-white/65">
+                                {sampleDraft.content}
+                              </p>
+                              {sampleDraft.hashtags?.trim() && (
+                                <p className="mt-2 break-words text-[9px] text-cyan-200/45">
+                                  {sampleDraft.hashtags}
+                                </p>
+                              )}
+                              <p className="mt-2 font-mono text-[8px] text-white/25">
+                                Draft {sampleDraft.postId} / fingerprint {sampleDraft.contentHash.slice(0, 16)}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-2 rounded-lg border border-rose-400/15 bg-rose-500/[0.04] p-2 text-[9px] font-bold leading-relaxed text-rose-100/70">
+                            Exact draft evidence is unavailable. Refresh the queue before attesting.
+                          </p>
+                        )}
                         <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
                           <input
                             type="checkbox"
+                            disabled={!sampleDraftReady}
                             checked={draftConfirmed}
                             onChange={(event) => setPilotDraftConfirmedByWorkspace((current) => ({
                               ...current,
-                              [candidate.workspaceKey]: event.target.checked,
+                              [candidate.workspaceKey]: event.target.checked && sampleDraft
+                                ? sampleDraft.contentHash
+                                : '',
                             }))}
-                            className="mt-0.5 accent-cyan-400"
+                            className="mt-0.5 accent-cyan-400 disabled:opacity-40"
                             aria-label={`Confirm exact real draft for ${candidate.label}`}
                           />
-                          I confirm the server-selected draft is real business content, not
-                          synthetic or QA data.
+                          I reviewed the exact draft shown above and confirm it is real business
+                          content, not synthetic or QA data.
                         </label>
                         <p className="mt-1.5 text-[9px] leading-relaxed text-white/30">
                           This creates an immutable pilot receipt for this exact draft version.
@@ -945,13 +1028,15 @@ export const LearningOperationsCard: React.FC<{
                       )}
                       onClick={async () => {
                         if (candidate.enrolled) {
+                          if (!sampleDraftReady || !sampleDraft) return;
                           await onPilotValidate?.(
                             candidate.samplePostId,
+                            sampleDraft.contentHash,
                             `Admin explicitly confirmed ${candidate.label}'s server-selected draft ${candidate.samplePostId} is real business content, not synthetic or QA data, for record-only pilot critique. This does not approve, schedule, or publish it.`,
                           );
                           setPilotDraftConfirmedByWorkspace((current) => ({
                             ...current,
-                            [candidate.workspaceKey]: false,
+                            [candidate.workspaceKey]: '',
                           }));
                           return;
                         }
@@ -970,7 +1055,9 @@ export const LearningOperationsCard: React.FC<{
                       {!contextReady
                         ? 'Business context required'
                         : candidate.enrolled
-                          ? 'Confirm and validate real draft'
+                          ? sampleDraftReady
+                            ? 'Confirm and validate exact draft'
+                            : 'Exact draft preview required'
                           : `Enroll with ${pilotBudgetLabel} cap`}
                     </button>
                   </div>

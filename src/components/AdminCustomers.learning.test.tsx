@@ -56,6 +56,13 @@ const pilotQueue: LearningPilotQueue = {
       samplePostId: 'draft_owner', enrolled: true, monthlyAiBudgetUsdCents: 500,
       contextReady: true, contextReason: 'business_profile',
       meaningfulProfileFieldCount: 2, verifiedFactCount: 0,
+      sampleDraft: {
+        postId: 'draft_owner',
+        content: 'A real owner post about a completed workflow automation project.',
+        platform: 'facebook', hashtags: '["#Automation"]',
+        imageUrl: 'https://cdn.example.test/owner-project.jpg',
+        postType: 'image', videoUrl: null, contentHash: 'a'.repeat(64),
+      },
     },
     {
       clientId: 'client_2', ownerKind: 'client', ownerId: 'client_2',
@@ -228,8 +235,11 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('5 eligible real drafts');
     expect(html).toContain('4 eligible real drafts');
     expect(html).toContain('Enroll with $5.00 cap');
-    expect(html).toContain('Confirm exact real draft');
-    expect(html).toContain('Confirm and validate real draft');
+    expect(html).toContain('Exact server-selected draft');
+    expect(html).toContain('A real owner post about a completed workflow automation project.');
+    expect(html).toContain('fingerprint aaaaaaaaaaaaaaaa');
+    expect(html).toContain('Confirm and validate exact draft');
+    expect(html).toContain('I reviewed the exact draft shown above');
     expect(html).toContain('This creates an immutable pilot receipt for this exact draft version');
     expect(html).toContain('It does not approve, schedule, or publish the post');
     expect(html).toContain('aria-label="Confirm exact real draft for My workspace"');
@@ -243,6 +253,32 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('aria-label="Confirm record-only consent for Active Client"');
     expect(html).toContain('aria-label="Consent evidence note for Active Client"');
     expect(html).toContain('Active Client enrollment stays disabled until both are complete');
+  });
+
+  it('fails closed when an enrolled workspace has no exact draft preview', () => {
+    const missingPreviewQueue: LearningPilotQueue = {
+      recordOnly: true,
+      candidates: [{ ...pilotQueue.candidates[0], sampleDraft: null }],
+    };
+    const html = renderToStaticMarkup(
+      <LearningOperationsCard
+        operations={operations}
+        pilotQueue={missingPreviewQueue}
+        pilotActionKey={null}
+        loading={false}
+        savingDecisionId={null}
+        onAdjudicate={async () => undefined}
+        onPilotEnroll={async () => undefined}
+        onPilotValidate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('Exact draft evidence is unavailable');
+    expect(html).toContain('Exact draft preview required');
+    const labelIndex = html.indexOf('Exact draft preview required');
+    const buttonStart = html.lastIndexOf('<button', labelIndex);
+    const buttonTag = html.slice(buttonStart, html.indexOf('>', buttonStart) + 1);
+    expect(buttonTag).toContain('disabled=""');
   });
 
   it('binds consent controls to each exact client workspace instead of sharing one attestation', () => {

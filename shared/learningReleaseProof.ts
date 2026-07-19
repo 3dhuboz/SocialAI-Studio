@@ -206,6 +206,21 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning settings and release evidence routes appends a positive real-post attestation without mutating the draft',
   },
   {
+    id: 'pilot_positive_sample_preview_required',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes rejects a blind attestation without an exact preview hash before reading the draft',
+  },
+  {
+    id: 'pilot_positive_sample_preview_stale',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes rejects a real-post attestation when the draft changed after preview',
+  },
+  {
+    id: 'pilot_positive_sample_content_bounds',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes rejects empty or oversized draft content before creating pilot evidence',
+  },
+  {
     id: 'pilot_positive_sample_hash_binding',
     suite: 'src/__tests__/learning-pilot-collector.test.ts',
     assertion: 'record-only pilot evaluation lease rejects a pilot evaluation when the positive sample hash no longer matches',

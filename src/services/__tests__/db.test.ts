@@ -285,6 +285,12 @@ describe('learning decision client', () => {
               workspaceKey: 'client_1', label: 'Active Client',
               eligibleDraftCount: 4, samplePostId: 'draft_1', enrolled: false,
               monthlyAiBudgetUsdCents: null,
+              sampleDraft: {
+                postId: 'draft_1', content: 'Real customer draft content.',
+                platform: 'facebook', hashtags: '["#RealBusiness"]',
+                imageUrl: 'https://cdn.example.test/draft.jpg', postType: 'image',
+                videoUrl: null, contentHash: 'a'.repeat(64),
+              },
             }],
           }
         : url.includes('/pilot/enroll')
@@ -318,12 +324,14 @@ describe('learning decision client', () => {
     });
     const attested = await db.attestLearningPilotDraft(
       'draft 1',
+      'a'.repeat(64),
       'Admin confirmed this exact server-selected draft is a real business draft.',
     );
     const validated = await db.validateLearningPilotDraft('draft 1');
 
     expect(queue.recordOnly).toBe(true);
     expect(queue.candidates[0].samplePostId).toBe('draft_1');
+    expect(queue.candidates[0].sampleDraft?.contentHash).toBe('a'.repeat(64));
     expect(enrolled).toMatchObject({ mode: 'approval', recordOnly: true });
     expect(attested).toMatchObject({
       sampleId: 'sample_1', created: true, postMutated: false,
@@ -351,6 +359,7 @@ describe('learning decision client', () => {
         method: 'POST',
         body: {
           realPostConfirmed: true,
+          expectedContentHash: 'a'.repeat(64),
           note: 'Admin confirmed this exact server-selected draft is a real business draft.',
         },
       },

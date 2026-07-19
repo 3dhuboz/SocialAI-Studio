@@ -305,6 +305,29 @@ function pilotCandidateContextReadiness(row: PilotCandidateRow) {
   });
 }
 
+function publishablePilotDraft(
+  row: PilotDraftRow,
+  identity: WorkspaceIdentity,
+): PublishablePost {
+  return {
+    id: row.id,
+    user_id: identity.userId,
+    client_id: identity.clientId,
+    owner_kind: identity.ownerKind,
+    owner_id: identity.ownerId,
+    content: row.content,
+    platform: row.platform?.trim() || 'facebook',
+    hashtags: row.hashtags,
+    image_url: row.image_url,
+    post_type: row.post_type,
+    video_url: row.video_url,
+    video_status: row.video_status,
+    video_script: row.video_script,
+    video_shots: row.video_shots,
+    archetype_slug: row.archetype_slug,
+  };
+}
+
 type AdjudicationEvidence = {
   content: string;
   platform: string;
@@ -664,6 +687,41 @@ function existingPilotSample(
     postId,
     contentHash,
   ).first<PilotSampleRow>();
+}
+
+async function loadPilotCandidatePreviews(
+  db: D1Database,
+  userId: string,
+  postIds: string[],
+): Promise<PilotDraftRow[]> {
+  const uniquePostIds = [...new Set(postIds.map((id) => id.trim()).filter(Boolean))];
+  if (uniquePostIds.length === 0) return [];
+  const placeholders = uniquePostIds.map(() => '?').join(',');
+  const result = await db.prepare(`
+    /* pilot_candidate_previews */
+    SELECT
+      p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
+      p.content,p.platform,p.hashtags,p.image_url,p.post_type,
+      p.video_url,p.video_status,p.video_script,p.video_shots,
+      COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
+      c.status AS client_status
+    FROM posts p
+    LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+    LEFT JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = ? AND p.id IN (${placeholders})
+      AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+      AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
+      AND (
+        (p.client_id IS NULL AND (p.owner_kind IS NULL OR p.owner_kind = 'user'))
+        OR (
+          p.client_id IS NOT NULL
+          AND c.id IS NOT NULL
+          AND (p.owner_kind IS NULL OR p.owner_kind = 'client')
+          AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+        )
+      )
+  `).bind(userId, ...uniquePostIds).all<PilotDraftRow>();
+  return result.results ?? [];
 }
 
 function latestReadiness(db: D1Database) {
@@ -1053,6 +1111,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
        AND pen.record_only = 1
       WHERE p.user_id = ?
         AND p.status = 'Draft'
+        AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
         AND (
           (p.client_id IS NULL AND (p.owner_kind IS NULL OR p.owner_kind = 'user'))
           OR (
@@ -1109,9 +1168,19 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
       LIMIT 50
     `).bind(AUTOPILOT_POLICY_VERSION, adminId).all<PilotCandidateRow>();
-    const candidates = (rows.results ?? []).map((row) => {
+    const candidateRows = rows.results ?? [];
+    const previewRows = await loadPilotCandidatePreviews(
+      c.env.DB,
+      adminId,
+      candidateRows
+        .filter((row) => countValue(row.enrolled) > 0)
+        .map((row) => row.sample_post_id),
+    );
+    const previewsById = new Map(previewRows.map((row) => [row.id, row]));
+    const candidates = (await Promise.all(candidateRows.map(async (row) => {
+      const enrolled = countValue(row.enrolled) > 0;
       const contextReadiness = pilotCandidateContextReadiness(row);
-      return {
+      const candidate = {
         clientId: row.client_id,
         ownerKind: row.owner_kind,
         ownerId: row.owner_id,
@@ -1119,7 +1188,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         label: row.label,
         eligibleDraftCount: countValue(row.eligible_draft_count),
         samplePostId: row.sample_post_id,
-        enrolled: countValue(row.enrolled) > 0,
+        enrolled,
         monthlyAiBudgetUsdCents: row.monthly_ai_budget_usd_cents == null
           ? null
           : countValue(row.monthly_ai_budget_usd_cents),
@@ -1128,7 +1197,41 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
         verifiedFactCount: contextReadiness.verifiedFactCount,
       };
-    });
+      if (!enrolled) return { ...candidate, sampleDraft: null };
+      const preview = previewsById.get(row.sample_post_id);
+      if (!preview) return { ...candidate, sampleDraft: null };
+      const previewClientId = preview.client_id?.trim() || null;
+      const previewOwnerKind: WorkspaceOwnerKind = previewClientId === null ? 'user' : 'client';
+      const previewOwnerId = preview.owner_id?.trim()
+        || previewClientId
+        || preview.user_id;
+      if (
+        preview.user_id !== row.user_id
+        || previewClientId !== row.client_id
+        || previewOwnerKind !== row.owner_kind
+        || previewOwnerId !== row.owner_id
+      ) return { ...candidate, sampleDraft: null };
+      const identity = normalizeWorkspaceIdentity(
+        preview.user_id,
+        previewClientId,
+        previewOwnerKind,
+        previewOwnerId,
+      );
+      const post = publishablePilotDraft(preview, identity);
+      return {
+        ...candidate,
+        sampleDraft: {
+          postId: post.id,
+          content: post.content,
+          platform: post.platform,
+          hashtags: post.hashtags,
+          imageUrl: post.image_url,
+          postType: post.post_type,
+          videoUrl: post.video_url,
+          contentHash: await buildReleaseContentHash(post),
+        },
+      };
+    })));
     return c.json({
       recordOnly: true,
       candidates,
@@ -1155,11 +1258,18 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
     }
     const unexpected = Object.keys(body).filter(
-      (key) => key !== 'realPostConfirmed' && key !== 'note',
+      (key) => !['realPostConfirmed', 'expectedContentHash', 'note'].includes(key),
     );
-    if (unexpected.length > 0 || body.realPostConfirmed !== true) {
+    const expectedContentHash = typeof body.expectedContentHash === 'string'
+      ? body.expectedContentHash.trim().toLowerCase()
+      : '';
+    if (
+      unexpected.length > 0
+      || body.realPostConfirmed !== true
+      || !/^[a-f0-9]{64}$/.test(expectedContentHash)
+    ) {
       return c.json({
-        error: 'Attestation requires only realPostConfirmed=true and note',
+        error: 'Attestation requires only realPostConfirmed=true, expectedContentHash, and note',
       }, 400);
     }
     const note = typeof body.note === 'string' ? body.note.trim() : '';
@@ -1186,6 +1296,12 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (row.status?.trim().toLowerCase() !== 'draft') {
       return c.json({ error: 'Pilot attestation accepts Draft posts only' }, 409);
     }
+    const contentLength = row.content?.trim().length ?? 0;
+    if (contentLength < 1 || contentLength > 5000) {
+      return c.json({
+        error: 'Pilot attestation requires draft content between 1 and 5000 characters',
+      }, 409);
+    }
 
     const clientId = row.client_id?.trim() || null;
     const ownerKind: WorkspaceOwnerKind = clientId === null ? 'user' : 'client';
@@ -1203,24 +1319,14 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       ownerKind,
       row.owner_id?.trim() || clientId || row.user_id,
     );
-    const post: PublishablePost = {
-      id: row.id,
-      user_id: identity.userId,
-      client_id: identity.clientId,
-      owner_kind: identity.ownerKind,
-      owner_id: identity.ownerId,
-      content: row.content,
-      platform: row.platform?.trim() || 'facebook',
-      hashtags: row.hashtags,
-      image_url: row.image_url,
-      post_type: row.post_type,
-      video_url: row.video_url,
-      video_status: row.video_status,
-      video_script: row.video_script,
-      video_shots: row.video_shots,
-      archetype_slug: row.archetype_slug,
-    };
+    const post = publishablePilotDraft(row, identity);
     const contentHash = await buildReleaseContentHash(post);
+    if (contentHash !== expectedContentHash) {
+      return c.json({
+        error: 'Draft changed after preview; refresh before attesting',
+        code: 'pilot_sample_preview_stale',
+      }, 409);
+    }
     if (await isSyntheticQaPilotPost(c.env.DB, identity, postId)) {
       return c.json({
         error: 'Known synthetic-QA posts cannot enter real pilot evidence',
@@ -1281,7 +1387,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       WHERE p.id = ? AND p.user_id = ? AND p.client_id IS ?
         AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
         AND COALESCE(p.content, '') = ?
-        AND p.platform IS ? AND p.hashtags IS ? AND p.image_url IS ?
+        AND COALESCE(NULLIF(TRIM(p.platform), ''), 'facebook') = ?
+        AND p.hashtags IS ? AND p.image_url IS ?
         AND p.post_type IS ? AND p.video_url IS ? AND p.video_status IS ?
         AND p.video_script IS ? AND p.video_shots IS ?
         AND (
