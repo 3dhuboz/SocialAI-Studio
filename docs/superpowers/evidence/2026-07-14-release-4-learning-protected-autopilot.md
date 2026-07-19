@@ -3156,3 +3156,53 @@ flag change, enrollment, publish-path behavior change, or customer-data
 mutation occurred. Production and staging behavior-changing flags remain off,
 both environments retain zero Protected Autopilot workspaces, and
 `hughesq-001` remains exactly `status='on_hold'`.
+
+### Software-Versus-Hardware Image Relevance Guard
+
+The reported Penny Wise I.T preview paired a custom-app/software caption with
+an electronics circuit board and repair tools. Read-only searches of both
+production and staging found no persisted post with that caption and wrote
+zero rows, confirming that the screenshot was an unsaved pre-calendar draft,
+not a published database record.
+
+The upstream generation correction from commit
+`2d34b3fb24ab3169f708fd959634643f77c04ac4` already replaces circuit-board,
+PCB, soldering, and repair-bench prompts for software posts and adds those
+subjects to the negative prompt. That commit was present in staging but not
+in `origin/main` or the production Worker. A second independent defence was
+still required because an image provider can disregard prompt negatives and
+the vision critic previously treated this only as a generic subject mismatch.
+
+Commit `2b8b81d3689084710b4338c2c1d476b1984a810d` adds a
+`SOFTWARE-VS-HARDWARE HARD RULE` to the final image-caption critic. Software,
+SaaS, custom-app, website, automation, and digital-service captions paired
+with circuit boards, motherboards, chips, soldering tools, or electronics
+repair scenes must score 1-2 with `match="no"`. A narrow exception preserves
+legitimate posts that explicitly discuss hardware, electronics, device
+repair, embedded systems, semiconductors, or electronics manufacturing.
+
+The regression test was written first and failed against the old prompt. The
+new invariant is bound into the mandatory release proof as
+`software_hardware_media_mismatch`. Verification then passed all 239
+frontend/root tests, all 1,284 Worker tests, strict root and Worker
+TypeScript, and the 1,925-module production frontend build. The clean
+exact-commit proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T18-32-16-024Z.json`
+- Release-proof payload SHA-256: `73375d01f9eda1cc52c0f4a58c6c0d3854846d87af14d5261c068c9f8af67e92`
+- Release-proof file SHA-256: `9b32bb0c36096e8c96abe11eb1d2093428a3743940bfc4f707bd18e9166f1a82`
+
+The exact commit deployed only to staging as Worker
+`47e8e521-efdd-4d4e-a816-e4c39c2fd97f`. Wrangler bound only
+`socialai-db-staging`; release enforcement, Protected Autopilot, and organic
+reach application remained disabled. The live staging health endpoint
+returned `ok=true`. The exact rollout judge remained `safe_hold`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T18-33-23-543Z.json`
+- Rollout payload SHA-256: `6d0e0c311831a567753bcf8f1165e89c7606732110df422b489ea6e077f84fb1`
+- Rollout file SHA-256: `1535b0a800887ca1562351463987d4e235a4e1987a28afaf77a9339f86666827`
+
+Production remains on Worker `26c19f95-7bb2-40b2-ae72-12c2a6e330e5`.
+No production deployment, migration, flag change, enrollment, publication,
+or customer-data mutation occurred. Both environments retain zero Protected
+Autopilot workspaces, and `hughesq-001` remains exactly `status='on_hold'`.
