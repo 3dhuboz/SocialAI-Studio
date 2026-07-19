@@ -2509,3 +2509,121 @@ evidence or customer consent. The rollout remains gate-closed pending explicit
 authorization for a bounded real Penny Wise Draft and separate explicit
 consent from one active client, followed by the documented volume,
 adjudication, quality, cost, outcome, and prediction thresholds.
+
+## 2026-07-20 Weekly Independent Calibration Staging Checkpoint
+
+The approved design required a weekly sample of green release decisions to be
+rechecked by an independent critic, with a severe false pass automatically
+disabling Protected Autopilot for the affected workspace. The prior runtime
+could quarantine only after a human adjudication existed; it did not perform
+the weekly independent calibration audit.
+
+### Implemented Safety Boundary
+
+Schema v47 adds `learning_calibration_audits`, a separate tenant-scoped ledger
+for automated calibration. It does not write to the human
+`learning_adjudications` table. The weekly job:
+
+- selects at most ten unchanged green decisions, with at most one per eligible
+  workspace;
+- excludes synthetic QA, inactive clients, `status='on_hold'` clients,
+  uninstalled shops, disabled workspaces, malformed hashes, and overlapping
+  leases;
+- requires valid tenant cost telemetry and a 50-cent reserve before any critic
+  work;
+- rebuilds the current content hash and runs the full independent critic,
+  final-media critic, and separate Release Judge without reading the cached
+  release receipt or mutating posts, decisions, adjudications, schedules, or
+  publishing state;
+- records repair-required original content as an advisory false pass rather
+  than allowing the repaired result to mask it;
+- treats provider outages as unavailable evidence, never as a label;
+- stores fixed privacy-safe error categories rather than provider exception
+  text; and
+- immediately persists a release-critical block and quarantines only the exact
+  tenant workspace when a verified severe false pass is found.
+
+The calibration runs before weekly strategy learning. Tenant deletion now
+removes its receipts before parent decisions. Cron telemetry contains only an
+allowlisted set of non-negative counters.
+
+During the live query-plan check, staging correctly rejected an initial source
+reference to a nonexistent `clients.on_hold` column. No write occurred. The
+selector was corrected to the canonical hold representation,
+`clients.status='on_hold'`, and the real Cloudflare query plan then completed
+read-only using the decision, settings, disqualification, calibration, post,
+client, and user indexes. This pre-deploy failure prevented a broken selector
+from reaching the staging Worker.
+
+### Verification
+
+Commits `d35b38c` and `7de2353` contain the implementation and canonical hold
+fix. Verification passed:
+
+- 97 Worker test files and 1,263 tests;
+- strict Worker TypeScript;
+- 18 frontend test files and 215 tests;
+- the 1,925-module frontend production build;
+- a staging Worker dry-run bound only to `socialai-db-staging` with enforcement,
+  Protected Autopilot, and organic-reach application all disabled; and
+- GitHub CI run `29690982695`, including frontend, Worker, Shopify, and the
+  explicit on-hold publishing guard.
+
+The clean-tree release proof returned `offline_pass` with all 99 mandatory
+checks passed, zero missing checks, and zero failed checks. It correctly records
+`liveStagingProven=false`, `authenticatedEvidenceSubmitted=false`,
+`productionMutationPerformed=false`, and `releaseFlagsChanged=false`.
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T14-30-38-977Z.json`
+- Payload SHA-256: `7c5684009b812f66835214abef7b57e521127d1e159a29173c8713da35481548`
+- Artifact file SHA-256: `b3b431ab70e5d92533a723dda3aaa665a02080808d40d97782a4ff550e939729`
+- Raw report SHA-256: `2e2314584f689d4322ad9fbf327f0e2284a4beb2a0c891dbc1e95fdd3687e2ae`
+
+### Staging Migration And Deployment
+
+Before migration, the complete staging D1 database was exported to:
+
+- Backup: `D:\GitHubBackup\SocialAi\staging-db-exports\socialai-db-staging-pre-v47-20260720-002450.sql`
+- Size: `2,527,335` bytes
+- SHA-256: `30be732e80d44629d7c2a114434c40b4bc841af872ec7a33da23ef89de3ef9d7`
+
+Schema v47 then applied to staging only. Read-only verification found the table
+and both indexes, all 22 columns, zero initial calibration rows, and zero writes
+from every verification query. The exact candidate selector compiled against
+the live staging schema and returned zero currently eligible calibration
+candidates.
+
+The staging Worker deployed as version
+`e27c1ec6-b564-4231-ae3d-79238d2a9141`. Its effective flags remain:
+
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+Staging, production, and same-domain health checks all returned HTTP 200 with
+the Worker health payload. Staging has zero Protected Autopilot workspaces,
+zero disabled workspaces, and zero calibration receipts.
+
+### Production Boundary And Rollout State
+
+Production remains pinned to Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, remains on schema v42, has no
+`learning_calibration_audits` table, and has zero Protected Autopilot
+workspaces. The production row `hughesq-001` remains exactly
+`status='on_hold'`. Every production query was read-only with
+`changed_db=false`; no production deployment, migration, flag change, or data
+mutation occurred.
+
+The authoritative rollout verifier returned `safe_hold`, not promotion ready:
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T14-34-38-000Z.json`
+- Payload SHA-256: `68addfcd03353b536dce57637e4eb7d6212c480742298c7ec80f1dc3f3289595`
+- Artifact file SHA-256: `3258d9e988fee64bca3ac9b1f8de7445f1f89064a1e82b1f4f43518c53043c5d`
+
+The remaining blockers are unchanged: staging readiness is not green,
+production readiness is not green, there are no positive real pilot samples,
+there is no separately consenting active customer, and the positive-sample
+schema is intentionally absent from production. The first natural weekly
+calibration cron receipt is also pending; the deployed selector currently has
+zero eligible decisions, so no customer content was processed or fabricated to
+manufacture evidence. Promotion and production behavior remain gate-closed.

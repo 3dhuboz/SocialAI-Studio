@@ -217,7 +217,17 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Current production schema version:** v42.
 
-**Current staging schema version:** v46.
+**Current staging schema version:** v47.
+
+Weekly calibration migration:
+`workers/api/schema_v47_learning_calibration_audits.sql`.
+It adds bounded tenant-scoped claims and privacy-safe receipts for the weekly
+independent recheck of unchanged green release decisions. The job excludes
+non-active and on-hold clients, requires healthy per-workspace cost telemetry,
+never reuses the original release receipt, and quarantines a Protected
+Autopilot workspace when a verified recheck finds a release-critical false
+pass. The migration and matching Worker are live in staging only; production
+remains on schema v42 until every documented release gate passes.
 
 Positive pilot sample migration:
 `workers/api/schema_v46_learning_pilot_samples.sql`.
