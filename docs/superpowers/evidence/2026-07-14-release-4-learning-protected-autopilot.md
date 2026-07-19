@@ -2209,3 +2209,46 @@ Verification passed:
 - Strict Worker TypeScript.
 - Full frontend suite: 17 files, 200 tests.
 - Production frontend build.
+
+## 2026-07-19 Staging Deployment Of Latest Guardrails
+
+### Staging Deployment
+
+Commit `2d34b3fb24ab3169f708fd959634643f77c04ac4` was deployed to the
+staging Worker only. Wrangler dry-run first resolved the deployment to
+`socialai-db-staging` with release enforcement disabled, Protected Autopilot
+disabled, and organic reach apply disabled.
+
+The staging deploy completed at `2026-07-19T06:45:41.888Z` with Worker
+version `61fa318f-163f-466c-998e-2ef872cb9beb`. Runtime health returned
+HTTP 200 with `{"ok":true,"service":"socialai-api"}`.
+
+Staging flags remained:
+
+- `LEARNING_BRAIN_ENABLED=true`
+- `LEARNING_RELEASE_ENFORCEMENT=false`
+- `LEARNING_AUTOPILOT_ENABLED=false`
+- `ORGANIC_REACH_ENABLED=true`
+- `ORGANIC_REACH_APPLY_ENABLED=false`
+
+### Post-Deploy Runtime Receipts
+
+The first natural staging `learning_pilot` cron after deploy, receipt `9315`
+at `2026-07-19 06:46:05` UTC, succeeded in 304 ms with zero candidates, zero
+evaluations, zero errors, and no budget, invalid, context, claim, or reuse
+skips.
+
+The paired `learning_readiness` cron, receipt `9316` at
+`2026-07-19 06:46:06` UTC, succeeded in 1,199 ms. Readiness snapshot
+`b474549f-ad8e-44e3-9d24-422496e0bf2e` remained red with zero eligible pilot
+decisions, zero pilot workspaces, zero release-judge invocations, complete
+kill-switch evidence, and `costWithinBudget=false` because no eligible pilot
+decision exists in the current readiness window.
+
+### Production Boundary
+
+Production was not deployed or migrated. It remains on Worker version
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`. Production `ai_usage` still has the
+pre-learning-attribution column set only (`id` through `ok`) and no
+`learning_decision_id` column. `hughesq-001` remains exactly
+`status='on_hold'`.
