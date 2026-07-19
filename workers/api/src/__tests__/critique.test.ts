@@ -68,6 +68,15 @@ describe('buildCritiqueSystemPrompt', () => {
     expect(prompt).toContain('score 3-4');
   });
 
+  it('hard-fails electronics hardware imagery for software and custom-app captions', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toContain('SOFTWARE-VS-HARDWARE HARD RULE');
+    expect(prompt).toMatch(/custom apps|custom software/i);
+    expect(prompt).toMatch(/circuit board|PCB/i);
+    expect(prompt).toContain('score 1-2');
+    expect(prompt).toMatch(/unless the caption explicitly discusses hardware/i);
+  });
+
   it('always requires JSON-only response with score, match, reasoning', () => {
     const prompt = buildCritiqueSystemPrompt('food-restaurant');
     expect(prompt).toContain('Return JSON ONLY');

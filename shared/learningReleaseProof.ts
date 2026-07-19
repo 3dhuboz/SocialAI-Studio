@@ -96,6 +96,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning release readiness requires the selected media critic for availability and receipt coverage',
   },
   {
+    id: 'software_hardware_media_mismatch',
+    suite: 'src/__tests__/critique.test.ts',
+    assertion: 'buildCritiqueSystemPrompt hard-fails electronics hardware imagery for software and custom-app captions',
+  },
+  {
     id: 'release_judge_telemetry',
     suite: 'src/__tests__/learning-readiness.test.ts',
     assertion: 'learning release readiness fails closed on unavailable or ambiguous Release Judge telemetry',

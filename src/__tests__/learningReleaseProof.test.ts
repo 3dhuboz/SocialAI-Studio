@@ -46,6 +46,7 @@ describe('buildReleaseProofArtifact', () => {
         'critic_lane_independence',
         'deterministic_block_path',
         'selected_media_critic',
+        'software_hardware_media_mismatch',
         'release_judge_telemetry',
         'release_judge_pipeline_failure',
         'release_judge_status_binding',
