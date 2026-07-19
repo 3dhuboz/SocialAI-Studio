@@ -2673,3 +2673,54 @@ schema but no natural weekly receipt or completed calibration rows yet.
 Production still intentionally lacks both later evidence schemas. No Worker
 deployment, schema migration, flag change, enrollment, post mutation, or
 customer-content processing occurred during this recheck.
+
+### Degraded Calibration Alert Staging Checkpoint
+
+A bounded independent completion audit found that weekly calibration already
+persisted privacy-safe `unavailable` and `errors` counters, but a degraded run
+did not notify an operator. A critic or Release Judge outage could therefore
+remain silent until someone manually inspected the weekly receipt.
+
+Commit `b90fc67775ebc4ab3fe533959ec948302e07189f` adds a single operational
+incident lifecycle without changing posts, decisions, schedules, publishing,
+workspace modes, or customer data:
+
+- any weekly run with one or more unavailable audits or execution errors fires
+  throttled `warn` alert `learning_calibration_run_degraded`;
+- the alert body contains only completed, unavailable, error, and candidate
+  counters, never post text, tenant identity, email, URL, or provider error;
+- a clean weekly run resolves the alert, including a legitimate zero-candidate
+  run; and
+- the existing critical severe-false-pass quarantine alert remains separate
+  and unchanged.
+
+The alert-fire test was written first and failed because no call existed. The
+focused calibration suite then passed all 16 tests, including explicit private
+email/URL exclusion and clean recovery. Full verification passed 97 Worker
+files and 1,264 tests, strict Worker TypeScript, 18 frontend/root files and 223
+tests, and the 1,925-module frontend production build. The staging dry-run was
+bound only to `socialai-db-staging`, with enforcement, Protected Autopilot, and
+organic-reach application disabled.
+
+The clean release proof passed all 100 mandatory checks and all 418 bound tests
+with zero missing or failed checks:
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T15-13-44-559Z.json`
+- Payload SHA-256: `c54cb29b338814e314ce18b0e7d8a71f9908bd4ce854f725d69a8d12fca49294`
+- Artifact file SHA-256: `3eeda885490931840e2c5e3aa9c4657dd8b8ee6df383d2e6771a9113c8800d6e`
+
+Staging deployed as Worker version
+`e370b77c-b7b0-46b5-977e-a293d0298f47`. No migration was required. The
+post-deploy rollout verifier returned `safe_hold`:
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T15-14-49-986Z.json`
+- Payload SHA-256: `39f55d4755ed870234457524c1985a53196dc16d59897bbd565e7d0241224075`
+- Artifact file SHA-256: `662e99601e146a26e04f76decd749ad4c83f80d23308142796722ff0b980050d`
+
+The first natural weekly calibration run is still pending at the documented
+Sunday `21:00 UTC` schedule; it was not manually triggered and no evidence was
+fabricated. Production remains on Worker
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`, both live D1 checks proved zero
+writes, both environments have zero Protected Autopilot workspaces, all
+behavior-changing flags remain disabled, and `hughesq-001` remains exactly
+`status='on_hold'`.
