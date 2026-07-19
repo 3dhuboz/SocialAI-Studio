@@ -136,6 +136,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'record-only pilot collector evaluates at most one draft from each of two consented workspaces',
   },
   {
+    id: 'pilot_routes_staging_isolation',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes keeps every approval-pilot operation isolated to staging',
+  },
+  {
     id: 'pilot_context_before_enrollment',
     suite: 'src/__tests__/learning-routes.test.ts',
     assertion: 'learning settings and release evidence routes refuses pilot enrollment before recording consent when business context is incomplete',

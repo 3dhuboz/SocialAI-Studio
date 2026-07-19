@@ -49,6 +49,7 @@ describe('buildReleaseProofArtifact', () => {
         'release_judge_input_independence',
         'release_judge_no_override',
         'pilot_two_workspace_cohort',
+        'pilot_routes_staging_isolation',
         'pilot_context_before_enrollment',
         'pilot_context_candidate_diagnostics',
         'pilot_synthetic_exclusion_schema',
