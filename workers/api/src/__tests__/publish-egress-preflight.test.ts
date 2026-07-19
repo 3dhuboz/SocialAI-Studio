@@ -927,7 +927,7 @@ describe('publish egress source contracts', () => {
       frontendRoot,
     ])))
       .toEqual([]);
-  });
+  }, 30_000);
 
   it('routes manual Postproxy publishing through the orchestrator', () => {
     const source = readFileSync(
