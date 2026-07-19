@@ -2724,3 +2724,53 @@ fabricated. Production remains on Worker
 writes, both environments have zero Protected Autopilot workspaces, all
 behavior-changing flags remain disabled, and `hughesq-001` remains exactly
 `status='on_hold'`.
+
+### Weekly Calibration Freshness Watchdog
+
+The degraded-run alert covers a calibration invocation that returns
+unavailable audits or errors, but it cannot detect a Cloudflare schedule that
+stops invoking the job entirely. The 15-minute health sweep previously checked
+only publish-failure bursts and posts stuck in `Publishing`.
+
+Commit `ef1666a56ef27c223f8aa5a3f15c15207830c7e8` adds a third independent
+health-sweep check:
+
+- the first successful `learning_calibration` receipt establishes monitoring;
+- before establishment, the check stays neutral and the promotion verifier
+  remains the authority, preventing false incidents before the first natural
+  run;
+- after establishment, the latest success must remain within seven days plus
+  a one-hour scheduler/critic grace period;
+- stale, malformed, or future timestamps fire critical
+  `learning_calibration_receipt_stale`; and
+- a fresh receipt resolves that incident.
+
+The query reads only `MAX(run_at)` from successful calibration rows. It reads
+no post, tenant, critic, or provider content. Live staging returned no
+established receipt, `changed_db=false`, zero rows written, and used
+`idx_cron_runs_type_run_at` with approximately 0.1 ms SQL duration.
+
+Tests were written first and failed because the third check did not exist.
+Verification then passed 14 focused health-sweep tests, 97 Worker files and
+1,269 tests, strict Worker TypeScript, 18 frontend/root files and 223 tests,
+and the 1,925-module frontend production build. Four watchdog invariants were
+added to the release-proof manifest.
+
+The clean proof passed all 104 mandatory checks and all 432 bound tests:
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T15-30-37-409Z.json`
+- Payload SHA-256: `29ebe40f1b08fa4cf2e0a05a631574a1e527a316c9befd81fc799fbc7b6d9a3e`
+- Artifact file SHA-256: `7d76b392fa04acbb82ffcd2ef7b3702b518fb1c5d83ca763e2e5f57ff9383e99`
+
+Staging deployed as Worker version
+`d4ac0667-ef0e-4334-9a21-90b0d330c9bd`, with all behavior-changing flags
+disabled. The immediate post-deploy rollout verifier returned `safe_hold`:
+
+- Artifact: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T15-31-39-847Z.json`
+- Payload SHA-256: `424f23b5c6ec891d84b87c2298c1cf654b038de3fcb14f38f7dd230a25b86053`
+- Artifact file SHA-256: `116769cd0d87f171517f65c2d6aff9f852c007baf63e3b441a5c55b79295974f`
+
+No schema migration, production deployment, enrollment, content processing,
+or customer-data mutation occurred. Production remains on
+`26c19f95-7bb2-40b2-ae72-12c2a6e330e5`; both environments have zero
+Protected Autopilot workspaces and `hughesq-001` remains `status='on_hold'`.
