@@ -9,6 +9,7 @@ import {
   buildWranglerInvocation,
   evaluateRolloutState,
   parseCron,
+  shouldFailRolloutCommand,
   validateReadOnlyD1Results,
   type RolloutObservation,
 } from '../../scripts/learning-rollout-state';
@@ -181,6 +182,26 @@ describe('learning live rollout state', () => {
       'staging_calibration_evidence',
       'production_calibration_schema',
     ]));
+  });
+
+  it('makes --require-ready fail closed while a rollout remains on safe_hold', () => {
+    const input = observation();
+    input.staging.pilotSamples = 0;
+    const evaluation = evaluateRolloutState(input);
+
+    expect(evaluation.result).toBe('safe_hold');
+    expect(shouldFailRolloutCommand(evaluation, false)).toBe(false);
+    expect(shouldFailRolloutCommand(evaluation, true)).toBe(true);
+  });
+
+  it('fails the rollout command for unsafe evidence with or without --require-ready', () => {
+    const input = observation();
+    input.production.flags.LEARNING_AUTOPILOT_ENABLED = 'true';
+    const evaluation = evaluateRolloutState(input);
+
+    expect(evaluation.result).toBe('unsafe_or_unverified');
+    expect(shouldFailRolloutCommand(evaluation, false)).toBe(true);
+    expect(shouldFailRolloutCommand(evaluation, true)).toBe(true);
   });
 
   it.each([

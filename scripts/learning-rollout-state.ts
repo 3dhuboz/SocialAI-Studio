@@ -643,6 +643,14 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   };
 }
 
+export function shouldFailRolloutCommand(
+  evaluation: Pick<RolloutEvaluation, 'result' | 'promotionReady'>,
+  requireReady: boolean,
+): boolean {
+  return evaluation.result === 'unsafe_or_unverified'
+    || (requireReady && !evaluation.promotionReady);
+}
+
 function executeReadOnlyD1(
   database: string,
   sql: string,
@@ -1008,8 +1016,7 @@ async function main(): Promise<void> {
     `Blockers: ${evaluation.blockers.join(', ') || 'none'}`,
   ].join('\n') + '\n');
 
-  if (evaluation.result === 'unsafe_or_unverified'
-    || (hasOption('--require-ready') && !evaluation.promotionReady)) {
+  if (shouldFailRolloutCommand(evaluation, hasOption('--require-ready'))) {
     process.exitCode = 1;
   }
 }
