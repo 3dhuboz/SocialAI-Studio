@@ -3125,3 +3125,34 @@ invoked. Production remains on Worker
 Protected Autopilot workspaces, and `hughesq-001` remains exactly
 `status='on_hold'`. No production deployment, migration, flag change,
 enrollment, publish-path change, or customer-data mutation occurred.
+
+### Frontend-Inclusive Publish Egress Proof
+
+A bounded source-contract audit found that the mandatory global publication
+chokepoint proof recursively scanned the Worker production tree but not the
+frontend production tree. The existing frontend checks covered known helpers
+in `App.tsx` and `facebookService.ts`, but a future component or service could
+introduce a raw Facebook publication POST without entering that global scan.
+No such bypass existed in the current frontend; its direct Graph calls were
+read-only token and statistics queries.
+
+Commit `955bf2d78472fa63a0e97977efa258cb64a18f75` expands the existing
+`egress_global_chokepoint` proof across both production trees. The test was
+written red first because the combined source boundary did not exist, then
+passed after adding the bounded source combiner. Raw Facebook POSTs and direct
+Postproxy publication imports remain rejected outside the centralized Worker
+orchestrator, while read-only Graph requests remain allowed.
+
+Verification passed all 239 frontend/root tests, all 1,283 Worker tests,
+strict root and Worker TypeScript, and the 1,925-module production frontend
+build. The clean exact-commit proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T18-15-40-904Z.json`
+- Release-proof payload SHA-256: `bea3545c71641dfcd6e350020b07efef94830828d0280cfb54525bf85a4ee8c9`
+- Release-proof file SHA-256: `7c3542611cf8284c490d2c34cf753502675d54e553a74f04ac026598ee0f3ef3`
+
+This was proof hardening only. No Worker or frontend deployment, migration,
+flag change, enrollment, publish-path behavior change, or customer-data
+mutation occurred. Production and staging behavior-changing flags remain off,
+both environments retain zero Protected Autopilot workspaces, and
+`hughesq-001` remains exactly `status='on_hold'`.
