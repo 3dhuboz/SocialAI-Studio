@@ -61,7 +61,12 @@ SELECT cron_type, success, error, run_at, details_json
  WHERE id IN (
    SELECT MAX(id)
      FROM cron_runs
-    WHERE cron_type IN ('learning_pilot', 'learning_readiness', 'learning_calibration')
+    WHERE cron_type IN (
+      'health_sweep',
+      'learning_pilot',
+      'learning_readiness',
+      'learning_calibration'
+    )
     GROUP BY cron_type
  )
  ORDER BY id DESC;
@@ -184,6 +189,7 @@ export interface RolloutObservation {
     ownerSamples: number;
     clientSamples: number;
     customerEnrollments: number;
+    latestHealthSweepCron: CronObservation | null;
     latestPilotCron: CronObservation | null;
     latestReadinessCron: CronObservation | null;
     calibrationTablePresent: boolean;
@@ -461,6 +467,11 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   );
   add('staging_flags_dormant', allDeployedFlagsDormant(input.staging.flags), 'safety');
   add('production_flags_dormant', allDeployedFlagsDormant(input.production.flags), 'safety');
+  add(
+    'staging_health_sweep_fresh',
+    cronIsHealthy(input.staging.latestHealthSweepCron, now, input.maxAgeMinutes),
+    'safety',
+  );
   add(
     'staging_scheduler_fresh',
     cronIsHealthy(input.staging.latestPilotCron, now, input.maxAgeMinutes)
@@ -845,6 +856,7 @@ async function main(): Promise<void> {
       ownerSamples: numberField(stagingSamples, 'owner_samples'),
       clientSamples: numberField(stagingSamples, 'client_samples'),
       customerEnrollments: numberField(stagingEnrollments, 'customer_enrollments'),
+      latestHealthSweepCron: parseCron(stagingCrons, 'health_sweep'),
       latestPilotCron: parseCron(stagingCrons, 'learning_pilot'),
       latestReadinessCron: parseCron(stagingCrons, 'learning_readiness'),
       calibrationTablePresent: stagingCalibrationTablePresent,
@@ -876,7 +888,7 @@ async function main(): Promise<void> {
   };
   const evaluation = evaluateRolloutState(observation);
   const payload = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,

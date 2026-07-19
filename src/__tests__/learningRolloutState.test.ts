@@ -80,6 +80,12 @@ function observation(): RolloutObservation {
         runAt: '2026-07-19T09:15:17.000Z',
         details: null,
       },
+      latestHealthSweepCron: {
+        success: true,
+        error: null,
+        runAt: '2026-07-19T09:15:18.000Z',
+        details: null,
+      },
       calibrationTablePresent: true,
       alertSchemaReady: true,
       latestCalibrationCron: {
@@ -214,6 +220,27 @@ describe('learning live rollout state', () => {
 
     expect(result.result).toBe('unsafe_or_unverified');
     expect(result.failedSafetyChecks).toContain('staging_scheduler_fresh');
+  });
+
+  it.each([
+    ['missing', (input: RolloutObservation) => {
+      input.staging.latestHealthSweepCron = null;
+    }],
+    ['failed', (input: RolloutObservation) => {
+      input.staging.latestHealthSweepCron!.success = false;
+      input.staging.latestHealthSweepCron!.error = 'alert schema drift';
+    }],
+    ['stale', (input: RolloutObservation) => {
+      input.staging.latestHealthSweepCron!.runAt = '2026-07-19T08:00:00.000Z';
+    }],
+  ])('fails safe-hold verification when the health sweep receipt is %s', (_label, mutate) => {
+    const input = observation();
+    mutate(input);
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('unsafe_or_unverified');
+    expect(result.failedSafetyChecks).toContain('staging_health_sweep_fresh');
   });
 
   it('keeps a dormant rollout safe but blocks promotion when the weekly calibration is stale', () => {
