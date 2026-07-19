@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import {
@@ -10,6 +11,150 @@ import {
   type PublicationRecordDeps,
 } from '../lib/publishing/publish-orchestrator';
 import { makeRecordingD1 } from './helpers/recording-d1';
+
+interface ProductionSource {
+  path: string;
+  source: string;
+}
+
+function productionTypeScriptSources(root: string): ProductionSource[] {
+  const sources: ProductionSource[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') visit(resolve(directory, entry.name));
+        continue;
+      }
+      if (!entry.isFile() || !/\.(?:ts|tsx)$/.test(entry.name)) continue;
+      if (/\.(?:test|spec)\.(?:ts|tsx)$/.test(entry.name)) continue;
+      const path = resolve(directory, entry.name);
+      sources.push({ path, source: readFileSync(path, 'utf8') });
+    }
+  };
+  visit(root);
+  return sources;
+}
+
+function requestMethod(call: ts.CallExpression): string {
+  const init = call.arguments[1];
+  if (!init || !ts.isObjectLiteralExpression(init)) return init ? 'UNKNOWN' : 'GET';
+  if (init.properties.some((property) => ts.isSpreadAssignment(property))) {
+    return 'UNKNOWN';
+  }
+  const method = init.properties.find((property) => {
+    if (!('name' in property) || !property.name) return false;
+    return (ts.isIdentifier(property.name) && property.name.text === 'method')
+      || (ts.isStringLiteral(property.name) && property.name.text === 'method');
+  });
+  if (!method) return 'GET';
+  if (!ts.isPropertyAssignment(method) || !ts.isStringLiteralLike(method.initializer)) {
+    return 'UNKNOWN';
+  }
+  return method.initializer.text.toUpperCase();
+}
+
+function graphUrlBindings(sourceFile: ts.SourceFile): Set<string> {
+  const declarations = new Map<string, string>();
+  const collect = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.initializer
+    ) {
+      declarations.set(node.name.text, node.initializer.getText(sourceFile));
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(sourceFile);
+
+  const graphBindings = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, initializer] of declarations) {
+      if (graphBindings.has(name)) continue;
+      const directlyGraph = /graph\.facebook\.com/i.test(initializer);
+      const derivedFromGraph = [...graphBindings].some((binding) =>
+        new RegExp(`\\b${binding}\\b`).test(initializer),
+      );
+      if (directlyGraph || derivedFromGraph) {
+        graphBindings.add(name);
+        changed = true;
+      }
+    }
+  }
+  return graphBindings;
+}
+
+function providerPublicationBypasses(sources: ProductionSource[]): string[] {
+  const bypasses: string[] = [];
+  for (const item of sources) {
+    const normalizedPath = item.path.replace(/\\/g, '/');
+    const isOrchestrator = normalizedPath.endsWith(
+      '/lib/publishing/publish-orchestrator.ts',
+    );
+    const sourceFile = ts.createSourceFile(
+      item.path,
+      item.source,
+      ts.ScriptTarget.Latest,
+      true,
+      item.path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    for (const statement of sourceFile.statements) {
+      if (!ts.isImportDeclaration(statement) || isOrchestrator) continue;
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      if (!/(?:^|\/)postproxy$/.test(statement.moduleSpecifier.text)) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        bypasses.push(`${normalizedPath}: namespace Postproxy import`);
+      }
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if ((element.propertyName?.text ?? element.name.text) === 'createPost') {
+            bypasses.push(`${normalizedPath}: direct Postproxy createPost import`);
+          }
+        }
+      }
+    }
+
+    const graphBindings = graphUrlBindings(sourceFile);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const expression = node.expression;
+        const rawFetch = (ts.isIdentifier(expression) && expression.text === 'fetch')
+          || (ts.isPropertyAccessExpression(expression)
+            && expression.name.text === 'fetch'
+            && expression.expression.getText(sourceFile) === 'globalThis');
+        const urlText = node.arguments[0]?.getText(sourceFile) ?? '';
+        const graphTarget = /graph\.facebook\.com/i.test(urlText)
+          || [...graphBindings].some((binding) =>
+            new RegExp(`\\b${binding}\\b`).test(urlText),
+          );
+        const method = requestMethod(node);
+        if (
+          rawFetch
+          && graphTarget
+          && (method === 'POST' || method === 'UNKNOWN')
+          && !isOrchestrator
+        ) {
+          const callText = node.getText(sourceFile);
+          const diagnosticReelStart = normalizedPath.endsWith('/routes/facebook.ts')
+            && /\/video_reels\b/.test(callText)
+            && /upload_phase\s*:\s*['"]start['"]/.test(callText)
+            && !/video_state\s*=\s*PUBLISHED|upload_phase\s*:\s*['"](?:finish|transfer)['"]/.test(callText);
+          if (!diagnosticReelStart) {
+            const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+            bypasses.push(`${normalizedPath}:${position.line + 1}: raw Facebook POST`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return bypasses;
+}
 
 const fixturePost: PersistedPublishPost = {
   id: 'p1',
@@ -638,6 +783,38 @@ describe('publish egress source contracts', () => {
     expect(migration).toContain('REFERENCES posts(id) ON DELETE CASCADE');
     expect(migration).toContain('prevent_publish_delivery_receipt_update');
     expect(migration).not.toMatch(/ALTER TABLE posts|UPDATE posts|INSERT INTO posts/);
+  });
+
+  it('detects new direct Facebook and Postproxy publication primitives', () => {
+    const bypasses = providerPublicationBypasses([
+      {
+        path: 'src/new-facebook-publisher.ts',
+        source: `const graph = 'https://graph.facebook.com/v21.0';
+          fetch(\`${'${graph}'}/page/feed\`, { method: 'POST' });`,
+      },
+      {
+        path: 'src/new-postproxy-publisher.ts',
+        source: `import { createPost as sendPost } from '../lib/postproxy';
+          void sendPost;`,
+      },
+      {
+        path: 'src/indirect-facebook-publisher.ts',
+        source: `const graph = 'https://graph.facebook.com/v21.0/page/feed';
+          const options = { method: 'POST' };
+          fetch(graph, options);`,
+      },
+    ]);
+
+    expect(bypasses).toEqual([
+      'src/new-facebook-publisher.ts:2: raw Facebook POST',
+      'src/new-postproxy-publisher.ts: direct Postproxy createPost import',
+      'src/indirect-facebook-publisher.ts:3: raw Facebook POST',
+    ]);
+  });
+
+  it('rejects provider publication calls outside the centralized orchestrator', () => {
+    expect(providerPublicationBypasses(productionTypeScriptSources(workerRoot)))
+      .toEqual([]);
   });
 
   it('routes manual Postproxy publishing through the orchestrator', () => {

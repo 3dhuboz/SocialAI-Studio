@@ -83,6 +83,7 @@ describe('buildReleaseProofArtifact', () => {
         'egress_delayed_reel_finish',
         'egress_frontend_worker_only',
         'egress_direct_helpers_removed',
+        'egress_global_chokepoint',
         'reach_platform_treatments',
         'reach_single_variable_experiment',
         'reach_shadow_non_mutating',

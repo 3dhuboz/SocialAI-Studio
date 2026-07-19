@@ -321,6 +321,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'publish egress source contracts removes every frontend direct-publish helper and banned Facebook scheduling path',
   },
   {
+    id: 'egress_global_chokepoint',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publish egress source contracts rejects provider publication calls outside the centralized orchestrator',
+  },
+  {
     id: 'reach_platform_treatments',
     suite: 'src/__tests__/reach-plan.test.ts',
     assertion: 'reach plan determinism creates Facebook and Instagram treatments separately',
