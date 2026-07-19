@@ -3,10 +3,12 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PRODUCTION_ROLLOUT_SQL,
+  STAGING_CALIBRATION_ROLLOUT_SQL,
   STAGING_ROLLOUT_SQL,
   assertReadOnlySql,
   buildWranglerInvocation,
   evaluateRolloutState,
+  parseCron,
   validateReadOnlyD1Results,
   type RolloutObservation,
 } from '../../scripts/learning-rollout-state';
@@ -70,12 +72,35 @@ function observation(): RolloutObservation {
         success: true,
         error: null,
         runAt: '2026-07-19T09:15:16.000Z',
+        details: null,
       },
       latestReadinessCron: {
         success: true,
         error: null,
         runAt: '2026-07-19T09:15:17.000Z',
+        details: null,
       },
+      calibrationTablePresent: true,
+      latestCalibrationCron: {
+        success: true,
+        error: null,
+        runAt: '2026-07-13T21:00:00.000Z',
+        details: {
+          posts_processed: 1,
+          candidates_considered: 1,
+          completed: 1,
+          unavailable: 0,
+          claimed_elsewhere: 0,
+          budget_skipped: 0,
+          severe_false_passes: 0,
+          workspaces_disabled: 0,
+          errors: 0,
+        },
+      },
+      calibrationRows: 1,
+      verifiedCalibrations: 1,
+      unavailableCalibrations: 0,
+      severeCalibrationFalsePasses: 0,
       readiness: greenReadiness(),
     },
     production: {
@@ -90,6 +115,7 @@ function observation(): RolloutObservation {
       protectedWorkspaces: 0,
       hugheseysQueStatus: 'on_hold',
       pilotSampleTablePresent: true,
+      calibrationTablePresent: true,
       readiness: greenReadiness(),
     },
   };
@@ -113,12 +139,16 @@ describe('learning live rollout state', () => {
     input.staging.ownerSamples = 0;
     input.staging.clientSamples = 0;
     input.staging.customerEnrollments = 0;
+    input.staging.latestCalibrationCron = null;
+    input.staging.calibrationRows = 0;
+    input.staging.verifiedCalibrations = 0;
     input.staging.readiness = {
       ...greenReadiness(),
       ready: false,
       checks: { pilot: false },
     };
     input.production.pilotSampleTablePresent = false;
+    input.production.calibrationTablePresent = false;
     input.production.readiness = null;
 
     const result = evaluateRolloutState(input);
@@ -132,6 +162,9 @@ describe('learning live rollout state', () => {
       'positive_pilot_samples',
       'customer_pilot_consent',
       'production_positive_sample_schema',
+      'staging_calibration_cron_fresh',
+      'staging_calibration_evidence',
+      'production_calibration_schema',
     ]));
   });
 
@@ -150,6 +183,9 @@ describe('learning live rollout state', () => {
     }],
     ['the offline proof does not match HEAD', (input: RolloutObservation) => {
       input.offlineProof.proofCommit = 'b'.repeat(40);
+    }],
+    ['the staging calibration schema is missing', (input: RolloutObservation) => {
+      input.staging.calibrationTablePresent = false;
     }],
   ])('returns unsafe_or_unverified when %s', (_label, mutate) => {
     const input = observation();
@@ -170,6 +206,82 @@ describe('learning live rollout state', () => {
 
     expect(result.result).toBe('unsafe_or_unverified');
     expect(result.failedSafetyChecks).toContain('staging_scheduler_fresh');
+  });
+
+  it('keeps a dormant rollout safe but blocks promotion when the weekly calibration is stale', () => {
+    const input = observation();
+    input.staging.latestCalibrationCron!.runAt = '2026-07-10T20:59:59.000Z';
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('safe_hold');
+    expect(result.failedSafetyChecks).toEqual([]);
+    expect(result.blockers).toContain('staging_calibration_cron_fresh');
+  });
+
+  it.each([
+    ['missing privacy-safe details', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.details = null;
+    }],
+    ['an unavailable independent recheck', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.details!.unavailable = 1;
+      input.staging.unavailableCalibrations = 1;
+      input.staging.calibrationRows = 2;
+    }],
+    ['a severe false pass', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.details!.severe_false_passes = 1;
+      input.staging.severeCalibrationFalsePasses = 1;
+    }],
+    ['a calibration execution error', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.details!.errors = 1;
+    }],
+  ])('blocks promotion without breaking the dormant hold for %s', (_label, mutate) => {
+    const input = observation();
+    mutate(input);
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('safe_hold');
+    expect(result.failedSafetyChecks).toEqual([]);
+    expect(result.blockers).toContain('staging_calibration_cron_fresh');
+  });
+
+  it('requires completed verified calibration rows even after a clean weekly no-op', () => {
+    const input = observation();
+    input.staging.latestCalibrationCron!.details!.posts_processed = 0;
+    input.staging.latestCalibrationCron!.details!.candidates_considered = 0;
+    input.staging.latestCalibrationCron!.details!.completed = 0;
+    input.staging.calibrationRows = 0;
+    input.staging.verifiedCalibrations = 0;
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('safe_hold');
+    expect(result.blockers).not.toContain('staging_calibration_cron_fresh');
+    expect(result.blockers).toContain('staging_calibration_evidence');
+  });
+
+  it('parses only object-shaped privacy-safe cron details', () => {
+    const valid = parseCron([{
+      cron_type: 'learning_calibration',
+      success: 1,
+      error: null,
+      run_at: '2026-07-13 21:00:00',
+      details_json: '{"errors":0}',
+    }], 'learning_calibration');
+    const malformed = parseCron([{
+      cron_type: 'learning_calibration',
+      success: 1,
+      error: null,
+      run_at: '2026-07-13 21:00:00',
+      details_json: '[0]',
+    }], 'learning_calibration');
+
+    expect(valid).toMatchObject({
+      runAt: '2026-07-13T21:00:00Z',
+      details: { errors: 0 },
+    });
+    expect(malformed?.details).toBeNull();
   });
 
   it('rejects every mutating SQL statement before Wrangler can execute it', () => {
@@ -199,6 +311,7 @@ describe('learning live rollout state', () => {
 
   it('keeps all built-in remote D1 statements read-only', () => {
     expect(() => assertReadOnlySql(STAGING_ROLLOUT_SQL)).not.toThrow();
+    expect(() => assertReadOnlySql(STAGING_CALIBRATION_ROLLOUT_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(PRODUCTION_ROLLOUT_SQL)).not.toThrow();
   });
 

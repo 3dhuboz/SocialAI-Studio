@@ -19,6 +19,19 @@ const POLICY_VERSION = '2026-07-14-v1';
 const STAGING_DATABASE_ID = '0ce38359-c7d6-4d6e-b278-7ca1a719dbb4';
 const PRODUCTION_DATABASE_ID = '6295841e-e5f7-4355-b0e0-c5f22e58d99d';
 const DEFAULT_MAX_AGE_MINUTES = 20;
+const WEEKLY_CALIBRATION_MAX_AGE_MINUTES = 8 * 24 * 60;
+
+const CALIBRATION_DETAIL_KEYS = [
+  'posts_processed',
+  'candidates_considered',
+  'completed',
+  'unavailable',
+  'claimed_elsewhere',
+  'budget_skipped',
+  'severe_false_passes',
+  'workspaces_disabled',
+  'errors',
+] as const;
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -43,11 +56,15 @@ SELECT COUNT(*) AS pilot_samples,
 SELECT COUNT(*) AS protected_workspaces
   FROM workspace_learning_settings
  WHERE mode = 'protected_autopilot';
-SELECT cron_type, success, error, run_at
+SELECT cron_type, success, error, run_at, details_json
   FROM cron_runs
- WHERE cron_type IN ('learning_pilot', 'learning_readiness')
- ORDER BY id DESC
- LIMIT 4;
+ WHERE id IN (
+   SELECT MAX(id)
+     FROM cron_runs
+    WHERE cron_type IN ('learning_pilot', 'learning_readiness', 'learning_calibration')
+    GROUP BY cron_type
+ )
+ ORDER BY id DESC;
 SELECT policy_version, ready, checks_json, evaluated_at
   FROM learning_release_readiness
  WHERE policy_version = '${POLICY_VERSION}'
@@ -59,6 +76,30 @@ SELECT COUNT(*) AS customer_enrollments
    AND owner_kind = 'client'
    AND consent_basis = 'customer_attested'
    AND record_only = 1;
+SELECT COUNT(*) AS calibration_tables
+  FROM sqlite_master
+ WHERE type = 'table'
+   AND name = 'learning_calibration_audits';
+`;
+
+export const STAGING_CALIBRATION_ROLLOUT_SQL = `
+SELECT COUNT(*) AS calibration_rows,
+       COALESCE(SUM(CASE
+         WHEN audit_status = 'completed' AND source_status = 'verified' THEN 1 ELSE 0
+       END), 0) AS verified_calibrations,
+       COALESCE(SUM(CASE
+         WHEN audit_status = 'unavailable' THEN 1 ELSE 0
+       END), 0) AS unavailable_calibrations,
+       COALESCE(SUM(CASE
+         WHEN audit_status = 'completed'
+          AND source_status = 'verified'
+          AND original_state = 'pass_green'
+          AND expected_state = 'block_red'
+          AND severity = 'release_critical'
+         THEN 1 ELSE 0
+       END), 0) AS severe_false_passes
+  FROM learning_calibration_audits
+ WHERE policy_version = '${POLICY_VERSION}';
 `;
 
 export const PRODUCTION_ROLLOUT_SQL = `
@@ -68,10 +109,13 @@ SELECT id, status
 SELECT COUNT(*) AS protected_workspaces
   FROM workspace_learning_settings
  WHERE mode = 'protected_autopilot';
-SELECT COUNT(*) AS pilot_sample_tables
+SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END), 0)
+         AS pilot_sample_tables,
+       COALESCE(SUM(CASE WHEN name = 'learning_calibration_audits' THEN 1 ELSE 0 END), 0)
+         AS calibration_tables
   FROM sqlite_master
  WHERE type = 'table'
-   AND name = 'learning_pilot_samples';
+   AND name IN ('learning_pilot_samples', 'learning_calibration_audits');
 SELECT policy_version, ready, checks_json, evaluated_at
   FROM learning_release_readiness
  WHERE policy_version = '${POLICY_VERSION}'
@@ -83,6 +127,7 @@ export interface CronObservation {
   success: boolean;
   error: string | null;
   runAt: string;
+  details: Record<string, unknown> | null;
 }
 
 export interface ReadinessObservation {
@@ -120,11 +165,18 @@ export interface RolloutObservation {
     customerEnrollments: number;
     latestPilotCron: CronObservation | null;
     latestReadinessCron: CronObservation | null;
+    calibrationTablePresent: boolean;
+    latestCalibrationCron: CronObservation | null;
+    calibrationRows: number;
+    verifiedCalibrations: number;
+    unavailableCalibrations: number;
+    severeCalibrationFalsePasses: number;
     readiness: ReadinessObservation | null;
   };
   production: EnvironmentObservation & {
     hugheseysQueStatus: string | null;
     pilotSampleTablePresent: boolean;
+    calibrationTablePresent: boolean;
     readiness: ReadinessObservation | null;
   };
 }
@@ -330,6 +382,26 @@ function cronIsHealthy(
     && isFresh(cron.runAt, now, maxAgeMinutes);
 }
 
+function calibrationCronIsHealthy(
+  cron: CronObservation | null,
+  now: Date,
+): boolean {
+  const details = cron?.details;
+  if (!cronIsHealthy(cron, now, WEEKLY_CALIBRATION_MAX_AGE_MINUTES) || !details) {
+    return false;
+  }
+  if (!CALIBRATION_DETAIL_KEYS.every((key) => {
+    const value = details[key];
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  })) {
+    return false;
+  }
+  return details.errors === 0
+    && details.unavailable === 0
+    && details.severe_false_passes === 0
+    && details.workspaces_disabled === 0;
+}
+
 export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluation {
   const now = new Date(input.generatedAt);
   if (!Number.isFinite(now.getTime()) || input.maxAgeMinutes <= 0) {
@@ -372,6 +444,7 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
       && cronIsHealthy(input.staging.latestReadinessCron, now, input.maxAgeMinutes),
     'safety',
   );
+  add('staging_calibration_schema', input.staging.calibrationTablePresent, 'safety');
   add(
     'zero_protected_workspaces',
     input.staging.protectedWorkspaces === 0 && input.production.protectedWorkspaces === 0,
@@ -410,8 +483,27 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   );
   add('customer_pilot_consent', input.staging.customerEnrollments >= 1, 'promotion');
   add(
+    'staging_calibration_cron_fresh',
+    calibrationCronIsHealthy(input.staging.latestCalibrationCron, now),
+    'promotion',
+  );
+  add(
+    'staging_calibration_evidence',
+    input.staging.calibrationRows >= 1
+      && input.staging.verifiedCalibrations >= 1
+      && input.staging.calibrationRows === input.staging.verifiedCalibrations
+      && input.staging.unavailableCalibrations === 0
+      && input.staging.severeCalibrationFalsePasses === 0,
+    'promotion',
+  );
+  add(
     'production_positive_sample_schema',
     input.production.pilotSampleTablePresent,
+    'promotion',
+  );
+  add(
+    'production_calibration_schema',
+    input.production.calibrationTablePresent,
     'promotion',
   );
 
@@ -492,7 +584,22 @@ function parseReadiness(row: Record<string, unknown> | null): ReadinessObservati
   }
 }
 
-function parseCron(rows: Array<Record<string, unknown>>, type: string): CronObservation | null {
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseCron(
+  rows: Array<Record<string, unknown>>,
+  type: string,
+): CronObservation | null {
   const row = rows.find((item) => item.cron_type === type);
   if (!row) return null;
   const runAt = stringField(row, 'run_at');
@@ -501,6 +608,7 @@ function parseCron(rows: Array<Record<string, unknown>>, type: string): CronObse
     success: Number(row.success) === 1,
     error: typeof row.error === 'string' ? row.error : null,
     runAt: /(?:Z|[+-]\d{2}:\d{2})$/.test(runAt) ? runAt : `${runAt.replace(' ', 'T')}Z`,
+    details: parseJsonObject(row.details_json),
   };
 }
 
@@ -672,6 +780,16 @@ async function main(): Promise<void> {
   const stagingCrons = stagingD1.rows[2]?.results ?? [];
   const stagingReadiness = firstRow(stagingD1.rows[3]);
   const stagingEnrollments = firstRow(stagingD1.rows[4]);
+  const stagingSchema = firstRow(stagingD1.rows[5]);
+  const stagingCalibrationTablePresent = numberField(stagingSchema, 'calibration_tables') === 1;
+  const stagingCalibrationD1 = stagingCalibrationTablePresent
+    ? executeReadOnlyD1(
+      'socialai-db-staging',
+      STAGING_CALIBRATION_ROLLOUT_SQL,
+      'staging',
+    )
+    : { rows: [] as D1StatementResult[], readOnly: true };
+  const stagingCalibration = firstRow(stagingCalibrationD1.rows[0]);
   const productionHughes = firstRow(productionD1.rows[0]);
   const productionProtected = firstRow(productionD1.rows[1]);
   const productionSchema = firstRow(productionD1.rows[2]);
@@ -694,7 +812,7 @@ async function main(): Promise<void> {
       databaseBindingId: stagingVersion.databaseBindingId,
       expectedDatabaseBindingId: STAGING_DATABASE_ID,
       flags: stagingVersion.flags,
-      d1ReadOnly: stagingD1.readOnly,
+      d1ReadOnly: stagingD1.readOnly && stagingCalibrationD1.readOnly,
       protectedWorkspaces: numberField(stagingProtected, 'protected_workspaces'),
       pilotSamples: numberField(stagingSamples, 'pilot_samples'),
       ownerSamples: numberField(stagingSamples, 'owner_samples'),
@@ -702,6 +820,12 @@ async function main(): Promise<void> {
       customerEnrollments: numberField(stagingEnrollments, 'customer_enrollments'),
       latestPilotCron: parseCron(stagingCrons, 'learning_pilot'),
       latestReadinessCron: parseCron(stagingCrons, 'learning_readiness'),
+      calibrationTablePresent: stagingCalibrationTablePresent,
+      latestCalibrationCron: parseCron(stagingCrons, 'learning_calibration'),
+      calibrationRows: numberField(stagingCalibration, 'calibration_rows'),
+      verifiedCalibrations: numberField(stagingCalibration, 'verified_calibrations'),
+      unavailableCalibrations: numberField(stagingCalibration, 'unavailable_calibrations'),
+      severeCalibrationFalsePasses: numberField(stagingCalibration, 'severe_false_passes'),
       readiness: parseReadiness(stagingReadiness),
     },
     production: {
@@ -716,12 +840,13 @@ async function main(): Promise<void> {
       protectedWorkspaces: numberField(productionProtected, 'protected_workspaces'),
       hugheseysQueStatus: stringField(productionHughes, 'status'),
       pilotSampleTablePresent: numberField(productionSchema, 'pilot_sample_tables') === 1,
+      calibrationTablePresent: numberField(productionSchema, 'calibration_tables') === 1,
       readiness: parseReadiness(productionReadiness),
     },
   };
   const evaluation = evaluateRolloutState(observation);
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,
