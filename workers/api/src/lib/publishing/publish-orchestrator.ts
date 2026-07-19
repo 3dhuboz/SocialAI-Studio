@@ -83,6 +83,10 @@ export type PublishOrchestratorResult =
 
 export interface PublishOrchestratorDeps {
   validateWorkspace(env: Env, post: PersistedPublishPost): Promise<void>;
+  evaluatePermanentBlock(
+    env: Env,
+    post: PersistedPublishPost,
+  ): Promise<PreflightDecision | null>;
   evaluatePreflight(
     env: Env,
     post: PublishablePost,
@@ -247,6 +251,67 @@ async function validateWorkspace(
     'SELECT id FROM users WHERE id = ?',
   ).bind(identity.userId).first<{ id: string }>();
   if (!user) throw new Error('workspace inactive: user not found');
+}
+
+export async function evaluatePermanentPublishBlock(
+  env: Env,
+  post: PersistedPublishPost,
+): Promise<PreflightDecision | null> {
+  if (/\[staging qa fixture - never publish\]/i.test(post.content)) {
+    return {
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    };
+  }
+
+  const isStaging = env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+  if (!isStaging && env.LEARNING_RELEASE_ENFORCEMENT !== 'true') return null;
+
+  const identity = normalizeWorkspaceIdentity(
+    post.user_id,
+    post.client_id,
+    post.owner_kind,
+    post.owner_id,
+  );
+  const row = await env.DB.prepare(`
+    SELECT d.id AS decision_id
+      FROM learning_decisions d
+      INNER JOIN learning_decision_disqualifications disq
+        ON disq.decision_id = d.id
+       AND disq.user_id = d.user_id
+       AND disq.workspace_key = d.workspace_key
+       AND disq.client_id IS d.client_id
+       AND disq.owner_kind = d.owner_kind
+       AND disq.owner_id = d.owner_id
+     WHERE d.user_id = ?
+       AND d.workspace_key = ?
+       AND d.client_id IS ?
+       AND d.owner_kind = ?
+       AND d.owner_id = ?
+       AND d.post_id = ?
+       AND disq.reason = 'synthetic_qa'
+     ORDER BY d.created_at DESC
+     LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    post.id,
+  ).first<{ decision_id: string }>();
+
+  if (!row) return null;
+  return {
+    mode: 'approval',
+    state: 'block_red',
+    mayPublish: false,
+    mustHold: true,
+    decisionId: row.decision_id,
+  };
 }
 
 async function persistHold(
@@ -458,6 +523,7 @@ async function beginDeliveryShadowAttempt(
 
 const defaultDeps: PublishOrchestratorDeps = {
   validateWorkspace,
+  evaluatePermanentBlock: evaluatePermanentPublishBlock,
   evaluatePreflight: evaluateReleasePreflight,
   persistHold,
   createPost,
@@ -478,6 +544,11 @@ export async function publishPersistedPost(
 ): Promise<PublishOrchestratorResult> {
   const deps = { ...defaultDeps, ...injectedDeps };
   await deps.validateWorkspace(env, post);
+  const permanentBlock = await deps.evaluatePermanentBlock(env, post);
+  if (permanentBlock) {
+    await deps.persistHold(env, post, permanentBlock);
+    throw new Error(`post ${post.id} is permanently disqualified from publication`);
+  }
   const preflight = await deps.evaluatePreflight(env, post);
   if (!preflight.mayPublish) {
     await deps.persistHold(env, post, preflight);

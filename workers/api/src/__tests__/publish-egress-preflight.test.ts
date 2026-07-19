@@ -4,6 +4,7 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import {
+  evaluatePermanentPublishBlock,
   publishPersistedPost,
   recordPublishedPostBestEffort,
   type PersistedPublishPost,
@@ -200,6 +201,7 @@ const graphReelFinishTarget = {
 function safeDeps(calls: { critic: number; postproxy: number; graph: number }): Partial<PublishOrchestratorDeps> {
   return {
     validateWorkspace: async () => undefined,
+    evaluatePermanentBlock: async () => null,
     evaluatePreflight: async () => {
       calls.critic += 1;
       return {
@@ -221,7 +223,109 @@ function safeDeps(calls: { critic: number; postproxy: number; graph: number }): 
   };
 }
 
+describe('evaluatePermanentPublishBlock', () => {
+  it('detects the never-publish marker without a database read', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('database must not be read for an explicit QA marker');
+    });
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: { prepare } as unknown as D1Database } as Env,
+      {
+        ...fixturePost,
+        content: '[STAGING QA FIXTURE - NEVER PUBLISH] Guaranteed revenue.',
+      },
+    );
+
+    expect(result).toEqual({
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('uses tenant-scoped staging disqualification receipts', async () => {
+    const { db, calls } = makeRecordingD1({
+      'INNER JOIN learning_decision_disqualifications disq': [
+        { decision_id: 'decision-qa-1' },
+      ],
+    });
+    const post: PersistedPublishPost = {
+      ...fixturePost,
+      id: 'client-post-1',
+      user_id: 'owner-1',
+      client_id: 'client-1',
+      owner_kind: 'client',
+      owner_id: 'client-1',
+    };
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      post,
+    );
+
+    expect(result).toMatchObject({
+      state: 'block_red',
+      mayPublish: false,
+      decisionId: 'decision-qa-1',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('INNER JOIN learning_decision_disqualifications disq');
+    expect(calls[0].sql).toContain("disq.reason = 'synthetic_qa'");
+    expect(calls[0].binds).toEqual([
+      'owner-1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'client-post-1',
+    ]);
+  });
+
+  it('skips the staging-only table in current production', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('production schema v42 must not query the staging-only table');
+    });
+
+    const result = await evaluatePermanentPublishBlock(
+      {
+        DB: { prepare } as unknown as D1Database,
+        ENVIRONMENT: 'production',
+        LEARNING_RELEASE_ENFORCEMENT: 'false',
+      } as Env,
+      fixturePost,
+    );
+
+    expect(result).toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+});
+
 describe('publishPersistedPost', () => {
+  it('permanently blocks synthetic QA before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      {
+        ...fixturePost,
+        content: '[STAGING QA FIXTURE - NEVER PUBLISH] Never send this.',
+      },
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
   it('does not rebind Cloudflare global fetch when using the default Graph transport', async () => {
     const calls = { critic: 0, postproxy: 0, graph: 0 };
     const deps = safeDeps(calls);

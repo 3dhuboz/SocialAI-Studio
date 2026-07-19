@@ -316,6 +316,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'publishPersistedPost makes zero Postproxy or Graph calls when preflight holds',
   },
   {
+    id: 'egress_synthetic_qa_permanent_block',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publishPersistedPost permanently blocks synthetic QA before critics or provider egress',
+  },
+  {
     id: 'publish_pass_preserved',
     suite: 'src/__tests__/publish-egress-preflight.test.ts',
     assertion: 'publishPersistedPost preserves Postproxy and Graph delivery when preflight allows it',
