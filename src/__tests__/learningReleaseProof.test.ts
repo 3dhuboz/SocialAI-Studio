@@ -89,6 +89,8 @@ describe('buildReleaseProofArtifact', () => {
         'calibration_repair_false_pass',
         'calibration_tenant_failure_isolation',
         'calibration_outage_not_label',
+        'alert_schema_health_sentinel',
+        'health_sweep_failure_receipt',
         'calibration_weekly_order',
         'calibration_fresh_non_mutating',
         'calibration_error_privacy',

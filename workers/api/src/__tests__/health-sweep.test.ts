@@ -33,6 +33,9 @@ function makeEnv(rowByPattern: Record<string, CannedRow>): Env {
         if (!sql.includes(pattern)) continue;
         return typeof value === 'number' ? { n: value } : value;
       }
+      if (sql.includes('FROM sqlite_master')) {
+        return { alert_tables: 1, alert_indexes: 2 };
+      }
       return { n: 0 };
     };
     return {
@@ -166,6 +169,30 @@ describe('checkLearningCalibrationFreshness', () => {
   );
 });
 
+describe('checkAlertPersistenceSchema', () => {
+  it('accepts the alert table only when both operational indexes exist', async () => {
+    const env = makeEnv({});
+
+    const result = await __test.checkAlertPersistenceSchema(env);
+
+    expect(result).toMatchObject({
+      key: 'alert_persistence_schema',
+      fired: false,
+      detail: 'table=1 indexes=2',
+    });
+  });
+
+  it.each([
+    [{ alert_tables: 0, alert_indexes: 0 }, 'table=0 indexes=0'],
+    [{ alert_tables: 1, alert_indexes: 1 }, 'table=1 indexes=1'],
+  ])('fails closed for incomplete alert persistence %#', async (schema, detail) => {
+    const env = makeEnv({ 'FROM sqlite_master': schema });
+
+    await expect(__test.checkAlertPersistenceSchema(env))
+      .rejects.toThrow(`Alert persistence schema is incomplete (${detail})`);
+  });
+});
+
 // ── Sweep orchestration ─────────────────────────────────────────────────
 
 describe('cronHealthSweep', () => {
@@ -175,7 +202,7 @@ describe('cronHealthSweep', () => {
       "status = 'Publishing'": 2,
     });
     const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(3);
+    expect(result.checks).toHaveLength(4);
     expect(result.posts_processed).toBe(2);
     expect(alertCalls.map((a) => a.key).sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
@@ -183,12 +210,13 @@ describe('cronHealthSweep', () => {
   it('quiet day: zero alerts fired, both resolve', async () => {
     const env = makeEnv({});
     const result = await cronHealthSweep(env);
+    expect(result.checks).toHaveLength(4);
     expect(result.posts_processed).toBe(0);
     expect(alertCalls).toHaveLength(0);
     expect(resolveCalls.sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
 
-  it('a single check throwing does not block the others', async () => {
+  it('continues remaining checks then fails the cron receipt when one check throws', async () => {
     // First check throws; second still runs. We simulate this by making
     // the burst query throw via a bad prepare implementation, but still
     // return a clean zombie count.
@@ -196,6 +224,9 @@ describe('cronHealthSweep', () => {
     const prepare = vi.fn().mockImplementation((sql: string) => ({
       bind: () => ({
         first: async () => {
+          if (sql.includes('FROM sqlite_master')) {
+            return { alert_tables: 1, alert_indexes: 2 };
+          }
           if (sql.includes("status = 'Missed'") && !firstCallSeen) {
             firstCallSeen = true;
             throw new Error('simulated D1 failure');
@@ -205,6 +236,9 @@ describe('cronHealthSweep', () => {
         },
       }),
       first: async () => {
+        if (sql.includes('FROM sqlite_master')) {
+          return { alert_tables: 1, alert_indexes: 2 };
+        }
         if (sql.includes("status = 'Missed'") && !firstCallSeen) {
           firstCallSeen = true;
           throw new Error('simulated D1 failure');
@@ -214,8 +248,9 @@ describe('cronHealthSweep', () => {
       },
     }));
     const env = { DB: { prepare } } as unknown as Env;
-    const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(3);
+    await expect(cronHealthSweep(env)).rejects.toThrow(
+      'Health sweep completed with 1 failed check: checkPublishFailureBurst',
+    );
     // The throwing check produces a `health_sweep_check_failed:...` alert,
     // and the other check still ran and resolved.
     expect(alertCalls.find((a) => a.key.startsWith('health_sweep_check_failed:'))).toBeDefined();

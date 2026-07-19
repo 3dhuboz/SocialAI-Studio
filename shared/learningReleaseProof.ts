@@ -361,6 +361,16 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'checkLearningCalibrationFreshness fails closed for invalid or future receipt timestamp not-a-timestamp',
   },
   {
+    id: 'alert_schema_health_sentinel',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'checkAlertPersistenceSchema accepts the alert table only when both operational indexes exist',
+  },
+  {
+    id: 'health_sweep_failure_receipt',
+    suite: 'src/__tests__/health-sweep.test.ts',
+    assertion: 'cronHealthSweep continues remaining checks then fails the cron receipt when one check throws',
+  },
+  {
     id: 'calibration_weekly_order',
     suite: 'src/__tests__/learning-calibration-audit.test.ts',
     assertion: 'weekly learning calibration audit wires calibration before learning and weekly customer review',

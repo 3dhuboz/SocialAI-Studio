@@ -8,8 +8,9 @@
 //   - publish_failure_burst : N posts marked Missed in the last 30 min
 //   - publish_zombie        : posts stuck in status='Publishing' for >30 min
 //   - learning_calibration_receipt_stale : established weekly receipt stopped arriving
+//   - alert_persistence_schema : the incident ledger and both indexes exist
 //
-// Three checks for v1 — deliberately small. Each is dark-launched by default
+// Four checks for v1 - deliberately small. Each incident is dark-launched by default
 // per the cron_alerts schema, so the first week is calibration-only (rows
 // get written, no emails go out). Steve flips the per-key dark_launch flag
 // after the noise level is known.
@@ -47,12 +48,13 @@ interface CheckResult {
   detail?: string;
 }
 
-/** Run all sweep checks. Each check is wrapped so one failing check
- *  doesn't take down the whole sweep — the dispatcher's `trackCron`
- *  also catches, but we want partial results in the happy-ish case. */
+/** Run every sweep check even when one fails, then throw one aggregate error
+ *  so the dispatcher's `trackCron` records a failed natural receipt. */
 export async function cronHealthSweep(env: Env): Promise<{ posts_processed: number; checks: CheckResult[] }> {
   const checks: CheckResult[] = [];
+  const failedChecks: string[] = [];
   for (const check of [
+    checkAlertPersistenceSchema,
     checkPublishFailureBurst,
     checkPublishZombie,
     checkLearningCalibrationFreshness,
@@ -66,10 +68,45 @@ export async function cronHealthSweep(env: Env): Promise<{ posts_processed: numb
       console.error(`[health-sweep] check ${check.name} threw:`, e?.message);
       await fireAlert(env, `health_sweep_check_failed:${check.name}`, 'warn', e?.message || String(e));
       checks.push({ key: check.name, fired: false, detail: `check threw: ${e?.message}` });
+      failedChecks.push(check.name);
     }
+  }
+  if (failedChecks.length > 0) {
+    const label = failedChecks.length === 1 ? 'check' : 'checks';
+    throw new Error(
+      `Health sweep completed with ${failedChecks.length} failed ${label}: ${failedChecks.join(', ')}`,
+    );
   }
   const fired = checks.filter((c) => c.fired).length;
   return { posts_processed: fired, checks };
+}
+
+// Alert delivery stays best-effort so an alert-ledger or Resend outage cannot
+// interrupt customer publishing. This health-lane sentinel independently
+// makes missing persistence infrastructure visible in the cron receipt.
+async function checkAlertPersistenceSchema(env: Env): Promise<CheckResult> {
+  const key = 'alert_persistence_schema';
+  const row = await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE
+              WHEN type = 'table' AND name = 'cron_alerts' THEN 1 ELSE 0
+            END), 0) AS alert_tables,
+            COALESCE(SUM(CASE
+              WHEN type = 'index'
+               AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
+              THEN 1 ELSE 0
+            END), 0) AS alert_indexes
+       FROM sqlite_master
+      WHERE (type = 'table' AND name = 'cron_alerts')
+         OR (type = 'index'
+             AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'))`,
+  ).first<{ alert_tables: number; alert_indexes: number }>();
+  const tables = Number(row?.alert_tables ?? 0);
+  const indexes = Number(row?.alert_indexes ?? 0);
+  const detail = `table=${tables} indexes=${indexes}`;
+  if (tables !== 1 || indexes !== 2) {
+    throw new Error(`Alert persistence schema is incomplete (${detail})`);
+  }
+  return { key, fired: false, detail };
 }
 
 // ── Check: publish_failure_burst ────────────────────────────────────────
@@ -179,6 +216,7 @@ async function checkLearningCalibrationFreshness(
 // Exported for unit tests to reach into without re-running the whole sweep.
 export const __test = {
   THRESHOLDS,
+  checkAlertPersistenceSchema,
   checkPublishFailureBurst,
   checkPublishZombie,
   checkLearningCalibrationFreshness,
