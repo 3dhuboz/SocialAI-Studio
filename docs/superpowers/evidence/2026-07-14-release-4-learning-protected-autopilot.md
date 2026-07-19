@@ -3548,3 +3548,115 @@ change occurred in this checkpoint. Staging remains on Worker
 `17cca808-bf93-49b6-9fc9-4b270b236a92`, production remains on Worker
 `3b963ed1-c9e1-42d6-9bff-68da2efa9215`, and `hughesq-001` remains exactly
 `status='on_hold'`.
+
+### Gladstone Customer Consent and Isolated Record-Only Copy
+
+The customer supplied explicit bounded consent for SocialAI Studio to copy
+Gladstone BBQ Festival's non-secret business profile and up to four
+unpublished drafts into isolated staging for record-only safety evaluation.
+The statement expressly forbids scheduling and publishing and preserves the
+right to withdraw consent. The source receipt is:
+
+- `docs/superpowers/evidence/consents/2026-07-20-gladstone-bbq-festival-record-only-staging.json`
+- receipt ID `consent-gladstonebbq-001-20260720-record-only`
+- consent payload SHA-256 `0882b9e1ab936e269a0cda476eff5dfb445b186100c4c19114869fd01a811e24`
+
+Mission Control scout receipt `workId=301` confirmed the existing immutable
+record-only enrollment and deletion primitives but found no trustworthy
+single-customer production-to-staging copy path. Commit `ce48dbf` therefore
+added a dry-run-first, staging-only operational command with a strict profile
+allowlist, a four-Draft ceiling, external-publish-marker rejection,
+deterministic copied IDs, forced unscheduled Draft state, immutable consent
+enrollment, zero experiment rate, null autopublish consent, post-write
+verification, and a scoped withdrawal purge.
+
+The production source audit was read-only. It found exactly four rows with
+`status='Draft'`. One row,
+`0022f8f6-6298-42ce-96fe-d14a01e17244`, carried a non-null legacy external
+post ID and was excluded rather than being represented as unpublished. The
+three remaining image Drafts had no external publish IDs, claims, video jobs,
+publish attempts, or QA state. All three old source schedule timestamps were
+explicitly discarded. Only these non-secret profile keys crossed the
+boundary: `name`, `type`, `description`, `tone`, `location`,
+`productsServices`, `contentTopics`, and `videoEnabled`. Blank `logoUrl` and
+`facebookAppId` fields were dropped. No tokens, stats, insights, provider
+IDs, claims, schedules, critique state, or publish metadata were copied.
+
+The first staging execution exposed an operational wrapper defect: Wrangler
+file mode returned human-readable success output instead of JSON. The
+command treated that ambiguity as failure and invoked its scoped rollback.
+An immediate independent SELECT audit proved the rollback had completed:
+zero Gladstone clients, posts, enrollments, or settings remained and
+Protected Autopilot remained zero. Commit `c18fb46` fixed the wrapper to
+require a zero process exit code and then use database SELECT verification,
+not output text, as the source of truth. A regression test preserves that
+contract.
+
+Verification before the successful copy passed:
+
+- 9 focused staging-copy safety assertions
+- all 258 frontend/root tests
+- all 1,287 Worker tests
+- strict root and Worker TypeScript
+- the 1,925-module production frontend build
+- exact-commit GitHub CI run `29707686719`
+- clean-commit read-only dry run with three eligible and one excluded Draft
+
+The second execution copied these deterministic rows into
+`socialai-db-staging` only:
+
+- `pilot-copy-fc3caf869fe11d1de5260218`
+- `pilot-copy-3150a9a8cd5d0ffd9ae735f4`
+- `pilot-copy-be692c0a252f57aa0bf77f89`
+
+The applied-copy receipt is:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-pilot-staging-copy-2026-07-19T23-19-47-229Z.json`
+- file SHA-256 `791e181cdd9c25b66b8c0e657c2a5389f0ee50f6ca096483a049e3e8f36721c1`
+- production source and recheck SHA-256 `b8fe9565b626ad365749b981245f60ae1b112dc96debc672b0cadd4868fe38df`
+
+Independent post-copy SELECTs reported `changed_db=false` and
+`rows_written=0`. They proved one active Gladstone staging client with empty
+stats and social-token fields; exactly three `Draft` posts with
+`scheduled_for=NULL`, zero publish attempts, and all provider, claim,
+publish, and QA fields null; one current-policy `customer_attested`,
+`record_only=1` enrollment; one approval setting with experiment rate `0`,
+$5.00 monthly budget, null autopublish consent and policy, and no disabled
+reason; and zero Protected Autopilot workspaces. Production retained its
+original four Draft rows, the source hash was unchanged, and
+`hughesq-001` remained `status='on_hold'`.
+
+No exact Draft has been attested as a genuine positive sample. The broad copy
+consent was not reused as exact-post attestation, no pilot sample was created,
+and no critic result was accepted as promotion evidence.
+
+The clean exact-commit release proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T23-21-07-285Z.json`
+- Release-proof payload SHA-256: `6dc97de3ab8db0d95bd2001bd85ede93863e74020ca39d30378938270517ea0b`
+- Release-proof file SHA-256: `a6870d7b5aa2c7f3027f1a43ff4e1684c638a1e11278feef83c021aa17f88c5f`
+
+The live rollout judge remained `safe_hold` with
+`promotion_ready=false`. The customer next requirement advanced only from
+obtaining consent to `review_exact_customer_draft`; the owner requirement
+remained `create_genuine_owner_draft`.
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T23-22-03-976Z.json`
+- Rollout payload SHA-256: `a4e60d699250240d4784365c63be0821b22e3c9894f8b255ccfd064b778c0abe`
+- Rollout file SHA-256: `cf0f026a000f9e7e7487343e4def5132082b433ceacc2c5549c2cce65d4c4756`
+
+The same exact versions and proof were evaluated with `--require-ready`.
+The judge preserved `safe_hold` and returned the required process exit code
+`1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-19T23-22-51-928Z.json`
+- Require-ready payload SHA-256: `36847efb5298d2f620dd017fc50041fcd15d9331ff50fee1c7c5b5daa3c6190a`
+- Require-ready file SHA-256: `8fb45c2d380be3d1ecf411fd1fdf0c001471f5dfc5ec0585166fdbc2b3511e97`
+
+No Worker, frontend, or production deployment and no schema application
+occurred. Staging remains on Worker
+`17cca808-bf93-49b6-9fc9-4b270b236a92`; production remains on Worker
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215`. All release and organic-reach apply
+flags remain off. The only persistent application-data change is the
+explicitly consented, isolated, withdrawable staging record copy and its
+record-only enrollment.
