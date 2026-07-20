@@ -3803,3 +3803,70 @@ dedicated critical quarantine alert when any workspace is disabled, and
 separately uses `LEARNING_CALIBRATION_DEGRADED_ALERT_KEY` for unavailable or
 failed calibration runs. No code change or deployment was needed for that
 path.
+
+### Bounded Media Repair and Exact Deployment Version Attestation
+
+The first genuine rejected sample recommended image regeneration but showed
+`repairCount=0`. A focused architecture audit confirmed this is the intended
+fail-closed split rather than a missing repair implementation:
+
+- image generation and prewarming may regenerate a low-scoring image once
+  with the curated archetype fallback, then persist the new image and its own
+  fresh critique
+- the bounded backlog repair lane may retry low-scoring images only up to the
+  shared maximum regeneration count
+- the final release pipeline permits at most two independent text-repair
+  attempts and requires every tenant, post, platform, requested-media, video,
+  and media field to remain identical
+- any attempted repair that changes an image URL, thumbnail URL, media kind,
+  status, archetype, or another publish-critical field returns `hold_amber`
+- a release-critical image block returns `block_red` before the independent
+  Release Judge, so a bad final artifact can never be swapped after review or
+  promoted merely because a later model suggests a repair
+
+The focused release, preflight, and prewarm suites passed all 44 assertions.
+No code change was warranted because weakening the immutable final-release
+boundary would create a post-review media-swap path.
+
+A clean proof at commit
+`1939133246d836ccb8add1e70715f609a64105b2` then passed the complete mandatory
+offline release manifest:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-20T00-09-55-897Z.json`
+- Release-proof payload SHA-256: `a80ae1f18797747295ef0d47862284c32ec08323e92a5fbd2b97219a4775f533`
+- Release-proof file SHA-256: `3764ba0eb79502ca5259f9747dda7c0dd2f29ebb15ed393b60314701bb2536a6`
+
+The live rollout judge was then supplied both exact expected Cloudflare
+Worker version IDs. Read-only deployment inspection proved staging remained
+`17cca808-bf93-49b6-9fc9-4b270b236a92` and production remained
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215`. Both
+`staging_version_attested` and `production_version_attested` changed from
+unproven to passed without a deployment or binding change.
+
+The version-attested rollout still returned `safe_hold` with
+`promotion_ready=false`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T00-10-35-830Z.json`
+- Rollout payload SHA-256: `bec386f18989fda60d4aa4cd92a1ebf93471f2110f226b2f61a7ba69dc7cdb6f`
+- Rollout file SHA-256: `980604889d86e50d3a6fa7244f3dc107aae612e25acea4d2c48e3c3354dc1a14`
+
+The strict version-attested `--require-ready` command preserved `safe_hold`
+and returned the required exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T00-11-34-224Z.json`
+- Require-ready payload SHA-256: `33a42d1d54a2aa11a1086447be095dc9fc28a75d0e8e99b4f4c3d45bb0930079`
+- Require-ready file SHA-256: `8295a657aabf13a3e4ddb5467e1f00c1b4c62a76ef6eb9fa5dc96905447fb721`
+
+The six remaining unsuppressed blockers are exactly:
+
+- `staging_readiness_green`
+- `production_readiness_green`
+- `positive_pilot_samples`
+- `staging_calibration_evidence`
+- `production_positive_sample_schema`
+- `production_calibration_schema`
+
+Both health endpoints remained green, both environments reported zero
+Protected Autopilot workspaces, every release and organic-reach apply flag
+remained false, and `hughesq-001` remained `on_hold`. No Worker, frontend,
+schema, database, schedule, publish, consent, or production mutation occurred.
