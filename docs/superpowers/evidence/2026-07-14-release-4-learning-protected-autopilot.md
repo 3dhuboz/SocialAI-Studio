@@ -3916,3 +3916,47 @@ No Worker, frontend, schema, database, schedule, publish, consent, release
 flag, or production behavior change was performed. `hughesq-001` remains on
 hold, and the next unattested Gladstone draft still requires exact provenance
 before it may be evaluated or counted.
+
+The implementation was saved and pushed at clean commit
+`e97460a97c00528fc1b546a8037094901bad0498`. Its complete mandatory offline
+release manifest passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-20T00-34-53-880Z.json`
+- Release-proof payload SHA-256: `d85818932403ae26e7f64b7658ede597325bd285177aa2dea19d0337da4e9f34`
+- Release-proof file SHA-256: `8699eaddfdd3bfcf52dce30002bda368383f808c238664c0de47ebfd1b034458`
+- Result: `offline_pass`
+- Explicit limitations: live staging was not claimed by the offline proof,
+  and authenticated evidence was not claimed by it
+
+The separate live read-only rollout verifier then bound that exact proof to
+staging Worker `17cca808-bf93-49b6-9fc9-4b270b236a92` and production Worker
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215`. The schema-v6 artifact retained
+`safe_hold`, reported `promotion_ready=false`, and selected only the
+`pilot_evidence` phase:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T00-36-21-819Z.json`
+- Rollout payload SHA-256: `560f42e56832af1cf729ed0bff4123b75afca6d1ffad9d315688723f7a0f5ee5`
+- Rollout file SHA-256: `553433306461a0c3ba3d188ab84a614557c462f5dba9af9144024f2f7271b818`
+- Next safe owner action: `owner_create_genuine_owner_draft`
+- Next safe customer action: `customer_review_exact_customer_draft`
+- Automatic activation allowed: `false`
+- Automatic production mutation allowed: `false`
+
+Canonical sorted-key payload rehashing independently reproduced the embedded
+payload digest, and a raw-byte rehash reproduced the artifact file digest.
+The live audit also proved one validated client sample, zero owner samples,
+zero Protected Autopilot workspaces in both environments, all release and
+organic-reach apply flags false, `productionMutationPerformed=false`,
+`releaseFlagsChanged=false`, and Hugheseys Que still `on_hold`.
+
+The exact same inputs were evaluated with `--require-ready`. The verifier
+again retained `safe_hold`, surfaced only the two record-only pilot actions,
+and returned the required exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T00-37-45-435Z.json`
+- Require-ready payload SHA-256: `c53c8487107ef81cc0c4aed4a9ce5e3aa87a4a0b9920808d3eb3ba6b0aa4b2a1`
+- Require-ready file SHA-256: `a3ca44c775710b25b0a3ae1fc4c597520fe967ff98621fee6e612a776e5c50a2`
+
+Production schema, production readiness, and activation work remain deferred.
+The rejected Gladstone post and every pilot draft remain unscheduled and
+unpublished.
