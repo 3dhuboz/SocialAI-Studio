@@ -3362,8 +3362,8 @@ const Dashboard: React.FC = () => {
           notch. Below it, the Tab Nav uses calc(env+64) to stick BELOW
           this header when scrolled. */}
       <header id="app-header" className="bg-[var(--color-surface-0)]/95 backdrop-blur-2xl sticky top-0 z-40 border-b border-white/[0.05]" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="max-w-6xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 min-h-[64px]">
+          <div className="flex items-center gap-3 min-w-0 w-full sm:w-auto">
             {CLIENT.clientMode ? (
               <div className="flex items-center gap-3 min-w-0">
                 <AppLogo size={48} />
@@ -3375,7 +3375,7 @@ const Dashboard: React.FC = () => {
             ) : (
               <>
                 <AppLogo size={72} />
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
                   {planCfg && (
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
                       {planCfg.name}
@@ -3400,7 +3400,7 @@ const Dashboard: React.FC = () => {
               </>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs flex-shrink-0">
+          <div className="flex items-center gap-2 text-xs flex-wrap w-full min-w-0 sm:w-auto sm:flex-nowrap sm:justify-end sm:flex-shrink-0">
             {fbConnected ? (
               <span className="flex items-center gap-1.5 text-blue-400 bg-blue-500/10 px-2 py-1 rounded-xl border border-blue-500/20 whitespace-nowrap">
                 <Link2 size={12} /> {CLIENT.clientMode ? 'Connected' : 'Facebook Connected'}
