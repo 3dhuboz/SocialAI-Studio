@@ -4048,3 +4048,52 @@ artifacts reported schema version 7, `productionMutationPerformed=false`,
 `releaseFlagsChanged=false`, four count-only owner source candidates, one
 validated customer sample, zero owner samples, zero Protected Autopilot
 workspaces, and the same six rollout blockers.
+
+### Authorized Second Customer Sample and Owner Draft Evaluation
+
+Steve supplied two exact, withdrawable authorizations: a genuine-output
+attestation and irrelevant-image rejection for
+`pilot-copy-be692c0a252f57aa0bf77f89`, plus consent to copy one
+server-selected unpublished Penny Wise I.T Draft into isolated staging for
+record-only safety evaluation. The authorization receipt is
+`docs/superpowers/evidence/consents/2026-07-20-gladstone-gradient-and-penny-owner-draft-record-only.json`.
+
+The bounded owner copier selected exactly one eligible production Draft,
+rechecked an unchanged production snapshot, and copied only the Draft into
+staging as `pilot-owner-copy-22a8f261ae1170b876d0d523`. It did not copy the
+profile, social tokens, schedule, provider identifiers, claims, publishing
+metadata, enrollment, or learning settings. Its applied receipt is:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-owner-pilot-staging-copy-2026-07-20T02-04-04-663Z.json`
+- authorization SHA-256: `074a21e0a89c91b2c8de6c4416802ce9d47ecd1c3a6afb0a112fd71813f8a82c`
+- source and production-recheck SHA-256: `98554ea60c6ce37e77055b6a49622a1856633d5ccb21642ceb6b1030800674db`
+
+The staging server then selected the exact authorized records and hashes:
+
+- Penny Wise: `pilot-owner-copy-22a8f261ae1170b876d0d523` / `6ac8a8be00a9c1df9af940cfc1fe9a96e794f6e7966870264b6f9554a3e1c976`
+- Gladstone: `pilot-copy-be692c0a252f57aa0bf77f89` / `f182b7851b6ecd2ba669b061a64ea3dab8f5a6dbffdc8e96ab3f33dd46be7818`
+
+Both exact Drafts completed all ten critics and failed closed as `block_red`.
+The Gladstone image critic scored the blank blue-to-pink gradient 2 of 10 and
+identified a catastrophic mismatch with the family BBQ festival and rides
+caption. The independent customer label matched that result and was recorded
+as release-critical adjudication `be58ef44-0023-4010-bbbf-12ded497aabb`.
+
+The Penny Wise image critic scored the generic notebook flatlay 3 of 10
+because it did not depict SocialAI, automation, or the caption's time-saving
+claim. The fact critic independently rejected the undocumented 5-10 hour
+statistic and the unsupported promise to reduce social-media work to zero.
+No human adjudication was inferred because the owner consent authorized
+evaluation, not an independent quality label.
+
+The complete credential-free receipts are:
+
+- `docs/superpowers/evidence/attestations/2026-07-20-gladstone-gradient-irrelevant-image-rejection.json`
+- `docs/superpowers/evidence/attestations/2026-07-20-penny-owner-draft-record-only-evaluation.json`
+
+An independent staging audit proved both posts remain `Draft`, every
+`scheduled_for` value is null, publish attempts and provider IDs are zero,
+and no publication event or delivery receipt exists. The pilot IDs do not
+exist in production. Both staging and production contain zero Protected
+Autopilot workspaces, every apply flag remains disabled, no deployment or
+schema change occurred, and production `hughesq-001` remains `on_hold`.
