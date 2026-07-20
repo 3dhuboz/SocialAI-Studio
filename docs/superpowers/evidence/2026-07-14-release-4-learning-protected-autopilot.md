@@ -4134,3 +4134,50 @@ Production contains no row, publication event, or delivery receipt for the
 pilot ID. Protected Autopilot remains empty in both environments and
 production `hughesq-001` remains `on_hold`. No deployment, schema application,
 release-flag change, schedule, publish, or production data mutation occurred.
+
+#### Exact Verification and External Version Hold
+
+The evidence-only implementation was saved at clean commit
+`90949871110641c3aff76066c72adf4f07ecc48f`. Verification passed:
+
+- all 274 root regression tests across 22 files
+- strict root TypeScript with `npx tsc --noEmit --pretty false`
+- JSON parsing and `git diff --check`
+
+The exact-commit offline release proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-20T22-21-14-783Z.json`
+- Release-proof payload SHA-256: `7fdd231c13dec1d1f5c440b82b503fc8b83597f148b9748e4ca125c6626d33be`
+- Release-proof file SHA-256: `2c20905680ff818a4f525b2d0b664562ad0f3e9721943c08c15977546b7bdb20`
+- Result: `offline_pass`
+
+The live read-only rollout verifier then detected that production had been
+externally deployed at `2026-07-20T21:40:57.821Z`. It observed Worker version
+`7fb945de-36a7-442e-8d45-8139d5a1a841` instead of the previously attested
+`3b963ed1-c9e1-42d6-9bff-68da2efa9215`. This evaluation did not perform that
+deployment and did not accept the new version automatically. The version
+mismatch added the `production_version_attested` blocker and made version
+attestation the only next safe phase.
+
+The normal live verifier retained `safe_hold`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T22-21-56-446Z.json`
+- Rollout payload SHA-256: `bd97e0f04a650172492be0fcf50af1c9817ccfdbbce61e8b1d0a49a1bb699bd0`
+- Rollout file SHA-256: `119c3bc92f7cf1f853db105bef28b07aab71aec1a31c08e67d3f9c44bcda654d`
+
+The same inputs were evaluated with `--require-ready`. The verifier again
+retained `safe_hold`, denied automatic activation, and returned the required
+exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T22-24-19-442Z.json`
+- Require-ready payload SHA-256: `db2d1f12d3241e1c6c952c295f84802c00f948ee6b330f36c1f0f8ff4daf5be6`
+- Require-ready file SHA-256: `bb26b5f2e244ed7b657bfe618aa16a510870247a70ce6d1cd7ef1206c20de93a`
+
+Both rollout artifacts report four validated pilot samples: one owner and
+three customer samples. All four are negative `block_red` evidence, so they
+do not satisfy the positive-sample gate. Customer candidate Drafts are now
+zero. Both environments still report
+`LEARNING_RELEASE_ENFORCEMENT=false`, `LEARNING_AUTOPILOT_ENABLED=false`,
+`ORGANIC_REACH_APPLY_ENABLED=false`, zero Protected Autopilot workspaces,
+`productionMutationPerformed=false`, `releaseFlagsChanged=false`, and
+production `hughesq-001` still `on_hold`.
