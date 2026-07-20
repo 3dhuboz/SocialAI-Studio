@@ -4097,3 +4097,40 @@ and no publication event or delivery receipt exists. The pilot IDs do not
 exist in production. Both staging and production contain zero Protected
 Autopilot workspaces, every apply flag remains disabled, no deployment or
 schema change occurred, and production `hughesq-001` remains `on_hold`.
+
+### Remaining Gladstone Draft Failed Closed
+
+The existing withdrawable Gladstone consent covered the non-secret business
+profile and up to four unpublished Drafts in isolated staging for record-only
+safety evaluation. The original deterministic copy had imported exactly
+three Drafts, so the final unevaluated copy remained within that scope. The
+consent established provenance and evaluation permission only; it did not
+provide a human quality label.
+
+The authenticated staging server selected exactly
+`pilot-copy-fc3caf869fe11d1de5260218` with content SHA-256
+`7f3ec088ddcc200dd25b7c0250227884a39f7c03cd9167505c97e896be286b89`.
+The immutable sample receipt is `d46fbcc1-2f8c-4c3d-ac2d-6f6949b95c58`
+with attestation basis `customer_real_post`. No approval, schedule, publish,
+or quality adjudication was inferred.
+
+All ten critics completed. Decision
+`5a22fedf-0839-44b9-9409-04bd6852cad4` failed closed as `block_red`. The
+release-critical image critic scored the generic office desk, lamp, notebook,
+and pen image 1 of 10 because it was a complete cross-domain mismatch for the
+Gladstone BBQ Festival market-stall application caption. Brand, business-harm,
+fact, platform, and repetition checks otherwise passed. Human adjudication
+remains null.
+
+The complete credential-free receipt is:
+
+- `docs/superpowers/evidence/attestations/2026-07-21-gladstone-market-stall-record-only-evaluation.json`
+
+Independent staging SELECTs proved the source remains `Draft` with
+`scheduled_for=NULL`, zero publish attempts, null claim and provider publish
+fields, and no publication event or delivery receipt. The workspace remains
+in approval mode with null autopublish consent and experiment rate `0`.
+Production contains no row, publication event, or delivery receipt for the
+pilot ID. Protected Autopilot remains empty in both environments and
+production `hughesq-001` remains `on_hold`. No deployment, schema application,
+release-flag change, schedule, publish, or production data mutation occurred.
