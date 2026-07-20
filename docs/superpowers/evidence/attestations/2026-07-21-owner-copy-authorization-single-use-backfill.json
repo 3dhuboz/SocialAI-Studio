@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "action": "authorization_consumption_backfilled",
+  "generatedAt": "2026-07-20T23:38:31.173Z",
+  "gitCommit": "f65702cbe42d794fea2a92a63f4aaca5d10be3f9",
+  "authorization": {
+    "receiptId": "pilot-authorization-penny-owner-gladstone-gradient-20260720",
+    "sha256": "074a21e0a89c91b2c8de6c4416802ce9d47ecd1c3a6afb0a112fd71813f8a82c",
+    "maxDrafts": 1,
+    "alreadyConsumedByCopiedPostId": "pilot-owner-copy-22a8f261ae1170b876d0d523",
+    "replayProbeBlockedBeforeWrite": true,
+    "replayProbeExitCode": 1,
+    "withdrawalRetainsHashOnlyTombstone": true
+  },
+  "stagingLedger": {
+    "table": "learning_pilot_authorization_uses",
+    "authorizationUseCount": 1,
+    "activeUseCount": 1,
+    "postContentStored": false,
+    "imageUrlStored": false,
+    "profileStored": false,
+    "tokenOrCredentialStored": false,
+    "scheduleStored": false,
+    "publishingMetadataStored": false
+  },
+  "recordOnlyVerification": {
+    "safeDraftCount": 2,
+    "publicationEventCount": 0,
+    "deliveryReceiptCount": 0,
+    "stagingProtectedAutopilotCount": 0,
+    "productionProtectedAutopilotCount": 0,
+    "hugheseysQueStatus": "on_hold",
+    "samples": [
+      {
+        "postId": "pilot-copy-be692c0a252f57aa0bf77f89",
+        "releaseState": "block_red",
+        "decisionCount": 1,
+        "criticVerdictCount": 10,
+        "distinctCriticKindCount": 6,
+        "pilotSampleCount": 1,
+        "humanAdjudicationCount": 1
+      },
+      {
+        "postId": "pilot-owner-copy-22a8f261ae1170b876d0d523",
+        "releaseState": "block_red",
+        "decisionCount": 1,
+        "criticVerdictCount": 10,
+        "distinctCriticKindCount": 6,
+        "pilotSampleCount": 1,
+        "humanAdjudicationCount": 0
+      }
+    ]
+  },
+  "mutationBoundary": {
+    "productionMutationPerformed": false,
+    "deploymentPerformed": false,
+    "releaseFlagsChanged": false,
+    "stagingMutation": "one hash-only authorization-use receipt",
+    "additionalPostCopied": false,
+    "scheduledOrPublished": false
+  },
+  "externalArtifact": {
+    "path": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-owner-pilot-staging-copy-2026-07-20T23-38-31-173Z.json",
+    "sha256": "aca1bad9ffcc77092d210ff3de32977a728937ef88849f2c5b72d60d7910f488"
+  }
+}

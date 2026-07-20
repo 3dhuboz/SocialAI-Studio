@@ -4250,3 +4250,35 @@ The focused rollout suite now has 47 passing tests, including missing-file
 fail-closed behavior that still produces an inspectable preflight result.
 No production schema, Worker, release flag, post, schedule, or publication
 state was changed while adding this check.
+
+### Single-Use Owner Authorization Backfill
+
+The exact one-Draft Penny Wise authorization had already been consumed by
+`pilot-owner-copy-22a8f261ae1170b876d0d523`. A replay audit found that the
+original copier relied on the copied post ID rather than a durable consent
+receipt. If the production candidate set changed, or the copied staging post
+was withdrawn, the same receipt could have selected another Draft.
+
+Commit `f65702cbe42d794fea2a92a63f4aaca5d10be3f9` closes that path before any
+additional intake. The operational copier now pins the exact receipt and task
+source, inserts an immutable unique receipt before a post copy, blocks receipt
+and consent-event replay, prevents receipt deletion, and permits only a
+one-way transition to a withdrawal tombstone. The staging-only ledger stores
+hashes and the derived copied-post ID; it stores no post content, image URL,
+profile, token, credential, schedule, or publishing metadata. No production
+migration was added or applied.
+
+The already-consumed receipt was backfilled without copying another post.
+The verified artifact is:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-owner-pilot-staging-copy-2026-07-20T23-38-31-173Z.json`
+- file SHA-256: `aca1bad9ffcc77092d210ff3de32977a728937ef88849f2c5b72d60d7910f488`
+- repository receipt: `docs/superpowers/evidence/attestations/2026-07-21-owner-copy-authorization-single-use-backfill.json`
+
+An immediate reuse of the same authorization returned exit code 1 before a
+write with `already consumed and cannot be replayed`. A count-only audit then
+proved both exact pilot posts remain safe, unscheduled Drafts with one
+`block_red` decision, ten critic verdicts, and one immutable pilot sample each.
+Gladstone has the one customer adjudication; Penny has none. Publication
+events and delivery receipts remain zero. Protected Autopilot remains zero in
+staging and production, and production `hughesq-001` remains `on_hold`.
