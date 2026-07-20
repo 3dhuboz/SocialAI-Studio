@@ -6,6 +6,7 @@ import {
   STAGING_CALIBRATION_ROLLOUT_SQL,
   STAGING_ROLLOUT_SQL,
   assertReadOnlySql,
+  buildProductionSchemaPreflight,
   buildRolloutActionPlan,
   buildWranglerInvocation,
   evaluateRolloutState,
@@ -142,6 +143,12 @@ function observation(): RolloutObservation {
       ownerDraftSourceCandidates: 0,
       pilotSampleTablePresent: true,
       calibrationTablePresent: true,
+      schemaPreflight: buildProductionSchemaPreflight({
+        postsTablePresent: true,
+        decisionTablePresent: true,
+        pilotSampleTablePresent: true,
+        calibrationTablePresent: true,
+      }),
       alertSchemaReady: true,
       readiness: greenReadiness(),
     },
@@ -483,6 +490,9 @@ describe('learning live rollout state', () => {
     ['the production alert persistence schema is incomplete', (input: RolloutObservation) => {
       input.production.alertSchemaReady = false;
     }],
+    ['the deferred production schema preflight fails', (input: RolloutObservation) => {
+      input.production.schemaPreflight.readyToApplyWhenPhaseReached = false;
+    }],
     ['a pilot intake counter is missing', (input: RolloutObservation) => {
       input.staging.ownerCandidateDrafts = -1;
     }],
@@ -668,6 +678,75 @@ describe('learning live rollout state', () => {
     expect(inventorySql).toContain('FROM publication_events event');
     expect(inventorySql).toContain('FROM publish_delivery_receipts receipt');
     expect(inventorySql).not.toMatch(/SELECT\s+(?:id|content|image_url|hashtags)\b/i);
+  });
+
+  it('preflights exact additive production migrations without applying them', () => {
+    const preflight = buildProductionSchemaPreflight({
+      postsTablePresent: true,
+      decisionTablePresent: true,
+      pilotSampleTablePresent: false,
+      calibrationTablePresent: false,
+    });
+
+    expect(preflight).toMatchObject({
+      mode: 'read_only_deferred',
+      readyToApplyWhenPhaseReached: true,
+      applicationPerformed: false,
+    });
+    expect(preflight.migrations).toHaveLength(2);
+    expect(preflight.migrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'positive_sample',
+        filePresent: true,
+        currentTablePresent: false,
+        dependency: 'posts',
+        dependencyPresent: true,
+        hashMatches: true,
+        additiveContractValid: true,
+      }),
+      expect.objectContaining({
+        id: 'calibration',
+        filePresent: true,
+        currentTablePresent: false,
+        dependency: 'learning_decisions',
+        dependencyPresent: true,
+        hashMatches: true,
+        additiveContractValid: true,
+      }),
+    ]));
+  });
+
+  it('fails the production schema preflight when a required dependency is absent', () => {
+    const preflight = buildProductionSchemaPreflight({
+      postsTablePresent: false,
+      decisionTablePresent: true,
+      pilotSampleTablePresent: false,
+      calibrationTablePresent: false,
+    });
+
+    expect(preflight.readyToApplyWhenPhaseReached).toBe(false);
+    expect(preflight.migrations.find((migration) => migration.id === 'positive_sample'))
+      .toMatchObject({ dependencyPresent: false });
+  });
+
+  it('fails closed with an artifact-ready result when migration files are missing', () => {
+    const preflight = buildProductionSchemaPreflight({
+      postsTablePresent: true,
+      decisionTablePresent: true,
+      pilotSampleTablePresent: false,
+      calibrationTablePresent: false,
+      root: resolve(process.cwd(), 'missing-production-schema-root'),
+    });
+
+    expect(preflight.readyToApplyWhenPhaseReached).toBe(false);
+    expect(preflight.migrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        filePresent: false,
+        sha256: '',
+        hashMatches: false,
+        additiveContractValid: false,
+      }),
+    ]));
   });
 
   it('counts only current-policy pilot samples backed by an eligible exact-hash decision', () => {

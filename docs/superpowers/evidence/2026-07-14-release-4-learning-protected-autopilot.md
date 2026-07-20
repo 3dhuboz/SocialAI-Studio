@@ -4218,3 +4218,35 @@ byte-for-byte source annotation.
 The credential-free version receipt is:
 
 - `docs/superpowers/evidence/attestations/2026-07-21-production-worker-7fb945de-version-attestation.json`
+
+### Deferred Production Schema Preflight
+
+Rollout artifact schema version 8 adds a mandatory read-only preflight for
+the two production migrations that must remain deferred until the upstream
+pilot and calibration phases pass. It does not add a migration runner and it
+cannot apply either file.
+
+The preflight verifies:
+
+- `schema_v46_learning_pilot_samples.sql` has exact SHA-256
+  `bfe1ff0113a076f44afecf300a7b32d28d469dece12dbd045489244ea49fc6df`
+- `schema_v47_learning_calibration_audits.sql` has exact SHA-256
+  `5c6a513a1205c678ba7ed1dfb6738e13b0a3576c3694d008c78729ef8f2bc343`
+- both files remain present and additive-only, retain their required table,
+  foreign-key, trigger, and index contracts, and contain no line-starting
+  `ALTER`, `DROP`, `INSERT`, `UPDATE`, `DELETE`, or `REPLACE` statement
+- production already contains the required `posts` and
+  `learning_decisions` dependency tables
+- the observation mode is exactly `read_only_deferred` and
+  `applicationPerformed` remains exactly `false`
+
+Missing files, changed hashes, destructive SQL, missing dependencies,
+duplicate/missing migration identities, or a claimed application make the
+new `production_schema_preflight` safety check fail. A failure changes the
+rollout result to `unsafe_or_unverified`; it is not treated as an ordinary
+promotion blocker.
+
+The focused rollout suite now has 47 passing tests, including missing-file
+fail-closed behavior that still produces an inspectable preflight result.
+No production schema, Worker, release flag, post, schedule, or publication
+state was changed while adding this check.

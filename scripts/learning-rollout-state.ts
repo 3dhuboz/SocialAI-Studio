@@ -39,6 +39,33 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const workerRoot = resolve(repoRoot, 'workers', 'api');
 
+const PRODUCTION_SCHEMA_MIGRATIONS = [
+  {
+    id: 'positive_sample',
+    file: 'workers/api/schema_v46_learning_pilot_samples.sql',
+    table: 'learning_pilot_samples',
+    dependency: 'posts',
+    expectedSha256: 'bfe1ff0113a076f44afecf300a7b32d28d469dece12dbd045489244ea49fc6df',
+    requiredFragments: [
+      'CREATE TABLE IF NOT EXISTS learning_pilot_samples',
+      'FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE',
+      'CREATE TRIGGER IF NOT EXISTS prevent_learning_pilot_sample_update',
+    ],
+  },
+  {
+    id: 'calibration',
+    file: 'workers/api/schema_v47_learning_calibration_audits.sql',
+    table: 'learning_calibration_audits',
+    dependency: 'learning_decisions',
+    expectedSha256: '5c6a513a1205c678ba7ed1dfb6738e13b0a3576c3694d008c78729ef8f2bc343',
+    requiredFragments: [
+      'CREATE TABLE IF NOT EXISTS learning_calibration_audits',
+      'FOREIGN KEY (decision_id) REFERENCES learning_decisions(id) ON DELETE CASCADE',
+      'CREATE INDEX IF NOT EXISTS idx_learning_calibration_status',
+    ],
+  },
+] as const;
+
 const REQUIRED_DEPLOYED_FLAGS = {
   LEARNING_BRAIN_ENABLED: 'true',
   LEARNING_RELEASE_ENFORCEMENT: 'false',
@@ -395,6 +422,10 @@ SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END)
          AS pilot_sample_tables,
        COALESCE(SUM(CASE WHEN name = 'learning_calibration_audits' THEN 1 ELSE 0 END), 0)
          AS calibration_tables,
+       COALESCE(SUM(CASE WHEN type = 'table' AND name = 'posts' THEN 1 ELSE 0 END), 0)
+         AS posts_tables,
+       COALESCE(SUM(CASE WHEN type = 'table' AND name = 'learning_decisions' THEN 1 ELSE 0 END), 0)
+         AS decision_tables,
        COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'cron_alerts' THEN 1 ELSE 0
        END), 0) AS alert_tables,
@@ -403,9 +434,12 @@ SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END)
           AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
          THEN 1 ELSE 0
        END), 0) AS alert_indexes
-  FROM sqlite_master
+ FROM sqlite_master
  WHERE (type = 'table'
-        AND name IN ('learning_pilot_samples', 'learning_calibration_audits', 'cron_alerts'))
+        AND name IN (
+          'learning_pilot_samples', 'learning_calibration_audits',
+          'posts', 'learning_decisions', 'cron_alerts'
+        ))
     OR (type = 'index'
         AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
 SELECT policy_version, ready, checks_json, evaluated_at
@@ -447,6 +481,27 @@ export interface ReadinessObservation {
   ready: boolean;
   evaluatedAt: string;
   checks: Record<string, unknown>;
+}
+
+export interface ProductionSchemaMigrationPreflight {
+  id: 'positive_sample' | 'calibration';
+  file: string;
+  filePresent: boolean;
+  table: string;
+  currentTablePresent: boolean;
+  dependency: string;
+  dependencyPresent: boolean;
+  sha256: string;
+  expectedSha256: string;
+  hashMatches: boolean;
+  additiveContractValid: boolean;
+}
+
+export interface ProductionSchemaPreflight {
+  mode: 'read_only_deferred';
+  readyToApplyWhenPhaseReached: boolean;
+  applicationPerformed: false;
+  migrations: ProductionSchemaMigrationPreflight[];
 }
 
 interface EnvironmentObservation {
@@ -500,6 +555,7 @@ export interface RolloutObservation {
     ownerDraftSourceCandidates: number;
     pilotSampleTablePresent: boolean;
     calibrationTablePresent: boolean;
+    schemaPreflight: ProductionSchemaPreflight;
     alertSchemaReady: boolean;
     readiness: ReadinessObservation | null;
   };
@@ -714,6 +770,72 @@ function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+export function buildProductionSchemaPreflight(input: {
+  postsTablePresent: boolean;
+  decisionTablePresent: boolean;
+  pilotSampleTablePresent: boolean;
+  calibrationTablePresent: boolean;
+  root?: string;
+}): ProductionSchemaPreflight {
+  const root = input.root ?? repoRoot;
+  const tablePresence: Record<string, boolean> = {
+    learning_pilot_samples: input.pilotSampleTablePresent,
+    learning_calibration_audits: input.calibrationTablePresent,
+  };
+  const dependencyPresence: Record<string, boolean> = {
+    posts: input.postsTablePresent,
+    learning_decisions: input.decisionTablePresent,
+  };
+  const forbiddenStatement = /^\s*(?:ALTER|DROP|INSERT|UPDATE|DELETE|REPLACE)\b/im;
+  const migrations = PRODUCTION_SCHEMA_MIGRATIONS.map((migration) => {
+    const path = resolve(root, migration.file);
+    const filePresent = existsSync(path);
+    const sql = filePresent ? readFileSync(path, 'utf8') : '';
+    const sha256 = filePresent ? sha256File(path) : '';
+    return {
+      id: migration.id,
+      file: migration.file,
+      filePresent,
+      table: migration.table,
+      currentTablePresent: tablePresence[migration.table] === true,
+      dependency: migration.dependency,
+      dependencyPresent: dependencyPresence[migration.dependency] === true,
+      sha256,
+      expectedSha256: migration.expectedSha256,
+      hashMatches: filePresent && sha256 === migration.expectedSha256,
+      additiveContractValid: filePresent && !forbiddenStatement.test(sql)
+        && migration.requiredFragments.every((fragment) => sql.includes(fragment)),
+    } satisfies ProductionSchemaMigrationPreflight;
+  });
+
+  return {
+    mode: 'read_only_deferred',
+    readyToApplyWhenPhaseReached: migrations.every((migration) =>
+      migration.dependencyPresent
+      && migration.hashMatches
+      && migration.additiveContractValid),
+    applicationPerformed: false,
+    migrations,
+  };
+}
+
+export function productionSchemaPreflightIsSafe(
+  preflight: ProductionSchemaPreflight,
+): boolean {
+  const ids = new Set(preflight.migrations.map((migration) => migration.id));
+  return preflight.mode === 'read_only_deferred'
+    && preflight.applicationPerformed === false
+    && preflight.readyToApplyWhenPhaseReached
+    && preflight.migrations.length === PRODUCTION_SCHEMA_MIGRATIONS.length
+    && ids.size === PRODUCTION_SCHEMA_MIGRATIONS.length
+    && PRODUCTION_SCHEMA_MIGRATIONS.every((migration) => ids.has(migration.id))
+    && preflight.migrations.every((migration) =>
+      migration.filePresent
+      && migration.dependencyPresent
+      && migration.hashMatches
+      && migration.additiveContractValid);
+}
+
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === 'object') {
@@ -877,6 +999,11 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   add('staging_calibration_schema', input.staging.calibrationTablePresent, 'safety');
   add('staging_alert_schema', input.staging.alertSchemaReady, 'safety');
   add('production_alert_schema', input.production.alertSchemaReady, 'safety');
+  add(
+    'production_schema_preflight',
+    productionSchemaPreflightIsSafe(input.production.schemaPreflight),
+    'safety',
+  );
   add(
     'zero_protected_workspaces',
     input.staging.protectedWorkspaces === 0 && input.production.protectedWorkspaces === 0,
@@ -1398,6 +1525,20 @@ async function main(): Promise<void> {
   const productionSchema = firstRow(productionD1.rows[2]);
   const productionReadiness = firstRow(productionD1.rows[3]);
   const productionOwnerDraftInventory = firstRow(productionD1.rows[4]);
+  const productionPilotSampleTablePresent = numberField(
+    productionSchema,
+    'pilot_sample_tables',
+  ) === 1;
+  const productionCalibrationTablePresent = numberField(
+    productionSchema,
+    'calibration_tables',
+  ) === 1;
+  const productionSchemaPreflight = buildProductionSchemaPreflight({
+    postsTablePresent: numberField(productionSchema, 'posts_tables') === 1,
+    decisionTablePresent: numberField(productionSchema, 'decision_tables') === 1,
+    pilotSampleTablePresent: productionPilotSampleTablePresent,
+    calibrationTablePresent: productionCalibrationTablePresent,
+  });
 
   const observation: RolloutObservation = {
     generatedAt,
@@ -1466,8 +1607,9 @@ async function main(): Promise<void> {
         productionOwnerDraftInventory,
         'owner_draft_source_candidates',
       ),
-      pilotSampleTablePresent: numberField(productionSchema, 'pilot_sample_tables') === 1,
-      calibrationTablePresent: numberField(productionSchema, 'calibration_tables') === 1,
+      pilotSampleTablePresent: productionPilotSampleTablePresent,
+      calibrationTablePresent: productionCalibrationTablePresent,
+      schemaPreflight: productionSchemaPreflight,
       alertSchemaReady: numberField(productionSchema, 'alert_tables') === 1
         && numberField(productionSchema, 'alert_indexes') === 2,
       readiness: parseReadiness(productionReadiness),
@@ -1480,7 +1622,7 @@ async function main(): Promise<void> {
   );
   const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,
@@ -1501,6 +1643,7 @@ async function main(): Promise<void> {
       'This command performs read-only Cloudflare D1, deployment, version, and health checks.',
       'Pilot intake diagnostics contain aggregate counts only and do not grant consent.',
       'The production owner Draft count does not expose content or authorize a staging copy.',
+      'Production schema preflight verifies deferred migration integrity and dependencies only; it never applies a migration.',
       'safe_hold proves dormant boundaries, not consent or permission to activate production.',
       'promotion_ready still requires an operator-reviewed change window and rollback plan.',
     ],
