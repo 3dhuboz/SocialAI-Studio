@@ -40,6 +40,7 @@ import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
 import { LivePostPreview } from './components/LivePostPreview';
 import { AiEnginePanel } from './components/AiEnginePanel';
+import { ReelStudio } from './components/ReelStudio';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -625,7 +626,10 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers' | 'shopify-stores'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'reels' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers' | 'shopify-stores'>(() => {
+    if (typeof window === 'undefined') return 'home';
+    return new URLSearchParams(window.location.search).get('tab') === 'reels' ? 'reels' : 'home';
+  });
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   // ── Billing summary cache (I4 fix) ────────────────────────────────────
   // Lazily-loaded the first time the user navigates to the Settings tab
@@ -2866,6 +2870,7 @@ const Dashboard: React.FC = () => {
   // ── Tab Rendering ──
   const tabs = [
     { id: 'home' as const, label: 'Home', icon: Home },
+    { id: 'reels' as const, label: 'Reel Studio', icon: Film },
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
@@ -4233,6 +4238,20 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* ═══ CALENDAR TAB ═══ */}
+        {activeTab === 'reels' && (
+          <ReelStudio
+            clientId={activeClientId}
+            profile={profile}
+            socialTokens={socialTokens}
+            workspaceName={clients.find((client) => client.id === activeClientId)?.name || profile.name || CLIENT.defaultBusinessName}
+            onOpenSettings={() => setActiveTab('settings')}
+            onPostsChanged={async () => {
+              const nextPosts = await db.getPosts(activeClientId);
+              setPosts(nextPosts.map(mapDbPostToSocialPost));
+            }}
+          />
+        )}
+
         {activeTab === 'calendar' && (
           <div className="space-y-5">
             <input ref={calendarUploadRef} type="file" accept="image/*" className="hidden" onChange={handleCalendarFileChange} />

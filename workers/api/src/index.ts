@@ -58,6 +58,7 @@ import { registerShopifyAutopilotRoutes } from './routes/shopify-autopilot';
 import { registerShopifyCampaignRoutes } from './routes/shopify-campaigns';
 import { registerShopifyFactsRoutes } from './routes/shopify-facts';
 import { registerShopifyProfileRoutes } from './routes/shopify-profile';
+import { registerReelMediaRoutes } from './routes/reel-media';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -95,7 +96,10 @@ app.use(
     // X-Portal-Secret is sent by whitelabel portal frontends to authenticate
     // their slug-based portal lookup. Without this, browser preflight blocks
     // the request and the portal shows "Portal not configured".
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Portal-Secret', 'X-Bootstrap-Secret'],
+    allowHeaders: [
+      'Content-Type', 'Authorization', 'X-Portal-Secret', 'X-Bootstrap-Secret',
+      'X-Client-Id', 'X-Reel-Filename', 'X-Reel-Size', 'X-Reel-Duration-Ms',
+    ],
     allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
   })
 );
@@ -132,6 +136,7 @@ registerIntegrationRoutes(app);
 registerLearningRoutes(app);
 registerTrackingRoutes(app);
 registerReachRoutes(app);
+registerReelMediaRoutes(app);
 
 // ── Shopify embedded app ──────────────────────────────────────────────────
 // All /api/shopify/* routes — install + GDPR webhooks + Phase 2 product
