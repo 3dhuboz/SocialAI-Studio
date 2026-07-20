@@ -53,6 +53,26 @@
       "repair": "Regenerate the image against the caption and brand exclusions."
     }
   },
+  "adjudicationReceipt": {
+    "adjudicationId": "ae82cd4f-d0c2-4326-a45a-3fc3d6f4e077",
+    "decisionId": "c36212f6-dede-42f4-87dd-391f7c725012",
+    "expectedState": "block_red",
+    "severity": "release_critical",
+    "sourceEvidenceVerified": true,
+    "createdAt": "2026-07-19T23:55:35.436Z",
+    "note": "Customer/operator attests pilot-copy-3150a9a8cd5d0ffd9ae735f4 is a genuine Gladstone SocialAI output and rejects it for publishing because the image is irrelevant to the BBQ-ribs caption."
+  },
+  "readinessAfterAdjudication": {
+    "evaluatedAt": "2026-07-20T00:00:39.831Z",
+    "ready": false,
+    "pilotDecisions": 1,
+    "adjudicatedDecisions": 1,
+    "severeFalsePasses": 0,
+    "falseHoldRate": 0,
+    "requiredCriticAvailability": 1,
+    "decisionReceiptCoverage": 1,
+    "releaseJudgeTelemetryCoverage": 1
+  },
   "independentDatabaseAudit": {
     "postStatus": "Draft",
     "scheduledFor": null,

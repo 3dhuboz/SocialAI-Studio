@@ -3672,7 +3672,7 @@ not publishing consent, approval, or a positive performance sample. The
 tracked receipt is:
 
 - `docs/superpowers/evidence/attestations/2026-07-20-gladstone-bbq-festival-irrelevant-image-rejection.json`
-- receipt file SHA-256 `8095d749495da5a62573f55ba0c9dc8b5044bffaa231f62f20741e9ed38d8232`
+- receipt file SHA-256 `739aae41201e10fa055d1b5976384dd17e0c509ec766e54bc8e17febd7da9a70`
 - exact content SHA-256 `de28de79d3eac039dc76e9234deed2e8ace40d894155b364aaf1335a9a948e6d`
 - immutable staging sample ID `e16416aa-c563-46d1-a1fd-c428bf74e333`
 - attestation basis `customer_real_post`
@@ -3732,3 +3732,74 @@ production mutation, release-flag change, or learning-apply change occurred.
 Staging remains on Worker `17cca808-bf93-49b6-9fc9-4b270b236a92`, production
 remains on Worker `3b963ed1-c9e1-42d6-9bff-68da2efa9215`, and
 `hughesq-001` remains on hold.
+
+### Gladstone Rejection Adjudication and Fresh Readiness
+
+The exact customer rejection was then written through the product's
+tenant-scoped adjudication path. The route independently reloaded the current
+pilot-cohort decision and source Draft, recomputed the canonical source hash,
+and accepted the label only because the evidence still matched decision
+`c36212f6-dede-42f4-87dd-391f7c725012`. The immutable result is:
+
+- adjudication ID `ae82cd4f-d0c2-4326-a45a-3fc3d6f4e077`
+- expected state `block_red`
+- severity `release_critical`
+- source decision state `block_red`
+- exact source content SHA-256 `de28de79d3eac039dc76e9234deed2e8ace40d894155b364aaf1335a9a948e6d`
+
+An independent SELECT audit reported `changed_db=false` and
+`rows_written=0`. It proved that the adjudication's user, workspace, client,
+owner kind, and owner ID exactly match the decision and staging Draft. The
+post remains `Draft`, `scheduled_for` remains null, publish attempts remain
+zero, no publication event or delivery receipt exists, the workspace remains
+in approval mode, autopublish consent remains null, and Protected Autopilot
+still has zero workspaces.
+
+The next scheduled readiness run completed successfully at
+`2026-07-20T00:00:39.831Z` and incorporated the customer label without manual
+metric editing:
+
+- pilot decisions `1`
+- adjudicated decisions `1`
+- severe false passes `0`
+- sampled false-hold rate `0`
+- required critic availability `100%`
+- decision receipt coverage `100%`
+- readiness `false`, as required while the 30-decision and remaining gates
+  are unmet
+
+The exact-commit release proof remained `offline_pass`:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-19T23-56-48-702Z.json`
+- Release-proof payload SHA-256: `a4794caa98a9ef6724a2d5ae0797a6ec0ebab3ffe622e710e7cb67d2a7d80ae2`
+- Release-proof file SHA-256: `17bddcc6be65bf231628d149c70966ebeaed26dfc7d78d3976abed6ea89ef72e`
+
+The fresh live rollout judge retained `safe_hold` and
+`promotion_ready=false`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T00-01-29-390Z.json`
+- Rollout payload SHA-256: `70eaf6f9c49c89ea2c0cfecffbf245f863bf96c4e6b98d16908c29a94361ba2a`
+- Rollout file SHA-256: `a3b47ee6e15425491cc57d0ba44e392270775c4d8ff97568bf531b1a73e43d66`
+
+The strict `--require-ready` judge also retained `safe_hold` and returned the
+required exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T00-02-12-689Z.json`
+- Require-ready payload SHA-256: `f5361d74f39842780b49445d0f0e4cf2af7e7937f682677b1b4d17cd015b9729`
+- Require-ready file SHA-256: `72416c7682fbd375ab030a855330485ccabe9a515044c09f643776117094f190`
+
+The server-selected next customer candidate is
+`pilot-copy-be692c0a252f57aa0bf77f89`, content SHA-256
+`f182b7851b6ecd2ba669b061a64ea3dab8f5a6dbffdc8e96ab3f33dd46be7818`.
+Its caption describes festival rides and family activities, while its image
+is only a blue/pink gradient. It has not been attested, validated,
+adjudicated, scheduled, published, or counted as evidence. Exact customer or
+operator provenance remains required before critics may evaluate it.
+
+Mission Control scout receipt `workId=306` was completed and locally checked.
+Its suggested calibration-quarantine concern was already covered: the weekly
+calibration cron calls `quarantineSevereFalsePassWorkspaces`, raises the
+dedicated critical quarantine alert when any workspace is disabled, and
+separately uses `LEARNING_CALIBRATION_DEGRADED_ALERT_KEY` for unavailable or
+failed calibration runs. No code change or deployment was needed for that
+path.
