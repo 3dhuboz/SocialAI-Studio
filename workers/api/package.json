@@ -13,10 +13,10 @@
     "hono": "^4.6.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241022.0",
+    "@cloudflare/workers-types": "^5.20260719.1",
     "typescript": "^5.5.4",
     "vitest": "^4.1.6",
-    "wrangler": "^3.78.0"
+    "wrangler": "^4.112.0"
   },
   "overrides": {
     "esbuild": "^0.28.0"

@@ -18,6 +18,26 @@ export interface UploadedReelMedia {
   sizeBytes: number;
 }
 
+export interface FinishedReelMedia extends UploadedReelMedia {
+  coverKey: string;
+  coverUrl: string;
+  startSeconds: number;
+  endSeconds: number;
+  coverSeconds: number;
+}
+
+export interface ReelFinishTiming {
+  sourceDurationSeconds: number;
+  startSeconds: number;
+  endSeconds: number;
+  coverSeconds: number;
+}
+
+export interface ReelFinishPayload extends Omit<ReelFinishTiming, 'sourceDurationSeconds'> {
+  key: string;
+  clientId?: string | null;
+}
+
 export interface ReelUploadHeaderInput {
   file: Pick<File, 'name' | 'size' | 'type'>;
   token: string | null;
@@ -37,6 +57,43 @@ export function getReelUploadIssue(file: Pick<File, 'name' | 'size' | 'type'>): 
     return 'Keep Reel uploads under 95 MB.';
   }
   return null;
+}
+
+export function getReelFinishIssue(input: ReelFinishTiming): string | null {
+  const values = [
+    input.sourceDurationSeconds,
+    input.startSeconds,
+    input.endSeconds,
+    input.coverSeconds,
+  ];
+  if (values.some((value) => !Number.isFinite(value))) return 'Choose valid trim and cover times.';
+  if (input.startSeconds < 0 || input.endSeconds <= input.startSeconds) {
+    return 'The trim end must come after the start.';
+  }
+  const clipDuration = input.endSeconds - input.startSeconds;
+  if (clipDuration < 1) return 'The finished Reel must be at least 1 second.';
+  if (clipDuration > 60) return 'Keep the finished Reel to 60 seconds or less.';
+  if (input.endSeconds > input.sourceDurationSeconds + 0.05) {
+    return 'The trim end is beyond the uploaded video.';
+  }
+  if (input.coverSeconds < input.startSeconds || input.coverSeconds > input.endSeconds) {
+    return 'Choose a cover frame inside the clip.';
+  }
+  return null;
+}
+
+function roundSecond(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+export function buildReelFinishPayload(input: ReelFinishPayload): ReelFinishPayload {
+  return {
+    key: input.key,
+    clientId: input.clientId,
+    startSeconds: roundSecond(input.startSeconds),
+    endSeconds: roundSecond(input.endSeconds),
+    coverSeconds: roundSecond(input.coverSeconds),
+  };
 }
 
 function authorizationValue(token: string, authMode: AuthMode): string {
@@ -113,4 +170,45 @@ export async function uploadReelMedia(input: {
     };
     request.send(input.file);
   });
+}
+
+export async function finishReelMedia(input: ReelFinishPayload & {
+  getToken: () => Promise<string | null>;
+  authMode: AuthMode;
+}): Promise<FinishedReelMedia> {
+  const token = await input.getToken();
+  if (!token) throw new Error('Your sign-in expired. Sign in again before finishing the Reel.');
+
+  const response = await fetch(`${API_BASE}/api/reel-media/finish`, {
+    method: 'POST',
+    headers: {
+      Authorization: authorizationValue(token, input.authMode),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(buildReelFinishPayload(input)),
+  });
+  let body: Record<string, unknown> = {};
+  try { body = await response.json() as Record<string, unknown>; } catch {}
+  if (!response.ok) {
+    throw new Error(typeof body.error === 'string' ? body.error : `Reel finishing failed (${response.status}).`);
+  }
+  if (
+    typeof body.key !== 'string'
+    || typeof body.url !== 'string'
+    || typeof body.coverKey !== 'string'
+    || typeof body.coverUrl !== 'string'
+  ) {
+    throw new Error('The Reel finished without usable video and cover files.');
+  }
+  return {
+    key: body.key,
+    url: body.url,
+    coverKey: body.coverKey,
+    coverUrl: body.coverUrl,
+    contentType: typeof body.contentType === 'string' ? body.contentType : 'video/mp4',
+    sizeBytes: 0,
+    startSeconds: typeof body.startSeconds === 'number' ? body.startSeconds : input.startSeconds,
+    endSeconds: typeof body.endSeconds === 'number' ? body.endSeconds : input.endSeconds,
+    coverSeconds: typeof body.coverSeconds === 'number' ? body.coverSeconds : input.coverSeconds,
+  };
 }

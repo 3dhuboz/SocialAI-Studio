@@ -38,7 +38,49 @@ function makeR2(store: Map<string, StoredObject>): R2Bucket {
       store.set(key, { body, options });
       return { key, size: body.byteLength } as R2Object;
     },
+    async get(key: string) {
+      const stored = store.get(key);
+      if (!stored) return null;
+      const body = stored.body.slice(0);
+      return {
+        key,
+        size: body.byteLength,
+        body: new Response(body).body,
+        customMetadata: stored.options?.customMetadata,
+        httpMetadata: stored.options?.httpMetadata,
+        async arrayBuffer() { return body; },
+        async text() { return new TextDecoder().decode(body); },
+        async json<T>() { return JSON.parse(new TextDecoder().decode(body)) as T; },
+        async blob() { return new Blob([body]); },
+        writeHttpMetadata() {},
+      } as unknown as R2ObjectBody;
+    },
+    async delete(key: string) {
+      store.delete(key);
+    },
   } as unknown as R2Bucket;
+}
+
+function makeMedia(calls: MediaTransformationOutputOptions[] = []): MediaBinding {
+  return {
+    input() {
+      return {
+        output(options?: MediaTransformationOutputOptions) {
+          calls.push(options || {});
+          const isFrame = options?.mode === 'frame';
+          const bytes = new TextEncoder().encode(isFrame ? 'finished-cover' : 'finished-video');
+          return {
+            async media() { return new Response(bytes).body!; },
+            async response() { return new Response(bytes); },
+            async contentType() { return isFrame ? 'image/jpeg' : 'video/mp4'; },
+          };
+        },
+        transform() {
+          throw new Error('Unexpected transform call');
+        },
+      };
+    },
+  } as MediaBinding;
 }
 
 function makeD1(ownedClientIds: string[]): D1Database {
@@ -168,5 +210,128 @@ describe('POST /api/reel-media/uploads', () => {
     const { app, env } = makeApp({ REELS_R2: undefined, R2_REELS_PUBLIC_BASE: undefined });
     const res = await app.request('/api/reel-media/uploads', uploadRequest(), env);
     expect(res.status).toBe(503);
+  });
+});
+
+function finishRequest(overrides: Record<string, unknown> = {}, uid = 'user_steve') {
+  return {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-Uid': uid,
+    },
+    body: JSON.stringify({
+      key: 'reels/uploads/source.mp4',
+      clientId: 'client_richo',
+      startSeconds: 2.25,
+      endSeconds: 18.75,
+      coverSeconds: 6.5,
+      ...overrides,
+    }),
+  } satisfies RequestInit;
+}
+
+describe('POST /api/reel-media/finish', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('requires an authenticated SocialAI session', async () => {
+    const { app, env } = makeApp({ MEDIA: makeMedia() });
+    const res = await app.request('/api/reel-media/finish', finishRequest({}, ''), env);
+    expect(res.status).toBe(401);
+  });
+
+  it('fails closed when Media Transformations is not bound', async () => {
+    const { app, env, store } = makeApp();
+    store.set('reels/uploads/source.mp4', {
+      body: new Uint8Array([1, 2, 3]).buffer,
+      options: {
+        customMetadata: {
+          ownerId: 'user_steve',
+          clientId: 'client_richo',
+          durationMs: '30000',
+        },
+      },
+    });
+    const res = await app.request('/api/reel-media/finish', finishRequest(), env);
+    expect(res.status).toBe(503);
+  });
+
+  it('rejects invalid trim and cover timing before transforming', async () => {
+    const calls: MediaTransformationOutputOptions[] = [];
+    const { app, env, store } = makeApp({ MEDIA: makeMedia(calls) });
+    store.set('reels/uploads/source.mp4', {
+      body: new Uint8Array([1, 2, 3]).buffer,
+      options: {
+        customMetadata: {
+          ownerId: 'user_steve',
+          clientId: 'client_richo',
+          durationMs: '30000',
+        },
+      },
+    });
+    const res = await app.request('/api/reel-media/finish', finishRequest({
+      startSeconds: 8,
+      endSeconds: 8.5,
+      coverSeconds: 10,
+    }), env);
+    expect(res.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not expose another workspace upload', async () => {
+    const calls: MediaTransformationOutputOptions[] = [];
+    const { app, env, store } = makeApp({ MEDIA: makeMedia(calls) });
+    store.set('reels/uploads/source.mp4', {
+      body: new Uint8Array([1, 2, 3]).buffer,
+      options: {
+        customMetadata: {
+          ownerId: 'user_someone_else',
+          clientId: 'client_richo',
+          durationMs: '30000',
+        },
+      },
+    });
+    const res = await app.request('/api/reel-media/finish', finishRequest(), env);
+    expect(res.status).toBe(404);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('stores an audio-preserving MP4 clip and selected JPEG cover', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    const calls: MediaTransformationOutputOptions[] = [];
+    const { app, env, store } = makeApp({ MEDIA: makeMedia(calls) });
+    store.set('reels/uploads/source.mp4', {
+      body: new Uint8Array([1, 2, 3]).buffer,
+      options: {
+        httpMetadata: { contentType: 'video/mp4' },
+        customMetadata: {
+          ownerId: 'user_steve',
+          clientId: 'client_richo',
+          durationMs: '30000',
+          originalName: 'counter-special.mp4',
+        },
+      },
+    });
+
+    const res = await app.request('/api/reel-media/finish', finishRequest(), env);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({
+      key: 'reels/finished/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.mp4',
+      url: 'https://reels.example.com/reels/finished/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.mp4',
+      coverKey: 'reels/covers/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jpg',
+      coverUrl: 'https://reels.example.com/reels/covers/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jpg',
+      contentType: 'video/mp4',
+      startSeconds: 2.25,
+      endSeconds: 18.75,
+      coverSeconds: 6.5,
+    });
+    expect(calls).toEqual([
+      { mode: 'video', time: '2.25s', duration: '16.5s', audio: true },
+      { mode: 'frame', time: '6.5s', format: 'jpg' },
+    ]);
+    expect(store.get('reels/finished/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.mp4')?.options?.customMetadata)
+      .toMatchObject({ ownerId: 'user_steve', clientId: 'client_richo', sourceKey: 'reels/uploads/source.mp4' });
+    expect(store.get('reels/covers/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.jpg')?.options?.httpMetadata)
+      .toMatchObject({ contentType: 'image/jpeg' });
   });
 });

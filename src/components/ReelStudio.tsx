@@ -6,10 +6,12 @@ import {
   CheckCircle2,
   Facebook,
   FileVideo2,
+  Image as ImageIcon,
   Instagram,
   Loader2,
   RefreshCw,
   Save,
+  Scissors,
   Send,
   ShieldCheck,
   Sparkles,
@@ -26,8 +28,11 @@ import {
 } from '../services/gemini';
 import { createPostproxyService } from '../services/postproxyService';
 import {
+  finishReelMedia,
+  getReelFinishIssue,
   getReelUploadIssue,
   uploadReelMedia,
+  type FinishedReelMedia,
   type UploadedReelMedia,
 } from '../services/reelMedia';
 import './ReelStudio.css';
@@ -43,6 +48,8 @@ interface ReelStudioProps {
   onPostsChanged: () => Promise<void> | void;
   onOpenSettings: () => void;
   loadFacts?: (clientId?: string | null) => Promise<ClientFact[]>;
+  uploadMedia?: typeof uploadReelMedia;
+  finishMedia?: typeof finishReelMedia;
 }
 
 interface VideoMetadata {
@@ -117,6 +124,35 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${String(totalSeconds % 60).padStart(2, '0')}`;
 }
 
+function formatTimestamp(seconds: number): string {
+  const safeSeconds = Math.max(0, seconds);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds - minutes * 60;
+  return `${minutes}:${remainder.toFixed(1).padStart(4, '0')}`;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+export function moveReelTrimWindow(input: {
+  value: number;
+  sourceDurationSeconds: number;
+  trimStartSeconds: number;
+  trimEndSeconds: number;
+  coverSeconds: number;
+}) {
+  const previousDuration = clamp(input.trimEndSeconds - input.trimStartSeconds, 1, 60);
+  const startSeconds = clamp(input.value, 0, Math.max(0, input.sourceDurationSeconds - 1));
+  const endSeconds = Math.min(input.sourceDurationSeconds, startSeconds + previousDuration);
+  const coverOffset = input.coverSeconds - input.trimStartSeconds;
+  return {
+    startSeconds,
+    endSeconds,
+    coverSeconds: clamp(startSeconds + coverOffset, startSeconds, endSeconds),
+  };
+}
+
 function defaultScheduleValue(): string {
   const value = new Date(Date.now() + 24 * 60 * 60 * 1000);
   value.setHours(9, 0, 0, 0);
@@ -153,6 +189,8 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   onPostsChanged,
   onOpenSettings,
   loadFacts = fetchClientFacts,
+  uploadMedia = uploadReelMedia,
+  finishMedia = finishReelMedia,
 }) => {
   const { getApiToken, authMode } = useAuth();
   const db = useDb();
@@ -162,15 +200,22 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     [getApiToken, authMode],
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const uploadSequenceRef = useRef(0);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null);
   const [uploadedMedia, setUploadedMedia] = useState<UploadedReelMedia | null>(null);
+  const [finishedMedia, setFinishedMedia] = useState<FinishedReelMedia | null>(null);
+  const [trimStartSeconds, setTrimStartSeconds] = useState(0);
+  const [trimEndSeconds, setTrimEndSeconds] = useState(0);
+  const [coverSeconds, setCoverSeconds] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   const [facts, setFacts] = useState<ClientFact[]>([]);
@@ -221,6 +266,16 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     'See this week\'s counter picks online.',
     '',
   ])], [selectedFactCta]);
+  const sourceDurationSeconds = videoMetadata ? videoMetadata.durationMs / 1000 : 0;
+  const finishedDurationSeconds = Math.max(0, trimEndSeconds - trimStartSeconds);
+  const finishIssue = videoMetadata
+    ? getReelFinishIssue({
+      sourceDurationSeconds,
+      startSeconds: trimStartSeconds,
+      endSeconds: trimEndSeconds,
+      coverSeconds,
+    })
+    : 'Upload a video before finishing it.';
 
   useEffect(() => {
     let cancelled = false;
@@ -257,7 +312,9 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     setFile(nextFile);
     setClipTitle(nextFile.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '));
     setUploadedMedia(null);
+    setFinishedMedia(null);
     setUploadError(null);
+    setFinishError(null);
     setUploadProgress(0);
     setLastResult(null);
     setIsUploading(true);
@@ -266,7 +323,12 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
       const metadata = await readVideoMetadata(nextPreviewUrl);
       if (sequence !== uploadSequenceRef.current) return;
       setVideoMetadata(metadata);
-      const uploaded = await uploadReelMedia({
+      const durationSeconds = metadata.durationMs / 1000;
+      const initialEnd = Math.min(durationSeconds, 60);
+      setTrimStartSeconds(0);
+      setTrimEndSeconds(initialEnd);
+      setCoverSeconds(Math.min(initialEnd, Math.max(0, initialEnd * 0.35)));
+      const uploaded = await uploadMedia({
         file: nextFile,
         getToken: getApiToken,
         authMode,
@@ -284,6 +346,81 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
       setUploadError(error?.message || 'The Reel could not be uploaded.');
     } finally {
       if (sequence === uploadSequenceRef.current) setIsUploading(false);
+    }
+  };
+
+  const seekPreview = (seconds: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    try { video.currentTime = seconds; } catch {}
+  };
+
+  const resetFinishedMedia = () => {
+    setFinishedMedia(null);
+    setFinishError(null);
+    setLastResult(null);
+  };
+
+  const changeTrimStart = (value: number) => {
+    const next = moveReelTrimWindow({
+      value,
+      sourceDurationSeconds,
+      trimStartSeconds,
+      trimEndSeconds,
+      coverSeconds,
+    });
+    setTrimStartSeconds(next.startSeconds);
+    setTrimEndSeconds(next.endSeconds);
+    setCoverSeconds(next.coverSeconds);
+    resetFinishedMedia();
+    seekPreview(next.startSeconds);
+  };
+
+  const changeTrimEnd = (value: number) => {
+    const maximumEnd = Math.min(sourceDurationSeconds, trimStartSeconds + 60);
+    const nextEnd = clamp(value, trimStartSeconds + 1, maximumEnd);
+    setTrimEndSeconds(nextEnd);
+    setCoverSeconds((current) => clamp(current, trimStartSeconds, nextEnd));
+    resetFinishedMedia();
+    seekPreview(nextEnd);
+  };
+
+  const changeCover = (value: number) => {
+    const nextCover = clamp(value, trimStartSeconds, trimEndSeconds);
+    setCoverSeconds(nextCover);
+    resetFinishedMedia();
+    seekPreview(nextCover);
+  };
+
+  const handleFinish = async () => {
+    if (!uploadedMedia || !videoMetadata) {
+      toast('Wait for the Reel upload to finish.', 'warning');
+      return;
+    }
+    if (finishIssue) {
+      toast(finishIssue, 'warning');
+      return;
+    }
+    setIsFinishing(true);
+    setFinishError(null);
+    setLastResult(null);
+    try {
+      const result = await finishMedia({
+        key: uploadedMedia.key,
+        clientId,
+        startSeconds: trimStartSeconds,
+        endSeconds: trimEndSeconds,
+        coverSeconds,
+        getToken: getApiToken,
+        authMode,
+      });
+      setFinishedMedia(result);
+      toast('Finished Reel and cover are ready.', 'success');
+    } catch (error: any) {
+      setFinishError(error?.message || 'The Reel could not be finished.');
+    } finally {
+      setIsFinishing(false);
     }
   };
 
@@ -354,8 +491,8 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   };
 
   const saveReel = async (action: 'draft' | 'release') => {
-    if (!uploadedMedia) {
-      toast('Wait for the Reel upload to finish.', 'warning');
+    if (!finishedMedia) {
+      toast('Finish the Reel and choose its cover before saving.', 'warning');
       return;
     }
     const finalContent = [hook.trim(), captionBody.trim(), cta.trim()].filter(Boolean).join('\n\n');
@@ -394,9 +531,10 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
         topic: clipTitle.trim() || (selectedFact && factTitle(selectedFact)) || 'Uploaded Reel',
         pillar: 'Promotion',
         postType: 'video',
-        videoUrl: uploadedMedia.url,
+        imageUrl: finishedMedia.coverUrl,
+        videoUrl: finishedMedia.url,
         videoStatus: 'ready',
-        r2VideoKey: uploadedMedia.key,
+        r2VideoKey: finishedMedia.key,
         videoScript: footageNotes.trim() || null,
         videoMood: 'owner-uploaded',
         clientId,
@@ -460,7 +598,14 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
 
           {previewUrl ? (
             <div className="reel-preview">
-              <video src={previewUrl} controls playsInline preload="metadata" />
+              <video
+                ref={videoRef}
+                src={finishedMedia?.url || previewUrl}
+                poster={finishedMedia?.coverUrl}
+                controls
+                playsInline
+                preload="metadata"
+              />
               <button type="button" className="reel-preview__replace" onClick={() => fileInputRef.current?.click()}>
                 <RefreshCw size={15} /> Replace
               </button>
@@ -470,6 +615,11 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
                     <span style={{ width: `${Math.round(uploadProgress * 100)}%` }} />
                   </div>
                   <span>{Math.round(uploadProgress * 100)}%</span>
+                </div>
+              )}
+              {isFinishing && (
+                <div className="reel-finish-progress" role="status">
+                  <Loader2 size={16} className="spin" /> Finishing MP4 and cover...
                 </div>
               )}
             </div>
@@ -505,7 +655,11 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
                 </span>
               </div>
               <span className={`reel-file-state${uploadedMedia ? ' is-ready' : uploadError ? ' is-error' : ''}`}>
-                {uploadedMedia ? <><Check size={13} /> Ready</> : uploadError ? 'Retry' : 'Uploading'}
+                {finishedMedia
+                  ? <><Check size={13} /> Finished</>
+                  : uploadedMedia
+                    ? <><Check size={13} /> Uploaded</>
+                    : uploadError ? 'Retry' : 'Uploading'}
               </span>
             </div>
           )}
@@ -515,6 +669,98 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
               <AlertCircle size={16} />
               <span>{uploadError}</span>
               {file && <button type="button" onClick={() => void handleFile(file)}>Retry upload</button>}
+            </div>
+          )}
+
+          {uploadedMedia && videoMetadata && (
+            <div className="reel-finisher" aria-labelledby="reel-finisher-heading">
+              <div className="reel-finisher__heading">
+                <Scissors size={17} />
+                <div>
+                  <strong id="reel-finisher-heading">Trim and cover</strong>
+                  <span>{formatTimestamp(finishedDurationSeconds)} selected / original sound kept</span>
+                </div>
+              </div>
+
+              <div className="reel-range">
+                <div className="reel-range__label">
+                  <label htmlFor="reel-trim-start">Starts</label>
+                  <output htmlFor="reel-trim-start">{formatTimestamp(trimStartSeconds)}</output>
+                </div>
+                <input
+                  id="reel-trim-start"
+                  type="range"
+                  min={0}
+                  max={Math.max(0, sourceDurationSeconds - 1)}
+                  step={0.1}
+                  value={trimStartSeconds}
+                  aria-valuetext={formatTimestamp(trimStartSeconds)}
+                  onChange={(event) => changeTrimStart(Number(event.target.value))}
+                />
+              </div>
+
+              <div className="reel-range">
+                <div className="reel-range__label">
+                  <label htmlFor="reel-trim-end">Ends</label>
+                  <output htmlFor="reel-trim-end">{formatTimestamp(trimEndSeconds)}</output>
+                </div>
+                <input
+                  id="reel-trim-end"
+                  type="range"
+                  min={Math.min(sourceDurationSeconds, trimStartSeconds + 1)}
+                  max={Math.min(sourceDurationSeconds, trimStartSeconds + 60)}
+                  step={0.1}
+                  value={trimEndSeconds}
+                  aria-valuetext={formatTimestamp(trimEndSeconds)}
+                  onChange={(event) => changeTrimEnd(Number(event.target.value))}
+                />
+              </div>
+
+              <div className="reel-range reel-range--cover">
+                <div className="reel-range__label">
+                  <label htmlFor="reel-cover-frame">Cover frame</label>
+                  <output htmlFor="reel-cover-frame">{formatTimestamp(coverSeconds)}</output>
+                </div>
+                <input
+                  id="reel-cover-frame"
+                  type="range"
+                  min={trimStartSeconds}
+                  max={trimEndSeconds}
+                  step={0.1}
+                  value={coverSeconds}
+                  aria-valuetext={formatTimestamp(coverSeconds)}
+                  onChange={(event) => changeCover(Number(event.target.value))}
+                />
+              </div>
+
+              <div className={`reel-finish-summary${finishedMedia ? ' is-ready' : ''}`}>
+                {finishedMedia ? (
+                  <img src={finishedMedia.coverUrl} alt="Selected Reel cover frame" />
+                ) : (
+                  <span className="reel-finish-summary__icon"><ImageIcon size={19} /></span>
+                )}
+                <div>
+                  <strong>{finishedMedia ? 'Finished Reel ready' : 'Cover not made yet'}</strong>
+                  <span>{finishedMedia ? 'MP4 and cover saved' : finishIssue || 'Ready to finish'}</span>
+                </div>
+              </div>
+
+              {finishError && (
+                <div className="reel-inline-error" role="alert">
+                  <AlertCircle size={16} />
+                  <span>{finishError}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                className="reel-finish-action"
+                onClick={() => void handleFinish()}
+                disabled={isFinishing || Boolean(finishIssue)}
+              >
+                {isFinishing ? <Loader2 size={16} className="spin" /> : finishedMedia ? <RefreshCw size={16} /> : <Scissors size={16} />}
+                {isFinishing ? 'Finishing Reel...' : finishedMedia ? 'Update finished Reel' : 'Finish Reel'}
+              </button>
             </div>
           )}
         </section>
@@ -674,7 +920,7 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
           <div className="reel-review">
             <span>Release check</span>
             <ul>
-              <li className={uploadedMedia ? 'is-ready' : ''}><Check size={14} /> Durable video</li>
+              <li className={finishedMedia ? 'is-ready' : ''}><Check size={14} /> Finished video and cover</li>
               <li className={hook.trim() || captionBody.trim() ? 'is-ready' : ''}><Check size={14} /> Editable copy</li>
               <li className={releaseConnected ? 'is-ready' : ''}><Check size={14} /> Connected publisher</li>
             </ul>
@@ -688,10 +934,10 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
           )}
 
           <div className="reel-release-actions">
-            <button type="button" className="reel-secondary-action" onClick={() => void saveReel('draft')} disabled={isSaving || !uploadedMedia}>
+            <button type="button" className="reel-secondary-action" onClick={() => void saveReel('draft')} disabled={isSaving || !finishedMedia}>
               <Save size={17} /> Save draft
             </button>
-            <button type="button" className="reel-primary-action" onClick={() => void saveReel('release')} disabled={isSaving || !uploadedMedia || !releaseConnected}>
+            <button type="button" className="reel-primary-action" onClick={() => void saveReel('release')} disabled={isSaving || !finishedMedia || !releaseConnected}>
               {isSaving ? <Loader2 size={18} className="spin" /> : releaseMode === 'schedule' ? <CalendarClock size={18} /> : <Send size={18} />}
               {isSaving ? 'Saving...' : releaseMode === 'schedule' ? 'Schedule Reel' : 'Review and publish'}
             </button>
