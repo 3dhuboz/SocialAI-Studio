@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTHORIZATION_USE_TABLE,
+  EXPECTED_AUTHORIZATION_RECEIPT_ID,
+  EXPECTED_AUTHORIZATION_THREAD_ID,
   EXPECTED_GLADSTONE_ATTESTATION,
   EXPECTED_GLADSTONE_POST_ID,
   EXPECTED_OWNER_COPY_STATEMENT,
+  authorizationSha256,
+  buildAuthorizationUseSchemaSql,
+  buildAuthorizationUseSql,
   buildOwnerApplySql,
   buildOwnerRollbackSql,
   buildOwnerWithdrawalSql,
@@ -17,11 +23,11 @@ import { EXPECTED_USER_ID } from '../../scripts/learning-pilot-staging-copy';
 
 const authorization: DualPilotAuthorizationReceipt = {
   schemaVersion: 1,
-  receiptId: 'pilot-authorization-penny-owner-gladstone-gradient-20260720',
+  receiptId: EXPECTED_AUTHORIZATION_RECEIPT_ID,
   capturedAt: '2026-07-20T01:47:33.413Z',
   source: {
     kind: 'user_provided_attestation',
-    threadId: '019ed317-7f47-7b22-ae5e-0fab6b0218c6',
+    threadId: EXPECTED_AUTHORIZATION_THREAD_ID,
   },
   statements: {
     gladstoneExactDraft: EXPECTED_GLADSTONE_ATTESTATION,
@@ -123,6 +129,38 @@ describe('owner learning pilot staging copy', () => {
         },
       },
     } as unknown as DualPilotAuthorizationReceipt)).toThrow('rejected for publishing');
+    expect(() => validateDualPilotAuthorization({
+      ...authorization,
+      receiptId: `${authorization.receiptId}-replay`,
+    })).toThrow('exact consent event');
+    expect(() => validateDualPilotAuthorization({
+      ...authorization,
+      source: { ...authorization.source, threadId: 'different-thread' },
+    })).toThrow('source is invalid');
+  });
+
+  it('builds an immutable hash-only single-use authorization ledger', () => {
+    const row = draft();
+    const copiedId = copiedOwnerPostId(row.id);
+    const schema = buildAuthorizationUseSchemaSql();
+    const sql = buildAuthorizationUseSql(
+      authorization,
+      'a'.repeat(64),
+      copiedId,
+      '2026-07-20T02:04:04.663Z',
+    );
+
+    expect(authorizationSha256(authorization)).toHaveLength(64);
+    expect(schema).toContain(`CREATE TABLE IF NOT EXISTS ${AUTHORIZATION_USE_TABLE}`);
+    expect(schema).toContain('authorization_sha256 TEXT NOT NULL UNIQUE');
+    expect(schema).toContain('receipt_id_sha256 TEXT NOT NULL UNIQUE');
+    expect(schema).toContain('BEFORE DELETE');
+    expect(schema).toContain('OLD.withdrawn_at IS NULL');
+    expect(schema).toContain('NEW.withdrawn_at IS NOT NULL');
+    expect(sql).toContain(`INSERT OR ABORT INTO ${AUTHORIZATION_USE_TABLE}`);
+    expect(sql).not.toContain(EXPECTED_OWNER_COPY_STATEMENT);
+    expect(sql).not.toContain(authorization.receiptId);
+    expect(sql).not.toContain(authorization.source.threadId);
   });
 
   it('rejects non-owner, published, claimed, video, QA, or delivered Drafts', () => {
@@ -154,9 +192,11 @@ describe('owner learning pilot staging copy', () => {
 
   it('copies a canonical owner Draft with schedules and publishing metadata cleared', () => {
     const row = draft();
-    const sql = buildOwnerApplySql(row, '2026-07-20T01:50:00.000Z');
+    const sql = buildOwnerApplySql(row, authorization, '2026-07-20T01:50:00.000Z');
 
     expect(sql).toContain(copiedOwnerPostId(row.id));
+    expect(sql.indexOf(`INSERT OR ABORT INTO ${AUTHORIZATION_USE_TABLE}`))
+      .toBeLessThan(sql.indexOf('INSERT OR ABORT INTO posts'));
     expect(sql.replace(/\s+/g, '')).toContain(",'Facebook','Draft',NULL,");
     expect(sql).toContain("'image','user'");
     expect(sql).not.toContain(row.scheduled_for!);
@@ -180,9 +220,15 @@ describe('owner learning pilot staging copy', () => {
 
   it('withdraws only the copied post and its decision-scoped evidence', () => {
     const copiedId = copiedOwnerPostId('source-1');
-    const sql = buildOwnerWithdrawalSql(copiedId);
+    const sql = buildOwnerWithdrawalSql(
+      copiedId,
+      authorization,
+      '2026-07-20T03:00:00.000Z',
+    );
 
     expect(sql).toContain(`post_id = '${copiedId}'`);
+    expect(sql).toContain(`UPDATE ${AUTHORIZATION_USE_TABLE}`);
+    expect(sql).toContain('SET withdrawn_at =');
     expect(sql).toContain("workspace_key = '__owner__'");
     expect(sql).toContain('DELETE FROM learning_critic_verdicts');
     expect(sql).toContain('DELETE FROM learning_pilot_samples');
@@ -190,5 +236,6 @@ describe('owner learning pilot staging copy', () => {
     expect(sql).not.toContain('DELETE FROM users');
     expect(sql).not.toContain('DELETE FROM workspace_learning_settings');
     expect(sql).not.toContain('DELETE FROM learning_pilot_enrollments');
+    expect(sql).not.toContain(`DELETE FROM ${AUTHORIZATION_USE_TABLE}`);
   });
 });

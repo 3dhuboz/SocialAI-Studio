@@ -32,6 +32,13 @@ export const EXPECTED_OWNER_COPY_STATEMENT =
 export const EXPECTED_GLADSTONE_ATTESTATION =
   'I attest pilot-copy-be692c0a252f57aa0bf77f89 is a genuine Gladstone SocialAI output for record-only evaluation. It is rejected for publishing because the image is irrelevant.';
 export const EXPECTED_GLADSTONE_POST_ID = 'pilot-copy-be692c0a252f57aa0bf77f89';
+export const EXPECTED_AUTHORIZATION_RECEIPT_ID =
+  'pilot-authorization-penny-owner-gladstone-gradient-20260720';
+export const EXPECTED_AUTHORIZATION_THREAD_ID =
+  '019ed317-7f47-7b22-ae5e-0fab6b0218c6';
+export const AUTHORIZATION_USE_TABLE = 'learning_pilot_authorization_uses';
+const AUTHORIZATION_USE_DELETE_TRIGGER = 'prevent_learning_pilot_authorization_use_delete';
+const AUTHORIZATION_USE_UPDATE_TRIGGER = 'restrict_learning_pilot_authorization_use_update';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -129,8 +136,9 @@ interface D1StatementResult {
 }
 
 interface OwnerCopyArtifact {
-  schemaVersion: 1;
-  action: 'dry_run' | 'applied' | 'withdrawn' | 'failed_and_rolled_back';
+  schemaVersion: 1 | 2;
+  action: 'dry_run' | 'applied' | 'withdrawn' | 'failed_and_rolled_back'
+    | 'authorization_consumption_backfilled';
   generatedAt: string;
   gitCommit: string;
   gitClean: boolean;
@@ -141,6 +149,11 @@ interface OwnerCopyArtifact {
     capturedAt: string;
     maxDrafts: 1;
     withdrawalAllowed: true;
+    singleUseLedger?: {
+      table: typeof AUTHORIZATION_USE_TABLE;
+      state: 'not_recorded' | 'consumed' | 'withdrawn';
+      verified: boolean;
+    };
   };
   source: {
     environment: 'production';
@@ -190,11 +203,14 @@ export function validateDualPilotAuthorization(
   if (!isRecord(value) || value.schemaVersion !== 1) {
     throw new Error('Authorization receipt schemaVersion must be 1');
   }
-  if (!/^pilot-authorization-[a-z0-9-]+$/.test(value.receiptId)) {
-    throw new Error('Authorization receipt ID is invalid');
+  if (value.receiptId !== EXPECTED_AUTHORIZATION_RECEIPT_ID) {
+    throw new Error('Authorization receipt ID does not match the exact consent event');
   }
   isoTimestamp(value.capturedAt, 'capturedAt');
-  if (value.source.kind !== 'user_provided_attestation' || !value.source.threadId.trim()) {
+  if (
+    value.source.kind !== 'user_provided_attestation'
+    || value.source.threadId !== EXPECTED_AUTHORIZATION_THREAD_ID
+  ) {
     throw new Error('Authorization source is invalid');
   }
   if (value.statements.gladstoneExactDraft !== EXPECTED_GLADSTONE_ATTESTATION) {
@@ -315,6 +331,105 @@ function payloadHash(value: unknown): string {
   return sha256(JSON.stringify(stableValue(value)));
 }
 
+function validSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
+}
+
+export function authorizationSha256(
+  authorization: DualPilotAuthorizationReceipt,
+): string {
+  return payloadHash(validateDualPilotAuthorization(authorization));
+}
+
+function authorizationUseId(authorizationHash: string): string {
+  if (!validSha256(authorizationHash)) throw new Error('Authorization hash is invalid');
+  return `pilot-authorization-use-${authorizationHash.slice(0, 24)}`;
+}
+
+export function buildAuthorizationUseSchemaSql(): string {
+  return `CREATE TABLE IF NOT EXISTS ${AUTHORIZATION_USE_TABLE} (
+  id TEXT PRIMARY KEY,
+  authorization_sha256 TEXT NOT NULL UNIQUE CHECK (
+    LENGTH(authorization_sha256) = 64
+    AND authorization_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  receipt_id_sha256 TEXT NOT NULL UNIQUE CHECK (
+    LENGTH(receipt_id_sha256) = 64
+    AND receipt_id_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  source_thread_id_sha256 TEXT NOT NULL CHECK (
+    LENGTH(source_thread_id_sha256) = 64
+    AND source_thread_id_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  statement_sha256 TEXT NOT NULL CHECK (
+    LENGTH(statement_sha256) = 64
+    AND statement_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  selected_source_id_sha256 TEXT NOT NULL CHECK (
+    LENGTH(selected_source_id_sha256) = 64
+    AND selected_source_id_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  copied_post_id TEXT NOT NULL UNIQUE CHECK (
+    copied_post_id GLOB 'pilot-owner-copy-[0-9a-f]*'
+  ),
+  max_drafts INTEGER NOT NULL CHECK (max_drafts = 1),
+  record_only INTEGER NOT NULL CHECK (record_only = 1),
+  consumed_at TEXT NOT NULL,
+  withdrawn_at TEXT
+);
+CREATE TRIGGER IF NOT EXISTS ${AUTHORIZATION_USE_DELETE_TRIGGER}
+BEFORE DELETE ON ${AUTHORIZATION_USE_TABLE}
+BEGIN
+  SELECT RAISE(ABORT, 'pilot authorization use receipts cannot be deleted');
+END;
+CREATE TRIGGER IF NOT EXISTS ${AUTHORIZATION_USE_UPDATE_TRIGGER}
+BEFORE UPDATE ON ${AUTHORIZATION_USE_TABLE}
+WHEN NOT (
+  NEW.id = OLD.id
+  AND NEW.authorization_sha256 = OLD.authorization_sha256
+  AND NEW.receipt_id_sha256 = OLD.receipt_id_sha256
+  AND NEW.source_thread_id_sha256 = OLD.source_thread_id_sha256
+  AND NEW.statement_sha256 = OLD.statement_sha256
+  AND NEW.selected_source_id_sha256 = OLD.selected_source_id_sha256
+  AND NEW.copied_post_id = OLD.copied_post_id
+  AND NEW.max_drafts = OLD.max_drafts
+  AND NEW.record_only = OLD.record_only
+  AND NEW.consumed_at = OLD.consumed_at
+  AND OLD.withdrawn_at IS NULL
+  AND NEW.withdrawn_at IS NOT NULL
+)
+BEGIN
+  SELECT RAISE(ABORT, 'pilot authorization use receipts are immutable');
+END;`;
+}
+
+export function buildAuthorizationUseSql(
+  authorization: DualPilotAuthorizationReceipt,
+  selectedSourceIdSha256: string,
+  copiedId: string,
+  consumedAt: string,
+): string {
+  const authorizationHash = authorizationSha256(authorization);
+  if (!validSha256(selectedSourceIdSha256)) {
+    throw new Error('Selected source ID hash is invalid');
+  }
+  if (!/^pilot-owner-copy-[a-f0-9]{24}$/.test(copiedId)) {
+    throw new Error('Authorization use requires a valid copied owner post ID');
+  }
+  const timestamp = isoTimestamp(consumedAt, 'consumedAt');
+  return `${buildAuthorizationUseSchemaSql()}
+INSERT OR ABORT INTO ${AUTHORIZATION_USE_TABLE} (
+  id,authorization_sha256,receipt_id_sha256,source_thread_id_sha256,
+  statement_sha256,selected_source_id_sha256,copied_post_id,max_drafts,
+  record_only,consumed_at,withdrawn_at
+) VALUES (
+  ${sqlText(authorizationUseId(authorizationHash))},${sqlText(authorizationHash)},
+  ${sqlText(sha256(authorization.receiptId))},${sqlText(sha256(authorization.source.threadId))},
+  ${sqlText(sha256(authorization.statements.pennyWiseOwnerDraftCopy))},
+  ${sqlText(selectedSourceIdSha256)},${sqlText(copiedId)},1,1,${sqlText(timestamp)},NULL
+);`;
+}
+
 export function serverSelectOwnerDraft(
   rows: OwnerSourceDraft[],
   receiptId: string,
@@ -348,7 +463,11 @@ function sqlNullable(value: string | null | undefined): string {
   return value === null || value === undefined || value === '' ? 'NULL' : sqlText(value);
 }
 
-export function buildOwnerApplySql(row: OwnerSourceDraft, appliedAt: string): string {
+export function buildOwnerApplySql(
+  row: OwnerSourceDraft,
+  authorization: DualPilotAuthorizationReceipt,
+  appliedAt: string,
+): string {
   const reasons = classifyOwnerDraft(row);
   if (reasons.length > 0) {
     throw new Error(`Owner Draft is not eligible: ${reasons.join(', ')}`);
@@ -356,6 +475,7 @@ export function buildOwnerApplySql(row: OwnerSourceDraft, appliedAt: string): st
   const copiedId = copiedOwnerPostId(row.id);
   const createdAt = isoTimestamp(appliedAt, 'appliedAt');
   return `-- Staging-only owner Draft copy. This SQL must never run against production.
+${buildAuthorizationUseSql(authorization, sha256(row.id), copiedId, createdAt)}
 INSERT OR ABORT INTO posts (
   id,user_id,client_id,content,platform,status,scheduled_for,hashtags,
   image_url,topic,pillar,created_at,post_type,owner_kind,owner_id,publish_attempts
@@ -389,16 +509,27 @@ DELETE FROM posts
 `;
 }
 
-export function buildOwnerWithdrawalSql(copiedId: string): string {
+export function buildOwnerWithdrawalSql(
+  copiedId: string,
+  authorization: DualPilotAuthorizationReceipt,
+  withdrawnAt: string,
+): string {
   if (!/^pilot-owner-copy-[a-f0-9]{24}$/.test(copiedId)) {
     throw new Error('Withdrawal refused an unexpected owner-copy post ID');
   }
+  const authorizationHash = authorizationSha256(authorization);
+  const withdrawalTimestamp = isoTimestamp(withdrawnAt, 'withdrawnAt');
   const user = sqlText(EXPECTED_USER_ID);
   const workspace = sqlText(OWNER_WORKSPACE_KEY);
   const post = sqlText(copiedId);
   const decisions = `SELECT id FROM learning_decisions
       WHERE user_id = ${user} AND workspace_key = ${workspace} AND post_id = ${post}`;
   return `-- Withdraw one consented owner Draft and only its derived staging evidence.
+UPDATE ${AUTHORIZATION_USE_TABLE}
+   SET withdrawn_at = ${sqlText(withdrawalTimestamp)}
+ WHERE authorization_sha256 = ${sqlText(authorizationHash)}
+   AND copied_post_id = ${post}
+   AND withdrawn_at IS NULL;
 UPDATE ai_usage SET learning_decision_id = NULL
  WHERE learning_decision_id IN (${decisions});
 DELETE FROM learning_calibration_audits WHERE decision_id IN (${decisions});
@@ -458,7 +589,11 @@ SELECT COUNT(*) AS count FROM workspace_learning_settings
 `;
 }
 
-function stagingVerificationSql(copiedId: string): string {
+function stagingVerificationSql(
+  copiedId: string,
+  authorization: DualPilotAuthorizationReceipt,
+): string {
+  const authorizationHash = authorizationSha256(authorization);
   return `
 SELECT COUNT(*) AS copied_count,
        COALESCE(SUM(CASE
@@ -494,10 +629,17 @@ SELECT COUNT(*) AS count FROM publish_delivery_receipts
    AND post_id = ${sqlText(copiedId)};
 SELECT COUNT(*) AS count FROM workspace_learning_settings
  WHERE mode = 'protected_autopilot';
+SELECT COUNT(*) AS count FROM ${AUTHORIZATION_USE_TABLE}
+ WHERE authorization_sha256 = ${sqlText(authorizationHash)}
+   AND copied_post_id = ${sqlText(copiedId)} AND withdrawn_at IS NULL;
 `;
 }
 
-function withdrawalVerificationSql(copiedId: string): string {
+function withdrawalVerificationSql(
+  copiedId: string,
+  authorization: DualPilotAuthorizationReceipt,
+): string {
+  const authorizationHash = authorizationSha256(authorization);
   return `
 SELECT COUNT(*) AS count FROM posts WHERE id = ${sqlText(copiedId)};
 SELECT COUNT(*) AS count FROM learning_decisions
@@ -509,6 +651,9 @@ SELECT COUNT(*) AS count FROM learning_pilot_samples
 SELECT COUNT(*) AS count FROM workspace_learning_settings
  WHERE user_id = '${EXPECTED_USER_ID}' AND workspace_key = '${OWNER_WORKSPACE_KEY}'
    AND mode = 'approval';
+SELECT COUNT(*) AS count FROM ${AUTHORIZATION_USE_TABLE}
+ WHERE authorization_sha256 = ${sqlText(authorizationHash)}
+   AND copied_post_id = ${sqlText(copiedId)} AND withdrawn_at IS NOT NULL;
 `;
 }
 
@@ -590,6 +735,114 @@ function count(row: Record<string, unknown> | null, key = 'count'): number {
   return Number.isSafeInteger(value) && value >= 0 ? value : -1;
 }
 
+type AuthorizationUseState = 'absent' | 'unused' | 'consumed' | 'withdrawn';
+
+function authorizationUseState(
+  authorization: DualPilotAuthorizationReceipt,
+): AuthorizationUseState {
+  const metadata = executeReadOnlyD1(
+    STAGING_DATABASE,
+    `SELECT type,name,sql FROM sqlite_master
+      WHERE name IN (
+        '${AUTHORIZATION_USE_TABLE}',
+        '${AUTHORIZATION_USE_DELETE_TRIGGER}',
+        '${AUTHORIZATION_USE_UPDATE_TRIGGER}'
+      ) ORDER BY name;`,
+    'staging',
+  )[0].results ?? [];
+  if (metadata.length === 0) return 'absent';
+
+  const byName = new Map(metadata.map((row) => [String(row.name ?? ''), row]));
+  const table = byName.get(AUTHORIZATION_USE_TABLE);
+  const deleteTrigger = byName.get(AUTHORIZATION_USE_DELETE_TRIGGER);
+  const updateTrigger = byName.get(AUTHORIZATION_USE_UPDATE_TRIGGER);
+  if (!table || !deleteTrigger || !updateTrigger || metadata.length !== 3) {
+    throw new Error('Authorization-use ledger schema is incomplete');
+  }
+  const tableSql = String(table.sql ?? '').toLowerCase();
+  const deleteSql = String(deleteTrigger.sql ?? '').toLowerCase();
+  const updateSql = String(updateTrigger.sql ?? '').toLowerCase();
+  const requiredTableFragments = [
+    'authorization_sha256 text not null unique',
+    'receipt_id_sha256 text not null unique',
+    'selected_source_id_sha256 text not null',
+    'copied_post_id text not null unique',
+    'check (max_drafts = 1)',
+    'check (record_only = 1)',
+    'withdrawn_at text',
+  ];
+  if (
+    requiredTableFragments.some((fragment) => !tableSql.includes(fragment))
+    || !deleteSql.includes('cannot be deleted')
+    || !updateSql.includes('old.withdrawn_at is null')
+    || !updateSql.includes('new.withdrawn_at is not null')
+  ) {
+    throw new Error('Authorization-use ledger schema does not match the fail-closed contract');
+  }
+
+  const authorizationHash = authorizationSha256(authorization);
+  const receiptHash = sha256(authorization.receiptId);
+  const threadHash = sha256(authorization.source.threadId);
+  const statementHash = sha256(authorization.statements.pennyWiseOwnerDraftCopy);
+  const [usage] = firstRows(executeReadOnlyD1(
+    STAGING_DATABASE,
+    `SELECT
+       COALESCE(SUM(CASE WHEN authorization_sha256 = ${sqlText(authorizationHash)}
+         THEN 1 ELSE 0 END), 0) AS authorization_count,
+       COALESCE(SUM(CASE WHEN receipt_id_sha256 = ${sqlText(receiptHash)}
+         THEN 1 ELSE 0 END), 0) AS receipt_count,
+       COALESCE(SUM(CASE WHEN source_thread_id_sha256 = ${sqlText(threadHash)}
+          AND statement_sha256 = ${sqlText(statementHash)} THEN 1 ELSE 0 END), 0)
+         AS consent_event_count,
+       COALESCE(SUM(CASE WHEN authorization_sha256 = ${sqlText(authorizationHash)}
+          AND withdrawn_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS withdrawn_count
+     FROM ${AUTHORIZATION_USE_TABLE};`,
+    'staging',
+  ));
+  const authorizationCount = count(usage, 'authorization_count');
+  const receiptCount = count(usage, 'receipt_count');
+  const consentEventCount = count(usage, 'consent_event_count');
+  const withdrawnCount = count(usage, 'withdrawn_count');
+  if ([authorizationCount, receiptCount, consentEventCount, withdrawnCount]
+    .some((value) => value < 0 || value > 1)) {
+    throw new Error('Authorization-use ledger contains ambiguous receipt state');
+  }
+  if (authorizationCount === 0 && receiptCount === 0 && consentEventCount === 0) {
+    return 'unused';
+  }
+  if (authorizationCount !== 1 || receiptCount !== 1 || consentEventCount !== 1) {
+    throw new Error('Authorization-use ledger contains a conflicting receipt identity');
+  }
+  return withdrawnCount === 1 ? 'withdrawn' : 'consumed';
+}
+
+function assertAuthorizationUnused(authorization: DualPilotAuthorizationReceipt): void {
+  const state = authorizationUseState(authorization);
+  if (state === 'consumed' || state === 'withdrawn') {
+    throw new Error(`Owner-copy authorization is already ${state} and cannot be replayed`);
+  }
+}
+
+function verifyAuthorizationUse(
+  authorization: DualPilotAuthorizationReceipt,
+  copiedId: string,
+  expectedState: 'consumed' | 'withdrawn',
+): void {
+  const state = authorizationUseState(authorization);
+  if (state !== expectedState) {
+    throw new Error(`Authorization-use ledger expected ${expectedState} but found ${state}`);
+  }
+  const [row] = firstRows(executeReadOnlyD1(
+    STAGING_DATABASE,
+    `SELECT COUNT(*) AS count FROM ${AUTHORIZATION_USE_TABLE}
+      WHERE authorization_sha256 = ${sqlText(authorizationSha256(authorization))}
+        AND copied_post_id = ${sqlText(copiedId)}
+        AND withdrawn_at IS ${expectedState === 'withdrawn' ? 'NOT ' : ''}NULL;`,
+    'staging',
+  ));
+  if (count(row) !== 1) throw new Error('Authorization-use ledger post binding is invalid');
+}
+
 function sourceSnapshot(): {
   rows: D1StatementResult[];
   drafts: OwnerSourceDraft[];
@@ -610,7 +863,11 @@ function sourceSnapshot(): {
   };
 }
 
-function assertStagingPreflight(copiedId: string): void {
+function assertStagingPreflight(
+  copiedId: string,
+  authorization: DualPilotAuthorizationReceipt,
+): void {
+  assertAuthorizationUnused(authorization);
   const values = firstRows(executeReadOnlyD1(
     STAGING_DATABASE,
     stagingPreflightSql(copiedId),
@@ -625,17 +882,20 @@ function assertStagingPreflight(copiedId: string): void {
   if (protectedWorkspaces !== 0) throw new Error('Protected Autopilot is unexpectedly enabled');
 }
 
-function verifyApplied(copiedId: string): {
+function verifyApplied(
+  copiedId: string,
+  authorization: DualPilotAuthorizationReceipt,
+): {
   scheduledRows: 0;
   publishableRows: 0;
   derivedRowsAtCopy: 0;
 } {
   const rows = firstRows(executeReadOnlyD1(
     STAGING_DATABASE,
-    stagingVerificationSql(copiedId),
+    stagingVerificationSql(copiedId, authorization),
     'staging',
   ));
-  const [post, decisions, samples, events, receipts, protectedWorkspaces] = rows;
+  const [post, decisions, samples, events, receipts, protectedWorkspaces, authorizationUse] = rows;
   if (count(post, 'copied_count') !== 1 || count(post, 'safe_count') !== 1) {
     throw new Error('Copied staging owner Draft failed the safety check');
   }
@@ -649,13 +909,20 @@ function verifyApplied(copiedId: string): {
   if (count(protectedWorkspaces) !== 0) {
     throw new Error('Protected Autopilot must remain disabled');
   }
+  if (count(authorizationUse) !== 1) {
+    throw new Error('Owner copy did not consume exactly one authorization receipt');
+  }
+  verifyAuthorizationUse(authorization, copiedId, 'consumed');
   return { scheduledRows: 0, publishableRows: 0, derivedRowsAtCopy: 0 };
 }
 
-function verifyWithdrawn(copiedId: string): void {
-  const [post, decisions, samples, settings] = firstRows(executeReadOnlyD1(
+function verifyWithdrawn(
+  copiedId: string,
+  authorization: DualPilotAuthorizationReceipt,
+): void {
+  const [post, decisions, samples, settings, authorizationUse] = firstRows(executeReadOnlyD1(
     STAGING_DATABASE,
-    withdrawalVerificationSql(copiedId),
+    withdrawalVerificationSql(copiedId, authorization),
     'staging',
   ));
   if (count(post) !== 0 || count(decisions) !== 0 || count(samples) !== 0) {
@@ -664,6 +931,10 @@ function verifyWithdrawn(copiedId: string): void {
   if (count(settings) !== 1) {
     throw new Error('Withdrawal altered the pre-existing owner approval settings');
   }
+  if (count(authorizationUse) !== 1) {
+    throw new Error('Withdrawal did not retain a single-use authorization tombstone');
+  }
+  verifyAuthorizationUse(authorization, copiedId, 'withdrawn');
 }
 
 function gitState(): { commit: string; clean: boolean } {
@@ -720,15 +991,124 @@ function writeArtifact(artifact: OwnerCopyArtifact, outputDirectory: string): st
 function loadAppliedArtifact(path: string): OwnerCopyArtifact {
   const artifact = JSON.parse(readFileSync(path, 'utf8')) as OwnerCopyArtifact;
   if (
-    artifact.schemaVersion !== 1
-    || artifact.action !== 'applied'
+    ![1, 2].includes(artifact.schemaVersion)
+    || !['applied', 'authorization_consumption_backfilled'].includes(artifact.action)
+    || artifact.source.database !== PRODUCTION_DATABASE
+    || artifact.source.readOnly !== true
     || artifact.target.database !== STAGING_DATABASE
     || artifact.target.workspaceKey !== OWNER_WORKSPACE_KEY
+    || artifact.target.recordOnly !== true
+    || artifact.target.mode !== 'approval'
+    || artifact.target.experimentRate !== 0
+    || artifact.target.autopublishConsentAt !== null
+    || artifact.target.scheduledRows !== 0
+    || artifact.target.publishableRows !== 0
     || !/^pilot-owner-copy-[a-f0-9]{24}$/.test(artifact.target.copiedPostId)
+    || !validSha256(artifact.authorization.sha256)
+    || !validSha256(artifact.source.selectedSourceIdSha256)
+    || !validSha256(artifact.source.contentSha256)
+    || !validSha256(artifact.source.mediaUrlSha256)
   ) {
-    throw new Error('Withdrawal requires a valid applied owner-copy artifact');
+    throw new Error('Operation requires a valid applied owner-copy artifact');
   }
   return artifact;
+}
+
+function verifyExistingCopyForBackfill(applied: OwnerCopyArtifact): void {
+  const copiedId = applied.target.copiedPostId;
+  const rows = executeReadOnlyD1(
+    STAGING_DATABASE,
+    `SELECT p.*,
+       (SELECT COUNT(*) FROM publication_events e WHERE e.post_id = p.id)
+         AS publication_event_count,
+       (SELECT COUNT(*) FROM publish_delivery_receipts r WHERE r.post_id = p.id)
+         AS delivery_receipt_count
+     FROM posts p WHERE p.id = ${sqlText(copiedId)};
+     SELECT COUNT(*) AS count FROM workspace_learning_settings
+      WHERE mode = 'protected_autopilot';`,
+    'staging',
+  );
+  const postRows = rows[0].results ?? [];
+  const protectedRows = rows[1].results?.[0] ?? null;
+  if (postRows.length !== 1 || count(protectedRows) !== 0) {
+    throw new Error('Existing owner copy or staging mode is unsafe for ledger backfill');
+  }
+  const post = postRows[0] as unknown as OwnerSourceDraft;
+  if (
+    post.user_id !== EXPECTED_USER_ID
+    || post.client_id !== null
+    || post.owner_kind !== 'user'
+    || post.owner_id !== EXPECTED_USER_ID
+    || post.status?.trim().toLowerCase() !== 'draft'
+    || post.scheduled_for !== null
+    || Number(post.publish_attempts ?? 0) !== 0
+    || Number(post.publication_event_count ?? -1) !== 0
+    || Number(post.delivery_receipt_count ?? -1) !== 0
+    || EXTERNAL_PUBLISH_FIELDS.some((field) => markerPresent(post[field]))
+  ) {
+    throw new Error('Existing owner copy is schedulable, publishable, or externally delivered');
+  }
+  if (
+    sha256(post.content ?? '') !== applied.source.contentSha256
+    || sha256(post.image_url ?? '') !== applied.source.mediaUrlSha256
+  ) {
+    throw new Error('Existing owner copy no longer matches the applied receipt hashes');
+  }
+}
+
+async function backfillAuthorizationConsumption(
+  authorization: DualPilotAuthorizationReceipt,
+  outputDirectory: string,
+): Promise<void> {
+  if (!hasOption('--apply') || option('--confirm-owner') !== EXPECTED_USER_ID) {
+    throw new Error(`Backfill requires --apply --confirm-owner ${EXPECTED_USER_ID}`);
+  }
+  const artifactPath = option('--artifact');
+  if (!artifactPath) throw new Error('Backfill requires the original applied owner-copy artifact');
+  const applied = loadAppliedArtifact(resolve(artifactPath));
+  if (
+    applied.authorization.receiptId !== authorization.receiptId
+    || applied.authorization.sha256 !== authorizationSha256(authorization)
+  ) {
+    throw new Error('Applied artifact does not match the exact authorization receipt');
+  }
+  const git = gitState();
+  if (!git.clean) throw new Error('Backfill requires a clean committed worktree');
+  assertAuthorizationUnused(authorization);
+  verifyExistingCopyForBackfill(applied);
+  executeStagingSql(buildAuthorizationUseSql(
+    authorization,
+    applied.source.selectedSourceIdSha256,
+    applied.target.copiedPostId,
+    applied.generatedAt,
+  ));
+  verifyAuthorizationUse(authorization, applied.target.copiedPostId, 'consumed');
+
+  const generatedAt = new Date().toISOString();
+  const artifact = {
+    ...applied,
+    schemaVersion: 2 as const,
+    action: 'authorization_consumption_backfilled' as const,
+    generatedAt,
+    gitCommit: git.commit,
+    gitClean: git.clean,
+    authorization: {
+      ...applied.authorization,
+      singleUseLedger: {
+        table: AUTHORIZATION_USE_TABLE,
+        state: 'consumed' as const,
+        verified: true,
+      },
+    },
+    notes: [
+      ...applied.notes,
+      'Backfilled one hash-only immutable staging receipt for the authorization already consumed by this copy.',
+      'The ledger stores no post content, image URL, profile, token, schedule, or publishing credential.',
+      'Withdrawal removes copied content and retains only a non-reversible single-use tombstone.',
+    ],
+  } satisfies OwnerCopyArtifact;
+  const receiptPath = writeArtifact(artifact, outputDirectory);
+  process.stdout.write(`Authorization consumption backfilled and verified. Artifact: ${receiptPath}\n`);
 }
 
 async function withdraw(
@@ -742,6 +1122,12 @@ async function withdraw(
   if (!artifactPath) throw new Error('Withdrawal requires the applied owner-copy artifact');
   const applied = loadAppliedArtifact(resolve(artifactPath));
   const copiedId = applied.target.copiedPostId;
+  if (
+    applied.authorization.receiptId !== authorization.receiptId
+    || applied.authorization.sha256 !== authorizationSha256(authorization)
+  ) {
+    throw new Error('Withdrawal artifact does not match the exact authorization receipt');
+  }
   const [post, events, receipts] = firstRows(executeReadOnlyD1(
     STAGING_DATABASE,
     `SELECT COUNT(*) AS count FROM posts
@@ -754,12 +1140,13 @@ async function withdraw(
   if (count(post) !== 1 || count(events) !== 0 || count(receipts) !== 0) {
     throw new Error('Withdrawal refused because the staging Draft is not safely unpublished');
   }
-  executeStagingSql(buildOwnerWithdrawalSql(copiedId));
-  verifyWithdrawn(copiedId);
   const generatedAt = new Date().toISOString();
+  executeStagingSql(buildOwnerWithdrawalSql(copiedId, authorization, generatedAt));
+  verifyWithdrawn(copiedId, authorization);
   const git = gitState();
   const receiptPath = writeArtifact({
     ...applied,
+    schemaVersion: 2,
     action: 'withdrawn',
     generatedAt,
     gitCommit: git.commit,
@@ -767,6 +1154,11 @@ async function withdraw(
     authorization: {
       ...applied.authorization,
       sha256: payloadHash(authorization),
+      singleUseLedger: {
+        table: AUTHORIZATION_USE_TABLE,
+        state: 'withdrawn',
+        verified: true,
+      },
     },
     target: { ...applied.target, verified: true },
     notes: [
@@ -781,6 +1173,10 @@ async function main(): Promise<void> {
   const authorizationPath = resolve(option('--authorization-file') ?? defaultAuthorizationPath);
   const outputDirectory = resolve(option('--output-dir') ?? defaultArtifactDirectory);
   const authorization = readAuthorization(authorizationPath);
+  if (hasOption('--backfill-consumption')) {
+    await backfillAuthorizationConsumption(authorization, outputDirectory);
+    return;
+  }
   if (hasOption('--withdraw')) {
     await withdraw(authorization, outputDirectory);
     return;
@@ -790,7 +1186,7 @@ async function main(): Promise<void> {
   const selection = serverSelectOwnerDraft(sourceBefore.drafts, authorization.receiptId);
   const selected = selection.selected;
   const copiedId = copiedOwnerPostId(selected.id);
-  assertStagingPreflight(copiedId);
+  assertStagingPreflight(copiedId, authorization);
 
   const apply = hasOption('--apply');
   if (apply && option('--confirm-owner') !== EXPECTED_USER_ID) {
@@ -811,8 +1207,8 @@ async function main(): Promise<void> {
   };
   if (apply) {
     try {
-      executeStagingSql(buildOwnerApplySql(selected, generatedAt));
-      verification = verifyApplied(copiedId);
+      executeStagingSql(buildOwnerApplySql(selected, authorization, generatedAt));
+      verification = verifyApplied(copiedId, authorization);
       const sourceAfter = sourceSnapshot();
       sourceAfterHash = sourceAfter.hash;
       if (sourceAfter.hash !== sourceBefore.hash) {
@@ -838,7 +1234,7 @@ async function main(): Promise<void> {
   }
 
   const artifact: OwnerCopyArtifact = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     action,
     generatedAt,
     gitCommit: git.commit,
@@ -850,6 +1246,11 @@ async function main(): Promise<void> {
       capturedAt: authorization.capturedAt,
       maxDrafts: 1,
       withdrawalAllowed: true,
+      singleUseLedger: {
+        table: AUTHORIZATION_USE_TABLE,
+        state: apply ? 'consumed' : 'not_recorded',
+        verified: apply,
+      },
     },
     source: {
       environment: 'production',
