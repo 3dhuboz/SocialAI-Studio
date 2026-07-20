@@ -4181,3 +4181,40 @@ zero. Both environments still report
 `ORGANIC_REACH_APPLY_ENABLED=false`, zero Protected Autopilot workspaces,
 `productionMutationPerformed=false`, `releaseFlagsChanged=false`, and
 production `hughesq-001` still `on_hold`.
+
+### Production Worker 291 Version Attestation
+
+The unexpected production version was traced before it was accepted by the
+rollout verifier. Cloudflare reports version
+`7fb945de-36a7-442e-8d45-8139d5a1a841`, version number 291, uploaded through
+Wrangler at `2026-07-20T21:40:56.824Z`. It retains the production D1 binding,
+the two existing R2 buckets, both handlers, and all five learning/reach flag
+values. The only binding added relative to version 290 is `MEDIA`.
+
+The upload occurred 128.824 seconds after PR 211 merged. That PR introduced
+the same unique `MEDIA` binding. Its reviewed head
+`7a28caa411273b96997775715f37807ef48e1be6` and merge commit
+`078b7a02c3141c3c56bc27f56087370a9788ba1d` have the identical
+`workers/api` tree `e424641e102933669a615469a0ee60f1053c80ba`.
+
+The exact reviewed Worker tree passed all 1,166 tests across 90 files and
+strict Worker TypeScript. GitHub CI's `typecheck-and-build` check also passed.
+The Worker source diff is confined to Reel Studio media upload/finishing,
+route registration, the `MEDIA` binding, and a restrictive PostProxy rule
+that blocks legacy immediate Reel publishing when the current connection is
+unavailable. No learning critic, Release Judge, workspace mode, learning
+cron, or centralized publish-orchestrator module changed. The Reel media
+route does not schedule or publish posts and does not call Facebook,
+Instagram, or PostProxy.
+
+This evidence supports a scoped read-only rollout version pin. It does not
+authorize release enforcement, Protected Autopilot, organic reach
+application, schema changes, scheduling, or publishing. Cloudflare did not
+attach a Git commit annotation to the upload, so the receipt explicitly
+records that the correlation is based on exact timing, the unique binding,
+the identical reviewed Git tree, and clean verification rather than a
+byte-for-byte source annotation.
+
+The credential-free version receipt is:
+
+- `docs/superpowers/evidence/attestations/2026-07-21-production-worker-7fb945de-version-attestation.json`
