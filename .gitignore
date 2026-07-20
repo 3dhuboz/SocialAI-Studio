@@ -9,3 +9,4 @@ workers/api/.wrangler/
 .claude/worktrees/
 .claude/settings.local.json
 .codex/
+output/

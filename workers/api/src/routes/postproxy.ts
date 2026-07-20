@@ -42,7 +42,11 @@ import {
   recordPublishedPostBestEffort,
   type PublicationOwnedPost,
 } from '../lib/publishing/publish-orchestrator';
-import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
+import {
+  legacyImmediateVideoReason,
+  postproxyMediaArray,
+  postproxyMissingMediaReason,
+} from '../lib/postproxy-media';
 import {
   parseWebhookEvent,
   planWebhookAction,
@@ -738,6 +742,17 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     // Match the cron's format-per-platform mapping. Facebook now uses
     // 'post'; the live Postproxy API rejects the old 'feed' alias.
     const isReel = post.post_type === 'video';
+    const legacyVideoReason = legacyImmediateVideoReason({
+      postType: post.post_type,
+      usePostproxy,
+    });
+    if (legacyVideoReason) {
+      return c.json({
+        error: legacyVideoReason,
+        code: 'REEL_PUBLISH_REQUIRES_POSTPROXY',
+        platform: postPlatform,
+      }, 409);
+    }
     const missingMediaReason = postproxyMissingMediaReason({
       platform: postPlatform,
       postType: post.post_type,
