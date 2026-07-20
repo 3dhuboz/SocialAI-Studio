@@ -53,6 +53,8 @@ export type Env = {
   // the prewarm cron copies each generated mp4 here so the publish cron has
   // a durable, public URL to feed FB/IG via file_url.
   REELS_R2?: R2Bucket;
+  // Server-side MP4 trimming and cover-frame extraction for owner uploads.
+  MEDIA?: MediaBinding;
   // R2 bucket for Poster Maker PNG bytes. Keyed `posters/<id>.png`; D1 row
   // posters.image_r2_key references the key. ~5 MB cap enforced in the upload
   // route. Streamed back to the browser via GET /api/db/posters/:id/image.
