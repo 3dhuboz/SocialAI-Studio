@@ -5,17 +5,12 @@ import {
   Check,
   CheckCircle2,
   Facebook,
-  FileVideo2,
-  Image as ImageIcon,
   Instagram,
   Loader2,
-  RefreshCw,
   Save,
-  Scissors,
   Send,
   ShieldCheck,
   Sparkles,
-  Upload,
 } from 'lucide-react';
 import type { BusinessProfile, SocialTokens } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -29,13 +24,26 @@ import {
 import { createPostproxyService } from '../services/postproxyService';
 import {
   finishReelMedia,
-  getReelFinishIssue,
   getReelUploadIssue,
   uploadReelMedia,
   type FinishedReelMedia,
-  type UploadedReelMedia,
 } from '../services/reelMedia';
+import { ReelClipEditor } from './reel-editor/ReelClipEditor';
+import { renderReelProject, type ReelRenderProgress } from './reel-editor/renderTimeline';
+import {
+  commitEdit,
+  createEditHistory,
+  createEmptyReelProject,
+  createReelClip,
+  getReelProjectIssue,
+  redoEdit,
+  reelProjectDuration,
+  undoEdit,
+  type ReelProject,
+} from './reel-editor/timeline';
 import './ReelStudio.css';
+
+export { moveReelTrimWindow } from './reel-editor/timeline';
 
 type Platform = 'Facebook' | 'Instagram';
 type ReleaseMode = 'now' | 'schedule';
@@ -113,44 +121,11 @@ function parseHashtags(value: string): string[] {
   )].slice(0, 10);
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  return `${minutes}:${String(totalSeconds % 60).padStart(2, '0')}`;
-}
-
 function formatTimestamp(seconds: number): string {
   const safeSeconds = Math.max(0, seconds);
   const minutes = Math.floor(safeSeconds / 60);
   const remainder = safeSeconds - minutes * 60;
   return `${minutes}:${remainder.toFixed(1).padStart(4, '0')}`;
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-export function moveReelTrimWindow(input: {
-  value: number;
-  sourceDurationSeconds: number;
-  trimStartSeconds: number;
-  trimEndSeconds: number;
-  coverSeconds: number;
-}) {
-  const previousDuration = clamp(input.trimEndSeconds - input.trimStartSeconds, 1, 60);
-  const startSeconds = clamp(input.value, 0, Math.max(0, input.sourceDurationSeconds - 1));
-  const endSeconds = Math.min(input.sourceDurationSeconds, startSeconds + previousDuration);
-  const coverOffset = input.coverSeconds - input.trimStartSeconds;
-  return {
-    startSeconds,
-    endSeconds,
-    coverSeconds: clamp(startSeconds + coverOffset, startSeconds, endSeconds),
-  };
 }
 
 function defaultScheduleValue(): string {
@@ -199,24 +174,17 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     () => createPostproxyService(getApiToken, authMode),
     [getApiToken, authMode],
   );
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const uploadSequenceRef = useRef(0);
-
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [videoMetadata, setVideoMetadata] = useState<VideoMetadata | null>(null);
-  const [uploadedMedia, setUploadedMedia] = useState<UploadedReelMedia | null>(null);
+  const assetUrlsRef = useRef(new Set<string>());
+  const renderAbortRef = useRef<AbortController | null>(null);
+  const [projectHistory, setProjectHistory] = useState(() => createEditHistory(createEmptyReelProject()));
+  const project = projectHistory.present;
   const [finishedMedia, setFinishedMedia] = useState<FinishedReelMedia | null>(null);
-  const [trimStartSeconds, setTrimStartSeconds] = useState(0);
-  const [trimEndSeconds, setTrimEndSeconds] = useState(0);
   const [coverSeconds, setCoverSeconds] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [finishError, setFinishError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [renderProgress, setRenderProgress] = useState<ReelRenderProgress | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
 
   const [facts, setFacts] = useState<ClientFact[]>([]);
   const [factsLoading, setFactsLoading] = useState(true);
@@ -266,16 +234,8 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     'See this week\'s counter picks online.',
     '',
   ])], [selectedFactCta]);
-  const sourceDurationSeconds = videoMetadata ? videoMetadata.durationMs / 1000 : 0;
-  const finishedDurationSeconds = Math.max(0, trimEndSeconds - trimStartSeconds);
-  const finishIssue = videoMetadata
-    ? getReelFinishIssue({
-      sourceDurationSeconds,
-      startSeconds: trimStartSeconds,
-      endSeconds: trimEndSeconds,
-      coverSeconds,
-    })
-    : 'Upload a video before finishing it.';
+  const finishedDurationSeconds = reelProjectDuration(project);
+  const finishIssue = getReelProjectIssue(project);
 
   useEffect(() => {
     let cancelled = false;
@@ -294,132 +254,173 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     if (selectedFactCta) setCta(selectedFactCta);
   }, [selectedFactCta]);
 
-  useEffect(() => () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-  }, [previewUrl]);
-
-  const handleFile = async (nextFile: File) => {
-    const issue = getReelUploadIssue(nextFile);
-    if (issue) {
-      toast(issue, 'warning');
-      return;
-    }
-
-    const sequence = ++uploadSequenceRef.current;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    const nextPreviewUrl = URL.createObjectURL(nextFile);
-    setPreviewUrl(nextPreviewUrl);
-    setFile(nextFile);
-    setClipTitle(nextFile.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' '));
-    setUploadedMedia(null);
-    setFinishedMedia(null);
-    setUploadError(null);
-    setFinishError(null);
-    setUploadProgress(0);
-    setLastResult(null);
-    setIsUploading(true);
-
-    try {
-      const metadata = await readVideoMetadata(nextPreviewUrl);
-      if (sequence !== uploadSequenceRef.current) return;
-      setVideoMetadata(metadata);
-      const durationSeconds = metadata.durationMs / 1000;
-      const initialEnd = Math.min(durationSeconds, 60);
-      setTrimStartSeconds(0);
-      setTrimEndSeconds(initialEnd);
-      setCoverSeconds(Math.min(initialEnd, Math.max(0, initialEnd * 0.35)));
-      const uploaded = await uploadMedia({
-        file: nextFile,
-        getToken: getApiToken,
-        authMode,
-        clientId,
-        durationMs: metadata.durationMs,
-        onProgress: (progress) => {
-          if (sequence === uploadSequenceRef.current) setUploadProgress(progress);
-        },
-      });
-      if (sequence !== uploadSequenceRef.current) return;
-      setUploadedMedia(uploaded);
-      setUploadProgress(1);
-    } catch (error: any) {
-      if (sequence !== uploadSequenceRef.current) return;
-      setUploadError(error?.message || 'The Reel could not be uploaded.');
-    } finally {
-      if (sequence === uploadSequenceRef.current) setIsUploading(false);
-    }
-  };
-
-  const seekPreview = (seconds: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.pause();
-    try { video.currentTime = seconds; } catch {}
-  };
-
   const resetFinishedMedia = () => {
     setFinishedMedia(null);
     setFinishError(null);
     setLastResult(null);
   };
 
-  const changeTrimStart = (value: number) => {
-    const next = moveReelTrimWindow({
-      value,
-      sourceDurationSeconds,
-      trimStartSeconds,
-      trimEndSeconds,
-      coverSeconds,
+  const changeProject = (nextProject: ReelProject, recordHistory = true) => {
+    setProjectHistory((current) => (
+      recordHistory
+        ? commitEdit(current, nextProject)
+        : { ...current, present: nextProject }
+    ));
+    if (recordHistory) resetFinishedMedia();
+  };
+
+  const handleUndo = () => {
+    setProjectHistory((current) => undoEdit(current));
+    resetFinishedMedia();
+  };
+
+  const handleRedo = () => {
+    setProjectHistory((current) => redoEdit(current));
+    resetFinishedMedia();
+  };
+
+  useEffect(() => {
+    setCoverSeconds((current) => Math.min(current, finishedDurationSeconds));
+  }, [finishedDurationSeconds]);
+
+  useEffect(() => () => {
+    renderAbortRef.current?.abort();
+    assetUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    assetUrlsRef.current.clear();
+  }, []);
+
+  const handleFiles = async (files: File[]) => {
+    if (project.clips.length + files.length > 12) {
+      toast('Keep each Reel to 12 clips or fewer.', 'warning');
+      return;
+    }
+    setIsImporting(true);
+    const nextClips = [];
+    try {
+      for (const nextFile of files) {
+        const issue = getReelUploadIssue(nextFile);
+        if (issue) {
+          toast(`${nextFile.name}: ${issue}`, 'warning');
+          continue;
+        }
+        const url = URL.createObjectURL(nextFile);
+        assetUrlsRef.current.add(url);
+        try {
+          const metadata = await readVideoMetadata(url);
+          nextClips.push(createReelClip({
+            id: crypto.randomUUID(),
+            file: nextFile,
+            url,
+            sourceDurationSeconds: metadata.durationMs / 1000,
+            width: metadata.width,
+            height: metadata.height,
+          }));
+        } catch (error) {
+          URL.revokeObjectURL(url);
+          assetUrlsRef.current.delete(url);
+          toast(error instanceof Error ? `${nextFile.name}: ${error.message}` : `${nextFile.name} could not be read.`, 'warning');
+        }
+      }
+      if (nextClips.length === 0) return;
+      const nextProject = {
+        ...project,
+        clips: [...project.clips, ...nextClips],
+        selectedClipId: project.selectedClipId || nextClips[0].id,
+      };
+      changeProject(nextProject);
+      if (!clipTitle.trim()) setClipTitle(nextClips[0].name);
+      if (project.clips.length === 0) {
+        const initialDuration = reelProjectDuration(nextProject);
+        setCoverSeconds(Math.min(initialDuration, Math.max(0, initialDuration * 0.35)));
+      }
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleMusicFile = (musicFile: File) => {
+    if (!musicFile.type.startsWith('audio/')) {
+      toast('Choose an MP3, M4A, WAV, AAC, or OGG audio file.', 'warning');
+      return;
+    }
+    if (musicFile.size > 25 * 1024 * 1024) {
+      toast('Keep background music under 25 MB.', 'warning');
+      return;
+    }
+    const url = URL.createObjectURL(musicFile);
+    assetUrlsRef.current.add(url);
+    changeProject({
+      ...project,
+      music: {
+        id: crypto.randomUUID(),
+        file: musicFile,
+        url,
+        name: musicFile.name,
+        volume: 0.22,
+        loop: true,
+      },
     });
-    setTrimStartSeconds(next.startSeconds);
-    setTrimEndSeconds(next.endSeconds);
-    setCoverSeconds(next.coverSeconds);
-    resetFinishedMedia();
-    seekPreview(next.startSeconds);
   };
 
-  const changeTrimEnd = (value: number) => {
-    const maximumEnd = Math.min(sourceDurationSeconds, trimStartSeconds + 60);
-    const nextEnd = clamp(value, trimStartSeconds + 1, maximumEnd);
-    setTrimEndSeconds(nextEnd);
-    setCoverSeconds((current) => clamp(current, trimStartSeconds, nextEnd));
-    resetFinishedMedia();
-    seekPreview(nextEnd);
-  };
-
-  const changeCover = (value: number) => {
-    const nextCover = clamp(value, trimStartSeconds, trimEndSeconds);
-    setCoverSeconds(nextCover);
-    resetFinishedMedia();
-    seekPreview(nextCover);
+  const removeMusic = () => {
+    changeProject({ ...project, music: null });
   };
 
   const handleFinish = async () => {
-    if (!uploadedMedia || !videoMetadata) {
-      toast('Wait for the Reel upload to finish.', 'warning');
-      return;
-    }
     if (finishIssue) {
       toast(finishIssue, 'warning');
       return;
     }
+    const controller = new AbortController();
+    renderAbortRef.current = controller;
     setIsFinishing(true);
     setFinishError(null);
     setLastResult(null);
+    setUploadProgress(0);
+    setRenderProgress({ phase: 'preparing', progress: 0, clipIndex: 0, clipCount: project.clips.length });
     try {
-      const result = await finishMedia({
-        key: uploadedMedia.key,
+      const rendered = await renderReelProject(project, {
+        signal: controller.signal,
+        onProgress: setRenderProgress,
+      });
+      setRenderProgress(null);
+      const renderedFile = new File(
+        [rendered.blob],
+        `socialai-reel-${Date.now()}.${rendered.extension}`,
+        { type: rendered.contentType },
+      );
+      const uploadIssue = getReelUploadIssue(renderedFile);
+      if (uploadIssue) throw new Error(uploadIssue);
+      const uploaded = await uploadMedia({
+        file: renderedFile,
+        getToken: getApiToken,
+        authMode,
         clientId,
-        startSeconds: trimStartSeconds,
-        endSeconds: trimEndSeconds,
-        coverSeconds,
+        durationMs: rendered.durationMs,
+        onProgress: setUploadProgress,
+      });
+      const renderedDurationSeconds = rendered.durationMs / 1000;
+      const safeCoverSeconds = Math.min(
+        Math.max(0, coverSeconds),
+        Math.max(0, renderedDurationSeconds - 0.05),
+      );
+      const result = await finishMedia({
+        key: uploaded.key,
+        clientId,
+        startSeconds: 0,
+        endSeconds: renderedDurationSeconds,
+        coverSeconds: safeCoverSeconds,
         getToken: getApiToken,
         authMode,
       });
       setFinishedMedia(result);
-      toast('Finished Reel and cover are ready.', 'success');
+      toast('Edited Reel and cover are ready.', 'success');
     } catch (error: any) {
-      setFinishError(error?.message || 'The Reel could not be finished.');
+      if (error?.name === 'AbortError') toast('Reel rendering cancelled.', 'info');
+      else setFinishError(error?.message || 'The Reel could not be finished.');
     } finally {
+      renderAbortRef.current = null;
+      setRenderProgress(null);
       setIsFinishing(false);
     }
   };
@@ -432,8 +433,8 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   };
 
   const generateCaptionOptions = async () => {
-    if (!uploadedMedia) {
-      toast('Upload the Reel before preparing its copy.', 'warning');
+    if (project.clips.length === 0) {
+      toast('Add a clip before preparing its copy.', 'warning');
       return;
     }
     const safeContext = selectedFact ? publicFactContent(selectedFact) : '';
@@ -452,7 +453,7 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     const sourceMaterial = [
       safeContext && `Verified Richo Road context:\n${safeContext}`,
       footageNotes.trim() && `Pete's description of the actual footage:\n${footageNotes.trim()}`,
-      `Clip title: ${clipTitle.trim() || file?.name || 'Uploaded Reel'}`,
+      `Clip title: ${clipTitle.trim() || project.clips[0]?.name || 'Uploaded Reel'}`,
     ].filter(Boolean).join('\n\n');
 
     try {
@@ -578,191 +579,36 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
           <div className="reel-panel__heading">
             <span>01</span>
             <div>
-              <h2 id="reel-media-heading">Your Reel</h2>
-              <p>Phone footage, stored for publishing.</p>
+              <h2 id="reel-media-heading">Edit your Reel</h2>
+              <p>Cut, arrange, style, mix, and preview every clip.</p>
             </div>
           </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/mp4,video/quicktime,video/webm"
-            capture="environment"
-            hidden
-            onChange={(event) => {
-              const nextFile = event.currentTarget.files?.[0];
-              if (nextFile) void handleFile(nextFile);
-              event.currentTarget.value = '';
+          <ReelClipEditor
+            project={project}
+            onProjectChange={changeProject}
+            onAddFiles={handleFiles}
+            onAddMusic={handleMusicFile}
+            onRemoveMusic={removeMusic}
+            canUndo={projectHistory.past.length > 0}
+            canRedo={projectHistory.future.length > 0}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            coverSeconds={coverSeconds}
+            onCoverChange={(seconds) => {
+              setCoverSeconds(seconds);
+              resetFinishedMedia();
             }}
+            finishedMedia={finishedMedia}
+            finishError={finishError}
+            finishIssue={finishIssue}
+            isImporting={isImporting}
+            isFinishing={isFinishing}
+            renderProgress={renderProgress}
+            uploadProgress={uploadProgress}
+            onFinish={handleFinish}
+            onCancelFinish={() => renderAbortRef.current?.abort()}
           />
-
-          {previewUrl ? (
-            <div className="reel-preview">
-              <video
-                ref={videoRef}
-                src={finishedMedia?.url || previewUrl}
-                poster={finishedMedia?.coverUrl}
-                controls
-                playsInline
-                preload="metadata"
-              />
-              <button type="button" className="reel-preview__replace" onClick={() => fileInputRef.current?.click()}>
-                <RefreshCw size={15} /> Replace
-              </button>
-              {isUploading && (
-                <div className="reel-upload-progress" role="status">
-                  <div className="reel-upload-progress__track">
-                    <span style={{ width: `${Math.round(uploadProgress * 100)}%` }} />
-                  </div>
-                  <span>{Math.round(uploadProgress * 100)}%</span>
-                </div>
-              )}
-              {isFinishing && (
-                <div className="reel-finish-progress" role="status">
-                  <Loader2 size={16} className="spin" /> Finishing MP4 and cover...
-                </div>
-              )}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className={`reel-dropzone${isDragging ? ' is-dragging' : ''}`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
-              onDragOver={(event) => event.preventDefault()}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(event) => {
-                event.preventDefault();
-                setIsDragging(false);
-                const nextFile = event.dataTransfer.files?.[0];
-                if (nextFile) void handleFile(nextFile);
-              }}
-            >
-              <Upload size={28} />
-              <strong>Upload Pete's Reel</strong>
-              <span>MP4, MOV or WebM, up to 95 MB</span>
-            </button>
-          )}
-
-          {file && (
-            <div className="reel-file-meta">
-              <FileVideo2 size={18} />
-              <div>
-                <strong>{file.name}</strong>
-                <span>
-                  {formatBytes(file.size)}
-                  {videoMetadata ? ` / ${formatDuration(videoMetadata.durationMs)} / ${videoMetadata.width}x${videoMetadata.height}` : ''}
-                </span>
-              </div>
-              <span className={`reel-file-state${uploadedMedia ? ' is-ready' : uploadError ? ' is-error' : ''}`}>
-                {finishedMedia
-                  ? <><Check size={13} /> Finished</>
-                  : uploadedMedia
-                    ? <><Check size={13} /> Uploaded</>
-                    : uploadError ? 'Retry' : 'Uploading'}
-              </span>
-            </div>
-          )}
-
-          {uploadError && (
-            <div className="reel-inline-error" role="alert">
-              <AlertCircle size={16} />
-              <span>{uploadError}</span>
-              {file && <button type="button" onClick={() => void handleFile(file)}>Retry upload</button>}
-            </div>
-          )}
-
-          {uploadedMedia && videoMetadata && (
-            <div className="reel-finisher" aria-labelledby="reel-finisher-heading">
-              <div className="reel-finisher__heading">
-                <Scissors size={17} />
-                <div>
-                  <strong id="reel-finisher-heading">Trim and cover</strong>
-                  <span>{formatTimestamp(finishedDurationSeconds)} selected / original sound kept</span>
-                </div>
-              </div>
-
-              <div className="reel-range">
-                <div className="reel-range__label">
-                  <label htmlFor="reel-trim-start">Starts</label>
-                  <output htmlFor="reel-trim-start">{formatTimestamp(trimStartSeconds)}</output>
-                </div>
-                <input
-                  id="reel-trim-start"
-                  type="range"
-                  min={0}
-                  max={Math.max(0, sourceDurationSeconds - 1)}
-                  step={0.1}
-                  value={trimStartSeconds}
-                  aria-valuetext={formatTimestamp(trimStartSeconds)}
-                  onChange={(event) => changeTrimStart(Number(event.target.value))}
-                />
-              </div>
-
-              <div className="reel-range">
-                <div className="reel-range__label">
-                  <label htmlFor="reel-trim-end">Ends</label>
-                  <output htmlFor="reel-trim-end">{formatTimestamp(trimEndSeconds)}</output>
-                </div>
-                <input
-                  id="reel-trim-end"
-                  type="range"
-                  min={Math.min(sourceDurationSeconds, trimStartSeconds + 1)}
-                  max={Math.min(sourceDurationSeconds, trimStartSeconds + 60)}
-                  step={0.1}
-                  value={trimEndSeconds}
-                  aria-valuetext={formatTimestamp(trimEndSeconds)}
-                  onChange={(event) => changeTrimEnd(Number(event.target.value))}
-                />
-              </div>
-
-              <div className="reel-range reel-range--cover">
-                <div className="reel-range__label">
-                  <label htmlFor="reel-cover-frame">Cover frame</label>
-                  <output htmlFor="reel-cover-frame">{formatTimestamp(coverSeconds)}</output>
-                </div>
-                <input
-                  id="reel-cover-frame"
-                  type="range"
-                  min={trimStartSeconds}
-                  max={trimEndSeconds}
-                  step={0.1}
-                  value={coverSeconds}
-                  aria-valuetext={formatTimestamp(coverSeconds)}
-                  onChange={(event) => changeCover(Number(event.target.value))}
-                />
-              </div>
-
-              <div className={`reel-finish-summary${finishedMedia ? ' is-ready' : ''}`}>
-                {finishedMedia ? (
-                  <img src={finishedMedia.coverUrl} alt="Selected Reel cover frame" />
-                ) : (
-                  <span className="reel-finish-summary__icon"><ImageIcon size={19} /></span>
-                )}
-                <div>
-                  <strong>{finishedMedia ? 'Finished Reel ready' : 'Cover not made yet'}</strong>
-                  <span>{finishedMedia ? 'MP4 and cover saved' : finishIssue || 'Ready to finish'}</span>
-                </div>
-              </div>
-
-              {finishError && (
-                <div className="reel-inline-error" role="alert">
-                  <AlertCircle size={16} />
-                  <span>{finishError}</span>
-                </div>
-              )}
-
-              <button
-                type="button"
-                className="reel-finish-action"
-                onClick={() => void handleFinish()}
-                disabled={isFinishing || Boolean(finishIssue)}
-              >
-                {isFinishing ? <Loader2 size={16} className="spin" /> : finishedMedia ? <RefreshCw size={16} /> : <Scissors size={16} />}
-                {isFinishing ? 'Finishing Reel...' : finishedMedia ? 'Update finished Reel' : 'Finish Reel'}
-              </button>
-            </div>
-          )}
         </section>
 
         <section className="reel-panel reel-panel--copy" aria-labelledby="reel-copy-heading">
@@ -811,7 +657,7 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
             type="button"
             className="reel-ai-button"
             onClick={() => void generateCaptionOptions()}
-            disabled={isGenerating || !uploadedMedia}
+            disabled={isGenerating || project.clips.length === 0}
           >
             {isGenerating ? <Loader2 size={17} className="spin" /> : <Sparkles size={17} />}
             {isGenerating ? 'Writing three options...' : 'Write 3 caption options'}
