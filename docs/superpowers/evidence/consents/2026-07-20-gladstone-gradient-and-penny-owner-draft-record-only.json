@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "pilot-authorization-penny-owner-gladstone-gradient-20260720",
+  "capturedAt": "2026-07-20T01:47:33.413Z",
+  "source": {
+    "kind": "user_provided_attestation",
+    "threadId": "019ed317-7f47-7b22-ae5e-0fab6b0218c6"
+  },
+  "statements": {
+    "gladstoneExactDraft": "I attest pilot-copy-be692c0a252f57aa0bf77f89 is a genuine Gladstone SocialAI output for record-only evaluation. It is rejected for publishing because the image is irrelevant.",
+    "pennyWiseOwnerDraftCopy": "I consent to SocialAI Studio copying one server-selected unpublished Penny Wise I.T Draft into isolated staging for record-only safety evaluation. No other post content may be copied, nothing may be scheduled or published, and consent may be withdrawn."
+  },
+  "grants": {
+    "gladstoneExactDraft": {
+      "postId": "pilot-copy-be692c0a252f57aa0bf77f89",
+      "clientId": "gladstonebbq-001",
+      "recordOnly": true,
+      "genuineSocialAiOutput": true,
+      "publishDisposition": "rejected",
+      "rejectionReason": "irrelevant_image",
+      "scheduleAllowed": false,
+      "publishAllowed": false,
+      "learningApplyAllowed": false
+    },
+    "pennyWiseOwnerDraftCopy": {
+      "userId": "user_3B9YKodZsIQjLdGW8wtwd7mmBMQ",
+      "workspaceKey": "__owner__",
+      "maxDrafts": 1,
+      "serverSelected": true,
+      "requiresUnpublished": true,
+      "copyProfileAllowed": false,
+      "isolatedStaging": true,
+      "recordOnly": true,
+      "scheduleAllowed": false,
+      "publishAllowed": false,
+      "learningApplyAllowed": false
+    }
+  },
+  "withdrawal": {
+    "allowed": true,
+    "effect": "Delete only the copied staging Draft and its derived learning evidence."
+  }
+}
