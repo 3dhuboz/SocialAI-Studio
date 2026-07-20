@@ -3870,3 +3870,49 @@ Both health endpoints remained green, both environments reported zero
 Protected Autopilot workspaces, every release and organic-reach apply flag
 remained false, and `hughesq-001` remained `on_hold`. No Worker, frontend,
 schema, database, schedule, publish, consent, or production mutation occurred.
+
+### Fail-Closed Rollout Action Sequencing
+
+The genuine Gladstone rejection remains evidence of a blocked output, not
+permission to publish it or activate learning. A follow-up operator-safety
+review found that the rollout verifier enforced every gate correctly but
+reported all unmet promotion checks as one flat blocker list. That could make
+a later production task appear equally actionable before pilot evidence,
+independent calibration, and staging readiness were complete.
+
+The read-only verifier now emits an ordered `actionPlan` in schema version 6.
+It selects exactly one current phase in this fail-closed order:
+
+1. safety recovery
+2. live Worker version attestation
+3. record-only pilot evidence
+4. independent staging calibration
+5. staging readiness
+6. additive production schemas in an operator-reviewed change window
+7. production shadow readiness
+8. preparation for an operator-reviewed activation change window
+
+The action plan includes structured next-safe actions, current-phase blockers,
+execution mode, and whether an action would mutate production. Production
+schema work is not surfaced until pilot evidence, calibration evidence, and
+staging readiness are all green. If any dormant safety invariant fails, the
+only action returned is read-only investigation.
+
+Automatic activation and automatic production mutation are hard-coded false,
+including after `promotion_ready`. The artifact also permanently prohibits
+automatic behavior-changing Worker deployment, release-enforcement enablement,
+Protected Autopilot enablement, organic-reach apply enablement, pilot-content
+scheduling or publication, and premature production-schema application.
+
+Local verification passed without deploying or touching live data:
+
+- rollout verifier tests: 39 of 39 passed
+- full root regression suite: 264 of 264 passed across 21 files
+- TypeScript: `npx tsc --noEmit --pretty false` passed
+- production frontend build: 1,925 modules transformed successfully
+- `git diff --check`: passed
+
+No Worker, frontend, schema, database, schedule, publish, consent, release
+flag, or production behavior change was performed. `hughesq-001` remains on
+hold, and the next unattested Gladstone draft still requires exact provenance
+before it may be evaluated or counted.

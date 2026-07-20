@@ -6,6 +6,7 @@ import {
   STAGING_CALIBRATION_ROLLOUT_SQL,
   STAGING_ROLLOUT_SQL,
   assertReadOnlySql,
+  buildRolloutActionPlan,
   buildWranglerInvocation,
   evaluateRolloutState,
   parseCron,
@@ -154,6 +155,129 @@ describe('learning live rollout state', () => {
     expect(result.safeHold).toBe(true);
     expect(result.promotionReady).toBe(true);
     expect(result.blockers).toEqual([]);
+  });
+
+  it('keeps automatic activation prohibited even when every promotion gate passes', () => {
+    const input = observation();
+    const plan = buildRolloutActionPlan(input);
+
+    expect(plan).toMatchObject({
+      phase: 'operator_change_window',
+      phaseBlockers: [],
+      automaticActivationAllowed: false,
+      automaticProductionMutationAllowed: false,
+    });
+    expect(plan.nextSafeActions).toEqual([
+      expect.objectContaining({
+        id: 'prepare_operator_reviewed_activation_change_window',
+        executionMode: 'operator_change_window',
+        productionMutation: false,
+        productionBehaviorChange: false,
+      }),
+    ]);
+    expect(plan.prohibitedAutomaticActions).toEqual(expect.arrayContaining([
+      'enable_learning_release_enforcement',
+      'enable_protected_autopilot',
+      'schedule_or_publish_pilot_content',
+    ]));
+  });
+
+  it('shows only record-only pilot work while evidence thresholds are incomplete', () => {
+    const input = observation();
+    input.staging.pilotSamples = 1;
+    input.staging.ownerSamples = 0;
+    input.staging.clientSamples = 1;
+    input.staging.ownerAttestedSamples = 0;
+    input.staging.clientAttestedSamples = 1;
+    input.staging.ownerCandidateDrafts = 1;
+    input.staging.clientCandidateDrafts = 1;
+    input.staging.calibrationRows = 0;
+    input.staging.verifiedCalibrations = 0;
+    input.staging.readiness = { ...greenReadiness(), ready: false };
+    input.production.pilotSampleTablePresent = false;
+    input.production.calibrationTablePresent = false;
+    input.production.readiness = null;
+
+    const plan = buildRolloutActionPlan(input);
+
+    expect(plan.phase).toBe('pilot_evidence');
+    expect(plan.phaseBlockers).toEqual(['positive_pilot_samples']);
+    expect(plan.nextSafeActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'owner_review_exact_owner_draft',
+        target: 'owner_pilot',
+        executionMode: 'record_only',
+      }),
+      expect.objectContaining({
+        id: 'customer_review_exact_customer_draft',
+        target: 'customer_pilot',
+        executionMode: 'record_only',
+      }),
+    ]));
+    expect(plan.nextSafeActions.some((action) => (
+      action.id.includes('production_learning_schemas')
+    ))).toBe(false);
+  });
+
+  it('orders version attestation before all evidence and schema work', () => {
+    const input = observation();
+    input.staging.expectedVersionId = null;
+    input.production.expectedVersionId = null;
+    input.production.pilotSampleTablePresent = false;
+    input.production.calibrationTablePresent = false;
+
+    const plan = buildRolloutActionPlan(input);
+
+    expect(plan.phase).toBe('version_attestation');
+    expect(plan.nextSafeActions.map((action) => action.id)).toEqual([
+      'attest_staging_worker_version',
+      'attest_production_worker_version',
+    ]);
+    expect(plan.nextSafeActions.every((action) => (
+      action.executionMode === 'read_only' && !action.productionMutation
+    ))).toBe(true);
+  });
+
+  it('permits additive production schema work only after upstream gates pass', () => {
+    const input = observation();
+    input.production.pilotSampleTablePresent = false;
+    input.production.calibrationTablePresent = false;
+    input.production.readiness = null;
+
+    const plan = buildRolloutActionPlan(input);
+
+    expect(plan.phase).toBe('production_schema');
+    expect(plan.phaseBlockers).toEqual([
+      'production_positive_sample_schema',
+      'production_calibration_schema',
+    ]);
+    expect(plan.nextSafeActions).toEqual([
+      expect.objectContaining({
+        id: 'apply_additive_production_learning_schemas_in_change_window',
+        executionMode: 'operator_change_window',
+        productionMutation: true,
+        productionBehaviorChange: false,
+      }),
+    ]);
+    expect(plan.automaticProductionMutationAllowed).toBe(false);
+  });
+
+  it('offers only safety investigation when a dormant invariant fails', () => {
+    const input = observation();
+    input.production.flags.LEARNING_AUTOPILOT_ENABLED = 'true';
+    input.production.pilotSampleTablePresent = false;
+
+    const plan = buildRolloutActionPlan(input);
+
+    expect(plan.phase).toBe('safety_recovery');
+    expect(plan.phaseBlockers).toContain('production_flags_dormant');
+    expect(plan.nextSafeActions).toEqual([
+      expect.objectContaining({
+        id: 'investigate_failed_safety_checks',
+        executionMode: 'read_only',
+        productionMutation: false,
+      }),
+    ]);
   });
 
   it('returns safe_hold for a healthy dormant rollout that still lacks real evidence', () => {

@@ -49,6 +49,42 @@ const REQUIRED_DEPLOYED_FLAGS = {
 type DeployedFlagName = keyof typeof REQUIRED_DEPLOYED_FLAGS;
 type RolloutResult = 'promotion_ready' | 'safe_hold' | 'unsafe_or_unverified';
 
+export type RolloutActionPhase =
+  | 'safety_recovery'
+  | 'version_attestation'
+  | 'pilot_evidence'
+  | 'staging_calibration'
+  | 'staging_readiness'
+  | 'production_schema'
+  | 'production_readiness'
+  | 'operator_change_window';
+
+export interface RolloutNextSafeAction {
+  id: string;
+  target: 'rollout' | 'owner_pilot' | 'customer_pilot' | 'staging' | 'production';
+  executionMode: 'read_only' | 'record_only' | 'operator_change_window';
+  productionMutation: boolean;
+  productionBehaviorChange: false;
+}
+
+export interface RolloutActionPlan {
+  phase: RolloutActionPhase;
+  phaseBlockers: string[];
+  nextSafeActions: RolloutNextSafeAction[];
+  automaticActivationAllowed: false;
+  automaticProductionMutationAllowed: false;
+  prohibitedAutomaticActions: string[];
+}
+
+const PROHIBITED_AUTOMATIC_ROLLOUT_ACTIONS = [
+  'deploy_behavior_changing_worker',
+  'enable_learning_release_enforcement',
+  'enable_protected_autopilot',
+  'enable_organic_reach_apply',
+  'schedule_or_publish_pilot_content',
+  'apply_production_schema_before_prerequisites',
+] as const;
+
 export const STAGING_ROLLOUT_SQL = `
 SELECT COUNT(*) AS pilot_samples,
        COALESCE(SUM(CASE WHEN sample.owner_kind = 'user' THEN 1 ELSE 0 END), 0)
@@ -887,6 +923,164 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   };
 }
 
+function rolloutAction(
+  id: string,
+  target: RolloutNextSafeAction['target'],
+  executionMode: RolloutNextSafeAction['executionMode'],
+  productionMutation = false,
+): RolloutNextSafeAction {
+  return {
+    id,
+    target,
+    executionMode,
+    productionMutation,
+    productionBehaviorChange: false,
+  };
+}
+
+function rolloutActionPlan(
+  phase: RolloutActionPhase,
+  phaseBlockers: string[],
+  nextSafeActions: RolloutNextSafeAction[],
+): RolloutActionPlan {
+  return {
+    phase,
+    phaseBlockers,
+    nextSafeActions,
+    automaticActivationAllowed: false,
+    automaticProductionMutationAllowed: false,
+    prohibitedAutomaticActions: [...PROHIBITED_AUTOMATIC_ROLLOUT_ACTIONS],
+  };
+}
+
+export function buildRolloutActionPlan(
+  input: RolloutObservation,
+  evaluation: RolloutEvaluation = evaluateRolloutState(input),
+): RolloutActionPlan {
+  const checkPassed = (id: string): boolean => (
+    evaluation.checks.find((check) => check.id === id)?.passed === true
+  );
+  const failed = (ids: string[]): string[] => ids.filter((id) => !checkPassed(id));
+
+  if (!evaluation.safeHold) {
+    return rolloutActionPlan(
+      'safety_recovery',
+      evaluation.failedSafetyChecks.length > 0
+        ? evaluation.failedSafetyChecks
+        : ['rollout_evaluation_unverified'],
+      [rolloutAction('investigate_failed_safety_checks', 'rollout', 'read_only')],
+    );
+  }
+
+  const versionBlockers = failed([
+    'staging_version_attested',
+    'production_version_attested',
+  ]);
+  if (versionBlockers.length > 0) {
+    const nextSafeActions = versionBlockers.map((id) => rolloutAction(
+      id === 'staging_version_attested'
+        ? 'attest_staging_worker_version'
+        : 'attest_production_worker_version',
+      id === 'staging_version_attested' ? 'staging' : 'production',
+      'read_only',
+    ));
+    return rolloutActionPlan('version_attestation', versionBlockers, nextSafeActions);
+  }
+
+  const pilotBlockers = failed(['positive_pilot_samples', 'customer_pilot_consent']);
+  if (pilotBlockers.length > 0) {
+    const pilotIntake = summarizePilotIntake(input.staging);
+    const nextSafeActions: RolloutNextSafeAction[] = [];
+    if (pilotIntake.owner.nextRequired !== 'cohort_minimum_met') {
+      nextSafeActions.push(rolloutAction(
+        `owner_${pilotIntake.owner.nextRequired}`,
+        'owner_pilot',
+        'record_only',
+      ));
+    }
+    if (pilotIntake.customer.nextRequired !== 'cohort_minimum_met') {
+      nextSafeActions.push(rolloutAction(
+        `customer_${pilotIntake.customer.nextRequired}`,
+        'customer_pilot',
+        'record_only',
+      ));
+    }
+    if (nextSafeActions.length === 0 && input.staging.pilotSamples < 30) {
+      nextSafeActions.push(rolloutAction(
+        'collect_additional_balanced_pilot_samples',
+        'rollout',
+        'record_only',
+      ));
+    }
+    if (!checkPassed('customer_pilot_consent')
+      && !nextSafeActions.some((action) => action.target === 'customer_pilot')) {
+      nextSafeActions.push(rolloutAction(
+        'reverify_customer_consent_and_enrollment',
+        'customer_pilot',
+        'record_only',
+      ));
+    }
+    return rolloutActionPlan('pilot_evidence', pilotBlockers, nextSafeActions);
+  }
+
+  const calibrationBlockers = failed([
+    'staging_calibration_cron_fresh',
+    'staging_calibration_evidence',
+  ]);
+  if (calibrationBlockers.length > 0) {
+    return rolloutActionPlan(
+      'staging_calibration',
+      calibrationBlockers,
+      [rolloutAction('run_independent_staging_calibration', 'staging', 'record_only')],
+    );
+  }
+
+  const stagingReadinessBlockers = failed(['staging_readiness_green']);
+  if (stagingReadinessBlockers.length > 0) {
+    return rolloutActionPlan(
+      'staging_readiness',
+      stagingReadinessBlockers,
+      [rolloutAction('resolve_staging_readiness_checks', 'staging', 'record_only')],
+    );
+  }
+
+  const productionSchemaBlockers = failed([
+    'production_positive_sample_schema',
+    'production_calibration_schema',
+  ]);
+  if (productionSchemaBlockers.length > 0) {
+    return rolloutActionPlan(
+      'production_schema',
+      productionSchemaBlockers,
+      [rolloutAction(
+        'apply_additive_production_learning_schemas_in_change_window',
+        'production',
+        'operator_change_window',
+        true,
+      )],
+    );
+  }
+
+  const productionReadinessBlockers = failed(['production_readiness_green']);
+  if (productionReadinessBlockers.length > 0) {
+    return rolloutActionPlan(
+      'production_readiness',
+      productionReadinessBlockers,
+      [rolloutAction('run_production_shadow_readiness', 'production', 'record_only')],
+    );
+  }
+
+  return rolloutActionPlan(
+    'operator_change_window',
+    [],
+    [rolloutAction(
+      'prepare_operator_reviewed_activation_change_window',
+      'production',
+      'operator_change_window',
+    )],
+  );
+}
+
 export function shouldFailRolloutCommand(
   evaluation: Pick<RolloutEvaluation, 'result' | 'promotionReady'>,
   requireReady: boolean,
@@ -1233,8 +1427,10 @@ async function main(): Promise<void> {
     },
   };
   const evaluation = evaluateRolloutState(observation);
+  const pilotIntake = summarizePilotIntake(observation.staging);
+  const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,
@@ -1246,7 +1442,8 @@ async function main(): Promise<void> {
     offlineProof,
     staging: observation.staging,
     production: observation.production,
-    pilotIntake: summarizePilotIntake(observation.staging),
+    pilotIntake,
+    actionPlan,
     checks: evaluation.checks,
     failedSafetyChecks: evaluation.failedSafetyChecks,
     blockers: evaluation.blockers,
@@ -1277,6 +1474,9 @@ async function main(): Promise<void> {
     `Staging version: ${stagingVersion.versionId}`,
     `Production version: ${productionVersion.versionId}`,
     `Pilot intake: owner=${payload.pilotIntake.owner.nextRequired}, customer=${payload.pilotIntake.customer.nextRequired}`,
+    `Next safe phase: ${actionPlan.phase}`,
+    `Next safe actions: ${actionPlan.nextSafeActions.map((action) => action.id).join(', ') || 'none'}`,
+    `Automatic activation allowed: ${actionPlan.automaticActivationAllowed}`,
     `Blockers: ${evaluation.blockers.join(', ') || 'none'}`,
   ].join('\n') + '\n');
 
