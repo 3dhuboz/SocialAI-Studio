@@ -106,7 +106,7 @@ export function registerReelMediaRoutes(app: Hono<{ Bindings: Env }>): void {
 
     const key = `reels/uploads/${crypto.randomUUID()}.${extension}`;
     const durationMs = positiveInteger(c.req.header('X-Reel-Duration-Ms'));
-    await c.env.REELS_R2.put(key, body, {
+    const storedUpload = await c.env.REELS_R2.put(key, body, {
       httpMetadata: {
         contentType,
         cacheControl: 'public, max-age=31536000, immutable',
@@ -120,12 +120,22 @@ export function registerReelMediaRoutes(app: Hono<{ Bindings: Env }>): void {
       },
     });
 
+    const storedSize = storedUpload?.size;
+    if (typeof storedSize === 'number' && storedSize !== declaredSize) {
+      await c.env.REELS_R2.delete(key);
+      return c.json({
+        error: storedSize > MAX_REEL_UPLOAD_BYTES
+          ? 'Keep Reel uploads under 95 MB.'
+          : 'The uploaded video size did not match the selected file.',
+      }, storedSize > MAX_REEL_UPLOAD_BYTES ? 413 : 400);
+    }
+
     const publicBase = c.env.R2_REELS_PUBLIC_BASE.replace(/\/+$/, '');
     return c.json({
       key,
       url: `${publicBase}/${key}`,
       contentType,
-      sizeBytes: declaredSize,
+      sizeBytes: storedSize ?? declaredSize,
     }, 201);
   });
 

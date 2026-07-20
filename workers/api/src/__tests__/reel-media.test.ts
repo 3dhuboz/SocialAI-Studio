@@ -206,6 +206,20 @@ describe('POST /api/reel-media/uploads', () => {
     expect(store.size).toBe(0);
   });
 
+  it('deletes an upload when its stored byte size does not match the declaration', async () => {
+    const { app, env, store } = makeApp();
+    const res = await app.request('/api/reel-media/uploads', uploadRequest({
+      body: new Uint8Array([0, 1, 2, 3, 4]),
+      size: 4,
+    }), env);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: 'The uploaded video size did not match the selected file.',
+    });
+    expect(store.size).toBe(0);
+  });
+
   it('fails closed when durable reel storage is not configured', async () => {
     const { app, env } = makeApp({ REELS_R2: undefined, R2_REELS_PUBLIC_BASE: undefined });
     const res = await app.request('/api/reel-media/uploads', uploadRequest(), env);
