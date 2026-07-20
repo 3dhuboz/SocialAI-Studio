@@ -3960,3 +3960,52 @@ and returned the required exit code `1`:
 Production schema, production readiness, and activation work remain deferred.
 The rejected Gladstone post and every pilot draft remain unscheduled and
 unpublished.
+
+### Privacy-Safe Owner Draft Source Inventory
+
+The schema-v6 action plan initially reported
+`owner_create_genuine_owner_draft` because isolated staging contained no
+eligible Penny Wise owner Draft. A bounded production read showed why that
+instruction was incomplete: the normal Create flow saves a Draft with a
+timestamp field even when no publishing date was selected. A stricter
+schedule-null diagnostic therefore returned zero despite genuine Drafts being
+present.
+
+The verifier now uses the application's actual Draft semantics and reads only
+an aggregate count. It does not select a post ID, caption, hashtag, image,
+video, topic, or other Draft content. A source candidate must:
+
+- belong to the Penny Wise owner workspace rather than a client
+- remain in `Draft` status with bounded non-empty content
+- retain canonical owner identity
+- have zero publish attempts and no provider publish identifiers or claim
+- have no `publication_events` row
+- have no `publish_delivery_receipts` row
+
+The exact production query returned `owner_draft_source_candidates=4` with
+`changed_db=false`, `changes=0`, and `rows_written=0`. This count proves only
+that bounded source candidates exist. Existing authorization covers Penny
+Wise I.T's non-secret profile, not post content, so it does not authorize a
+copy or reveal which Draft will be server-selected.
+
+Rollout artifact schema version 7 adds the aggregate count and a mandatory
+`production_owner_draft_inventory_observed` safety check. Missing, negative,
+or malformed inventory now makes the rollout `unsafe_or_unverified`. When
+staging has no owner candidate but production has at least one bounded source
+candidate, the only owner action becomes
+`owner_authorize_bounded_owner_draft_copy`; the verifier no longer asks Steve
+to create redundant content. With a zero source count, the existing
+`owner_create_genuine_owner_draft` instruction remains correct.
+
+Verification passed without deployment or mutation:
+
+- rollout verifier tests: 43 of 43 passed
+- full root regression suite: 268 of 268 passed across 21 files
+- TypeScript: `npx tsc --noEmit --pretty false` passed
+- the production aggregate query independently returned four candidates and
+  proved zero writes
+
+No Penny Wise Draft was copied, previewed, attested, critiqued, scheduled, or
+published. The unattested Gladstone gradient Draft also remains unchanged and
+unevaluated. All release/apply flags remain disabled, Protected Autopilot
+remains empty, and Hugheseys Que remains on hold.

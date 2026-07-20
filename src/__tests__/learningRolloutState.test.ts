@@ -139,6 +139,7 @@ function observation(): RolloutObservation {
       d1ReadOnly: true,
       protectedWorkspaces: 0,
       hugheseysQueStatus: 'on_hold',
+      ownerDraftSourceCandidates: 0,
       pilotSampleTablePresent: true,
       calibrationTablePresent: true,
       alertSchemaReady: true,
@@ -216,6 +217,63 @@ describe('learning live rollout state', () => {
     ]));
     expect(plan.nextSafeActions.some((action) => (
       action.id.includes('production_learning_schemas')
+    ))).toBe(false);
+  });
+
+  it('requests bounded copy authorization when genuine owner Draft sources already exist', () => {
+    const input = observation();
+    input.staging.pilotSamples = 1;
+    input.staging.ownerSamples = 0;
+    input.staging.clientSamples = 1;
+    input.staging.ownerAttestedSamples = 0;
+    input.staging.clientAttestedSamples = 1;
+    input.staging.ownerCandidateDrafts = 0;
+    input.staging.clientCandidateDrafts = 1;
+    input.production.ownerDraftSourceCandidates = 4;
+
+    const intake = summarizePilotIntake(
+      input.staging,
+      input.production.ownerDraftSourceCandidates,
+    );
+    const plan = buildRolloutActionPlan(input);
+
+    expect(intake.owner).toMatchObject({
+      candidateDrafts: 0,
+      sourceDraftCandidates: 4,
+      nextRequired: 'authorize_bounded_owner_draft_copy',
+    });
+    expect(plan.phase).toBe('pilot_evidence');
+    expect(plan.nextSafeActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'owner_authorize_bounded_owner_draft_copy',
+        target: 'owner_pilot',
+        executionMode: 'record_only',
+        productionMutation: false,
+        productionBehaviorChange: false,
+      }),
+    ]));
+    expect(plan.nextSafeActions.some((action) => (
+      action.id === 'owner_create_genuine_owner_draft'
+    ))).toBe(false);
+  });
+
+  it('requests a genuinely new owner Draft only when no source Draft exists', () => {
+    const input = observation();
+    input.staging.pilotSamples = 0;
+    input.staging.ownerSamples = 0;
+    input.staging.clientSamples = 0;
+    input.staging.ownerAttestedSamples = 0;
+    input.staging.clientAttestedSamples = 0;
+    input.staging.ownerCandidateDrafts = 0;
+    input.production.ownerDraftSourceCandidates = 0;
+
+    const plan = buildRolloutActionPlan(input);
+
+    expect(plan.nextSafeActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'owner_create_genuine_owner_draft' }),
+    ]));
+    expect(plan.nextSafeActions.some((action) => (
+      action.id === 'owner_authorize_bounded_owner_draft_copy'
     ))).toBe(false);
   });
 
@@ -337,6 +395,7 @@ describe('learning live rollout state', () => {
       owner: {
         enrollmentReceipts: 1,
         candidateDrafts: 0,
+        sourceDraftCandidates: 0,
         syntheticExcludedDrafts: 6,
         attestedSamples: 0,
         validatedSamples: 0,
@@ -426,6 +485,9 @@ describe('learning live rollout state', () => {
     }],
     ['a pilot intake counter is missing', (input: RolloutObservation) => {
       input.staging.ownerCandidateDrafts = -1;
+    }],
+    ['the production owner Draft inventory is unverified', (input: RolloutObservation) => {
+      input.production.ownerDraftSourceCandidates = -1;
     }],
   ])('returns unsafe_or_unverified when %s', (_label, mutate) => {
     const input = observation();
@@ -591,6 +653,21 @@ describe('learning live rollout state', () => {
     expect(() => assertReadOnlySql(STAGING_ROLLOUT_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(STAGING_CALIBRATION_ROLLOUT_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(PRODUCTION_ROLLOUT_SQL)).not.toThrow();
+  });
+
+  it('observes only an aggregate bounded owner Draft inventory in production', () => {
+    const inventorySql = PRODUCTION_ROLLOUT_SQL
+      .split(';')
+      .map((statement) => statement.trim())
+      .find((statement) => statement.includes('owner_draft_source_candidates'));
+
+    expect(inventorySql).toBeDefined();
+    expect(inventorySql).toContain('SELECT COUNT(*) AS owner_draft_source_candidates');
+    expect(inventorySql).toContain("LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'");
+    expect(inventorySql).toContain('COALESCE(p.publish_attempts, 0) = 0');
+    expect(inventorySql).toContain('FROM publication_events event');
+    expect(inventorySql).toContain('FROM publish_delivery_receipts receipt');
+    expect(inventorySql).not.toMatch(/SELECT\s+(?:id|content|image_url|hashtags)\b/i);
   });
 
   it('counts only current-policy pilot samples backed by an eligible exact-hash decision', () => {

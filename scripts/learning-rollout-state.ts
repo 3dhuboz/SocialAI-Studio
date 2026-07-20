@@ -17,6 +17,7 @@ import {
 import { hasCompleteGreenLearningReadinessChecks } from '../shared/learning-readiness-checks';
 
 const POLICY_VERSION = '2026-07-14-v1';
+const PILOT_OWNER_USER_ID = 'user_3B9YKodZsIQjLdGW8wtwd7mmBMQ';
 const STAGING_DATABASE_ID = '0ce38359-c7d6-4d6e-b278-7ca1a719dbb4';
 const PRODUCTION_DATABASE_ID = '6295841e-e5f7-4355-b0e0-c5f22e58d99d';
 const DEFAULT_MAX_AGE_MINUTES = 20;
@@ -412,6 +413,26 @@ SELECT policy_version, ready, checks_json, evaluated_at
  WHERE policy_version = '${POLICY_VERSION}'
  ORDER BY evaluated_at DESC
  LIMIT 1;
+SELECT COUNT(*) AS owner_draft_source_candidates
+  FROM posts p
+ WHERE p.user_id = '${PILOT_OWNER_USER_ID}'
+   AND p.client_id IS NULL
+   AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+   AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
+   AND (p.owner_kind IS NULL OR p.owner_kind = 'user')
+   AND COALESCE(p.publish_attempts, 0) = 0
+   AND p.late_post_id IS NULL
+   AND p.claim_id IS NULL
+   AND p.fb_video_id IS NULL
+   AND p.postproxy_post_id IS NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM publication_events event
+      WHERE event.user_id = p.user_id AND event.post_id = p.id
+   )
+   AND NOT EXISTS (
+     SELECT 1 FROM publish_delivery_receipts receipt
+      WHERE receipt.user_id = p.user_id AND receipt.post_id = p.id
+   );
 `;
 
 export interface CronObservation {
@@ -476,6 +497,7 @@ export interface RolloutObservation {
   };
   production: EnvironmentObservation & {
     hugheseysQueStatus: string | null;
+    ownerDraftSourceCandidates: number;
     pilotSampleTablePresent: boolean;
     calibrationTablePresent: boolean;
     alertSchemaReady: boolean;
@@ -503,6 +525,7 @@ type PilotIntakeNextRequired =
   | 'cohort_minimum_met'
   | 'owner_consent_and_enrollment'
   | 'create_genuine_owner_draft'
+  | 'authorize_bounded_owner_draft_copy'
   | 'review_exact_owner_draft'
   | 'validate_attested_owner_sample'
   | 'obtain_separately_consenting_active_customer'
@@ -522,9 +545,14 @@ function pilotIntakeCountersAreValid(staging: RolloutObservation['staging']): bo
     && staging.customerEnrollments <= 1;
 }
 
-export function summarizePilotIntake(staging: RolloutObservation['staging']) {
-  const valid = pilotIntakeCountersAreValid(staging);
-  const ownerNext: PilotIntakeNextRequired = !valid
+export function summarizePilotIntake(
+  staging: RolloutObservation['staging'],
+  ownerDraftSourceCandidates = 0,
+) {
+  const sourceInventoryValid = Number.isSafeInteger(ownerDraftSourceCandidates)
+    && ownerDraftSourceCandidates >= 0;
+  const valid = pilotIntakeCountersAreValid(staging) && sourceInventoryValid;
+  const ownerStagingNext: PilotIntakeNextRequired = !valid
     ? 'unverified'
     : staging.ownerSamples >= 8
       ? 'cohort_minimum_met'
@@ -535,6 +563,10 @@ export function summarizePilotIntake(staging: RolloutObservation['staging']) {
           : staging.ownerCandidateDrafts > 0
             ? 'review_exact_owner_draft'
             : 'create_genuine_owner_draft';
+  const ownerNext: PilotIntakeNextRequired = ownerStagingNext === 'create_genuine_owner_draft'
+    && ownerDraftSourceCandidates > 0
+    ? 'authorize_bounded_owner_draft_copy'
+    : ownerStagingNext;
   const customerNext: PilotIntakeNextRequired = !valid
     ? 'unverified'
     : staging.clientSamples >= 8
@@ -554,6 +586,7 @@ export function summarizePilotIntake(staging: RolloutObservation['staging']) {
     owner: {
       enrollmentReceipts: staging.ownerEnrollments,
       candidateDrafts: staging.ownerCandidateDrafts,
+      sourceDraftCandidates: ownerDraftSourceCandidates,
       syntheticExcludedDrafts: staging.ownerSyntheticExcludedDrafts,
       attestedSamples: staging.ownerAttestedSamples,
       validatedSamples: staging.ownerSamples,
@@ -806,6 +839,12 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
   add('staging_d1_read_only', input.staging.d1ReadOnly, 'safety');
   add('production_d1_read_only', input.production.d1ReadOnly, 'safety');
   add(
+    'production_owner_draft_inventory_observed',
+    Number.isSafeInteger(input.production.ownerDraftSourceCandidates)
+      && input.production.ownerDraftSourceCandidates >= 0,
+    'safety',
+  );
+  add(
     'staging_pilot_intake_observed',
     pilotIntakeCountersAreValid(input.staging),
     'safety',
@@ -989,7 +1028,10 @@ export function buildRolloutActionPlan(
 
   const pilotBlockers = failed(['positive_pilot_samples', 'customer_pilot_consent']);
   if (pilotBlockers.length > 0) {
-    const pilotIntake = summarizePilotIntake(input.staging);
+    const pilotIntake = summarizePilotIntake(
+      input.staging,
+      input.production.ownerDraftSourceCandidates,
+    );
     const nextSafeActions: RolloutNextSafeAction[] = [];
     if (pilotIntake.owner.nextRequired !== 'cohort_minimum_met') {
       nextSafeActions.push(rolloutAction(
@@ -1355,6 +1397,7 @@ async function main(): Promise<void> {
   const productionProtected = firstRow(productionD1.rows[1]);
   const productionSchema = firstRow(productionD1.rows[2]);
   const productionReadiness = firstRow(productionD1.rows[3]);
+  const productionOwnerDraftInventory = firstRow(productionD1.rows[4]);
 
   const observation: RolloutObservation = {
     generatedAt,
@@ -1419,6 +1462,10 @@ async function main(): Promise<void> {
       d1ReadOnly: productionD1.readOnly,
       protectedWorkspaces: numberField(productionProtected, 'protected_workspaces'),
       hugheseysQueStatus: stringField(productionHughes, 'status'),
+      ownerDraftSourceCandidates: numberField(
+        productionOwnerDraftInventory,
+        'owner_draft_source_candidates',
+      ),
       pilotSampleTablePresent: numberField(productionSchema, 'pilot_sample_tables') === 1,
       calibrationTablePresent: numberField(productionSchema, 'calibration_tables') === 1,
       alertSchemaReady: numberField(productionSchema, 'alert_tables') === 1
@@ -1427,10 +1474,13 @@ async function main(): Promise<void> {
     },
   };
   const evaluation = evaluateRolloutState(observation);
-  const pilotIntake = summarizePilotIntake(observation.staging);
+  const pilotIntake = summarizePilotIntake(
+    observation.staging,
+    observation.production.ownerDraftSourceCandidates,
+  );
   const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,
@@ -1450,6 +1500,7 @@ async function main(): Promise<void> {
     limitations: [
       'This command performs read-only Cloudflare D1, deployment, version, and health checks.',
       'Pilot intake diagnostics contain aggregate counts only and do not grant consent.',
+      'The production owner Draft count does not expose content or authorize a staging copy.',
       'safe_hold proves dormant boundaries, not consent or permission to activate production.',
       'promotion_ready still requires an operator-reviewed change window and rollback plan.',
     ],
