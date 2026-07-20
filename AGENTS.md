@@ -68,6 +68,7 @@ GitHub repo
 | `DashboardStats.tsx` | Followers/engagement stat cards |
 | `SetupBanner.tsx` | Setup checklist progress |
 | `AnimatedReelPreview.tsx` | Reel video preview card |
+| `ReelStudio.tsx` | Owner Reel desk - durable phone-video upload, verified workspace context, editable AI captions, and draft/schedule/publish controls |
 | `LiveGallery.tsx` | Published post gallery |
 | `LivePostPreview.tsx` | Real-time post preview (FB/IG format) |
 | `PostShowcase.tsx` | Featured post display |
@@ -97,6 +98,7 @@ GitHub repo
 | `posterAi.ts` | Poster AI generation (fal.ai Ideogram) |
 | `posters.ts` | Poster CRUD — save/load/delete via worker |
 | `videoAudioService.ts` | Video + audio processing for reels |
+| `reelMedia.ts` | Authenticated owner-video validation and progress-aware upload to the Worker R2 route |
 
 ### Data & utils
 | File | Purpose |
@@ -159,6 +161,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
 | `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
 | `shopify-learning.ts` | Signed Shopify-session settings/readiness controls and owner conversion feedback with server-derived shop identity |
+| `reel-media.ts` | `POST /api/reel-media/uploads` - authenticated, workspace-scoped MP4/MOV/WebM upload to durable Reel R2 storage |
 
 ### Lib (`src/lib/`) — shared business logic
 | File | Purpose |
