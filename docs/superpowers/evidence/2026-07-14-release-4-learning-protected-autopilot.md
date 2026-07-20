@@ -4009,3 +4009,42 @@ No Penny Wise Draft was copied, previewed, attested, critiqued, scheduled, or
 published. The unattested Gladstone gradient Draft also remains unchanged and
 unevaluated. All release/apply flags remain disabled, Protected Autopilot
 remains empty, and Hugheseys Que remains on hold.
+
+#### Exact Schema-v7 Evidence
+
+Commit `61934446ef7ff220ea026fe125f318c140558332` was clean, matched
+`origin/codex/learning-pilot-progress`, and was preserved in the verified
+all-refs bundle:
+
+- Bundle: `D:\GitHubBackup\SocialAi\codex-saves\STEVES-Steve\git-bundles\SocialAi-codex-learning-pilot-progress-20260720T011451226Z-61934446ef7f.bundle`
+- Bundle SHA-256: `daa79c80f2024af0e76aa229239bb3eeff5ff4a3e9fc847dc3bde1baea9346ee`
+
+The exact-commit offline proof passed:
+
+- Release proof: `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-20T01-16-42-311Z.json`
+- Release-proof payload SHA-256: `864fd899129fa723912e9a3165eb6723b628b3118bcde4049ef6d8d8975ce04d`
+- Release-proof file SHA-256: `ce4094e7a650780b6ea290c7a642acdf8e2e1aaf8b51033c0d41435070b51d3d`
+- Result: `offline_pass`
+
+The normal live read-only verifier retained `safe_hold` and selected only
+`owner_authorize_bounded_owner_draft_copy` and
+`customer_review_exact_customer_draft`:
+
+- Rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T01-18-02-750Z.json`
+- Rollout payload SHA-256: `12bd771f8929453735af4ca8af800f6a6fb2321842360058c173be01e87ddf99`
+- Rollout file SHA-256: `3a4dc78807cba7a9fd5dbcab2910cffee9760380f50cfa7631a6374e0410843f`
+
+The same fixed Worker versions and proof were evaluated with
+`--require-ready`. It retained the same state and actions and returned the
+required exit code `1`:
+
+- Require-ready rollout state: `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-20T01-19-23-168Z.json`
+- Require-ready payload SHA-256: `60bcf24b979292fc2e6c7d9fd3a543a30f783ff2e9973c3beb3752d4283f1b3e`
+- Require-ready file SHA-256: `ab0a18492534e87e322915dbab2efae5bcdb4f4ee7248fb0ed902d7eecfd365b`
+
+Independent sorted-key payload hashing reproduced all three embedded payload
+digests, and raw-byte hashing reproduced all three file digests. Both live
+artifacts reported schema version 7, `productionMutationPerformed=false`,
+`releaseFlagsChanged=false`, four count-only owner source candidates, one
+validated customer sample, zero owner samples, zero Protected Autopilot
+workspaces, and the same six rollout blockers.
