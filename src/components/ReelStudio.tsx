@@ -1,16 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  ArrowLeft,
+  ArrowRight,
   CalendarClock,
   Check,
   CheckCircle2,
   Facebook,
+  Film,
   Instagram,
   Loader2,
+  Plus,
   Save,
   Send,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import type { BusinessProfile, SocialTokens } from '../types';
 import { useAuth } from '../contexts/AuthContext';
@@ -47,6 +53,21 @@ export { moveReelTrimWindow } from './reel-editor/timeline';
 
 type Platform = 'Facebook' | 'Instagram';
 type ReleaseMode = 'now' | 'schedule';
+type WorkflowStep = 1 | 2 | 3;
+
+interface ReelTextDraft {
+  version: 1;
+  clipTitle: string;
+  footageNotes: string;
+  platform: Platform;
+  hook: string;
+  captionBody: string;
+  hashtagsText: string;
+  cta: string;
+  releaseMode: ReleaseMode;
+  scheduleAt: string;
+  updatedAt: string;
+}
 
 interface ReelStudioProps {
   clientId: string | null;
@@ -70,6 +91,29 @@ interface CaptionOption {
   hook: string;
   body: string;
   hashtags: string[];
+}
+
+export function parseReelTextDraft(value: string | null): ReelTextDraft | null {
+  if (!value) return null;
+  try {
+    const draft = JSON.parse(value) as Partial<ReelTextDraft>;
+    if (
+      draft.version !== 1
+      || typeof draft.clipTitle !== 'string'
+      || typeof draft.footageNotes !== 'string'
+      || (draft.platform !== 'Facebook' && draft.platform !== 'Instagram')
+      || typeof draft.hook !== 'string'
+      || typeof draft.captionBody !== 'string'
+      || typeof draft.hashtagsText !== 'string'
+      || typeof draft.cta !== 'string'
+      || (draft.releaseMode !== 'now' && draft.releaseMode !== 'schedule')
+      || typeof draft.scheduleAt !== 'string'
+      || typeof draft.updatedAt !== 'string'
+    ) return null;
+    return draft as ReelTextDraft;
+  } catch {
+    return null;
+  }
 }
 
 function parseFactMetadata(fact: ClientFact): Record<string, any> {
@@ -176,8 +220,12 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   );
   const assetUrlsRef = useRef(new Set<string>());
   const renderAbortRef = useRef<AbortController | null>(null);
+  const quickFileInputRef = useRef<HTMLInputElement | null>(null);
   const [projectHistory, setProjectHistory] = useState(() => createEditHistory(createEmptyReelProject()));
   const project = projectHistory.present;
+  const [activeStep, setActiveStep] = useState<WorkflowStep>(1);
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [finishedMedia, setFinishedMedia] = useState<FinishedReelMedia | null>(null);
   const [coverSeconds, setCoverSeconds] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -203,6 +251,10 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   const [scheduleAt, setScheduleAt] = useState(defaultScheduleValue);
   const [isSaving, setIsSaving] = useState(false);
   const [lastResult, setLastResult] = useState<string | null>(null);
+  const draftStorageKey = useMemo(
+    () => `socialai:reel-studio:draft:${clientId || 'owner'}`,
+    [clientId],
+  );
 
   const facebookConnected = Boolean(
     socialTokens.postproxyPlacementId
@@ -236,6 +288,15 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   ])], [selectedFactCta]);
   const finishedDurationSeconds = reelProjectDuration(project);
   const finishIssue = getReelProjectIssue(project);
+  const firstClip = project.clips[0] ?? null;
+  const copyReady = Boolean(hook.trim() || captionBody.trim());
+  const hasDraftContent = Boolean(
+    project.clips.length
+    || clipTitle.trim()
+    || footageNotes.trim()
+    || hook.trim()
+    || captionBody.trim(),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -251,6 +312,61 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
   }, [clientId, loadFacts]);
 
   useEffect(() => {
+    setDraftHydrated(false);
+    const draft = parseReelTextDraft(window.localStorage.getItem(draftStorageKey));
+    if (draft) {
+      setClipTitle(draft.clipTitle);
+      setFootageNotes(draft.footageNotes);
+      setPlatform(draft.platform);
+      setHook(draft.hook);
+      setCaptionBody(draft.captionBody);
+      setHashtagsText(draft.hashtagsText);
+      setCta(draft.cta);
+      setReleaseMode(draft.releaseMode);
+      setScheduleAt(draft.scheduleAt);
+      setDraftSavedAt(draft.updatedAt);
+    } else {
+      setDraftSavedAt(null);
+    }
+    setDraftHydrated(true);
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (!draftHydrated) return undefined;
+    const saveTimer = window.setTimeout(() => {
+      const updatedAt = new Date().toISOString();
+      const draft: ReelTextDraft = {
+        version: 1,
+        clipTitle,
+        footageNotes,
+        platform,
+        hook,
+        captionBody,
+        hashtagsText,
+        cta,
+        releaseMode,
+        scheduleAt,
+        updatedAt,
+      };
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      setDraftSavedAt(updatedAt);
+    }, 450);
+    return () => window.clearTimeout(saveTimer);
+  }, [
+    captionBody,
+    clipTitle,
+    cta,
+    draftHydrated,
+    draftStorageKey,
+    footageNotes,
+    hashtagsText,
+    hook,
+    platform,
+    releaseMode,
+    scheduleAt,
+  ]);
+
+  useEffect(() => {
     if (selectedFactCta) setCta(selectedFactCta);
   }, [selectedFactCta]);
 
@@ -258,6 +374,34 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     setFinishedMedia(null);
     setFinishError(null);
     setLastResult(null);
+  };
+
+  const startFresh = () => {
+    if (hasDraftContent && !window.confirm('Start a fresh Reel and clear this draft?')) return;
+    renderAbortRef.current?.abort();
+    assetUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    assetUrlsRef.current.clear();
+    setProjectHistory(createEditHistory(createEmptyReelProject()));
+    setFinishedMedia(null);
+    setCoverSeconds(0);
+    setUploadProgress(0);
+    setFinishError(null);
+    setRenderProgress(null);
+    setClipTitle('');
+    setFootageNotes('');
+    setCaptionOptions([]);
+    setSelectedOption(0);
+    setHook('');
+    setCaptionBody('');
+    setHashtagsText('');
+    setCta('Order online from Richo Road Butchery.');
+    setPlatform('Facebook');
+    setReleaseMode('now');
+    setScheduleAt(defaultScheduleValue());
+    setLastResult(null);
+    setActiveStep(1);
+    window.localStorage.removeItem(draftStorageKey);
+    setDraftSavedAt(null);
   };
 
   const changeProject = (nextProject: ReelProject, recordHistory = true) => {
@@ -414,6 +558,7 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
         authMode,
       });
       setFinishedMedia(result);
+      setActiveStep(2);
       toast('Edited Reel and cover are ready.', 'success');
     } catch (error: any) {
       if (error?.name === 'AbortError') toast('Reel rendering cancelled.', 'info');
@@ -564,59 +709,141 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
     <div className="reel-studio">
       <header className="reel-studio__header">
         <div>
-          <span className="reel-studio__eyebrow">Owner media desk</span>
-          <h1>Reel Studio</h1>
+          <span className="reel-studio__eyebrow">Richo Road media</span>
+          <h1>Make a Reel</h1>
           <p>{workspaceName}</p>
         </div>
-        <div className="reel-studio__trust">
-          <ShieldCheck size={18} />
-          <span>Verified context only</span>
+        <div className="reel-studio__header-actions">
+          <div className="reel-studio__trust" title={draftSavedAt || 'Draft autosave is on'}>
+            <ShieldCheck size={18} />
+            <span>{draftSavedAt ? 'Draft saved' : 'Autosave on'}</span>
+          </div>
+          <button type="button" className="reel-studio__reset" onClick={startFresh}>
+            <Trash2 size={16} />
+            <span>Start fresh</span>
+          </button>
         </div>
       </header>
 
+      <nav className="reel-studio__steps" aria-label="Reel workflow">
+        <button type="button" className={`${activeStep === 1 ? 'is-active' : ''} ${finishedMedia ? 'is-done' : ''}`} onClick={() => setActiveStep(1)}>
+          <span>{finishedMedia ? <Check size={15} /> : '1'}</span>
+          <strong>Add clips</strong>
+        </button>
+        <button type="button" className={`${activeStep === 2 ? 'is-active' : ''} ${copyReady ? 'is-done' : ''}`} onClick={() => setActiveStep(2)} disabled={!finishedMedia}>
+          <span>{copyReady ? <Check size={15} /> : '2'}</span>
+          <strong>Add words</strong>
+        </button>
+        <button type="button" className={activeStep === 3 ? 'is-active' : ''} onClick={() => setActiveStep(3)} disabled={!finishedMedia || !copyReady}>
+          <span>3</span>
+          <strong>Post</strong>
+        </button>
+      </nav>
+
       <div className="reel-studio__grid">
-        <section className="reel-panel reel-panel--media" aria-labelledby="reel-media-heading">
+        <section className="reel-panel reel-panel--media" aria-labelledby="reel-media-heading" hidden={activeStep !== 1}>
           <div className="reel-panel__heading">
             <span>01</span>
             <div>
-              <h2 id="reel-media-heading">Edit your Reel</h2>
-              <p>Cut, arrange, style, mix, and preview every clip.</p>
+              <h2 id="reel-media-heading">Add and check your clips</h2>
+              <p>Choose the videos from Pete's phone.</p>
             </div>
           </div>
 
-          <ReelClipEditor
-            project={project}
-            onProjectChange={changeProject}
-            onAddFiles={handleFiles}
-            onAddMusic={handleMusicFile}
-            onRemoveMusic={removeMusic}
-            canUndo={projectHistory.past.length > 0}
-            canRedo={projectHistory.future.length > 0}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
-            coverSeconds={coverSeconds}
-            onCoverChange={(seconds) => {
-              setCoverSeconds(seconds);
-              resetFinishedMedia();
+          <input
+            ref={quickFileInputRef}
+            className="reel-studio__file-input"
+            type="file"
+            accept="video/mp4,video/quicktime,video/webm"
+            multiple
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files || []);
+              event.currentTarget.value = '';
+              if (files.length) void handleFiles(files);
             }}
-            finishedMedia={finishedMedia}
-            finishError={finishError}
-            finishIssue={finishIssue}
-            isImporting={isImporting}
-            isFinishing={isFinishing}
-            renderProgress={renderProgress}
-            uploadProgress={uploadProgress}
-            onFinish={handleFinish}
-            onCancelFinish={() => renderAbortRef.current?.abort()}
           />
+
+          {!firstClip ? (
+            <button type="button" className="reel-studio__quick-add" onClick={() => quickFileInputRef.current?.click()} disabled={isImporting}>
+              {isImporting ? <Loader2 size={28} className="spin" /> : <Film size={28} />}
+              <strong>{isImporting ? 'Adding clips...' : 'Choose videos'}</strong>
+              <span>Up to 12 clips</span>
+            </button>
+          ) : (
+            <div className="reel-studio__quick-preview">
+              <div className="reel-studio__quick-video">
+                <video src={firstClip.url} controls playsInline preload="metadata" />
+                {project.clips.length > 1 && <span>{project.clips.length} clips</span>}
+              </div>
+              <div className="reel-studio__quick-meta">
+                <div>
+                  <span>Ready to check</span>
+                  <strong>{clipTitle.trim() || firstClip.name}</strong>
+                  <small>{project.clips.length} {project.clips.length === 1 ? 'clip' : 'clips'} · {formatTimestamp(finishedDurationSeconds)}</small>
+                </div>
+                <button type="button" onClick={() => quickFileInputRef.current?.click()} disabled={isImporting || project.clips.length >= 12}>
+                  <Plus size={16} /> Add clips
+                </button>
+              </div>
+            </div>
+          )}
+
+          <details className="reel-studio__advanced">
+            <summary>
+              <SlidersHorizontal size={18} />
+              <span>
+                <strong>Optional editing</strong>
+                <small>Trim, reorder, add captions, music, fades, and choose a cover</small>
+              </span>
+            </summary>
+            <div className="reel-studio__advanced-body">
+              <ReelClipEditor
+                project={project}
+                onProjectChange={changeProject}
+                onAddFiles={handleFiles}
+                onAddMusic={handleMusicFile}
+                onRemoveMusic={removeMusic}
+                canUndo={projectHistory.past.length > 0}
+                canRedo={projectHistory.future.length > 0}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                coverSeconds={coverSeconds}
+                onCoverChange={(seconds) => {
+                  setCoverSeconds(seconds);
+                  resetFinishedMedia();
+                }}
+                finishedMedia={finishedMedia}
+                finishError={finishError}
+                finishIssue={finishIssue}
+                isImporting={isImporting}
+                isFinishing={isFinishing}
+                renderProgress={renderProgress}
+                uploadProgress={uploadProgress}
+                onFinish={handleFinish}
+                onCancelFinish={() => renderAbortRef.current?.abort()}
+              />
+            </div>
+          </details>
+
+          <div className="reel-studio__step-actions reel-studio__step-actions--end">
+            <button
+              type="button"
+              className="reel-primary-action"
+              onClick={() => finishedMedia ? setActiveStep(2) : void handleFinish()}
+              disabled={Boolean(finishIssue) || isFinishing || isImporting}
+            >
+              {isFinishing ? <Loader2 size={18} className="spin" /> : <ArrowRight size={18} />}
+              {isFinishing ? 'Preparing Reel...' : finishedMedia ? 'Continue to words' : 'Check Reel'}
+            </button>
+          </div>
         </section>
 
-        <section className="reel-panel reel-panel--copy" aria-labelledby="reel-copy-heading">
+        <section className="reel-panel reel-panel--copy" aria-labelledby="reel-copy-heading" hidden={activeStep !== 2}>
           <div className="reel-panel__heading">
             <span>02</span>
             <div>
-              <h2 id="reel-copy-heading">Shape the story</h2>
-              <p>Pick real context, then edit every word.</p>
+              <h2 id="reel-copy-heading">Add the words</h2>
+              <p>Let SocialAI write them, then make them sound like Pete.</p>
             </div>
           </div>
 
@@ -634,23 +861,6 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
               rows={3}
               placeholder="Pete slices the burgers, shows the tray, then points to the weekend special."
             />
-          </div>
-
-          <div className="reel-field">
-            <label htmlFor="reel-context">Website context</label>
-            <select
-              id="reel-context"
-              value={customerSafeFacts.length ? selectedFactIndex : -1}
-              onChange={(event) => setSelectedFactIndex(Number(event.target.value))}
-              disabled={factsLoading || customerSafeFacts.length === 0}
-            >
-              {factsLoading && <option value={-1}>Loading verified context...</option>}
-              {!factsLoading && customerSafeFacts.length === 0 && <option value={-1}>Use my footage note only</option>}
-              {customerSafeFacts.map((fact, index) => (
-                <option key={`${factTitle(fact)}-${index}`} value={index}>{factTitle(fact)}</option>
-              ))}
-            </select>
-            {selectedFact && <span className="reel-field__hint">{factSummary(selectedFact)}</span>}
           </div>
 
           <button
@@ -692,27 +902,85 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
             <textarea id="reel-caption" value={captionBody} onChange={(event) => setCaptionBody(event.target.value)} rows={6} placeholder="Add the product details and reason to order." />
           </div>
 
-          <div className="reel-field">
-            <label htmlFor="reel-cta">Call to action</label>
-            <select id="reel-cta" value={cta} onChange={(event) => setCta(event.target.value)}>
-              {ctaOptions.map((option) => <option key={option || 'none'} value={option}>{option || 'No call to action'}</option>)}
-            </select>
-          </div>
+          <details className="reel-studio__advanced reel-studio__advanced--copy">
+            <summary>
+              <SlidersHorizontal size={18} />
+              <span>
+                <strong>Caption extras</strong>
+                <small>Website special, call to action, and hashtags</small>
+              </span>
+            </summary>
+            <div className="reel-studio__advanced-fields">
+              <div className="reel-field">
+                <label htmlFor="reel-context">Website context</label>
+                <select
+                  id="reel-context"
+                  value={customerSafeFacts.length ? selectedFactIndex : -1}
+                  onChange={(event) => setSelectedFactIndex(Number(event.target.value))}
+                  disabled={factsLoading || customerSafeFacts.length === 0}
+                >
+                  {factsLoading && <option value={-1}>Loading verified context...</option>}
+                  {!factsLoading && customerSafeFacts.length === 0 && <option value={-1}>Use my footage note only</option>}
+                  {customerSafeFacts.map((fact, index) => (
+                    <option key={`${factTitle(fact)}-${index}`} value={index}>{factTitle(fact)}</option>
+                  ))}
+                </select>
+                {selectedFact && <span className="reel-field__hint">{factSummary(selectedFact)}</span>}
+              </div>
 
-          <div className="reel-field">
-            <label htmlFor="reel-hashtags">Hashtags</label>
-            <input id="reel-hashtags" value={hashtagsText} onChange={(event) => setHashtagsText(event.target.value)} placeholder="#Rockhampton #Butcher #WeeklySpecial" />
+              <div className="reel-field">
+                <label htmlFor="reel-cta">Call to action</label>
+                <select id="reel-cta" value={cta} onChange={(event) => setCta(event.target.value)}>
+                  {ctaOptions.map((option) => <option key={option || 'none'} value={option}>{option || 'No call to action'}</option>)}
+                </select>
+              </div>
+
+              <div className="reel-field">
+                <label htmlFor="reel-hashtags">Hashtags</label>
+                <input id="reel-hashtags" value={hashtagsText} onChange={(event) => setHashtagsText(event.target.value)} placeholder="#Rockhampton #Butcher #WeeklySpecial" />
+              </div>
+            </div>
+          </details>
+
+          <div className="reel-studio__step-actions">
+            <button type="button" className="reel-secondary-action" onClick={() => setActiveStep(1)}>
+              <ArrowLeft size={17} /> Clips
+            </button>
+            <button
+              type="button"
+              className="reel-primary-action"
+              onClick={() => {
+                if (!copyReady) {
+                  toast('Write a caption or choose one of the SocialAI options.', 'warning');
+                  return;
+                }
+                setActiveStep(3);
+              }}
+            >
+              Check post <ArrowRight size={17} />
+            </button>
           </div>
         </section>
 
-        <aside className="reel-panel reel-panel--release" aria-labelledby="reel-release-heading">
+        <aside className="reel-panel reel-panel--release" aria-labelledby="reel-release-heading" hidden={activeStep !== 3}>
           <div className="reel-panel__heading">
             <span>03</span>
             <div>
-              <h2 id="reel-release-heading">Release</h2>
-              <p>Save it, schedule it, or send it live.</p>
+              <h2 id="reel-release-heading">Check and post</h2>
+              <p>Choose where and when it goes out.</p>
             </div>
           </div>
+
+          {finishedMedia && (
+            <div className="reel-studio__release-preview">
+              <img src={finishedMedia.coverUrl} alt="Selected Reel cover" />
+              <div>
+                <span>Ready to post</span>
+                <strong>{hook.trim() || clipTitle.trim() || 'Richo Road Reel'}</strong>
+                <small>{formatTimestamp(finishedDurationSeconds)} · {platform}</small>
+              </div>
+            </div>
+          )}
 
           <div className="reel-release-block">
             <span className="reel-release-block__label">Platform</span>
@@ -780,12 +1048,15 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
           )}
 
           <div className="reel-release-actions">
+            <button type="button" className="reel-secondary-action" onClick={() => setActiveStep(2)}>
+              <ArrowLeft size={17} /> Words
+            </button>
             <button type="button" className="reel-secondary-action" onClick={() => void saveReel('draft')} disabled={isSaving || !finishedMedia}>
               <Save size={17} /> Save draft
             </button>
             <button type="button" className="reel-primary-action" onClick={() => void saveReel('release')} disabled={isSaving || !finishedMedia || !releaseConnected}>
               {isSaving ? <Loader2 size={18} className="spin" /> : releaseMode === 'schedule' ? <CalendarClock size={18} /> : <Send size={18} />}
-              {isSaving ? 'Saving...' : releaseMode === 'schedule' ? 'Schedule Reel' : 'Review and publish'}
+              {isSaving ? 'Saving...' : releaseMode === 'schedule' ? 'Schedule Reel' : 'Post Reel'}
             </button>
           </div>
         </aside>
