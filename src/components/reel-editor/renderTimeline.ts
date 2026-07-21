@@ -1,5 +1,6 @@
 import {
   reelClipDuration,
+  reelClipTransitionOpacity,
   reelOutputDimensions,
   reelProjectDuration,
   type ReelClip,
@@ -31,6 +32,11 @@ interface RenderOptions {
 
 const FRAME_RATE = 30;
 const VIDEO_BITS_PER_SECOND = 6_000_000;
+const OVERLAY_TEXT_SCALE: Record<ReelClip['overlaySize'], number> = {
+  small: 0.82,
+  medium: 1,
+  large: 1.2,
+};
 
 function abortError(): DOMException {
   return new DOMException('Reel rendering was cancelled.', 'AbortError');
@@ -174,7 +180,7 @@ function drawOverlay(
   outputHeight: number,
 ): void {
   if (!clip.overlayText.trim()) return;
-  const fontSize = Math.max(28, Math.round(outputWidth * 0.062));
+  const fontSize = Math.max(24, Math.round(outputWidth * 0.062 * OVERLAY_TEXT_SCALE[clip.overlaySize]));
   const lineHeight = Math.round(fontSize * 1.16);
   const horizontalPadding = Math.round(outputWidth * 0.055);
   const verticalPadding = Math.round(fontSize * 0.48);
@@ -220,6 +226,7 @@ function drawFrame(
   project: ReelProject,
   outputWidth: number,
   outputHeight: number,
+  outputSeconds?: number,
 ): void {
   context.save();
   context.clearRect(0, 0, outputWidth, outputHeight);
@@ -233,6 +240,13 @@ function drawFrame(
   drawVideoLayer(context, video, clip, outputWidth, outputHeight, clip.fit, clip.zoom);
   context.restore();
   drawOverlay(context, clip, outputWidth, outputHeight);
+  if (outputSeconds !== undefined) {
+    const opacity = reelClipTransitionOpacity(clip, outputSeconds);
+    if (opacity < 0.999) {
+      context.fillStyle = `rgba(0, 0, 0, ${1 - opacity})`;
+      context.fillRect(0, 0, outputWidth, outputHeight);
+    }
+  }
 }
 
 async function prepareMusic(
@@ -275,7 +289,8 @@ async function renderClip(
   video.volume = 1;
   const source = audioContext.createMediaElementSource(video);
   const gain = audioContext.createGain();
-  gain.gain.value = clip.muted ? 0 : clip.volume;
+  const baseVolume = clip.muted ? 0 : clip.volume;
+  gain.gain.value = baseVolume * reelClipTransitionOpacity(clip, 0);
   source.connect(gain).connect(destination);
   await waitForMediaEvent(video, 'loadedmetadata', options.signal);
   await waitForMediaEvent(video, 'loadeddata', options.signal);
@@ -307,8 +322,10 @@ async function renderClip(
         finish(abortError());
         return;
       }
-      drawFrame(context, video, clip, project, outputWidth, outputHeight);
       const localOutputSeconds = Math.max(0, video.currentTime - clip.trimStartSeconds) / clip.speed;
+      const transitionOpacity = reelClipTransitionOpacity(clip, localOutputSeconds);
+      gain.gain.value = baseVolume * transitionOpacity;
+      drawFrame(context, video, clip, project, outputWidth, outputHeight, localOutputSeconds);
       options.onProgress?.({
         phase: 'rendering',
         progress: Math.min(0.995, (renderedBeforeSeconds + localOutputSeconds) / totalDurationSeconds),
