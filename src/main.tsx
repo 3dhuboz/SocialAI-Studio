@@ -9,6 +9,9 @@ import { RootErrorBoundary } from './components/RootErrorBoundary';
 import { CLIENT } from './client.config';
 import './index.css';
 
+// Scope client-specific styling before React mounts to avoid a flash of the default skin.
+document.documentElement.setAttribute('data-client', CLIENT.clientId);
+
 // Apply light theme if configured
 if ((CLIENT as any).theme === 'light') {
   document.documentElement.setAttribute('data-theme', 'light');
