@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ClientFact } from '../../services/gemini';
-import { isCustomerSafeFact, moveReelTrimWindow, publicFactContent } from '../ReelStudio';
+import {
+  isCustomerSafeFact,
+  moveReelTrimWindow,
+  parseReelTextDraft,
+  publicFactContent,
+} from '../ReelStudio';
 
 function fact(overrides: Partial<ClientFact> = {}): ClientFact {
   return {
@@ -75,5 +80,30 @@ describe('Reel Studio trim controls', () => {
       endSeconds: 130,
       coverSeconds: 130,
     });
+  });
+});
+
+describe('Reel Studio draft recovery', () => {
+  it('restores a valid writing and publishing draft', () => {
+    const draft = {
+      version: 1,
+      clipTitle: 'Friday counter picks',
+      footageNotes: 'Pete shows the tray.',
+      platform: 'Facebook',
+      hook: 'Fresh from the counter.',
+      captionBody: 'Ready for the weekend.',
+      hashtagsText: '#Rockhampton',
+      cta: 'Order online from Richo Road Butchery.',
+      releaseMode: 'now',
+      scheduleAt: '2026-07-22T09:00',
+      updatedAt: '2026-07-21T03:00:00.000Z',
+    };
+
+    expect(parseReelTextDraft(JSON.stringify(draft))).toEqual(draft);
+  });
+
+  it('ignores incomplete or corrupt drafts', () => {
+    expect(parseReelTextDraft('{bad json')).toBeNull();
+    expect(parseReelTextDraft(JSON.stringify({ version: 1, clipTitle: 'Only one field' }))).toBeNull();
   });
 });
