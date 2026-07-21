@@ -22,6 +22,7 @@ const STAGING_DATABASE_ID = '0ce38359-c7d6-4d6e-b278-7ca1a719dbb4';
 const PRODUCTION_DATABASE_ID = '6295841e-e5f7-4355-b0e0-c5f22e58d99d';
 const DEFAULT_MAX_AGE_MINUTES = 20;
 const WEEKLY_CALIBRATION_MAX_AGE_MINUTES = 8 * 24 * 60;
+const OWNER_SOURCE_SECRET_KEY = /(?:api.?key|token|secret|password|credential|private.?key|auth)/i;
 
 const CALIBRATION_DETAIL_KEYS = [
   'posts_processed',
@@ -378,6 +379,9 @@ SELECT COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_calibration_audits' THEN 1 ELSE 0
        END), 0) AS calibration_tables,
        COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'learning_pilot_authorization_uses' THEN 1 ELSE 0
+       END), 0) AS owner_authorization_tables,
+       COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'cron_alerts' THEN 1 ELSE 0
        END), 0) AS alert_tables,
        COALESCE(SUM(CASE
@@ -386,7 +390,9 @@ SELECT COALESCE(SUM(CASE
          THEN 1 ELSE 0
        END), 0) AS alert_indexes
   FROM sqlite_master
- WHERE (type = 'table' AND name IN ('learning_calibration_audits', 'cron_alerts'))
+ WHERE (type = 'table' AND name IN (
+          'learning_calibration_audits', 'learning_pilot_authorization_uses', 'cron_alerts'
+       ))
     OR (type = 'index'
         AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
 `;
@@ -409,6 +415,12 @@ SELECT COUNT(*) AS calibration_rows,
        END), 0) AS severe_false_passes
   FROM learning_calibration_audits
  WHERE policy_version = '${POLICY_VERSION}';
+`;
+
+export const STAGING_OWNER_AUTHORIZATION_USE_SQL = `
+SELECT selected_source_id_sha256
+  FROM learning_pilot_authorization_uses
+ ORDER BY selected_source_id_sha256;
 `;
 
 export const PRODUCTION_ROLLOUT_SQL = `
@@ -447,18 +459,35 @@ SELECT policy_version, ready, checks_json, evaluated_at
  WHERE policy_version = '${POLICY_VERSION}'
  ORDER BY evaluated_at DESC
  LIMIT 1;
-SELECT COUNT(*) AS owner_draft_source_candidates
+SELECT p.id,p.image_url,p.hashtags
   FROM posts p
  WHERE p.user_id = '${PILOT_OWNER_USER_ID}'
    AND p.client_id IS NULL
    AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
    AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
    AND (p.owner_kind IS NULL OR p.owner_kind = 'user')
+   AND (p.owner_id IS NULL OR p.owner_id = '${PILOT_OWNER_USER_ID}')
+   AND LOWER(TRIM(COALESCE(p.platform, ''))) IN ('facebook','instagram')
+   AND LOWER(TRIM(COALESCE(p.post_type, ''))) = 'image'
+   AND NULLIF(TRIM(COALESCE(p.image_url, '')), '') IS NOT NULL
    AND COALESCE(p.publish_attempts, 0) = 0
-   AND p.late_post_id IS NULL
-   AND p.claim_id IS NULL
-   AND p.fb_video_id IS NULL
-   AND p.postproxy_post_id IS NULL
+   AND NULLIF(TRIM(COALESCE(p.late_post_id, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.video_url, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.video_request_id, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.audio_mixed_url, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.claim_id, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.claim_at, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.fb_video_id, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.fb_publish_state, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.postproxy_post_id, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.postproxy_status, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.postproxy_permalink, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.postproxy_sent_at, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.postproxy_finished_at, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.qa_feedback_target, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.qa_feedback_reason, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.qa_feedback_note, '')), '') IS NULL
+   AND NULLIF(TRIM(COALESCE(p.qa_feedback_at, '')), '') IS NULL
    AND NOT EXISTS (
      SELECT 1 FROM publication_events event
       WHERE event.user_id = p.user_id AND event.post_id = p.id
@@ -468,6 +497,59 @@ SELECT COUNT(*) AS owner_draft_source_candidates
       WHERE receipt.user_id = p.user_id AND receipt.post_id = p.id
    );
 `;
+
+function validOwnerSourceMedia(value: unknown): boolean {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && [...url.searchParams.keys()].every((key) => !OWNER_SOURCE_SECRET_KEY.test(key));
+  } catch {
+    return false;
+  }
+}
+
+function validOwnerSourceHashtags(value: unknown): boolean {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
+    return true;
+  }
+  if (typeof value !== 'string') return false;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      && parsed.length <= 20
+      && parsed.every((item) => typeof item === 'string' && item.length <= 100);
+  } catch {
+    return false;
+  }
+}
+
+export function countUnusedOwnerDraftSourceCandidates(
+  candidateRows: Array<Record<string, unknown>>,
+  authorizationUseRows: Array<Record<string, unknown>>,
+): number {
+  const usedHashes = authorizationUseRows.map((row) => (
+    String(row.selected_source_id_sha256 ?? '')
+  ));
+  if (
+    usedHashes.some((hash) => !/^[a-f0-9]{64}$/.test(hash))
+    || new Set(usedHashes).size !== usedHashes.length
+  ) {
+    throw new Error('Staging owner authorization source hashes are invalid or ambiguous');
+  }
+  const sourceIds = candidateRows.map((row) => String(row.id ?? ''));
+  if (sourceIds.some((id) => !id.trim()) || new Set(sourceIds).size !== sourceIds.length) {
+    throw new Error('Production owner Draft source identities are invalid or ambiguous');
+  }
+  const consumed = new Set(usedHashes);
+  return candidateRows.filter((row) => (
+    validOwnerSourceMedia(row.image_url)
+    && validOwnerSourceHashtags(row.hashtags)
+    && !consumed.has(createHash('sha256').update(String(row.id)).digest('hex'))
+  )).length;
+}
 
 export interface CronObservation {
   success: boolean;
@@ -1510,6 +1592,13 @@ async function main(): Promise<void> {
   const stagingEnrollments = firstRow(stagingD1.rows[4]);
   const stagingSchema = firstRow(stagingD1.rows[5]);
   const stagingCalibrationTablePresent = numberField(stagingSchema, 'calibration_tables') === 1;
+  const stagingAuthorizationTableCount = numberField(
+    stagingSchema,
+    'owner_authorization_tables',
+  );
+  if (![0, 1].includes(stagingAuthorizationTableCount)) {
+    throw new Error('Staging owner authorization ledger schema is ambiguous');
+  }
   const stagingAlertSchemaReady = numberField(stagingSchema, 'alert_tables') === 1
     && numberField(stagingSchema, 'alert_indexes') === 2;
   const stagingCalibrationD1 = stagingCalibrationTablePresent
@@ -1520,11 +1609,23 @@ async function main(): Promise<void> {
     )
     : { rows: [] as D1StatementResult[], readOnly: true };
   const stagingCalibration = firstRow(stagingCalibrationD1.rows[0]);
+  const stagingAuthorizationUseD1 = stagingAuthorizationTableCount === 1
+    ? executeReadOnlyD1(
+      'socialai-db-staging',
+      STAGING_OWNER_AUTHORIZATION_USE_SQL,
+      'staging',
+    )
+    : { rows: [] as D1StatementResult[], readOnly: true };
+  const stagingAuthorizationUseRows = stagingAuthorizationUseD1.rows[0]?.results ?? [];
   const productionHughes = firstRow(productionD1.rows[0]);
   const productionProtected = firstRow(productionD1.rows[1]);
   const productionSchema = firstRow(productionD1.rows[2]);
   const productionReadiness = firstRow(productionD1.rows[3]);
-  const productionOwnerDraftInventory = firstRow(productionD1.rows[4]);
+  const productionOwnerDraftRows = productionD1.rows[4]?.results ?? [];
+  const ownerDraftSourceCandidates = countUnusedOwnerDraftSourceCandidates(
+    productionOwnerDraftRows,
+    stagingAuthorizationUseRows,
+  );
   const productionPilotSampleTablePresent = numberField(
     productionSchema,
     'pilot_sample_tables',
@@ -1557,7 +1658,9 @@ async function main(): Promise<void> {
       databaseBindingId: stagingVersion.databaseBindingId,
       expectedDatabaseBindingId: STAGING_DATABASE_ID,
       flags: stagingVersion.flags,
-      d1ReadOnly: stagingD1.readOnly && stagingCalibrationD1.readOnly,
+      d1ReadOnly: stagingD1.readOnly
+        && stagingCalibrationD1.readOnly
+        && stagingAuthorizationUseD1.readOnly,
       protectedWorkspaces: numberField(stagingProtected, 'protected_workspaces'),
       pilotSamples: numberField(stagingSamples, 'pilot_samples'),
       ownerSamples: numberField(stagingSamples, 'owner_samples'),
@@ -1603,10 +1706,7 @@ async function main(): Promise<void> {
       d1ReadOnly: productionD1.readOnly,
       protectedWorkspaces: numberField(productionProtected, 'protected_workspaces'),
       hugheseysQueStatus: stringField(productionHughes, 'status'),
-      ownerDraftSourceCandidates: numberField(
-        productionOwnerDraftInventory,
-        'owner_draft_source_candidates',
-      ),
+      ownerDraftSourceCandidates,
       pilotSampleTablePresent: productionPilotSampleTablePresent,
       calibrationTablePresent: productionCalibrationTablePresent,
       schemaPreflight: productionSchemaPreflight,
@@ -1642,7 +1742,9 @@ async function main(): Promise<void> {
     limitations: [
       'This command performs read-only Cloudflare D1, deployment, version, and health checks.',
       'Pilot intake diagnostics contain aggregate counts only and do not grant consent.',
-      'The production owner Draft count does not expose content or authorize a staging copy.',
+      'The production owner Draft count is computed from ephemeral minimal rows, excludes '
+        + 'consumed staging source hashes, and serializes no source IDs, URLs, or content.',
+      'A positive source count does not authorize a staging copy.',
       'Production schema preflight verifies deferred migration integrity and dependencies only; it never applies a migration.',
       'safe_hold proves dormant boundaries, not consent or permission to activate production.',
       'promotion_ready still requires an operator-reviewed change window and rollback plan.',

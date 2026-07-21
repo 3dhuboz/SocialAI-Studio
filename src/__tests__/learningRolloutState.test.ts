@@ -1,14 +1,17 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PRODUCTION_ROLLOUT_SQL,
   STAGING_CALIBRATION_ROLLOUT_SQL,
+  STAGING_OWNER_AUTHORIZATION_USE_SQL,
   STAGING_ROLLOUT_SQL,
   assertReadOnlySql,
   buildProductionSchemaPreflight,
   buildRolloutActionPlan,
   buildWranglerInvocation,
+  countUnusedOwnerDraftSourceCandidates,
   evaluateRolloutState,
   parseCron,
   shouldFailRolloutCommand,
@@ -662,22 +665,70 @@ describe('learning live rollout state', () => {
   it('keeps all built-in remote D1 statements read-only', () => {
     expect(() => assertReadOnlySql(STAGING_ROLLOUT_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(STAGING_CALIBRATION_ROLLOUT_SQL)).not.toThrow();
+    expect(() => assertReadOnlySql(STAGING_OWNER_AUTHORIZATION_USE_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(PRODUCTION_ROLLOUT_SQL)).not.toThrow();
   });
 
-  it('observes only an aggregate bounded owner Draft inventory in production', () => {
+  it('reads only minimal bounded owner Draft fields before producing an aggregate count', () => {
     const inventorySql = PRODUCTION_ROLLOUT_SQL
       .split(';')
       .map((statement) => statement.trim())
-      .find((statement) => statement.includes('owner_draft_source_candidates'));
+      .find((statement) => statement.includes('SELECT p.id,p.image_url,p.hashtags'));
 
     expect(inventorySql).toBeDefined();
-    expect(inventorySql).toContain('SELECT COUNT(*) AS owner_draft_source_candidates');
+    expect(inventorySql).toContain('SELECT p.id,p.image_url,p.hashtags');
     expect(inventorySql).toContain("LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'");
+    expect(inventorySql).toContain("LOWER(TRIM(COALESCE(p.post_type, ''))) = 'image'");
+    expect(inventorySql).toContain("LOWER(TRIM(COALESCE(p.platform, ''))) IN");
     expect(inventorySql).toContain('COALESCE(p.publish_attempts, 0) = 0');
+    expect(inventorySql).toContain('p.qa_feedback_target');
+    expect(inventorySql).toContain('p.video_request_id');
+    expect(inventorySql).toContain('p.postproxy_finished_at');
     expect(inventorySql).toContain('FROM publication_events event');
     expect(inventorySql).toContain('FROM publish_delivery_receipts receipt');
-    expect(inventorySql).not.toMatch(/SELECT\s+(?:id|content|image_url|hashtags)\b/i);
+    expect(inventorySql).not.toMatch(/SELECT\s+(?:p\.)?content\b/i);
+  });
+
+  it('excludes unsafe media and source hashes already consumed in staging', () => {
+    const consumedId = 'owner-draft-consumed';
+    const consumedHash = createHash('sha256').update(consumedId).digest('hex');
+    const candidates = [
+      {
+        id: consumedId,
+        image_url: 'https://cdn.example.com/consumed.jpg',
+        hashtags: '["#SmallBusiness"]',
+      },
+      {
+        id: 'owner-draft-safe',
+        image_url: 'https://cdn.example.com/safe.jpg',
+        hashtags: '["#Automation"]',
+      },
+      {
+        id: 'owner-draft-http',
+        image_url: 'http://cdn.example.com/unsafe.jpg',
+        hashtags: '[]',
+      },
+      {
+        id: 'owner-draft-secret-url',
+        image_url: 'https://cdn.example.com/unsafe.jpg?token=secret-shaped',
+        hashtags: '[]',
+      },
+      {
+        id: 'owner-draft-bad-tags',
+        image_url: 'https://cdn.example.com/tags.jpg',
+        hashtags: '{"not":"an array"}',
+      },
+    ];
+
+    const count = countUnusedOwnerDraftSourceCandidates(candidates, [{
+      selected_source_id_sha256: consumedHash,
+    }]);
+
+    expect(count).toBe(1);
+    expect(typeof count).toBe('number');
+    expect(() => countUnusedOwnerDraftSourceCandidates(candidates, [{
+      selected_source_id_sha256: 'not-a-hash',
+    }])).toThrow('invalid or ambiguous');
   });
 
   it('preflights exact additive production migrations without applying them', () => {
