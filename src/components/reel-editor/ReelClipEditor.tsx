@@ -11,6 +11,7 @@ import {
   Play,
   Plus,
   Redo2,
+  RotateCcw,
   RotateCw,
   Scissors,
   SlidersHorizontal,
@@ -64,6 +65,11 @@ interface ReelClipEditorProps {
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const TEXT_COLOURS = ['#ffffff', '#f6c55f', '#ef4444', '#111111'];
+const OVERLAY_PREVIEW_SIZES: Record<ReelClip['overlaySize'], string> = {
+  small: 'clamp(0.76rem, 1.55vw, 1.05rem)',
+  medium: 'clamp(0.9rem, 1.9vw, 1.35rem)',
+  large: 'clamp(1.05rem, 2.3vw, 1.65rem)',
+};
 
 const formatTimestamp = (seconds: number) => {
   const safeSeconds = Math.max(0, seconds);
@@ -230,6 +236,19 @@ export const ReelClipEditor: React.FC<ReelClipEditorProps> = ({
     onProjectChange(moveReelClip(project, selectedClip.id, direction));
   };
 
+  const resetSelectedLook = () => {
+    commitClip({
+      fit: 'cover',
+      zoom: 1,
+      offsetX: 0,
+      offsetY: 0,
+      rotation: 0,
+      brightness: 1,
+      contrast: 1,
+      saturation: 1,
+    });
+  };
+
   const dropClip = (targetId: string) => {
     if (!draggedClipId || draggedClipId === targetId) return;
     const clips = [...project.clips];
@@ -367,7 +386,10 @@ export const ReelClipEditor: React.FC<ReelClipEditorProps> = ({
                       }}
                     />
                     {selectedClip.overlayText.trim() ? (
-                      <div className={`reel-editor__overlay is-${selectedClip.overlayPosition}${selectedClip.overlayBackground ? ' has-background' : ''}`} style={{ color: selectedClip.overlayColor }}>
+                      <div
+                        className={`reel-editor__overlay is-${selectedClip.overlayPosition}${selectedClip.overlayBackground ? ' has-background' : ''}`}
+                        style={{ color: selectedClip.overlayColor, fontSize: OVERLAY_PREVIEW_SIZES[selectedClip.overlaySize] }}
+                      >
                         {selectedClip.overlayText}
                       </div>
                     ) : null}
@@ -415,6 +437,22 @@ export const ReelClipEditor: React.FC<ReelClipEditorProps> = ({
                         {SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>{speed}x</option>)}
                       </select>
                     </label>
+                    <div className="reel-control">
+                      <span>Transition</span>
+                      <div className="reel-editor__segment">
+                        {(['cut', 'fade'] as const).map((transition) => (
+                          <button key={transition} type="button" className={selectedClip.transition === transition ? 'is-selected' : ''} onClick={() => commitClip({ transition })}>
+                            {transition === 'cut' ? 'Clean cut' : 'Fade'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {selectedClip.transition === 'fade' ? (
+                      <label className="reel-control">
+                        <span>Fade length <output>{selectedClip.transitionDurationSeconds.toFixed(1)}s</output></span>
+                        <input type="range" min={0.2} max={1.5} step={0.1} value={selectedClip.transitionDurationSeconds} onChange={(event) => commitClip({ transitionDurationSeconds: Number(event.target.value) })} />
+                      </label>
+                    ) : null}
                     <div className="reel-editor__action-row">
                       <button type="button" onClick={splitAtPlayhead}><Scissors size={15} /> Split</button>
                       <button type="button" onClick={duplicateSelected}><Copy size={15} /> Duplicate</button>
@@ -456,6 +494,9 @@ export const ReelClipEditor: React.FC<ReelClipEditorProps> = ({
                         {(['blur', 'black'] as const).map((background) => <button key={background} type="button" className={project.background === background ? 'is-selected' : ''} onClick={() => onProjectChange({ ...project, background })}>{background === 'blur' ? 'Blur' : 'Black'}</button>)}
                       </div>
                     </div>
+                    <div className="reel-editor__action-row">
+                      <button type="button" onClick={resetSelectedLook}><RotateCcw size={15} /> Reset look</button>
+                    </div>
                   </div>
                 ) : null}
 
@@ -469,6 +510,12 @@ export const ReelClipEditor: React.FC<ReelClipEditorProps> = ({
                       <span>Position</span>
                       <div className="reel-editor__segment">
                         {(['top', 'centre', 'bottom'] as const).map((position) => <button key={position} type="button" className={selectedClip.overlayPosition === position ? 'is-selected' : ''} onClick={() => commitClip({ overlayPosition: position })}>{position}</button>)}
+                      </div>
+                    </div>
+                    <div className="reel-control">
+                      <span>Text size</span>
+                      <div className="reel-editor__segment">
+                        {(['small', 'medium', 'large'] as const).map((size) => <button key={size} type="button" className={selectedClip.overlaySize === size ? 'is-selected' : ''} onClick={() => commitClip({ overlaySize: size })}>{size}</button>)}
                       </div>
                     </div>
                     <div className="reel-control">

@@ -5,6 +5,8 @@ export const MIN_CLIP_DURATION_SECONDS = 0.35;
 export type ReelAspectRatio = '9:16' | '4:5' | '1:1';
 export type ReelFitMode = 'cover' | 'contain';
 export type ReelTextPosition = 'top' | 'centre' | 'bottom';
+export type ReelTextSize = 'small' | 'medium' | 'large';
+export type ReelTransition = 'cut' | 'fade';
 export type ReelRotation = 0 | 90 | 180 | 270;
 
 export interface ReelClip {
@@ -19,6 +21,8 @@ export interface ReelClip {
   trimStartSeconds: number;
   trimEndSeconds: number;
   speed: number;
+  transition: ReelTransition;
+  transitionDurationSeconds: number;
   volume: number;
   muted: boolean;
   fit: ReelFitMode;
@@ -31,6 +35,7 @@ export interface ReelClip {
   saturation: number;
   overlayText: string;
   overlayPosition: ReelTextPosition;
+  overlaySize: ReelTextSize;
   overlayColor: string;
   overlayBackground: boolean;
 }
@@ -103,6 +108,8 @@ export function createReelClip(input: {
     trimStartSeconds: 0,
     trimEndSeconds: input.sourceDurationSeconds,
     speed: 1,
+    transition: 'cut',
+    transitionDurationSeconds: 0.6,
     volume: 1,
     muted: false,
     fit: 'cover',
@@ -115,6 +122,7 @@ export function createReelClip(input: {
     saturation: 1,
     overlayText: '',
     overlayPosition: 'bottom',
+    overlaySize: 'medium',
     overlayColor: '#ffffff',
     overlayBackground: true,
   };
@@ -123,6 +131,21 @@ export function createReelClip(input: {
 export function reelClipDuration(clip: ReelClip): number {
   const sourceDuration = Math.max(0, clip.trimEndSeconds - clip.trimStartSeconds);
   return roundSecond(sourceDuration / clamp(clip.speed, 0.25, 4));
+}
+
+export function reelClipTransitionOpacity(clip: ReelClip, outputSeconds: number): number {
+  if (clip.transition !== 'fade') return 1;
+  const clipDuration = reelClipDuration(clip);
+  const transitionDuration = Math.min(
+    clamp(clip.transitionDurationSeconds, 0.2, 1.5),
+    clipDuration / 2,
+  );
+  if (transitionDuration <= 0) return 1;
+  const position = clamp(outputSeconds, 0, clipDuration);
+  return clamp(Math.min(
+    position / transitionDuration,
+    (clipDuration - position) / transitionDuration,
+  ), 0, 1);
 }
 
 export function reelProjectDuration(project: Pick<ReelProject, 'clips'>): number {
@@ -166,6 +189,7 @@ export function updateReelClip(
         trimStartSeconds: roundSecond(trimStartSeconds),
         trimEndSeconds: roundSecond(trimEndSeconds),
         speed: clamp(next.speed, 0.5, 2),
+        transitionDurationSeconds: clamp(next.transitionDurationSeconds, 0.2, 1.5),
         volume: clamp(next.volume, 0, 1),
         zoom: clamp(next.zoom, 1, 2.5),
         offsetX: clamp(next.offsetX, -1, 1),
