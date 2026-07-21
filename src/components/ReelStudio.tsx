@@ -718,7 +718,13 @@ export const ReelStudio: React.FC<ReelStudioProps> = ({
             <ShieldCheck size={18} />
             <span>{draftSavedAt ? 'Draft saved' : 'Autosave on'}</span>
           </div>
-          <button type="button" className="reel-studio__reset" onClick={startFresh}>
+          <button
+            type="button"
+            className="reel-studio__reset"
+            onClick={startFresh}
+            aria-label="Start fresh"
+            title="Start fresh"
+          >
             <Trash2 size={16} />
             <span>Start fresh</span>
           </button>
