@@ -21,3 +21,11 @@ export function postproxyMissingMediaReason(args: {
 
   return null;
 }
+
+export function legacyImmediateVideoReason(args: {
+  postType: string | null | undefined;
+  usePostproxy: boolean;
+}): string | null {
+  if (args.postType !== 'video' || args.usePostproxy) return null;
+  return 'Immediate Reel publishing needs the current publishing connection. Connect again in Settings, or schedule the Reel instead.';
+}

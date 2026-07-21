@@ -40,6 +40,7 @@ import { HomeDashboard } from './components/HomeDashboard';
 import { DateTimePicker } from './components/DateTimePicker';
 import { LivePostPreview } from './components/LivePostPreview';
 import { AiEnginePanel } from './components/AiEnginePanel';
+import { ReelStudio } from './components/ReelStudio';
 import {
   Sparkles, Settings, Calendar, BarChart3, Wand2, Image as ImageIcon,
   Send, Loader2, Plus, Edit2, Trash2, Facebook, Instagram, Clock,
@@ -625,7 +626,10 @@ const Dashboard: React.FC = () => {
   const { toast } = useToast();
   const { user, userDoc, loading, logIn, logOut, refreshUserDoc, authMode, portalClientId, getApiToken } = useAuth();
   const db = useDb();
-  const [activeTab, setActiveTab] = useState<'home' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers' | 'shopify-stores'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'reels' | 'calendar' | 'smart' | 'insights' | 'posters' | 'settings' | 'clients' | 'customers' | 'shopify-stores'>(() => {
+    if (typeof window === 'undefined') return 'home';
+    return new URLSearchParams(window.location.search).get('tab') === 'reels' ? 'reels' : 'home';
+  });
   const [smartSubMode, setSmartSubMode] = useState<'autopilot' | 'quickpost'>('autopilot');
   // ── Billing summary cache (I4 fix) ────────────────────────────────────
   // Lazily-loaded the first time the user navigates to the Settings tab
@@ -2866,6 +2870,7 @@ const Dashboard: React.FC = () => {
   // ── Tab Rendering ──
   const tabs = [
     { id: 'home' as const, label: 'Home', icon: Home },
+    { id: 'reels' as const, label: 'Reel Studio', icon: Film },
     { id: 'calendar' as const, label: 'Calendar', icon: Calendar },
     { id: 'smart' as const, label: 'Create', icon: Wand2 },
     { id: 'insights' as const, label: 'Insights', icon: BarChart3 },
@@ -3357,8 +3362,8 @@ const Dashboard: React.FC = () => {
           notch. Below it, the Tab Nav uses calc(env+64) to stick BELOW
           this header when scrolled. */}
       <header id="app-header" className="bg-[var(--color-surface-0)]/95 backdrop-blur-2xl sticky top-0 z-40 border-b border-white/[0.05]" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4 min-h-[64px]">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="max-w-6xl mx-auto px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 min-h-[64px]">
+          <div className="flex items-center gap-3 min-w-0 w-full sm:w-auto">
             {CLIENT.clientMode ? (
               <div className="flex items-center gap-3 min-w-0">
                 <AppLogo size={48} />
@@ -3370,7 +3375,7 @@ const Dashboard: React.FC = () => {
             ) : (
               <>
                 <AppLogo size={72} />
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
                   {planCfg && (
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r ${planCfg.color} text-white`}>
                       {planCfg.name}
@@ -3395,7 +3400,7 @@ const Dashboard: React.FC = () => {
               </>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs flex-shrink-0">
+          <div className="flex items-center gap-2 text-xs flex-wrap w-full min-w-0 sm:w-auto sm:flex-nowrap sm:justify-end sm:flex-shrink-0">
             {fbConnected ? (
               <span className="flex items-center gap-1.5 text-blue-400 bg-blue-500/10 px-2 py-1 rounded-xl border border-blue-500/20 whitespace-nowrap">
                 <Link2 size={12} /> {CLIENT.clientMode ? 'Connected' : 'Facebook Connected'}
@@ -4233,6 +4238,20 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* ═══ CALENDAR TAB ═══ */}
+        {activeTab === 'reels' && (
+          <ReelStudio
+            clientId={activeClientId}
+            profile={profile}
+            socialTokens={socialTokens}
+            workspaceName={clients.find((client) => client.id === activeClientId)?.name || profile.name || CLIENT.defaultBusinessName}
+            onOpenSettings={() => setActiveTab('settings')}
+            onPostsChanged={async () => {
+              const nextPosts = await db.getPosts(activeClientId);
+              setPosts(nextPosts.map(mapDbPostToSocialPost));
+            }}
+          />
+        )}
+
         {activeTab === 'calendar' && (
           <div className="space-y-5">
             <input ref={calendarUploadRef} type="file" accept="image/*" className="hidden" onChange={handleCalendarFileChange} />

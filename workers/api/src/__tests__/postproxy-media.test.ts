@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { postproxyMediaArray, postproxyMissingMediaReason } from '../lib/postproxy-media';
+import {
+  legacyImmediateVideoReason,
+  postproxyMediaArray,
+  postproxyMissingMediaReason,
+} from '../lib/postproxy-media';
 
 describe('Postproxy media requirements', () => {
   it('allows Facebook feed posts to publish text-only when generated media is unavailable', () => {
@@ -26,5 +30,12 @@ describe('Postproxy media requirements', () => {
       postType: 'image',
       mediaUrl: null,
     })).toMatch(/Instagram posts require a public image\/video URL/);
+  });
+
+  it('blocks an immediate Reel from falling through to a text-only legacy publish', () => {
+    expect(legacyImmediateVideoReason({ postType: 'video', usePostproxy: false }))
+      .toMatch(/current publishing connection/i);
+    expect(legacyImmediateVideoReason({ postType: 'video', usePostproxy: true })).toBeNull();
+    expect(legacyImmediateVideoReason({ postType: 'image', usePostproxy: false })).toBeNull();
   });
 });

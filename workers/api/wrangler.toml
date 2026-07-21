@@ -87,6 +87,12 @@ binding = "REELS_R2"
 bucket_name = "socialai-reels"
 preview_bucket_name = "socialai-reels"
 
+# Reel Studio finishing: trim to MP4 with original audio and extract a cover.
+# Media Transformations has no local simulator, so Wrangler dev uses remote.
+[media]
+binding = "MEDIA"
+remote = true
+
 # R2 object lifecycle: cached reel videos auto-delete 90 days after upload.
 # Posts referencing them have long since published; the durable URL was only
 # needed to bridge fal.ai's 24h URL expiry to the scheduled publish time.
@@ -159,6 +165,10 @@ database_id = "0ce38359-c7d6-4d6e-b278-7ca1a719dbb4"
 [[env.staging.r2_buckets]]
 binding = "REELS_R2"
 bucket_name = "socialai-reels"
+
+[env.staging.media]
+binding = "MEDIA"
+remote = true
 
 [[env.staging.r2_buckets]]
 binding = "POSTER_ASSETS"
