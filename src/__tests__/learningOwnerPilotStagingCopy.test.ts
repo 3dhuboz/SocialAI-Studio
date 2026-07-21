@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   AUTHORIZATION_USE_TABLE,
@@ -6,6 +7,8 @@ import {
   EXPECTED_GLADSTONE_ATTESTATION,
   EXPECTED_GLADSTONE_POST_ID,
   EXPECTED_OWNER_COPY_STATEMENT,
+  FOLLOWUP_AUTHORIZATION_CAPTURED_AT,
+  FOLLOWUP_AUTHORIZATION_RECEIPT_ID,
   authorizationSha256,
   buildAuthorizationUseSchemaSql,
   buildAuthorizationUseSql,
@@ -65,6 +68,12 @@ const authorization: DualPilotAuthorizationReceipt = {
   },
 };
 
+const followupAuthorization: DualPilotAuthorizationReceipt = {
+  ...authorization,
+  receiptId: FOLLOWUP_AUTHORIZATION_RECEIPT_ID,
+  capturedAt: FOLLOWUP_AUTHORIZATION_CAPTURED_AT,
+};
+
 function draft(patch: Partial<OwnerSourceDraft> = {}): OwnerSourceDraft {
   return {
     id: 'owner-draft-1',
@@ -109,6 +118,8 @@ function draft(patch: Partial<OwnerSourceDraft> = {}): OwnerSourceDraft {
 describe('owner learning pilot staging copy', () => {
   it('accepts only the two exact record-only authorization statements', () => {
     expect(validateDualPilotAuthorization(authorization)).toEqual(authorization);
+    expect(validateDualPilotAuthorization(followupAuthorization)).toEqual(followupAuthorization);
+    expect(authorizationSha256(followupAuthorization)).not.toBe(authorizationSha256(authorization));
     expect(() => validateDualPilotAuthorization({
       ...authorization,
       grants: {
@@ -134,6 +145,10 @@ describe('owner learning pilot staging copy', () => {
       receiptId: `${authorization.receiptId}-replay`,
     })).toThrow('exact consent event');
     expect(() => validateDualPilotAuthorization({
+      ...followupAuthorization,
+      capturedAt: authorization.capturedAt,
+    })).toThrow('capture time');
+    expect(() => validateDualPilotAuthorization({
       ...authorization,
       source: { ...authorization.source, threadId: 'different-thread' },
     })).toThrow('source is invalid');
@@ -154,6 +169,8 @@ describe('owner learning pilot staging copy', () => {
     expect(schema).toContain(`CREATE TABLE IF NOT EXISTS ${AUTHORIZATION_USE_TABLE}`);
     expect(schema).toContain('authorization_sha256 TEXT NOT NULL UNIQUE');
     expect(schema).toContain('receipt_id_sha256 TEXT NOT NULL UNIQUE');
+    expect(schema).toContain('CREATE UNIQUE INDEX IF NOT EXISTS');
+    expect(schema).toContain('ON learning_pilot_authorization_uses(selected_source_id_sha256)');
     expect(schema).toContain('BEFORE DELETE');
     expect(schema).toContain('OLD.withdrawn_at IS NULL');
     expect(schema).toContain('NEW.withdrawn_at IS NOT NULL');
@@ -188,6 +205,23 @@ describe('owner learning pilot staging copy', () => {
     expect(forward.selected.id).toBe(reverse.selected.id);
     expect(forward.eligibleCount).toBe(3);
     expect(forward.excludedCount).toBe(0);
+    expect(forward.previouslyCopiedExcludedCount).toBe(0);
+  });
+
+  it('never selects a source Draft consumed by an earlier authorization event', () => {
+    const rows = [draft({ id: 'a' }), draft({ id: 'b' }), draft({ id: 'c' })];
+    const first = serverSelectOwnerDraft(rows, authorization.receiptId);
+    const used = new Set([
+      createHash('sha256').update(first.selected.id).digest('hex'),
+    ]);
+    const second = serverSelectOwnerDraft(rows, followupAuthorization.receiptId, used);
+
+    expect(second.selected.id).not.toBe(first.selected.id);
+    expect(second.eligibleCount).toBe(2);
+    expect(second.previouslyCopiedExcludedCount).toBe(1);
+    expect(() => serverSelectOwnerDraft(rows, followupAuthorization.receiptId, new Set(
+      rows.map((row) => createHash('sha256').update(row.id).digest('hex')),
+    ))).toThrow('previously unused');
   });
 
   it('copies a canonical owner Draft with schedules and publishing metadata cleared', () => {

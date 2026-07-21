@@ -34,11 +34,27 @@ export const EXPECTED_GLADSTONE_ATTESTATION =
 export const EXPECTED_GLADSTONE_POST_ID = 'pilot-copy-be692c0a252f57aa0bf77f89';
 export const EXPECTED_AUTHORIZATION_RECEIPT_ID =
   'pilot-authorization-penny-owner-gladstone-gradient-20260720';
+export const FOLLOWUP_AUTHORIZATION_RECEIPT_ID =
+  'pilot-authorization-penny-owner-followup-20260721';
 export const EXPECTED_AUTHORIZATION_THREAD_ID =
   '019ed317-7f47-7b22-ae5e-0fab6b0218c6';
+export const FOLLOWUP_AUTHORIZATION_CAPTURED_AT = '2026-07-21T00:44:01.994Z';
+const AUTHORIZATION_BINDINGS = [
+  {
+    receiptId: EXPECTED_AUTHORIZATION_RECEIPT_ID,
+    capturedAt: '2026-07-20T01:47:33.413Z',
+    threadId: EXPECTED_AUTHORIZATION_THREAD_ID,
+  },
+  {
+    receiptId: FOLLOWUP_AUTHORIZATION_RECEIPT_ID,
+    capturedAt: FOLLOWUP_AUTHORIZATION_CAPTURED_AT,
+    threadId: EXPECTED_AUTHORIZATION_THREAD_ID,
+  },
+] as const;
 export const AUTHORIZATION_USE_TABLE = 'learning_pilot_authorization_uses';
 const AUTHORIZATION_USE_DELETE_TRIGGER = 'prevent_learning_pilot_authorization_use_delete';
 const AUTHORIZATION_USE_UPDATE_TRIGGER = 'restrict_learning_pilot_authorization_use_update';
+const AUTHORIZATION_SOURCE_INDEX = 'uq_learning_pilot_authorization_source';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -161,6 +177,7 @@ interface OwnerCopyArtifact {
     readOnly: boolean;
     eligibleDraftCount: number;
     excludedDraftCount: number;
+    previouslyCopiedExcludedCount?: number;
     selectedSourceIdSha256: string;
     sourceSnapshotSha256: string;
     productionRecheckSha256: string | null;
@@ -203,13 +220,18 @@ export function validateDualPilotAuthorization(
   if (!isRecord(value) || value.schemaVersion !== 1) {
     throw new Error('Authorization receipt schemaVersion must be 1');
   }
-  if (value.receiptId !== EXPECTED_AUTHORIZATION_RECEIPT_ID) {
+  const binding = AUTHORIZATION_BINDINGS.find((candidate) => (
+    candidate.receiptId === value.receiptId
+  ));
+  if (!binding) {
     throw new Error('Authorization receipt ID does not match the exact consent event');
   }
-  isoTimestamp(value.capturedAt, 'capturedAt');
+  if (isoTimestamp(value.capturedAt, 'capturedAt') !== binding.capturedAt) {
+    throw new Error('Authorization capture time does not match the exact consent event');
+  }
   if (
     value.source.kind !== 'user_provided_attestation'
-    || value.source.threadId !== EXPECTED_AUTHORIZATION_THREAD_ID
+    || value.source.threadId !== binding.threadId
   ) {
     throw new Error('Authorization source is invalid');
   }
@@ -400,7 +422,9 @@ WHEN NOT (
 )
 BEGIN
   SELECT RAISE(ABORT, 'pilot authorization use receipts are immutable');
-END;`;
+END;
+CREATE UNIQUE INDEX IF NOT EXISTS ${AUTHORIZATION_SOURCE_INDEX}
+  ON ${AUTHORIZATION_USE_TABLE}(selected_source_id_sha256);`;
 }
 
 export function buildAuthorizationUseSql(
@@ -433,10 +457,23 @@ INSERT OR ABORT INTO ${AUTHORIZATION_USE_TABLE} (
 export function serverSelectOwnerDraft(
   rows: OwnerSourceDraft[],
   receiptId: string,
-): { selected: OwnerSourceDraft; eligibleCount: number; excludedCount: number } {
+  previouslyUsedSourceHashes: ReadonlySet<string> = new Set(),
+): {
+  selected: OwnerSourceDraft;
+  eligibleCount: number;
+  excludedCount: number;
+  previouslyCopiedExcludedCount: number;
+} {
   if (!receiptId.trim()) throw new Error('Server selection requires an authorization receipt ID');
-  const eligible = rows.filter((row) => classifyOwnerDraft(row).length === 0);
-  if (eligible.length === 0) throw new Error('No production owner Draft is safely eligible');
+  for (const sourceHash of previouslyUsedSourceHashes) {
+    if (!validSha256(sourceHash)) throw new Error('Previously used source hash is invalid');
+  }
+  const safe = rows.filter((row) => classifyOwnerDraft(row).length === 0);
+  const eligible = safe.filter((row) => !previouslyUsedSourceHashes.has(sha256(row.id)));
+  const previouslyCopiedExcludedCount = safe.length - eligible.length;
+  if (eligible.length === 0) {
+    throw new Error('No previously unused production owner Draft is safely eligible');
+  }
   const ranked = eligible.map((row) => ({
     row,
     rank: sha256(`${receiptId}:${row.id}`),
@@ -446,6 +483,7 @@ export function serverSelectOwnerDraft(
     selected: ranked[0].row,
     eligibleCount: eligible.length,
     excludedCount: rows.length - eligible.length,
+    previouslyCopiedExcludedCount,
   };
 }
 
@@ -739,6 +777,7 @@ type AuthorizationUseState = 'absent' | 'unused' | 'consumed' | 'withdrawn';
 
 function authorizationUseState(
   authorization: DualPilotAuthorizationReceipt,
+  requireSourceIndex = false,
 ): AuthorizationUseState {
   const metadata = executeReadOnlyD1(
     STAGING_DATABASE,
@@ -746,7 +785,8 @@ function authorizationUseState(
       WHERE name IN (
         '${AUTHORIZATION_USE_TABLE}',
         '${AUTHORIZATION_USE_DELETE_TRIGGER}',
-        '${AUTHORIZATION_USE_UPDATE_TRIGGER}'
+        '${AUTHORIZATION_USE_UPDATE_TRIGGER}',
+        '${AUTHORIZATION_SOURCE_INDEX}'
       ) ORDER BY name;`,
     'staging',
   )[0].results ?? [];
@@ -756,12 +796,20 @@ function authorizationUseState(
   const table = byName.get(AUTHORIZATION_USE_TABLE);
   const deleteTrigger = byName.get(AUTHORIZATION_USE_DELETE_TRIGGER);
   const updateTrigger = byName.get(AUTHORIZATION_USE_UPDATE_TRIGGER);
-  if (!table || !deleteTrigger || !updateTrigger || metadata.length !== 3) {
+  const sourceIndex = byName.get(AUTHORIZATION_SOURCE_INDEX);
+  if (
+    !table
+    || !deleteTrigger
+    || !updateTrigger
+    || ![3, 4].includes(metadata.length)
+    || (requireSourceIndex && !sourceIndex)
+  ) {
     throw new Error('Authorization-use ledger schema is incomplete');
   }
   const tableSql = String(table.sql ?? '').toLowerCase();
   const deleteSql = String(deleteTrigger.sql ?? '').toLowerCase();
   const updateSql = String(updateTrigger.sql ?? '').toLowerCase();
+  const sourceIndexSql = String(sourceIndex?.sql ?? '').toLowerCase();
   const requiredTableFragments = [
     'authorization_sha256 text not null unique',
     'receipt_id_sha256 text not null unique',
@@ -776,14 +824,16 @@ function authorizationUseState(
     || !deleteSql.includes('cannot be deleted')
     || !updateSql.includes('old.withdrawn_at is null')
     || !updateSql.includes('new.withdrawn_at is not null')
+    || (sourceIndex && (
+      !sourceIndexSql.includes('create unique index')
+      || !sourceIndexSql.includes('(selected_source_id_sha256)')
+    ))
   ) {
     throw new Error('Authorization-use ledger schema does not match the fail-closed contract');
   }
 
   const authorizationHash = authorizationSha256(authorization);
   const receiptHash = sha256(authorization.receiptId);
-  const threadHash = sha256(authorization.source.threadId);
-  const statementHash = sha256(authorization.statements.pennyWiseOwnerDraftCopy);
   const [usage] = firstRows(executeReadOnlyD1(
     STAGING_DATABASE,
     `SELECT
@@ -791,9 +841,6 @@ function authorizationUseState(
          THEN 1 ELSE 0 END), 0) AS authorization_count,
        COALESCE(SUM(CASE WHEN receipt_id_sha256 = ${sqlText(receiptHash)}
          THEN 1 ELSE 0 END), 0) AS receipt_count,
-       COALESCE(SUM(CASE WHEN source_thread_id_sha256 = ${sqlText(threadHash)}
-          AND statement_sha256 = ${sqlText(statementHash)} THEN 1 ELSE 0 END), 0)
-         AS consent_event_count,
        COALESCE(SUM(CASE WHEN authorization_sha256 = ${sqlText(authorizationHash)}
           AND withdrawn_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS withdrawn_count
      FROM ${AUTHORIZATION_USE_TABLE};`,
@@ -801,16 +848,15 @@ function authorizationUseState(
   ));
   const authorizationCount = count(usage, 'authorization_count');
   const receiptCount = count(usage, 'receipt_count');
-  const consentEventCount = count(usage, 'consent_event_count');
   const withdrawnCount = count(usage, 'withdrawn_count');
-  if ([authorizationCount, receiptCount, consentEventCount, withdrawnCount]
+  if ([authorizationCount, receiptCount, withdrawnCount]
     .some((value) => value < 0 || value > 1)) {
     throw new Error('Authorization-use ledger contains ambiguous receipt state');
   }
-  if (authorizationCount === 0 && receiptCount === 0 && consentEventCount === 0) {
+  if (authorizationCount === 0 && receiptCount === 0) {
     return 'unused';
   }
-  if (authorizationCount !== 1 || receiptCount !== 1 || consentEventCount !== 1) {
+  if (authorizationCount !== 1 || receiptCount !== 1) {
     throw new Error('Authorization-use ledger contains a conflicting receipt identity');
   }
   return withdrawnCount === 1 ? 'withdrawn' : 'consumed';
@@ -823,12 +869,34 @@ function assertAuthorizationUnused(authorization: DualPilotAuthorizationReceipt)
   }
 }
 
+function usedOwnerSourceHashes(): Set<string> {
+  const [table] = firstRows(executeReadOnlyD1(
+    STAGING_DATABASE,
+    `SELECT COUNT(*) AS count FROM sqlite_master
+      WHERE type = 'table' AND name = '${AUTHORIZATION_USE_TABLE}';`,
+    'staging',
+  ));
+  if (count(table) === 0) return new Set();
+  if (count(table) !== 1) throw new Error('Authorization-use ledger table is ambiguous');
+  const rows = executeReadOnlyD1(
+    STAGING_DATABASE,
+    `SELECT selected_source_id_sha256 FROM ${AUTHORIZATION_USE_TABLE}
+      ORDER BY selected_source_id_sha256;`,
+    'staging',
+  )[0].results ?? [];
+  const hashes = rows.map((row) => String(row.selected_source_id_sha256 ?? ''));
+  if (hashes.some((value) => !validSha256(value)) || new Set(hashes).size !== hashes.length) {
+    throw new Error('Authorization-use ledger contains invalid or duplicate source hashes');
+  }
+  return new Set(hashes);
+}
+
 function verifyAuthorizationUse(
   authorization: DualPilotAuthorizationReceipt,
   copiedId: string,
   expectedState: 'consumed' | 'withdrawn',
 ): void {
-  const state = authorizationUseState(authorization);
+  const state = authorizationUseState(authorization, true);
   if (state !== expectedState) {
     throw new Error(`Authorization-use ledger expected ${expectedState} but found ${state}`);
   }
@@ -1182,8 +1250,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  assertAuthorizationUnused(authorization);
   const sourceBefore = sourceSnapshot();
-  const selection = serverSelectOwnerDraft(sourceBefore.drafts, authorization.receiptId);
+  const selection = serverSelectOwnerDraft(
+    sourceBefore.drafts,
+    authorization.receiptId,
+    usedOwnerSourceHashes(),
+  );
   const selected = selection.selected;
   const copiedId = copiedOwnerPostId(selected.id);
   assertStagingPreflight(copiedId, authorization);
@@ -1260,6 +1333,7 @@ async function main(): Promise<void> {
       )),
       eligibleDraftCount: selection.eligibleCount,
       excludedDraftCount: selection.excludedCount,
+      previouslyCopiedExcludedCount: selection.previouslyCopiedExcludedCount,
       selectedSourceIdSha256: sha256(selected.id),
       sourceSnapshotSha256: sourceBefore.hash,
       productionRecheckSha256: sourceAfterHash,
