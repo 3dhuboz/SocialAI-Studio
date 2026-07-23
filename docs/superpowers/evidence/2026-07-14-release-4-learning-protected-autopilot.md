@@ -4282,3 +4282,56 @@ proved both exact pilot posts remain safe, unscheduled Drafts with one
 Gladstone has the one customer adjudication; Penny has none. Publication
 events and delivery receipts remain zero. Protected Autopilot remains zero in
 staging and production, and production `hughesq-001` remains `on_hold`.
+
+### Image Root-Fix Worker Pair And Cross-Platform Preflight Repair
+
+The GPT Image 2 relevance repair was deployed as staging Worker version
+`70cd5ed3-3944-4e9a-ab3b-46eec832e510` and production Worker version
+`cea92e31-2f0b-4948-99e9-7e9904e27e86`. Cloudflare reports the same script
+etag for both versions, the correct staging and production D1 bindings, both
+`fetch` and `scheduled` handlers, `IMAGE_GEN_PROVIDER=gpt-image-2`, and all
+learning and reach application flags disabled.
+
+The first current-version rollout pass correctly failed closed because
+staging has no automatic cron triggers and its health/pilot receipts were
+stale. An explicit Wrangler `--test-scheduled` invocation of only the staging
+`*/15` record-only lane refreshed `health_sweep`, `learning_pilot`, and
+`learning_readiness` at `2026-07-23T23:37:04Z`. It evaluated zero candidates,
+scheduled and published nothing, and the temporary local server was stopped
+immediately afterward.
+
+The next pass exposed a Windows checkout portability defect in the deferred
+production schema preflight. The pinned migration hashes matched the
+canonical Git blobs, but a CRLF working-tree checkout produced different raw
+byte hashes. The verifier now canonicalizes CRLF to LF only for migration
+integrity hashing. A regression proves canonical LF and CRLF migrations pass,
+while a substantive SQL mutation still fails both the hash and additive
+contract. The focused verifier suite passed 49 of 49 tests and strict
+TypeScript.
+
+Exact-commit offline proof `a838ca607d3a76a08c6f0748acb7a8918ef5cf79`
+then passed all 114 required checks with zero missing or failed checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-23T23-44-53-325Z.json`
+- payload SHA-256 `3aed1cd342dc6039608bf182d6d80b6053a48610831f400a6572a412cd87f8eb`
+- file SHA-256 `ab5331c9735a455c6973c08d9dbdbf6ec0ccb91428d146cf1d41ac16535c2ac2`
+
+The version-pinned live verifier returned `safe_hold` with no failed safety
+checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-23T23-45-10-121Z.json`
+- payload SHA-256 `6f0f4ca6fa24205dea42737afbdac97861b3fdf58328d42bd097b3ebc302f13e`
+- file SHA-256 `fbb12c7a329242abd26df111ac64186482c3f156b5902a686d5d5541758604c9`
+
+Both environments were healthy and read-only, the deferred production schema
+was verified but not applied, Protected Autopilot counts remained zero,
+production `hughesq-001` remained `on_hold`, and no release flag or production
+data changed. The credential-free scoped version receipt is:
+
+- `docs/superpowers/evidence/attestations/2026-07-24-worker-pair-image-root-fix-version-attestation.json`
+
+Promotion remains intentionally blocked on genuine positive owner/customer
+pilot samples, green staging and production readiness, natural staging
+calibration evidence, and the two deferred production schemas. The current
+next safe phase is `pilot_evidence`; no authorization is inferred for any
+additional draft copy, evaluation, schedule, publication, or activation.
