@@ -852,6 +852,11 @@ function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+function sha256CanonicalTextFile(path: string): string {
+  const canonicalText = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+  return createHash('sha256').update(canonicalText, 'utf8').digest('hex');
+}
+
 export function buildProductionSchemaPreflight(input: {
   postsTablePresent: boolean;
   decisionTablePresent: boolean;
@@ -873,7 +878,7 @@ export function buildProductionSchemaPreflight(input: {
     const path = resolve(root, migration.file);
     const filePresent = existsSync(path);
     const sql = filePresent ? readFileSync(path, 'utf8') : '';
-    const sha256 = filePresent ? sha256File(path) : '';
+    const sha256 = filePresent ? sha256CanonicalTextFile(path) : '';
     return {
       id: migration.id,
       file: migration.file,

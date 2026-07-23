@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -765,6 +772,55 @@ describe('learning live rollout state', () => {
         additiveContractValid: true,
       }),
     ]));
+  });
+
+  it('accepts canonical migrations with CRLF checkout endings but rejects SQL changes', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'socialai-schema-crlf-'));
+    const targetDir = resolve(root, 'workers', 'api');
+    mkdirSync(targetDir, { recursive: true });
+    const files = [
+      'schema_v46_learning_pilot_samples.sql',
+      'schema_v47_learning_calibration_audits.sql',
+    ];
+
+    try {
+      for (const file of files) {
+        const source = readFileSync(resolve(process.cwd(), 'workers', 'api', file), 'utf8')
+          .replace(/\r\n/g, '\n')
+          .replace(/\n/g, '\r\n');
+        writeFileSync(resolve(targetDir, file), source, 'utf8');
+      }
+
+      expect(buildProductionSchemaPreflight({
+        postsTablePresent: true,
+        decisionTablePresent: true,
+        pilotSampleTablePresent: false,
+        calibrationTablePresent: false,
+        root,
+      }).readyToApplyWhenPhaseReached).toBe(true);
+
+      const changedPath = resolve(targetDir, files[0]);
+      writeFileSync(
+        changedPath,
+        readFileSync(changedPath, 'utf8').replace(
+          'CREATE TABLE IF NOT EXISTS learning_pilot_samples',
+          'CREATE TABLE IF NOT EXISTS changed_learning_pilot_samples',
+        ),
+        'utf8',
+      );
+      const changed = buildProductionSchemaPreflight({
+        postsTablePresent: true,
+        decisionTablePresent: true,
+        pilotSampleTablePresent: false,
+        calibrationTablePresent: false,
+        root,
+      });
+      expect(changed.readyToApplyWhenPhaseReached).toBe(false);
+      expect(changed.migrations.find((migration) => migration.id === 'positive_sample'))
+        .toMatchObject({ hashMatches: false, additiveContractValid: false });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('fails the production schema preflight when a required dependency is absent', () => {
