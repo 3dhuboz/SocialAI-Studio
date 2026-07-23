@@ -2,9 +2,8 @@
  * AI-cost regression tests — guards the 2026-05-16 cost-cuts PR.
  *
  * Three behaviours we never want to regress:
- *   (a) Score=5 ships (no regen). The audit raised the regen bar from
- *       "<=5 regen" to "<5 regen" because empirical retries on score=5
- *       rarely lift it but always cost ~$0.04 FLUX + $0.003 critique.
+ *   (a) A score at the shared acceptance threshold ships; lower scores
+ *       regenerate. The strict-less-than SQL contract prevents drift.
  *   (b) Draft posts are excluded from runBacklogRegen. Drafts may never
  *       publish, so paying to regen their images up front is waste.
  *   (c) logAiUsage writes a row to D1 with the canonical column set, so
@@ -20,6 +19,7 @@ import {
   logAiUsage,
   withLearningDecisionUsageScope,
 } from '../ai-usage';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../../shared/critique-thresholds';
 import type { Env } from '../../env';
 
 // ── D1 fake ────────────────────────────────────────────────────────────────
@@ -76,10 +76,9 @@ function makeEnv(db: ReturnType<typeof makeFakeDB>, overrides: Partial<Env> = {}
 describe('AI-cost regression — runBacklogRegen', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it('(a) score=5 does NOT trigger regen — only score < 5 is pulled', async () => {
-    // The threshold default is 5; the predicate is `score < ?` so a row
-    // with score=5 must not appear in the COUNT(*) result. We simulate
-    // this by having the fake D1 say "no pending work" (n=0) and asserting
+  it('(a) the acceptance score does NOT trigger regen', async () => {
+    // A row at the threshold must not appear in the COUNT(*) result. We
+    // simulate this by having the fake D1 say "no pending work" (n=0) and asserting
     // that the COUNT query body uses `<`, not `<=`.
     const db = makeFakeDB({ countResult: { n: 0 } });
     const env = makeEnv(db);
@@ -92,7 +91,7 @@ describe('AI-cost regression — runBacklogRegen', () => {
     expect(countCall!.sql).toMatch(/image_critique_score\s*<\s*\?/);
     expect(countCall!.sql).not.toMatch(/image_critique_score\s*<=\s*\?/);
     // Threshold binding is the first positional param.
-    expect(countCall!.bindings[0]).toBe(5);
+    expect(countCall!.bindings[0]).toBe(CRITIQUE_ACCEPT_THRESHOLD);
   });
 
   it('(b) Draft posts are excluded from runBacklogRegen — status=Scheduled only', async () => {
@@ -161,12 +160,13 @@ describe('AI-cost regression — logAiUsage', () => {
     expect(db.calls.length).toBe(1);
     const call = db.calls[0];
     expect(call.kind).toBe('run');
-    // SQL must target ai_usage and the canonical attribution-aware columns.
+    // Normal production writes must target the deployed pre-v45 schema.
     expect(call.sql).toMatch(/INSERT INTO ai_usage/i);
     expect(call.sql).toMatch(/user_id, client_id, provider, model, operation/);
     expect(call.sql).toMatch(
-      /tokens_in, tokens_out, images_generated, est_cost_usd, post_id,\s+learning_decision_id, ok/,
+      /tokens_in, tokens_out, images_generated, est_cost_usd, post_id, ok/,
     );
+    expect(call.sql).not.toContain('learning_decision_id');
     // Positional bindings — column order from helper matches SQL.
     expect(call.bindings).toEqual([
       'user_123',
@@ -179,7 +179,6 @@ describe('AI-cost regression — logAiUsage', () => {
       1,    // imagesGenerated
       0.025,
       'post_789',
-      null, // no learning decision scope
       1,    // ok=true → 1
     ]);
   });
@@ -197,8 +196,7 @@ describe('AI-cost regression — logAiUsage', () => {
     const bindings = db.calls[0].bindings;
     expect(bindings[0]).toBeNull();        // userId
     expect(bindings[1]).toBeNull();        // clientId
-    expect(bindings[bindings.length - 3]).toBeNull(); // postId
-    expect(bindings[bindings.length - 2]).toBeNull(); // learningDecisionId
+    expect(bindings[bindings.length - 2]).toBeNull(); // postId
     expect(bindings[bindings.length - 1]).toBe(0);    // ok
   });
 
@@ -246,8 +244,9 @@ describe('AI-cost regression — logAiUsage', () => {
       estCostUsd: 0.001,
     });
 
+    expect(db.calls[0].sql).toContain('learning_decision_id');
     expect(db.calls[0].bindings.at(-2)).toBe('decision-pilot-1');
-    expect(db.calls[1].bindings.at(-2)).toBeNull();
+    expect(db.calls[1].sql).not.toContain('learning_decision_id');
     expect(() =>
       assertLearningDecisionUsageScopeComplete(scoped, 'decision-pilot-1'))
       .not.toThrow();

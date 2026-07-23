@@ -24,6 +24,19 @@ const ALLOWED_GENERATION_MODELS = new Set([
   'claude-haiku-4-5',
 ]);
 
+export function toAnthropicDirectModel(model: string): string {
+  // OpenRouter and Anthropic use different public identifiers for Haiku 4.5.
+  // Passing the OpenRouter alias to Anthropic returns a 404 and used to make
+  // every request silently take the slower fallback path.
+  if (model === 'anthropic/claude-haiku-4.5') return 'claude-haiku-4-5';
+  return model.replace(/^anthropic\//, '');
+}
+
+export function toOpenRouterGenerationModel(model: string): string {
+  if (model === 'claude-haiku-4-5') return 'anthropic/claude-haiku-4.5';
+  return model;
+}
+
 export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
   /**
    * POST /api/ai/generate
@@ -110,7 +123,7 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
       try {
         const result = await callAnthropicDirect({
           apiKey: c.env.ANTHROPIC_API_KEY,
-          model: effectiveModel.replace(/^anthropic\//, ''),
+          model: toAnthropicDirectModel(effectiveModel),
           systemPrompt,
           cachedPrefix,
           prompt,
@@ -150,7 +163,7 @@ export function registerAiRoutes(app: Hono<{ Bindings: Env }>): void {
     }
 
     const orBody: Record<string, unknown> = {
-      model: effectiveModel,
+      model: toOpenRouterGenerationModel(effectiveModel),
       messages,
       temperature,
       max_tokens: maxTokens,

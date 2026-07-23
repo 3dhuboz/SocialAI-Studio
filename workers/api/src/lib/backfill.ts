@@ -15,7 +15,7 @@ import type { Env } from '../env';
 import { buildSafeImagePrompt } from './image-safety';
 import { resolveArchetypeSlug } from './archetypes';
 import { critiqueImageInternal, buildCritiqueSystemPrompt } from './critique';
-import { generateImageWithGuardrails } from './image-gen';
+import { generateImageWithGuardrails, regenerateImageAfterCritique } from './image-gen';
 import { buildCritiqueContextText } from './post-critique';
 import { loadForbiddenSubjects, resolveBusinessType } from './profile-guards';
 import { callAnthropicVision } from './anthropic';
@@ -105,7 +105,13 @@ export async function backfillImagesForUser(env: Env, uid: string) {
           console.log(`[backfill] post ${postId} critique score=${critique.score} match=${critique.match}`);
           finalCritique = critique;
           if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
-            const retry = await generateImageWithGuardrails(env, uid, clientId, safe, { forceFallback: true, caption, seedHint: postId });
+            const retry = await regenerateImageAfterCritique(env, uid, clientId, safe, {
+              caption,
+              critiqueReasoning: critique.reasoning,
+              archetypeSlug,
+              modelUsed: gen.modelUsed,
+              seedHint: postId,
+            });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
@@ -127,6 +133,10 @@ export async function backfillImagesForUser(env: Env, uid: string) {
         }
       }
 
+      if (!finalCritique || finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+        finalUrl = null;
+      }
+
       if (finalUrl) {
         if (finalCritique) {
           await env.DB.prepare(
@@ -139,7 +149,7 @@ export async function backfillImagesForUser(env: Env, uid: string) {
         succeeded++;
       } else {
         failed++;
-        errors.push(`${postId}: image gen failed via ${gen.modelUsed}`);
+        errors.push(`${postId}: image generation or final critique failed via ${gen.modelUsed}`);
       }
     } catch (e: any) {
       failed++;
@@ -249,7 +259,13 @@ export async function backfillImagesForPastDrafts(
         if (critique) {
           finalCritique = critique;
           if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
-            const retry = await generateImageWithGuardrails(env, uid, postClientId, safe, { forceFallback: true, caption });
+            const retry = await regenerateImageAfterCritique(env, uid, postClientId, safe, {
+              caption,
+              critiqueReasoning: critique.reasoning,
+              archetypeSlug,
+              modelUsed: gen.modelUsed,
+              seedHint: postId,
+            });
             if (retry.imageUrl) {
               finalUrl = retry.imageUrl;
               critiqueRetries++;
@@ -265,6 +281,10 @@ export async function backfillImagesForPastDrafts(
         }
       }
 
+      if (!finalCritique || finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+        finalUrl = null;
+      }
+
       if (finalUrl) {
         if (finalCritique) {
           await env.DB.prepare(
@@ -277,7 +297,7 @@ export async function backfillImagesForPastDrafts(
         succeeded++;
       } else {
         failed++;
-        errors.push(`${postId}: image gen failed via ${gen.modelUsed}`);
+        errors.push(`${postId}: image generation or final critique failed via ${gen.modelUsed}`);
       }
     } catch (e: any) {
       failed++;
@@ -497,7 +517,7 @@ export async function runBacklogCritique(
            WHERE id = ?`
         ).bind(critique.score, critique.reasoning, new Date().toISOString(), post.id).run();
         scored++;
-        if (critique.score <= 4) lowScores++;
+        if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) lowScores++;
       } else {
         // Critique failed — write the actual error into reasoning so we
         // can SELECT and diagnose without parsing wrangler tail. Score
@@ -566,7 +586,7 @@ export async function runBacklogRegen(
 
   const limit = 20;
   const rows = await env.DB.prepare(
-    `SELECT id, content, image_prompt, client_id, user_id, image_critique_score
+    `SELECT id, content, image_prompt, client_id, user_id, image_critique_score, image_critique_reasoning
      FROM posts
      WHERE image_critique_score IS NOT NULL
        AND image_critique_score < ?
@@ -580,6 +600,7 @@ export async function runBacklogRegen(
   ).bind(threshold, MAX_REGEN_ATTEMPTS, limit).all<{
     id: string; content: string; image_prompt: string;
     client_id: string | null; user_id: string; image_critique_score: number;
+    image_critique_reasoning: string | null;
   }>();
 
   const posts = rows.results || [];
@@ -608,9 +629,14 @@ export async function runBacklogRegen(
       const safe = buildSafeImagePrompt(post.image_prompt, post.content, businessType);
       if (!safe) { failed++; continue; }
 
-      const gen = await generateImageWithGuardrails(
-        env, post.user_id, post.client_id, safe, { forceFallback: true, caption: post.content, seedHint: post.id },
-      );
+      const archetypeSlug = await resolveArchetypeSlug(env, post.user_id, post.client_id);
+      const gen = await regenerateImageAfterCritique(env, post.user_id, post.client_id, safe, {
+        caption: post.content,
+        critiqueReasoning: post.image_critique_reasoning || `Previous image scored ${post.image_critique_score}/10`,
+        archetypeSlug,
+        modelUsed: env.IMAGE_GEN_PROVIDER === 'gpt-image-2' ? 'gpt-image-2-medium' : 'flux-dev',
+        seedHint: post.id,
+      });
       if (!gen.imageUrl) { failed++; continue; }
 
       // Reuse archetypeSlug from gen (already resolved + caption-sniffed)
@@ -628,20 +654,16 @@ export async function runBacklogRegen(
         forbiddenSubjects,
       });
 
-      if (critique) {
+      if (critique && critique.score >= CRITIQUE_ACCEPT_THRESHOLD) {
         await env.DB.prepare(
           `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
            WHERE id = ?`
         ).bind(gen.imageUrl, critique.score, critique.reasoning, new Date().toISOString(), post.id).run();
+        regenerated++;
       } else {
-        // No critique available — clear the score so the post drops out of
-        // this query next tick (won't loop forever) but keep the new image.
-        await env.DB.prepare(
-          `UPDATE posts SET image_url = ?, image_critique_score = NULL, image_critique_reasoning = NULL, image_critique_at = NULL
-           WHERE id = ?`
-        ).bind(gen.imageUrl, post.id).run();
+        failed++;
+        console.warn(`[backlog-regen] post ${post.id} replacement held by final critique gate`);
       }
-      regenerated++;
     } catch (e: any) {
       failed++;
       console.warn(`[backlog-regen] post ${post.id} failed: ${e?.message}`);

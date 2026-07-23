@@ -3671,12 +3671,12 @@ const Dashboard: React.FC = () => {
                 <div>
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Content Type</label>
                   <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => setContentType('text')}
+                    <button type="button" aria-pressed={contentType === 'text'} onClick={() => setContentType('text')}
                       className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'text' ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                       <MessageSquare size={14} /> Text
                     </button>
                     {canUseImages ? (
-                      <button onClick={() => setContentType('image')}
+                      <button type="button" aria-pressed={contentType === 'image'} onClick={() => setContentType('image')}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'image' ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                         <ImageIcon size={14} /> Text + Image
                       </button>
@@ -3686,7 +3686,7 @@ const Dashboard: React.FC = () => {
                       </div>
                     )}
                     {(effectivePlan === 'pro' || effectivePlan === 'agency' || (isAdminMode && !activeClientId)) ? (
-                      <button onClick={() => setContentType('video')}
+                      <button type="button" aria-pressed={contentType === 'video'} onClick={() => setContentType('video')}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'video' ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                         <Play size={14} /> Text + Video Brief
                       </button>

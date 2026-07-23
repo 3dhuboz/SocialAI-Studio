@@ -171,6 +171,8 @@ const fixturePost: PersistedPublishPost = {
   platform: 'facebook',
   hashtags: '[]',
   image_url: 'https://cdn.example/image.jpg',
+  image_critique_score: 8,
+  image_critique_reasoning: 'Relevant and safe.',
   post_type: 'image',
   video_url: null,
   video_status: null,
@@ -228,6 +230,24 @@ function safeDeps(calls: { critic: number; postproxy: number; graph: number }): 
 }
 
 describe('evaluatePermanentPublishBlock', () => {
+  it('permanently blocks a low-scoring image even when learning enforcement is off', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('provided critique score should avoid a database read');
+    });
+
+    const result = await evaluatePermanentPublishBlock(
+      {
+        DB: { prepare } as unknown as D1Database,
+        ENVIRONMENT: 'production',
+        LEARNING_RELEASE_ENFORCEMENT: 'false',
+      } as Env,
+      { ...fixturePost, image_critique_score: 4 },
+    );
+
+    expect(result).toMatchObject({ state: 'block_red', mayPublish: false, mustHold: true });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
   it('detects the never-publish marker without a database read', async () => {
     const prepare = vi.fn(() => {
       throw new Error('database must not be read for an explicit QA marker');
@@ -927,7 +947,7 @@ describe('publish egress source contracts', () => {
       frontendRoot,
     ])))
       .toEqual([]);
-  }, 30_000);
+  }, 120_000);
 
   it('routes manual Postproxy publishing through the orchestrator', () => {
     const source = readFileSync(

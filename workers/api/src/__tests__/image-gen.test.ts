@@ -21,7 +21,11 @@
 // source still has the pre-#86 values — flux-dev tests will FAIL until #86
 // merges into main. Merging order: #86 → this PR.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { generateImageWithGuardrails } from '../lib/image-gen';
+import {
+  buildCritiqueGuidedRetryPlan,
+  generateImageWithGuardrails,
+  shouldForceCuratedFallbackForCritiqueRetry,
+} from '../lib/image-gen';
 import { ARCHETYPE_IMAGE_GUARDRAILS } from '../lib/image-safety';
 
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -40,6 +44,36 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+});
+
+describe('critique retry strategy', () => {
+  it('preserves a precise GPT Image 2 prompt for tech and IT retries', () => {
+    expect(shouldForceCuratedFallbackForCritiqueRetry('tech-saas-agency', 'gpt-image-2-medium')).toBe(false);
+  });
+
+  it('preserves corrected GPT Image 2 prompts and uses curated fallback for weaker models', () => {
+    expect(shouldForceCuratedFallbackForCritiqueRetry('bbq-smokehouse', 'gpt-image-2-medium')).toBe(false);
+    expect(shouldForceCuratedFallbackForCritiqueRetry('tech-saas-agency', 'flux-dev')).toBe(true);
+  });
+
+  it('turns a failed tech image into an exact critic-guided retry instead of a generic scene', () => {
+    const plan = buildCritiqueGuidedRetryPlan({
+      safePrompt: {
+        prompt: 'overhead daylight photo of a workflow map with simple boxes and arrows on paper',
+        negativePrompt: 'people, hands, readable text',
+      },
+      caption: 'Map the current workflow on paper before choosing custom app features.',
+      critiqueReasoning: 'The prior image was a generic notebook and coffee flatlay without a visible process map.',
+      archetypeSlug: 'tech-saas-agency',
+      modelUsed: 'gpt-image-2-medium',
+    });
+
+    expect(plan.forceFallback).toBe(false);
+    expect(plan.safePrompt.prompt).toContain('workflow map with simple boxes and arrows');
+    expect(plan.safePrompt.prompt).toContain('generic notebook and coffee flatlay');
+    expect(plan.safePrompt.prompt).toContain('Do not substitute a generic desk');
+    expect(plan.safePrompt.negativePrompt).toContain('generic unrelated stock image');
+  });
 });
 
 /** Build a mock Env with chainable D1 prepare(...).bind(...).first/all stubs.
@@ -162,7 +196,7 @@ describe('generateImageWithGuardrails — GPT Image 2 rollout', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('https://fal.run/fal-ai/gpt-image-2');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://fal.run/openai/gpt-image-2');
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toMatchObject({
       image_size: 'square_hd',

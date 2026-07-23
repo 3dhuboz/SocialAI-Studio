@@ -4,6 +4,7 @@
  * Replaces all direct Firestore SDK calls.
  */
 import type { SocialPost } from '../types';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../shared/critique-thresholds';
 
 const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
@@ -1129,7 +1130,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
      * image is guaranteed on-archetype. Re-critiques and persists the new
      * score in one round-trip. Caps at 20 per call.
      */
-    async bulkRegenLowScoreImages(threshold = 4, limit = 20): Promise<{
+    async bulkRegenLowScoreImages(threshold = CRITIQUE_ACCEPT_THRESHOLD - 1, limit = 20): Promise<{
       found: number;
       regenerated: number;
       failed: number;
@@ -1207,9 +1208,8 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
      * Catches the failure mode the user screenshotted today — food image
      * on a SaaS post — BEFORE it gets published. ~$0.003/image, ~500ms.
      *
-     * Recommended threshold: if score <= 4 OR regenerate=true, run the
-     * image-gen again with a refined prompt; if score 5-7, flag for human
-     * review on the calendar; if score 8+, ship it.
+     * Scores below the shared acceptance threshold require regeneration;
+     * accepted images are specific matches and can proceed unattended.
      */
     async critiqueImageCaption(input: CritiqueImageInput): Promise<ImageCritique> {
       const res = await f('/api/critique-image-caption', {

@@ -49,12 +49,15 @@ export interface PublishablePost {
   platform: string;
   hashtags: string | null;
   image_url: string | null;
+  image_prompt?: string | null;
   post_type: string | null;
   video_url: string | null;
   video_status: string | null;
   video_script?: string | null;
   video_shots?: string | null;
   archetype_slug?: string | null;
+  image_critique_score?: number | null;
+  image_critique_reasoning?: string | null;
 }
 
 export interface PreflightDecision {

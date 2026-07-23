@@ -4,7 +4,7 @@
 // routes/post-quality.ts, but gated behind a Shopify App Bridge session
 // token instead. Used by the Compose page to score the freshly-generated
 // {imageUrl, caption} pair BEFORE the merchant clicks Save/Publish, so
-// they can regenerate if the score is poor (≤4 = "regenerate" verdict).
+// they can regenerate if the image is not a clear, specific match.
 //
 // Shares the underlying logic with the cron's prewarm-critique path:
 // critiqueImageInternal in lib/critique.ts is the single source of truth
@@ -38,6 +38,7 @@ import { isRateLimited } from '../auth';
 import { verifySessionToken, type VerifiedSession } from '../lib/shopify-auth';
 import { critiqueImageInternal } from '../lib/critique';
 import { loadForbiddenSubjectsForShop } from '../lib/profile-guards';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 const RATE_LIMIT_PER_MIN = 60;
 
@@ -131,9 +132,8 @@ export function registerShopifyPostQualityRoutes(app: Hono<{ Bindings: Env }>): 
       score: result.score,
       match: result.match,
       reasoning: result.reasoning,
-      // ≤4/10 means the image-caption match was poor enough that
-      // regenerating is more likely to help than tweaking the caption.
-      regenerate: result.score <= 4,
+      // Scores below the shared unattended-publish threshold require repair.
+      regenerate: result.score < CRITIQUE_ACCEPT_THRESHOLD,
     });
   });
 }

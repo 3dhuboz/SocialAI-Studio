@@ -128,13 +128,7 @@ export async function logAiUsage(env: Env, row: AiUsageRow): Promise<void> {
   const learningDecisionId = learningScope?.decisionId ?? null;
   if (learningScope) learningScope.attempted += 1;
   try {
-    await env.DB.prepare(
-      `INSERT INTO ai_usage (
-         user_id, client_id, provider, model, operation,
-         tokens_in, tokens_out, images_generated, est_cost_usd, post_id,
-         learning_decision_id, ok
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
+    const commonBindings = [
       row.userId ?? null,
       row.clientId ?? null,
       row.provider,
@@ -145,9 +139,27 @@ export async function logAiUsage(env: Env, row: AiUsageRow): Promise<void> {
       row.imagesGenerated ?? null,
       row.estCostUsd ?? null,
       row.postId ?? null,
-      learningDecisionId,
-      row.ok === false ? 0 : 1,
-    ).run();
+    ];
+    if (learningScope) {
+      // Staging learning pilots deliberately require schema v45 and fail
+      // closed if attribution cannot be persisted.
+      await env.DB.prepare(
+        `INSERT INTO ai_usage (
+           user_id, client_id, provider, model, operation,
+           tokens_in, tokens_out, images_generated, est_cost_usd, post_id,
+           learning_decision_id, ok
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(...commonBindings, learningDecisionId, row.ok === false ? 0 : 1).run();
+    } else {
+      // Normal production logging must remain compatible with the deployed
+      // pre-v45 table until the learning release gates authorize migration.
+      await env.DB.prepare(
+        `INSERT INTO ai_usage (
+           user_id, client_id, provider, model, operation,
+           tokens_in, tokens_out, images_generated, est_cost_usd, post_id, ok
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(...commonBindings, row.ok === false ? 0 : 1).run();
+    }
     if (learningScope) learningScope.persisted += 1;
   } catch (e: any) {
     // Best-effort logging. The most likely failure here is the table

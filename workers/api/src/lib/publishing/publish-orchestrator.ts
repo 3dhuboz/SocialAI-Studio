@@ -19,6 +19,7 @@ import {
 } from '../learning/publication-repository';
 import { normalizeWorkspaceIdentity } from '../learning/types';
 import { fireAlert } from '../alerts';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../../shared/critique-thresholds';
 
 export type PersistedPublishPost = PublishablePost;
 
@@ -265,6 +266,36 @@ export async function evaluatePermanentPublishBlock(
       mustHold: true,
       decisionId: null,
     };
+  }
+
+  const isVideo = /^(?:video|reel)$/i.test(post.post_type || '');
+  const expectsImage = !!post.image_prompt?.trim() && post.image_prompt.trim() !== 'N/A';
+  if (expectsImage && !isVideo && !post.image_url) {
+    return {
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    };
+  }
+  if (post.image_url && !isVideo) {
+    let score = post.image_critique_score;
+    if (score === undefined) {
+      const qa = await env.DB.prepare(
+        'SELECT image_critique_score FROM posts WHERE id = ? AND owner_kind = ? AND owner_id = ?',
+      ).bind(post.id, post.owner_kind, post.owner_id).first<{ image_critique_score: number | null }>();
+      score = qa?.image_critique_score ?? null;
+    }
+    if (score == null || score < CRITIQUE_ACCEPT_THRESHOLD) {
+      return {
+        mode: 'approval',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: null,
+      };
+    }
   }
 
   const isStaging = env.ENVIRONMENT?.trim().toLowerCase() === 'staging';

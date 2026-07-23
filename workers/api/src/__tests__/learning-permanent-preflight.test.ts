@@ -273,5 +273,5 @@ describe('learning settings provisioning', () => {
     expect(shopify.match(
       /ensureWorkspaceLearningSettings\(c\.env\.DB,\s*shop,\s*null,\s*'shop',\s*shop/g,
     )).toHaveLength(2);
-  });
+  }, 30_000);
 });

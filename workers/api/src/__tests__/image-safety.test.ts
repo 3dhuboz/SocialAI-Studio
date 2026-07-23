@@ -117,6 +117,7 @@ describe('needsSafeFallback', () => {
     'overhead flatlay of an open notebook, ceramic mug and pen on a linen runner',
     'fresh produce displayed in a wicker basket at the farmers market',  // vague term BUT 11 words
     'rolled yoga mat, water bottle and a folded towel on a clean studio floor',
+    'sharp overhead photograph of an open notebook showing unlabeled boxes and arrows; no people, no hands, no devices, no logos, no readable text, no text overlay',
   ])('returns false for: %s', (prompt) => {
     expect(needsSafeFallback(prompt)).toBe(false);
   });
@@ -131,6 +132,21 @@ describe('isTextRenderingPrompt', () => {
 
   it('flags wristbands even when called unprinted because models invent lettering', () => {
     expect(isTextRenderingPrompt('plain unprinted wristbands beside sliced brisket on butcher paper')).toBe(true);
+  });
+
+  it('does not treat negative text exclusions as a request to render text', () => {
+    expect(isTextRenderingPrompt(
+      'open notebook with simple boxes and arrows; no logos, no readable text, no text overlay',
+    )).toBe(false);
+    expect(isTextRenderingPrompt(
+      'overhead paper workflow without any readable words or labels',
+    )).toBe(false);
+  });
+
+  it('does not treat negative UI exclusions as the requested visual subject', () => {
+    expect(isAbstractUIPrompt(
+      'open notebook with pencil and blank cards; no dashboard, charts, screens, or app UI',
+    )).toBe(false);
   });
 });
 

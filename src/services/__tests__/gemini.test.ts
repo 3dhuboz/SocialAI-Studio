@@ -22,6 +22,8 @@ import {
   scrubBannedPhrases,
   neutralizePromptData,
   findForbiddenSubjectViolation,
+  extractExplicitImageBrief,
+  parseContentJudgeResult,
   repairSmartScheduleImagePromptForArchetype,
   guardMarketingImagePromptForBusinessContext,
   generateMarketingImage,
@@ -285,6 +287,43 @@ describe('buildSafeImagePromptClient', () => {
   it('strips people-mentions from positive prompts', () => {
     const r = buildSafeImagePromptClient('chef holding pizza with both hands', 'bakery');
     expect(r!.prompt).not.toMatch(/\bchef\b|\bholding\b|\bhands\b/i);
+  });
+
+  it('preserves an exact physical brief when its tail contains negative exclusions', () => {
+    const brief = 'sharp realistic overhead daylight photograph of an open notebook showing only simple unlabeled boxes and arrows, with a pencil and three blank index cards beside it; no people, no hands, no devices, no logos, no readable text, no text overlay';
+    const r = buildSafeImagePromptClient(brief, 'tech-saas-agency');
+
+    expect(r).not.toBeNull();
+    expect(r!.prompt).toContain('open notebook showing only simple unlabeled boxes and arrows');
+    expect(r!.prompt).toContain('three blank index cards');
+    expect(r!.prompt).not.toMatch(/smartphone|closed laptop|coffee mug/i);
+  });
+});
+
+describe('extractExplicitImageBrief', () => {
+  it('preserves a user-specified physical scene instead of allowing a generic substitute', () => {
+    const brief = extractExplicitImageBrief(
+      'Share a practical workflow tip. The accompanying image must be a sharp overhead daylight photograph of an open notebook showing simple unlabeled boxes and arrows, with a pencil and blank index cards; no people, no readable text.',
+    );
+
+    expect(brief).toContain('open notebook showing simple unlabeled boxes and arrows');
+    expect(brief).toContain('no people, no readable text');
+  });
+
+  it('returns null when the topic does not prescribe an image', () => {
+    expect(extractExplicitImageBrief('Share one practical custom app planning tip.')).toBeNull();
+  });
+});
+
+describe('parseContentJudgeResult', () => {
+  it('accepts valid JSON wrapped in markdown fences', () => {
+    expect(parseContentJudgeResult(`\`\`\`json
+{"specifics_grounded":1,"no_invented_testimonials":1,"no_invented_stats":1,"no_fake_urgency":1,"reason":""}
+\`\`\``)).toEqual({ pass: true, reason: undefined });
+  });
+
+  it('rejects malformed or incomplete safety scores', () => {
+    expect(() => parseContentJudgeResult('{"specifics_grounded":1}')).toThrow(/invalid safety score/i);
   });
 });
 

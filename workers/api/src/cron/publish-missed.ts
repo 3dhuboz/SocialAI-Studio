@@ -18,7 +18,8 @@
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
-import { generateImageWithGuardrails } from '../lib/image-gen';
+import { generateImageWithGuardrails, regenerateImageAfterCritique } from '../lib/image-gen';
+import { resolveArchetypeSlug } from '../lib/archetypes';
 import { critiqueImageInternal } from '../lib/critique';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { buildCritiqueContextText } from '../lib/post-critique';
@@ -401,7 +402,13 @@ async function enforceFinalImageCritiqueGate(
 ): Promise<{ imageUrl: string | null; blockedReason: string | null }> {
   let finalImageUrl = params.imageUrl;
   if (!finalImageUrl || !/^https?:/i.test(finalImageUrl)) {
-    return { imageUrl: finalImageUrl, blockedReason: null };
+    const expectedImage = !!params.imagePrompt?.trim() && params.imagePrompt.trim() !== 'N/A';
+    return {
+      imageUrl: finalImageUrl,
+      blockedReason: expectedImage
+        ? 'Image QA hold: this post requires an image, but no reviewed public image was available at publish time.'
+        : null,
+    };
   }
 
   const critiqueContext = buildCritiqueContextText({
@@ -481,12 +488,23 @@ async function enforceFinalImageCritiqueGate(
       await env.DB.prepare(
         `UPDATE posts SET image_regen_count = COALESCE(image_regen_count, 0) + 1 WHERE id = ?`,
       ).bind(String(post.id)).run();
-      const retry = await generateImageWithGuardrails(
+      const retryArchetype = await resolveArchetypeSlug(
+        env,
+        String(post.user_id || ''),
+        (post.client_id as string | null) || null,
+      );
+      const retry = await regenerateImageAfterCritique(
         env,
         String(post.user_id || ''),
         (post.client_id as string | null) || null,
         safe,
-        { forceFallback: true, caption: params.caption, seedHint: String(post.id) },
+        {
+          caption: params.caption,
+          critiqueReasoning: finalCritique?.reasoning,
+          archetypeSlug: retryArchetype,
+          modelUsed: env.IMAGE_GEN_PROVIDER === 'gpt-image-2' ? 'gpt-image-2-medium' : 'flux-dev',
+          seedHint: String(post.id),
+        },
       );
       if (retry.imageUrl) {
         const retryCritique = await critiqueImageInternal(env, {
@@ -498,7 +516,7 @@ async function enforceFinalImageCritiqueGate(
           clientId: (post.client_id as string | null) || null,
           postId: String(post.id),
         });
-        if (retryCritique) {
+        if (retryCritique && retryCritique.score >= CRITIQUE_ACCEPT_THRESHOLD) {
           finalImageUrl = retry.imageUrl;
           finalCritique = { score: retryCritique.score, reasoning: retryCritique.reasoning };
           await persistPublishCritique(env, String(post.id), finalImageUrl, finalCritique);
@@ -507,7 +525,7 @@ async function enforceFinalImageCritiqueGate(
     }
   }
 
-  if (finalCritique && finalCritique.score <= QUALITY_GUARD_THRESHOLD) {
+  if (finalCritique && finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
     return {
       imageUrl: finalImageUrl,
       blockedReason: `Image QA hold: final critique scored this image ${finalCritique.score}/10 — ${finalCritique.reasoning}. Open Calendar to upload a better image or refine the caption/prompt before re-publishing.`,
@@ -517,17 +535,10 @@ async function enforceFinalImageCritiqueGate(
   return { imageUrl: finalImageUrl, blockedReason: null };
 }
 
-// Image-quality guard threshold for publish-time blocking. Posts whose
-// vision critique scored AT OR BELOW this AND have exhausted their FLUX
-// regen budget (image_regen_count >= MAX_REGEN_ATTEMPTS in runBacklogRegen)
-// are marked Missed instead of claimed for publish. Prevents shipping the
-// "generic gradient on a wellness post" failure mode we observed live —
-// the regen loop catches it but if FLUX can't produce a better image after
-// MAX_REGEN_ATTEMPTS tries, blocking is safer than publishing a known-bad
-// image. Note: this guard threshold (3) is intentionally HARDER than the
-// generic regen accept threshold (CRITIQUE_ACCEPT_THRESHOLD=5) — we'd
-// rather publish a score-4 image than mark every score-4 post Missed.
-const QUALITY_GUARD_THRESHOLD = 3;
+// The early backlog sweep uses the same acceptance rule as the final egress
+// gate. Binding threshold-1 keeps its SQL `<= ?` predicate equivalent to
+// `score < CRITIQUE_ACCEPT_THRESHOLD` without another magic number.
+const QUALITY_GUARD_THRESHOLD = CRITIQUE_ACCEPT_THRESHOLD - 1;
 const SHOPIFY_FACEBOOK_ONLY_FILTER =
   `(COALESCE(owner_kind, 'user') != 'shop' OR COALESCE(platform, 'facebook') = 'facebook')`;
 
@@ -549,6 +560,7 @@ function persistedPublishPost(
     platform: normalizePostPlatform(post.platform),
     hashtags: typeof post.hashtags === 'string' ? post.hashtags : null,
     image_url: typeof post.image_url === 'string' ? post.image_url : null,
+    image_prompt: typeof post.image_prompt === 'string' ? post.image_prompt : null,
     post_type: typeof post.post_type === 'string' ? post.post_type : null,
     video_url: typeof post.video_url === 'string' ? post.video_url : null,
     video_status: typeof post.video_status === 'string' ? post.video_status : null,

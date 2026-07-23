@@ -219,6 +219,19 @@ export function buildArchetypeVoiceBlock(businessType: string): {
 const OFFICE_IMAGE_PROMPT_RE =
   /\b(?:laptop|desk|notebook|notepad|sticky\s*notes?|planner|calendar|corkboard|clipboard|checklist|smartphone|phone|coffee|mug|office|workspace|paper\s+squares?|content\s+cards?)\b/i;
 
+export function extractExplicitImageBrief(topic: string): string | null {
+  const marker = /\b(?:the\s+)?(?:accompanying\s+|attached\s+|post\s+)?image\s+must\s+(?:be\s+|show\s+|depict\s+|feature\s+)?/i;
+  const match = marker.exec(topic);
+  if (!match) return null;
+  const brief = topic
+    .slice(match.index + match[0].length)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[,:;-]+\s*/, '')
+    .slice(0, 1_200);
+  return brief.length >= 12 ? brief : null;
+}
+
 export function repairSmartScheduleImagePromptForArchetype(
   post: Pick<SmartScheduledPost, 'content' | 'topic' | 'imagePrompt'>,
   businessType: string,
@@ -1065,15 +1078,15 @@ export const generateSocialPost = async (
 
   // Pick a random content angle so repeated generations feel fresh
   const angles = [
-    'Tell a micro-story or anecdote that connects emotionally',
-    'Share a surprising fact, stat, or counterintuitive insight',
     'Ask a thought-provoking question that invites comments',
     'Give a quick actionable tip the audience can use today',
-    'Show a behind-the-scenes moment or honest reflection',
-    'Create urgency or FOMO around the topic',
-    'Use a bold opinion or hot take to spark conversation',
-    'Celebrate a win, milestone, or customer success',
+    'Share a practical observation without inventing a result, customer, statistic, or timeframe',
   ];
+  if (facts.length > 0) angles.push('Share one verified fact from the current Facebook context without extrapolating beyond it');
+  if (safeProfile?.tacticalTips?.trim()) angles.push('Use one owner-provided tactical tip');
+  if (safeProfile?.hotTakes?.trim()) angles.push('Use one owner-provided opinion or hot take');
+  if (safeProfile?.weeklyMaterial?.trim()) angles.push('Show one owner-provided behind-the-scenes moment');
+  if (safeProfile?.customerStories?.trim()) angles.push('Tell one owner-provided customer story without adding details');
   const angle = angles[Math.floor(Math.random() * angles.length)];
 
   // Content format instructions
@@ -1189,7 +1202,7 @@ STRICT ANTI-GENERIC RULES (forbidden tokens — DO NOT WRITE under any condition
 - Write like you're texting a smart friend, not writing a press release.
 
 Write a ${platform} post about: "${topic}".
-Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Write a scene that VISUALLY REPRESENTS what this specific post about '${topic}' is communicating — match the post's TOPIC and EMOTIONAL MESSAGE. Topic-to-scene guide: Pain Points/Problem posts → cluttered desk, overflowing notebook, alarm clock, chaotic planner; Solution/Success posts → clean minimal surface, single well-placed tool; Tips/Educational posts → concept-in-action scene, stopwatch, checklist, measuring tool; Product/Feature posts → the specific product in use; Behind the Scenes → mid-action process shot. Pick from these brand-appropriate compositions: ${filterImagePromptExamples(getImagePromptExamples(businessType), safeProfile?.forbiddenSubjects)}. Name the SPECIFIC scene, NEVER just 'product', 'items', 'goods'. NO people, NO hands, NO faces. Real physical world only — no screens, charts, dashboards, infographics, UI mockups, pricing tables."}
+Return JSON: {"content": "post body text — NO hashtags in content", "hashtags": ["tag1", "tag2", ...], "imagePrompt": "Describe one realistic photograph whose PRIMARY SUBJECT and visible ACTION directly prove what this exact post about '${topic}' is communicating. If the topic contains an explicit instruction such as 'the accompanying image must...', preserve that requested scene exactly; do not replace its subject. The following examples are composition inspiration only and may NEVER replace the post's requested subject: ${filterImagePromptExamples(getImagePromptExamples(businessType), safeProfile?.forbiddenSubjects)}. Name the specific physical subject, action, setting, lighting, and camera angle. Reject generic desk, coffee, closed-laptop, blank-notebook, or stock-flatlay substitutes unless they are explicitly central to the topic. NO people, NO hands, NO faces. Real physical world only — no screens, charts, dashboards, infographics, UI mockups, pricing tables, logos, or readable text."}
 Content must respect the character limits above. No padding. No filler.`;
 
   const parseRaw = (raw: string) => {
@@ -1260,6 +1273,7 @@ Content must respect the character limits above. No padding. No filler.`;
   let parsed: any;
   let attempt = 0;
   let lastReason = '';
+  let acceptedBySafetyChecks = false;
   while (attempt < 3) {
     attempt++;
     const text = await callAI(prompt + (attempt > 1 ? `\n\nATTEMPT #${attempt} — your previous draft was rejected because: "${lastReason}". Do not repeat that mistake.` : ''), {
@@ -1268,18 +1282,32 @@ Content must respect the character limits above. No padding. No filler.`;
       responseFormat: 'json',
     });
     parsed = parseRaw(text);
-    if (typeof parsed.content !== 'string') break;
+    const parsedContent = typeof parsed.content === 'string' ? parsed.content.trim() : '';
+    if (parsedContent.length < 20 || /^Could not parse AI response\.?$/i.test(parsedContent)) {
+      lastReason = 'generator returned incomplete content';
+      console.warn(`[gemini] attempt ${attempt} rejected (invalid response)`);
+      continue;
+    }
     // Layer A: regex detector (cheap, instant, catches known patterns)
     const regexViolation = detectFabrication(parsed.content, profileContext);
     if (regexViolation) { lastReason = regexViolation; console.warn(`[gemini] attempt ${attempt} rejected (regex): ${regexViolation}`); continue; }
     const forbiddenViolation = findForbiddenSubjectViolation(parsed, safeProfile?.forbiddenSubjects);
     if (forbiddenViolation) { lastReason = forbiddenViolation; console.warn(`[gemini] attempt ${attempt} rejected (forbidden subject): ${forbiddenViolation}`); continue; }
-    // Layer B: LLM judge (semantic — catches what regex misses). Only on attempts 1-2.
-    if (attempt < 3) {
-      const judgement = await judgePost(parsed.content, facts, profileContext || '');
-      if (!judgement.pass) { lastReason = judgement.reason || 'judge flagged fabrication'; console.warn(`[gemini] attempt ${attempt} rejected (judge): ${lastReason}`); continue; }
+    // Layer B: the independent semantic judge must pass every attempt.
+    const judgement = await judgePost(parsed.content, facts, profileContext || '');
+    if (!judgement.pass) {
+      lastReason = judgement.reason || 'judge flagged fabrication';
+      console.warn(`[gemini] attempt ${attempt} rejected (judge): ${lastReason}`);
+      if (judgement.unavailable) {
+        throw new Error('Content safety check unavailable. No post was created; please retry.');
+      }
+      continue;
     }
+    acceptedBySafetyChecks = true;
     break;
+  }
+  if (!acceptedBySafetyChecks) {
+    throw new Error(`Post blocked by content safety checks${lastReason ? `: ${lastReason}` : '.'}`);
   }
   // Final scrub for anything that survived all attempts
   const limit = platform === 'Facebook' ? HASHTAG_LIMITS.facebook.optimal : HASHTAG_LIMITS.instagram.optimal;
@@ -1289,13 +1317,20 @@ Content must respect the character limits above. No padding. No filler.`;
   if (typeof parsed.content === 'string') {
     parsed.content = scrubBannedPhrases(parsed.content);
   }
+  const explicitImageBrief = extractExplicitImageBrief(topic);
+  if (explicitImageBrief) {
+    parsed.imagePrompt = explicitImageBrief;
+  } else if (typeof parsed.imagePrompt === 'string') {
+    parsed.imagePrompt = repairSmartScheduleImagePromptForArchetype({
+      content: parsed.content || '',
+      topic,
+      imagePrompt: parsed.imagePrompt,
+    }, businessType);
+  }
   const finalForbiddenViolation = findForbiddenSubjectViolation(parsed || {}, safeProfile?.forbiddenSubjects);
   if (finalForbiddenViolation) {
     console.warn(`[gemini] final single post blocked (forbidden subject): ${finalForbiddenViolation}`);
-    return {
-      content: 'Could not generate a safe post without referencing a forbidden subject.',
-      hashtags: [],
-    };
+    throw new Error('Post blocked because it referenced a forbidden subject. No post was created.');
   }
   return parsed;
 };
@@ -1307,12 +1342,31 @@ Content must respect the character limits above. No padding. No filler.`;
 // LLM judge — semantic fabrication detection that the regex bank misses.
 // Cheap (~$0.001 per call with Haiku at temp 0). Returns pass=true if the post
 // is clean, or pass=false with a reason and an optional suggested rewrite.
-// Defaults to PASS on any error so a flaky judge never blocks generation entirely.
+// Fails closed on malformed output or provider errors. A post that cannot be
+// independently checked must never be approved for unattended publishing.
+export function parseContentJudgeResult(text: string): { pass: boolean; reason?: string } {
+  const result = parseAiJson(text);
+  if (!result || typeof result !== 'object') {
+    throw new Error('judge returned invalid JSON');
+  }
+  const keys = [
+    'specifics_grounded',
+    'no_invented_testimonials',
+    'no_invented_stats',
+    'no_fake_urgency',
+  ] as const;
+  if (keys.some((key) => result[key] !== 0 && result[key] !== 1)) {
+    throw new Error('judge returned an invalid safety score');
+  }
+  const allPass = keys.every((key) => result[key] === 1);
+  return { pass: allPass, reason: allPass ? undefined : (result.reason || 'judge flagged content') };
+}
+
 async function judgePost(
   content: string,
   facts: ClientFact[],
   brandContext: string,
-): Promise<{ pass: boolean; reason?: string }> {
+): Promise<{ pass: boolean; reason?: string; unavailable?: boolean }> {
   const factsText = buildAuthoritativeFacebookEvidence(facts);
   const prompt = `You are a strict editor. Reject any social media draft that invents specifics not in the verified data below. Reply with ONLY JSON.
 
@@ -1348,15 +1402,14 @@ Return: {"specifics_grounded":0|1,"no_invented_testimonials":0|1,"no_invented_st
       callAI(prompt, { temperature: 0, maxTokens: 300, responseFormat: 'json' }),
       new Promise<string>((_, rej) => setTimeout(() => rej(new Error('judge timeout 8s')), 8000)),
     ]);
-    const result = JSON.parse(text);
-    const allPass = result.specifics_grounded === 1
-      && result.no_invented_testimonials === 1
-      && result.no_invented_stats === 1
-      && result.no_fake_urgency === 1;
-    return { pass: allPass, reason: allPass ? undefined : (result.reason || 'judge flagged content') };
+    return parseContentJudgeResult(text);
   } catch (e: any) {
-    console.warn('[judge] failed (defaulting to pass):', e?.message);
-    return { pass: true };
+    console.warn('[judge] failed closed:', e?.message);
+    return {
+      pass: false,
+      unavailable: true,
+      reason: 'Content safety critic was unavailable or returned invalid output.',
+    };
   }
 }
 
