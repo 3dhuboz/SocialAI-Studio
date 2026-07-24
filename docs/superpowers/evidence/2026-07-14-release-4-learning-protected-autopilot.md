@@ -4335,3 +4335,57 @@ pilot samples, green staging and production readiness, natural staging
 calibration evidence, and the two deferred production schemas. The current
 next safe phase is `pilot_evidence`; no authorization is inferred for any
 additional draft copy, evaluation, schedule, publication, or activation.
+
+### Automatic Staging Record-Only Monitoring
+
+Commit `31bdb899df142de30f4885baca12b9f19346a136` closes the stale
+staging-observability gap without changing production. Staging Worker version
+`2b06c28d-e9f3-4a0b-a98e-a0a2fa5b15a4` now has only the `*/15` and weekly
+calibration schedules. The dispatcher restricts those staging schedules to
+health, consent-gated record-only pilot evaluation, readiness, and
+calibration. It explicitly excludes publication, media prewarm, refresh,
+Shopify reconciliation, strategy application, and weekly review email work.
+
+Strict Worker TypeScript passed. Four focused record-only suites passed 64 of
+64 tests, and three publication/permanent-preflight suites passed 49 of 49
+tests. The exact clean commit then passed all 114 offline release checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-24T00-03-46-398Z.json`
+- payload SHA-256 `c54933a52e384c601beec27fcdf739143203447812317773158632347b7f30fe`
+- file SHA-256 `1d70cdd7583a23e603d6136e3af5744a9dca5928a3f6a8e24ea90e10af858fb3`
+
+The first post-deploy rollout check failed closed because the previous manual
+staging receipts were stale. No receipt was manufactured to clear that
+failure. Cloudflare's first natural quarter-hour event then recorded
+successful health, pilot, and readiness receipts at `00:15:10Z`,
+`00:15:11Z`, and `00:15:14Z`. The pilot considered zero candidates, processed
+zero posts, and reported zero errors.
+
+The version-pinned live judge then returned `safe_hold` with no failed safety
+checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-24T00-16-25-892Z.json`
+- payload SHA-256 `83f9b6a3f662c4a28e6fef68fdddfa4194bb2700e72cb1792002f07ce17d847c`
+- file SHA-256 `8cd3808062b5f89058415c1553bcb3d012d196e42647bd5ba356920511332a40`
+
+The same exact inputs with `--require-ready` retained `safe_hold` and returned
+the required exit code `1`:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-24T00-17-42-643Z.json`
+- payload SHA-256 `d69a0fa31c64413e5d5132ff2c9678b44199c363c2c26b92c1df130e5aa3ea62`
+- file SHA-256 `7e883ff3f3b41cc5a14f8cf3e699b2cf322022d5767db61c025e1cd4be4a5009`
+
+Production remained on Worker version
+`cea92e31-2f0b-4948-99e9-7e9904e27e86`. Both environments retain disabled
+release enforcement, Protected Autopilot, and organic reach application;
+both Protected Autopilot workspace counts are zero; production
+`hughesq-001` remains `on_hold`; and no production data or schema changed.
+The credential-free receipt is:
+
+- `docs/superpowers/evidence/attestations/2026-07-24-staging-record-only-scheduler-attestation.json`
+
+Promotion remains blocked on genuine positive owner and customer samples,
+green readiness, one natural weekly staging calibration, and the two deferred
+production schemas. This receipt authorizes record-only staging monitoring
+only; it does not authorize scheduling, publishing, production activation, or
+synthetic positive evidence.
