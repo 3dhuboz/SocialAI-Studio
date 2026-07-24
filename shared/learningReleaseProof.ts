@@ -188,7 +188,7 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
   {
     id: 'pilot_media_provider_poll_contract',
     suite: 'src/__tests__/learning-pilot-media-jobs.test.ts',
-    assertion: 'record-only pilot media jobs uses the full fal model path for video status and result polling',
+    assertion: 'record-only pilot media jobs accepts only Fal-returned queue URLs bound to the exact request',
   },
   {
     id: 'pilot_media_image_usage_attribution',
