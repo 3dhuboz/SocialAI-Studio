@@ -153,6 +153,19 @@ function observation(): RolloutObservation {
       protectedWorkspaces: 0,
       hugheseysQueStatus: 'on_hold',
       ownerDraftSourceCandidates: 0,
+      latestHealthSweepCron: {
+        success: true,
+        error: null,
+        runAt: '2026-07-19T09:15:18.000Z',
+        details: null,
+      },
+      latestReadinessCron: {
+        success: true,
+        error: null,
+        runAt: '2026-07-19T09:15:17.000Z',
+        details: null,
+      },
+      cronDetailsSchemaReady: true,
       pilotSampleTablePresent: true,
       calibrationTablePresent: true,
       schemaPreflight: buildProductionSchemaPreflight({
@@ -502,6 +515,15 @@ describe('learning live rollout state', () => {
     ['the production alert persistence schema is incomplete', (input: RolloutObservation) => {
       input.production.alertSchemaReady = false;
     }],
+    ['the production cron telemetry schema is incomplete', (input: RolloutObservation) => {
+      input.production.cronDetailsSchemaReady = false;
+    }],
+    ['the production health sweep receipt is stale', (input: RolloutObservation) => {
+      input.production.latestHealthSweepCron!.runAt = '2026-07-19T08:00:00.000Z';
+    }],
+    ['the production readiness receipt is missing', (input: RolloutObservation) => {
+      input.production.latestReadinessCron = null;
+    }],
     ['the deferred production schema preflight fails', (input: RolloutObservation) => {
       input.production.schemaPreflight.readyToApplyWhenPhaseReached = false;
     }],
@@ -551,6 +573,28 @@ describe('learning live rollout state', () => {
 
     expect(result.result).toBe('unsafe_or_unverified');
     expect(result.failedSafetyChecks).toContain('staging_health_sweep_fresh');
+  });
+
+  it.each([
+    ['missing health sweep', (input: RolloutObservation) => {
+      input.production.latestHealthSweepCron = null;
+    }, 'production_health_sweep_fresh'],
+    ['failed readiness scheduler', (input: RolloutObservation) => {
+      input.production.latestReadinessCron!.success = false;
+      input.production.latestReadinessCron!.error = 'cron receipt insert failed';
+    }, 'production_scheduler_fresh'],
+    ['missing cron telemetry schema', (input: RolloutObservation) => {
+      input.production.cronDetailsSchemaReady = false;
+    }, 'production_cron_details_schema'],
+  ])('fails safe-hold verification for production %s', (_label, mutate, check) => {
+    const input = observation();
+    mutate(input);
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('unsafe_or_unverified');
+    expect(result.safeHold).toBe(false);
+    expect(result.failedSafetyChecks).toContain(check);
   });
 
   it('keeps a dormant rollout safe but blocks promotion when the weekly calibration is stale', () => {
@@ -705,6 +749,19 @@ describe('learning live rollout state', () => {
     expect(() => assertReadOnlySql(STAGING_CALIBRATION_ROLLOUT_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(STAGING_OWNER_AUTHORIZATION_USE_SQL)).not.toThrow();
     expect(() => assertReadOnlySql(PRODUCTION_ROLLOUT_SQL)).not.toThrow();
+  });
+
+  it('observes production cron schema and monitor freshness without writes', () => {
+    expect(PRODUCTION_ROLLOUT_SQL).toContain(
+      "WHERE type = 'table' AND name = 'cron_runs') AS cron_runs_sql",
+    );
+    expect(PRODUCTION_ROLLOUT_SQL).toContain(
+      "WHERE cron_type IN ('health_sweep', 'learning_readiness')",
+    );
+    expect(PRODUCTION_ROLLOUT_SQL).toContain('NULL AS details_json');
+    expect(PRODUCTION_ROLLOUT_SQL).not.toMatch(
+      /(?:INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP)\s+/i,
+    );
   });
 
   it('reads only minimal bounded owner Draft fields before producing an aggregate count', () => {

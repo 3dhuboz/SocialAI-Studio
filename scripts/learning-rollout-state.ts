@@ -447,7 +447,10 @@ SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END)
          WHEN type = 'index'
           AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
          THEN 1 ELSE 0
-       END), 0) AS alert_indexes
+       END), 0) AS alert_indexes,
+       (SELECT sql
+          FROM sqlite_master
+         WHERE type = 'table' AND name = 'cron_runs') AS cron_runs_sql
  FROM sqlite_master
  WHERE (type = 'table'
         AND name IN (
@@ -461,6 +464,15 @@ SELECT policy_version, ready, checks_json, evaluated_at
  WHERE policy_version = '${POLICY_VERSION}'
  ORDER BY evaluated_at DESC
  LIMIT 1;
+SELECT cron_type, success, error, run_at, NULL AS details_json
+  FROM cron_runs
+ WHERE id IN (
+   SELECT MAX(id)
+     FROM cron_runs
+    WHERE cron_type IN ('health_sweep', 'learning_readiness')
+    GROUP BY cron_type
+ )
+ ORDER BY id DESC;
 SELECT p.id,p.image_url,p.hashtags
   FROM posts p
  WHERE p.user_id = '${PILOT_OWNER_USER_ID}'
@@ -637,6 +649,9 @@ export interface RolloutObservation {
   production: EnvironmentObservation & {
     hugheseysQueStatus: string | null;
     ownerDraftSourceCandidates: number;
+    latestHealthSweepCron: CronObservation | null;
+    latestReadinessCron: CronObservation | null;
+    cronDetailsSchemaReady: boolean;
     pilotSampleTablePresent: boolean;
     calibrationTablePresent: boolean;
     schemaPreflight: ProductionSchemaPreflight;
@@ -1111,9 +1126,24 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
       && cronIsHealthy(input.staging.latestReadinessCron, now, input.maxAgeMinutes),
     'safety',
   );
+  add(
+    'production_health_sweep_fresh',
+    cronIsHealthy(input.production.latestHealthSweepCron, now, input.maxAgeMinutes),
+    'safety',
+  );
+  add(
+    'production_scheduler_fresh',
+    cronIsHealthy(input.production.latestReadinessCron, now, input.maxAgeMinutes),
+    'safety',
+  );
   add('staging_calibration_schema', input.staging.calibrationTablePresent, 'safety');
   add('staging_alert_schema', input.staging.alertSchemaReady, 'safety');
   add('production_alert_schema', input.production.alertSchemaReady, 'safety');
+  add(
+    'production_cron_details_schema',
+    input.production.cronDetailsSchemaReady,
+    'safety',
+  );
   add(
     'production_schema_preflight',
     productionSchemaPreflightIsSafe(input.production.schemaPreflight),
@@ -1654,7 +1684,8 @@ async function main(): Promise<void> {
   const productionProtected = firstRow(productionD1.rows[1]);
   const productionSchema = firstRow(productionD1.rows[2]);
   const productionReadiness = firstRow(productionD1.rows[3]);
-  const productionOwnerDraftRows = productionD1.rows[4]?.results ?? [];
+  const productionCrons = productionD1.rows[4]?.results ?? [];
+  const productionOwnerDraftRows = productionD1.rows[5]?.results ?? [];
   const ownerDraftSourceCandidates = countUnusedOwnerDraftSourceCandidates(
     productionOwnerDraftRows,
     stagingAuthorizationUseRows,
@@ -1740,6 +1771,11 @@ async function main(): Promise<void> {
       protectedWorkspaces: numberField(productionProtected, 'protected_workspaces'),
       hugheseysQueStatus: stringField(productionHughes, 'status'),
       ownerDraftSourceCandidates,
+      latestHealthSweepCron: parseCron(productionCrons, 'health_sweep'),
+      latestReadinessCron: parseCron(productionCrons, 'learning_readiness'),
+      cronDetailsSchemaReady: (
+        stringField(productionSchema, 'cron_runs_sql') ?? ''
+      ).includes('details_json'),
       pilotSampleTablePresent: productionPilotSampleTablePresent,
       calibrationTablePresent: productionCalibrationTablePresent,
       schemaPreflight: productionSchemaPreflight,
@@ -1755,7 +1791,7 @@ async function main(): Promise<void> {
   );
   const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 8,
+    schemaVersion: 9,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,
