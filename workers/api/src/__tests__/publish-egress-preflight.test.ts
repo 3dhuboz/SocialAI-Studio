@@ -296,16 +296,53 @@ describe('evaluatePermanentPublishBlock', () => {
       mayPublish: false,
       decisionId: 'decision-qa-1',
     });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].sql).toContain('INNER JOIN learning_decision_disqualifications disq');
-    expect(calls[0].sql).toContain("disq.reason = 'synthetic_qa'");
-    expect(calls[0].binds).toEqual([
+    expect(calls).toHaveLength(2);
+    expect(calls[0].sql).toContain('FROM learning_pilot_generated_drafts generated');
+    expect(calls[1].sql).toContain('INNER JOIN learning_decision_disqualifications disq');
+    expect(calls[1].sql).toContain("disq.reason = 'synthetic_qa'");
+    expect(calls[1].binds).toEqual([
       'owner-1',
       'client-1',
       'client-1',
       'client',
       'client-1',
       'client-post-1',
+    ]);
+  });
+
+  it('permanently blocks a receipt-bound staging pilot draft by exact tenant tuple', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM learning_pilot_generated_drafts generated': [{ id: 'generated-receipt-1' }],
+    });
+    const post: PersistedPublishPost = {
+      ...fixturePost,
+      id: 'generated-post-1',
+      user_id: 'owner-1',
+      client_id: 'client-1',
+      owner_kind: 'client',
+      owner_id: 'client-1',
+    };
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      post,
+    );
+
+    expect(result).toEqual({
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].binds).toEqual([
+      'owner-1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'generated-post-1',
     ]);
   });
 
@@ -342,6 +379,27 @@ describe('publishPersistedPost', () => {
         ...fixturePost,
         content: '[STAGING QA FIXTURE - NEVER PUBLISH] Never send this.',
       },
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
+  it('blocks generated pilot records before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+    const { db } = makeRecordingD1({
+      'FROM learning_pilot_generated_drafts generated': [{ id: 'generated-receipt-1' }],
+    });
+
+    await expect(publishPersistedPost(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      fixturePost,
       postproxyTarget,
       deps,
     )).rejects.toThrow('permanently disqualified');

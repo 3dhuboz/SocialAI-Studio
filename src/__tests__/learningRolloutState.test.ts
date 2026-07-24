@@ -116,6 +116,7 @@ function observation(): RolloutObservation {
         details: null,
       },
       calibrationTablePresent: true,
+      generatedDraftTablePresent: true,
       alertSchemaReady: true,
       latestCalibrationCron: {
         success: true,
@@ -525,6 +526,9 @@ describe('learning live rollout state', () => {
     }],
     ['the staging calibration schema is missing', (input: RolloutObservation) => {
       input.staging.calibrationTablePresent = false;
+    }],
+    ['the staging generated-draft schema is missing', (input: RolloutObservation) => {
+      input.staging.generatedDraftTablePresent = false;
     }],
     ['the staging alert persistence schema is incomplete', (input: RolloutObservation) => {
       input.staging.alertSchemaReady = false;

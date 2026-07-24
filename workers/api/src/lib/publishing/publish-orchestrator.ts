@@ -268,6 +268,38 @@ export async function evaluatePermanentPublishBlock(
     };
   }
 
+  const isStaging = env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+  if (isStaging) {
+    const generatedPilotDraft = await env.DB.prepare(`
+      SELECT generated.id
+      FROM learning_pilot_generated_drafts generated
+      WHERE generated.user_id = ?
+        AND generated.workspace_key = ?
+        AND generated.client_id IS ?
+        AND generated.owner_kind = ?
+        AND generated.owner_id = ?
+        AND generated.post_id = ?
+        AND generated.record_only = 1
+      LIMIT 1
+    `).bind(
+      post.user_id,
+      post.client_id === null ? '__owner__' : post.client_id,
+      post.client_id,
+      post.owner_kind,
+      post.owner_id,
+      post.id,
+    ).first<{ id: string }>();
+    if (generatedPilotDraft) {
+      return {
+        mode: 'approval',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: null,
+      };
+    }
+  }
+
   const isVideo = /^(?:video|reel)$/i.test(post.post_type || '');
   const expectsImage = !!post.image_prompt?.trim() && post.image_prompt.trim() !== 'N/A';
   if (expectsImage && !isVideo && !post.image_url) {
@@ -298,7 +330,6 @@ export async function evaluatePermanentPublishBlock(
     }
   }
 
-  const isStaging = env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
   if (!isStaging && env.LEARNING_RELEASE_ENFORCEMENT !== 'true') return null;
 
   const identity = normalizeWorkspaceIdentity(

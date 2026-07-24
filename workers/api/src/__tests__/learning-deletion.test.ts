@@ -10,6 +10,7 @@ import { makeRecordingD1 } from './helpers/recording-d1';
 const DEFERRED_TABLE_ROWS = [
   { name: 'learning_calibration_audits' },
   { name: 'learning_decision_disqualifications' },
+  { name: 'learning_pilot_generated_drafts' },
   { name: 'learning_pilot_samples' },
 ];
 
@@ -30,9 +31,11 @@ describe('learning data deletion', () => {
     await deleteLearningWorkspaceData(db, userId, workspaceKey);
 
     const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
-    expect(deletes).toHaveLength(17);
+    expect(deletes).toHaveLength(18);
     expect(deletes.some((call) =>
       call.sql.includes('DELETE FROM learning_pilot_samples'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_generated_drafts'))).toBe(true);
     expect(deletes.some((call) =>
       call.sql.includes('DELETE FROM learning_decision_disqualifications'))).toBe(true);
     expect(deletes.some((call) =>
@@ -55,9 +58,11 @@ describe('learning data deletion', () => {
     await deleteLearningUserData(db, 'owner_1');
 
     const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
-    expect(deletes).toHaveLength(17);
+    expect(deletes).toHaveLength(18);
     expect(deletes.some((call) =>
       call.sql.includes('DELETE FROM learning_pilot_samples'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_generated_drafts'))).toBe(true);
     expect(deletes.some((call) =>
       call.sql.includes('DELETE FROM learning_decision_disqualifications'))).toBe(true);
     expect(deletes.some((call) =>
@@ -77,6 +82,7 @@ describe('learning data deletion', () => {
 
     const sql = calls.map((call) => call.sql).join('\n');
     expect(sql).not.toContain('DELETE FROM learning_pilot_samples');
+    expect(sql).not.toContain('DELETE FROM learning_pilot_generated_drafts');
     expect(sql).not.toContain('DELETE FROM learning_decision_disqualifications');
     expect(sql).not.toContain('DELETE FROM learning_calibration_audits');
     expect(sql).toContain('DELETE FROM learning_adjudications');

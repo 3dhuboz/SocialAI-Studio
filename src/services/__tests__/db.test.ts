@@ -308,10 +308,27 @@ describe('learning decision client', () => {
               mode: 'shadow',
               decisionsRemoved: 1,
               samplesRemoved: 1,
+              generatedPilotDraftsDeleted: 1,
               sourcePostsDeleted: 0,
               publishingRecordsDeleted: 0,
               originalDraftsRetained: true,
               copiedStagingDataRequiresArtifactWithdrawal: true,
+            }
+          : url.includes('/pilot/generate-draft')
+          ? {
+              receiptId: 'generated-receipt-1',
+              enrollmentId: 'pilot-enrollment-1',
+              postId: 'draft_1',
+              contentHash: 'a'.repeat(64),
+              provider: 'anthropic',
+              model: 'claude-haiku-4-5',
+              attemptCount: 1,
+              generatedAt: '2026-07-24T04:00:00.000Z',
+              recordOnly: true,
+              sourceStatus: 'Draft',
+              scheduledFor: null,
+              publishingAllowed: false,
+              created: true,
             }
           : url.includes('/pilot/enroll')
           ? {
@@ -342,6 +359,7 @@ describe('learning decision client', () => {
       confirmed: true,
       note: 'Customer confirmed record-only pilot participation by phone.',
     });
+    const generated = await db.generateLearningPilotDraft('client_1');
     const attested = await db.attestLearningPilotDraft(
       'draft 1',
       'a'.repeat(64),
@@ -358,6 +376,13 @@ describe('learning decision client', () => {
     expect(queue.candidates[0].samplePostId).toBe('draft_1');
     expect(queue.candidates[0].sampleDraft?.contentHash).toBe('a'.repeat(64));
     expect(enrolled).toMatchObject({ mode: 'approval', recordOnly: true });
+    expect(generated).toMatchObject({
+      postId: 'draft_1',
+      sourceStatus: 'Draft',
+      scheduledFor: null,
+      publishingAllowed: false,
+      recordOnly: true,
+    });
     expect(attested).toMatchObject({
       sampleId: 'sample_1', created: true, postMutated: false,
     });
@@ -369,6 +394,7 @@ describe('learning decision client', () => {
       sourcePostsDeleted: 0,
       publishingRecordsDeleted: 0,
       originalDraftsRetained: true,
+      generatedPilotDraftsDeleted: 1,
     });
     expect(calls.every(({ url }) =>
       url.startsWith('https://socialai-api-staging.steve-700.workers.dev/'))).toBe(true);
@@ -385,6 +411,14 @@ describe('learning decision client', () => {
           monthlyAiBudgetUsdCents: 500,
           customerConsentConfirmed: true,
           customerConsentNote: 'Customer confirmed record-only pilot participation by phone.',
+        },
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/generate-draft'),
+        method: 'POST',
+        body: {
+          clientId: 'client_1',
+          recordOnlyConfirmed: true,
         },
       },
       {

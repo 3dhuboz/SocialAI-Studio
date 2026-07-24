@@ -8,6 +8,7 @@ type ArchetypeRow = { archetype_slug: string | null };
 
 const DEFERRED_LEARNING_TABLES = [
   'learning_pilot_samples',
+  'learning_pilot_generated_drafts',
   'learning_decision_disqualifications',
   'learning_calibration_audits',
 ] as const;
@@ -23,6 +24,7 @@ async function existingDeferredLearningTables(
     WHERE type = 'table'
       AND name IN (
         'learning_pilot_samples',
+        'learning_pilot_generated_drafts',
         'learning_decision_disqualifications',
         'learning_calibration_audits'
       )

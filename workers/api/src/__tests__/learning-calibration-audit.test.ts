@@ -539,6 +539,7 @@ describe('weekly learning calibration audit', () => {
         'FROM sqlite_master': [
           { name: 'learning_calibration_audits' },
           { name: 'learning_decision_disqualifications' },
+          { name: 'learning_pilot_generated_drafts' },
           { name: 'learning_pilot_samples' },
         ],
       });

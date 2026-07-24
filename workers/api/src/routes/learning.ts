@@ -31,6 +31,7 @@ import {
   runClaimedPilotEvaluation,
   withdrawRecordOnlyPilot,
 } from '../lib/learning/pilot-evaluation';
+import { generateRecordOnlyPilotDraft } from '../lib/learning/pilot-draft-generator';
 import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
@@ -59,6 +60,7 @@ type PilotDraftRow = {
   owner_kind: string | null;
   owner_id: string | null;
   status: string | null;
+  scheduled_for: string | null;
   content: string;
   platform: string | null;
   hashtags: string | null;
@@ -101,6 +103,61 @@ type PilotActiveEnrollmentRow = {
   policy_version: string;
   enrolled_at: string;
   label: string;
+  generated_draft_post_id: string | null;
+  generated_draft_content_hash: string | null;
+  generated_draft_provider: string | null;
+  generated_draft_model: string | null;
+  generated_draft_at: string | null;
+};
+
+type PilotDraftGenerationEnrollmentRow = {
+  id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  policy_version: string;
+  consent_basis: 'owner_self' | 'customer_attested';
+  consent_confirmed_at: string;
+  consent_note: string;
+  monthly_ai_budget_usd_cents: number | string;
+  archetype_slug: string | null;
+  client_status: string | null;
+};
+
+type PilotGeneratedDraftReceiptRow = {
+  id: string;
+  enrollment_id: string;
+  post_id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  policy_version: string;
+  content_hash: string;
+  provider: string;
+  model: string;
+  attempt_count: number | string;
+  generated_at: string;
+  record_only: number | string;
+  post_user_id: string | null;
+  post_client_id: string | null;
+  post_owner_kind: string | null;
+  post_owner_id: string | null;
+  post_status: string | null;
+  post_scheduled_for: string | null;
+  post_content: string | null;
+  post_platform: string | null;
+  post_hashtags: string | null;
+  post_image_url: string | null;
+  post_type: string | null;
+  post_video_url: string | null;
+  post_video_status: string | null;
+  post_video_script: string | null;
+  post_video_shots: string | null;
+  post_archetype_slug: string | null;
 };
 
 type PilotValidationEnrollmentRow = {
@@ -701,6 +758,162 @@ function existingPilotSample(
   ).first<PilotSampleRow>();
 }
 
+function loadGeneratedPilotDraftReceipt(
+  db: D1Database,
+  enrollmentId: string,
+): Promise<PilotGeneratedDraftReceiptRow | null> {
+  return db.prepare(`
+    /* pilot_generated_draft_receipt */
+    SELECT
+      generated.id,generated.enrollment_id,generated.post_id,
+      generated.user_id,generated.workspace_key,generated.client_id,
+      generated.owner_kind,generated.owner_id,generated.policy_version,
+      generated.content_hash,generated.provider,generated.model,
+      generated.attempt_count,generated.generated_at,generated.record_only,
+      p.user_id AS post_user_id,p.client_id AS post_client_id,
+      p.owner_kind AS post_owner_kind,p.owner_id AS post_owner_id,
+      p.status AS post_status,p.scheduled_for AS post_scheduled_for,
+      p.content AS post_content,p.platform AS post_platform,
+      p.hashtags AS post_hashtags,p.image_url AS post_image_url,
+      p.post_type,p.video_url AS post_video_url,
+      p.video_status AS post_video_status,p.video_script AS post_video_script,
+      p.video_shots AS post_video_shots,
+      COALESCE(client.archetype_slug, pilot_user.archetype_slug)
+        AS post_archetype_slug
+    FROM learning_pilot_generated_drafts generated
+    LEFT JOIN posts p
+      ON p.id = generated.post_id
+     AND p.user_id = generated.user_id
+     AND p.client_id IS generated.client_id
+    LEFT JOIN clients client
+      ON client.id = generated.client_id
+     AND client.user_id = generated.user_id
+    LEFT JOIN users pilot_user
+      ON pilot_user.id = generated.user_id
+    WHERE generated.enrollment_id = ?
+      AND generated.record_only = 1
+    LIMIT 1
+  `).bind(enrollmentId).first<PilotGeneratedDraftReceiptRow>();
+}
+
+async function removeUnreceiptedGeneratedPilotPost(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  postId: string,
+  content: string,
+  hashtags: string,
+  imagePrompt: string,
+): Promise<void> {
+  await db.prepare(`
+    DELETE FROM posts
+    WHERE id = ?
+      AND user_id = ?
+      AND client_id IS ?
+      AND owner_kind = ?
+      AND owner_id = ?
+      AND content = ?
+      AND platform = 'facebook'
+      AND LOWER(TRIM(COALESCE(status, ''))) = 'draft'
+      AND NULLIF(TRIM(COALESCE(scheduled_for, '')), '') IS NULL
+      AND hashtags = ?
+      AND image_url IS NULL
+      AND image_prompt = ?
+      AND post_type = 'text'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM learning_pilot_generated_drafts generated
+        WHERE generated.post_id = posts.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM publication_events event WHERE event.post_id = posts.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM publish_delivery_receipts delivery
+        WHERE delivery.post_id = posts.id
+      )
+  `).bind(
+    postId,
+    identity.userId,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    content,
+    hashtags,
+    imagePrompt,
+  ).run();
+  const retained = await db.prepare(`
+    SELECT id
+    FROM posts
+    WHERE id = ?
+      AND user_id = ?
+      AND client_id IS ?
+    LIMIT 1
+  `).bind(postId, identity.userId, identity.clientId).first<{ id: string }>();
+  if (retained) {
+    throw new Error('Unreceipted record-only pilot draft cleanup failed closed');
+  }
+}
+
+function generatedReceiptPost(
+  row: PilotGeneratedDraftReceiptRow,
+): PublishablePost | null {
+  if (
+    !row.post_user_id
+    || row.post_user_id !== row.user_id
+    || row.post_client_id !== row.client_id
+    || row.post_owner_kind !== row.owner_kind
+    || row.post_owner_id !== row.owner_id
+    || row.post_status?.trim().toLowerCase() !== 'draft'
+    || (row.post_scheduled_for?.trim() || null) !== null
+    || typeof row.post_content !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: row.post_id,
+    user_id: row.user_id,
+    client_id: row.client_id,
+    owner_kind: row.owner_kind,
+    owner_id: row.owner_id,
+    content: row.post_content,
+    platform: row.post_platform?.trim() || 'facebook',
+    hashtags: row.post_hashtags,
+    image_url: row.post_image_url,
+    post_type: row.post_type,
+    video_url: row.post_video_url,
+    video_status: row.post_video_status,
+    video_script: row.post_video_script,
+    video_shots: row.post_video_shots,
+    archetype_slug: row.post_archetype_slug,
+  };
+}
+
+async function publicGeneratedPilotDraft(
+  row: PilotGeneratedDraftReceiptRow,
+  created: boolean,
+) {
+  const post = generatedReceiptPost(row);
+  if (!post || await buildReleaseContentHash(post) !== row.content_hash) {
+    throw new Error('Generated pilot draft changed after its immutable provenance receipt');
+  }
+  return {
+    receiptId: row.id,
+    enrollmentId: row.enrollment_id,
+    postId: row.post_id,
+    contentHash: row.content_hash,
+    provider: row.provider,
+    model: row.model,
+    attemptCount: countValue(row.attempt_count),
+    generatedAt: row.generated_at,
+    recordOnly: true as const,
+    sourceStatus: 'Draft' as const,
+    scheduledFor: null,
+    publishingAllowed: false as const,
+    created,
+  };
+}
+
 async function loadPilotCandidatePreviews(
   db: D1Database,
   userId: string,
@@ -712,7 +925,7 @@ async function loadPilotCandidatePreviews(
   const result = await db.prepare(`
     /* pilot_candidate_previews */
     SELECT
-      p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
+      p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,p.scheduled_for,
       p.content,p.platform,p.hashtags,p.image_url,p.post_type,
       p.video_url,p.video_status,p.video_script,p.video_shots,
       COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
@@ -1110,6 +1323,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         alreadyWithdrawn: result.alreadyWithdrawn,
         decisionsRemoved: result.decisionsRemoved,
         samplesRemoved: result.samplesRemoved,
+        generatedPilotDraftsDeleted: result.generatedPilotDraftsDeleted,
         withdrawalNoteLength: withdrawalNote.length,
         sourcePostsDeleted: result.sourcePostsDeleted,
         publishingRecordsDeleted: result.publishingRecordsDeleted,
@@ -1134,9 +1348,436 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
           code: 'pilot_withdrawal_publication_conflict',
         }, 409);
       }
+      if (message.includes('unsafe generated draft state')) {
+        return c.json({
+          error: message,
+          code: 'pilot_withdrawal_generated_draft_conflict',
+        }, 409);
+      }
       return c.json({
         error: 'Pilot withdrawal failed closed; no source posts or publishing records were changed',
       }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/generate-draft', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot draft generation is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['clientId', 'recordOnlyConfirmed'].includes(key),
+    );
+    if (
+      unexpected.length > 0
+      || body.recordOnlyConfirmed !== true
+      || (
+        body.clientId !== undefined
+        && body.clientId !== null
+        && typeof body.clientId !== 'string'
+      )
+    ) {
+      return c.json({
+        error: 'Pilot draft generation requires only clientId and recordOnlyConfirmed=true',
+      }, 400);
+    }
+
+    const clientId = requestedClientId(body.clientId);
+    const identity = normalizeWorkspaceIdentity(
+      adminId,
+      clientId,
+      clientId === null ? 'user' : 'client',
+      clientId ?? adminId,
+    );
+    const now = new Date();
+    const enrollment = await c.env.DB.prepare(`
+      /* pilot_draft_generation_enrollment */
+      SELECT
+        pen.id,pen.user_id,pen.workspace_key,pen.client_id,
+        pen.owner_kind,pen.owner_id,pen.policy_version,
+        pen.consent_basis,pen.consent_confirmed_at,pen.consent_note,
+        w.monthly_ai_budget_usd_cents,
+        COALESCE(client.archetype_slug, pilot_user.archetype_slug)
+          AS archetype_slug,
+        client.status AS client_status
+      FROM learning_pilot_enrollments pen
+      INNER JOIN workspace_learning_settings w
+        ON w.user_id = pen.user_id
+       AND w.workspace_key = pen.workspace_key
+       AND w.client_id IS pen.client_id
+       AND w.owner_kind = pen.owner_kind
+       AND w.owner_id = pen.owner_id
+       AND w.mode = 'approval'
+       AND w.autopublish_consent_at IS NULL
+       AND w.autopublish_policy_version IS NULL
+       AND w.experiment_rate = 0
+       AND w.monthly_ai_budget_usd_cents > 0
+       AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+      LEFT JOIN clients client
+        ON client.id = pen.client_id
+       AND client.user_id = pen.user_id
+      LEFT JOIN users pilot_user
+        ON pilot_user.id = pen.user_id
+      WHERE pen.user_id = ?
+        AND pen.workspace_key = ?
+        AND pen.client_id IS ?
+        AND pen.owner_kind = ?
+        AND pen.owner_id = ?
+        AND pen.policy_version = ?
+        AND pen.record_only = 1
+        AND pen.consent_confirmed_at IS NOT NULL
+        AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+        AND (
+          (
+            pen.owner_kind = 'user'
+            AND pen.consent_basis = 'owner_self'
+            AND pen.client_id IS NULL
+            AND pen.workspace_key = '__owner__'
+            AND pen.owner_id = pen.user_id
+          )
+          OR (
+            pen.owner_kind = 'client'
+            AND pen.consent_basis = 'customer_attested'
+            AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+            AND pen.client_id IS NOT NULL
+            AND pen.workspace_key = pen.client_id
+            AND pen.owner_id = pen.client_id
+            AND client.id IS NOT NULL
+            AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+          )
+        )
+      LIMIT 1
+    `).bind(
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      AUTOPILOT_POLICY_VERSION,
+      now.toISOString(),
+    ).first<PilotDraftGenerationEnrollmentRow>();
+    if (!enrollment) {
+      return c.json({
+        error: 'No current record-only pilot consent is available for this workspace',
+        code: 'pilot_generation_not_authorized',
+      }, 409);
+    }
+
+    const existing = await loadGeneratedPilotDraftReceipt(c.env.DB, enrollment.id);
+    if (existing) {
+      try {
+        return c.json(await publicGeneratedPilotDraft(existing, false));
+      } catch {
+        return c.json({
+          error: 'The generated pilot draft changed after its provenance receipt; generation stopped',
+          code: 'pilot_generated_draft_stale',
+        }, 409);
+      }
+    }
+
+    let criticContext;
+    try {
+      criticContext = await loadCriticContext(
+        c.env,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+      );
+    } catch (error) {
+      console.warn('[learning-pilot] generation context unavailable', {
+        workspaceKey: identity.workspaceKey,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot business context could not be loaded; no draft was created',
+        code: 'pilot_context_unavailable',
+      }, 503);
+    }
+    const contextReadiness = assessCriticContextReadiness(criticContext);
+    if (!contextReadiness.ready) {
+      return c.json({
+        error: 'Pilot business context is incomplete; no draft was created',
+        code: 'pilot_context_not_ready',
+      }, 409);
+    }
+
+    const monthlyBudgetUsdCents = countValue(enrollment.monthly_ai_budget_usd_cents);
+    const budget = await getRecordOnlyPilotBudgetStatus(
+      c.env.DB,
+      identity,
+      monthlyBudgetUsdCents,
+      now,
+    );
+    if (!budget.allowed) {
+      return c.json({
+        error: 'Pilot AI budget reserve is unavailable; no draft was created',
+        code: 'pilot_budget_unavailable',
+      }, 409);
+    }
+
+    const postId = `pilot-generated-${crypto.randomUUID()}`;
+    let generated;
+    try {
+      generated = await generateRecordOnlyPilotDraft(
+        c.env,
+        identity,
+        criticContext,
+        postId,
+      );
+    } catch (error) {
+      console.warn('[learning-pilot] draft generation failed closed', {
+        workspaceKey: identity.workspaceKey,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot draft generation failed its safety checks; no draft was created',
+        code: 'pilot_generation_failed_closed',
+      }, 503);
+    }
+
+    const receiptId = crypto.randomUUID();
+    const generatedAt = new Date().toISOString();
+    const hashtags = JSON.stringify(generated.hashtags);
+    const generatedPost: PublishablePost = {
+      id: postId,
+      user_id: identity.userId,
+      client_id: identity.clientId,
+      owner_kind: identity.ownerKind,
+      owner_id: identity.ownerId,
+      content: generated.content,
+      platform: 'facebook',
+      hashtags,
+      image_url: null,
+      post_type: 'text',
+      video_url: null,
+      video_status: null,
+      video_script: null,
+      video_shots: null,
+      archetype_slug: enrollment.archetype_slug,
+    };
+    const contentHash = await buildReleaseContentHash(generatedPost);
+    const reasoning = JSON.stringify({
+      source: 'learning_pilot_generation',
+      policyVersion: enrollment.policy_version,
+      receiptId,
+      recordOnly: true,
+    });
+
+    await c.env.DB.batch([
+      c.env.DB.prepare(`
+        INSERT OR IGNORE INTO posts (
+          id,user_id,client_id,owner_kind,owner_id,content,platform,status,
+          scheduled_for,hashtags,image_url,topic,pillar,image_prompt,reasoning,post_type
+        )
+        SELECT
+          ?,pen.user_id,pen.client_id,pen.owner_kind,pen.owner_id,
+          ?,'facebook','Draft',NULL,?,NULL,NULL,NULL,?,?,'text'
+        FROM learning_pilot_enrollments pen
+        INNER JOIN workspace_learning_settings w
+          ON w.user_id = pen.user_id
+         AND w.workspace_key = pen.workspace_key
+         AND w.client_id IS pen.client_id
+         AND w.owner_kind = pen.owner_kind
+         AND w.owner_id = pen.owner_id
+         AND w.mode = 'approval'
+         AND w.autopublish_consent_at IS NULL
+         AND w.autopublish_policy_version IS NULL
+         AND w.experiment_rate = 0
+         AND w.monthly_ai_budget_usd_cents > 0
+         AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+        LEFT JOIN clients client
+          ON client.id = pen.client_id
+         AND client.user_id = pen.user_id
+        WHERE pen.id = ?
+          AND pen.user_id = ?
+          AND pen.workspace_key = ?
+          AND pen.client_id IS ?
+          AND pen.owner_kind = ?
+          AND pen.owner_id = ?
+          AND pen.policy_version = ?
+          AND pen.record_only = 1
+          AND pen.consent_confirmed_at IS NOT NULL
+          AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+          AND (
+            (
+              pen.owner_kind = 'user'
+              AND pen.consent_basis = 'owner_self'
+              AND pen.client_id IS NULL
+            )
+            OR (
+              pen.owner_kind = 'client'
+              AND pen.consent_basis = 'customer_attested'
+              AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+              AND client.id IS NOT NULL
+              AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM learning_pilot_generated_drafts existing
+            WHERE existing.enrollment_id = pen.id
+          )
+      `).bind(
+        postId,
+        generated.content,
+        hashtags,
+        generated.imagePrompt,
+        reasoning,
+        enrollment.id,
+        identity.userId,
+        identity.workspaceKey,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+        AUTOPILOT_POLICY_VERSION,
+        generatedAt,
+      ),
+      c.env.DB.prepare(`
+        INSERT OR IGNORE INTO learning_pilot_generated_drafts (
+          id,enrollment_id,post_id,user_id,workspace_key,client_id,
+          owner_kind,owner_id,policy_version,content_hash,provider,model,
+          attempt_count,generated_by,generated_at,record_only
+        )
+        SELECT
+          ?,pen.id,p.id,pen.user_id,pen.workspace_key,pen.client_id,
+          pen.owner_kind,pen.owner_id,pen.policy_version,?,?,?,?,?,?,1
+        FROM posts p
+        INNER JOIN learning_pilot_enrollments pen
+          ON pen.id = ?
+         AND pen.user_id = p.user_id
+         AND pen.client_id IS p.client_id
+         AND pen.workspace_key = ?
+         AND pen.owner_kind = ?
+         AND pen.owner_id = ?
+         AND pen.policy_version = ?
+         AND pen.record_only = 1
+         AND pen.consent_confirmed_at IS NOT NULL
+         AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+        INNER JOIN workspace_learning_settings w
+          ON w.user_id = pen.user_id
+         AND w.workspace_key = pen.workspace_key
+         AND w.client_id IS pen.client_id
+         AND w.owner_kind = pen.owner_kind
+         AND w.owner_id = pen.owner_id
+         AND w.mode = 'approval'
+         AND w.autopublish_consent_at IS NULL
+         AND w.autopublish_policy_version IS NULL
+         AND w.experiment_rate = 0
+         AND w.monthly_ai_budget_usd_cents > 0
+         AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+        LEFT JOIN clients client
+          ON client.id = pen.client_id
+         AND client.user_id = pen.user_id
+        LEFT JOIN users pilot_user
+          ON pilot_user.id = pen.user_id
+        WHERE p.id = ?
+          AND p.user_id = ?
+          AND p.client_id IS ?
+          AND p.owner_kind = ?
+          AND p.owner_id = ?
+          AND p.status = 'Draft'
+          AND p.scheduled_for IS NULL
+          AND p.content = ?
+          AND p.platform = 'facebook'
+          AND p.hashtags = ?
+          AND p.image_url IS NULL
+          AND p.post_type = 'text'
+          AND COALESCE(client.archetype_slug, pilot_user.archetype_slug) IS ?
+          AND (
+            pen.owner_kind = 'user'
+            OR (
+              pen.owner_kind = 'client'
+              AND pen.consent_basis = 'customer_attested'
+              AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+              AND client.id IS NOT NULL
+              AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM publication_events pe WHERE pe.post_id = p.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM publish_delivery_receipts delivery WHERE delivery.post_id = p.id
+          )
+      `).bind(
+        receiptId,
+        contentHash,
+        generated.provider,
+        generated.model,
+        generated.attemptCount,
+        adminId,
+        generatedAt,
+        enrollment.id,
+        identity.workspaceKey,
+        identity.ownerKind,
+        identity.ownerId,
+        AUTOPILOT_POLICY_VERSION,
+        generatedAt,
+        postId,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+        generated.content,
+        hashtags,
+        enrollment.archetype_slug,
+      ),
+    ]);
+
+    const receipt = await loadGeneratedPilotDraftReceipt(c.env.DB, enrollment.id);
+    if (!receipt || receipt.post_id !== postId) {
+      try {
+        await removeUnreceiptedGeneratedPilotPost(
+          c.env.DB,
+          identity,
+          postId,
+          generated.content,
+          hashtags,
+          generated.imagePrompt,
+        );
+      } catch (error) {
+        console.error('[learning-pilot] unreceipted draft cleanup failed', {
+          workspaceKey: identity.workspaceKey,
+          postId,
+          reason: error instanceof Error ? error.message : 'unknown error',
+        });
+        return c.json({
+          error: 'Pilot draft persistence could not be verified; generation stopped',
+          code: 'pilot_generation_persistence_uncertain',
+        }, 503);
+      }
+    }
+    if (!receipt) {
+      return c.json({
+        error: 'Pilot consent changed before persistence; no generated draft was retained',
+        code: 'pilot_generation_authorization_changed',
+      }, 409);
+    }
+    try {
+      return c.json(await publicGeneratedPilotDraft(
+        receipt,
+        receipt.post_id === postId,
+      ));
+    } catch {
+      return c.json({
+        error: 'Generated pilot draft provenance could not be verified',
+        code: 'pilot_generated_draft_stale',
+      }, 409);
     }
   });
 
@@ -1163,7 +1804,10 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         CASE WHEN p.client_id IS NULL THEN 'My workspace'
              ELSE COALESCE(NULLIF(TRIM(c.name), ''), 'Client workspace') END AS label,
         COUNT(*) AS eligible_draft_count,
-        MIN(p.id) AS sample_post_id,
+        COALESCE(
+          MAX(CASE WHEN generated.post_id = p.id THEN p.id END),
+          MIN(p.id)
+        ) AS sample_post_id,
         MAX(CASE WHEN pen.id IS NOT NULL AND w.mode = 'approval' THEN 1 ELSE 0 END) AS enrolled,
         MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents,
         CASE WHEN p.client_id IS NULL THEN u.profile ELSE c.profile END AS profile_json,
@@ -1197,6 +1841,15 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
        AND pen.owner_id = CASE WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
        AND pen.policy_version = ?
        AND pen.record_only = 1
+      LEFT JOIN learning_pilot_generated_drafts generated
+        ON generated.enrollment_id = pen.id
+       AND generated.user_id = pen.user_id
+       AND generated.workspace_key = pen.workspace_key
+       AND generated.client_id IS pen.client_id
+       AND generated.owner_kind = pen.owner_kind
+       AND generated.owner_id = pen.owner_id
+       AND generated.policy_version = pen.policy_version
+       AND generated.record_only = 1
       WHERE p.user_id = ?
         AND p.status = 'Draft'
         AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
@@ -1266,6 +1919,11 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         pen.workspace_key,
         pen.policy_version,
         pen.enrolled_at,
+        generated.post_id AS generated_draft_post_id,
+        generated.content_hash AS generated_draft_content_hash,
+        generated.provider AS generated_draft_provider,
+        generated.model AS generated_draft_model,
+        generated.generated_at AS generated_draft_at,
         CASE
           WHEN pen.owner_kind = 'user' THEN 'My workspace'
           ELSE COALESCE(NULLIF(TRIM(client.name), ''), 'Client workspace')
@@ -1274,6 +1932,15 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       LEFT JOIN clients client
         ON client.id = pen.client_id
        AND client.user_id = pen.user_id
+      LEFT JOIN learning_pilot_generated_drafts generated
+        ON generated.enrollment_id = pen.id
+       AND generated.user_id = pen.user_id
+       AND generated.workspace_key = pen.workspace_key
+       AND generated.client_id IS pen.client_id
+       AND generated.owner_kind = pen.owner_kind
+       AND generated.owner_id = pen.owner_id
+       AND generated.policy_version = pen.policy_version
+       AND generated.record_only = 1
       WHERE pen.user_id = ?
         AND pen.policy_version = ?
         AND pen.record_only = 1
@@ -1356,6 +2023,19 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         enrolledAt: row.enrolled_at,
         label: row.label,
         recordOnly: true,
+        generatedDraft: row.generated_draft_post_id
+          && row.generated_draft_content_hash
+          && row.generated_draft_provider
+          && row.generated_draft_model
+          && row.generated_draft_at
+          ? {
+              postId: row.generated_draft_post_id,
+              contentHash: row.generated_draft_content_hash,
+              provider: row.generated_draft_provider,
+              model: row.generated_draft_model,
+              generatedAt: row.generated_draft_at,
+            }
+          : null,
       })),
       candidates,
     });
@@ -1404,7 +2084,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!postId) return c.json({ error: 'Not found' }, 404);
     const row = await c.env.DB.prepare(`
       SELECT
-        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
+        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,p.scheduled_for,
         p.content,p.platform,p.hashtags,p.image_url,p.post_type,
         p.video_url,p.video_status,p.video_script,p.video_shots,
         COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
@@ -1630,7 +2310,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!postId) return c.json({ error: 'Not found' }, 404);
     const row = await c.env.DB.prepare(`
       SELECT
-        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
+        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,p.scheduled_for,
         p.content,p.platform,p.hashtags,p.image_url,p.post_type,
         p.video_url,p.video_status,p.video_script,p.video_shots,
         COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,

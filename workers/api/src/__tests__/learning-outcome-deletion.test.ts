@@ -22,6 +22,7 @@ const EXPECTED_WORKSPACE_DELETE_ORDER = [
   'learning_profiles',
   'learning_signals',
   'learning_pilot_samples',
+  'learning_pilot_generated_drafts',
   'learning_decision_disqualifications',
   'learning_calibration_audits',
   'learning_adjudications',
@@ -34,6 +35,7 @@ const EXPECTED_WORKSPACE_DELETE_ORDER = [
 const DEFERRED_TABLE_ROWS = [
   { name: 'learning_calibration_audits' },
   { name: 'learning_decision_disqualifications' },
+  { name: 'learning_pilot_generated_drafts' },
   { name: 'learning_pilot_samples' },
 ];
 

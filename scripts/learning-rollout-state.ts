@@ -411,6 +411,9 @@ SELECT COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_calibration_audits' THEN 1 ELSE 0
        END), 0) AS calibration_tables,
        COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'learning_pilot_generated_drafts' THEN 1 ELSE 0
+       END), 0) AS generated_draft_tables,
+       COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_pilot_authorization_uses' THEN 1 ELSE 0
        END), 0) AS owner_authorization_tables,
        COALESCE(SUM(CASE
@@ -421,9 +424,10 @@ SELECT COALESCE(SUM(CASE
           AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
          THEN 1 ELSE 0
        END), 0) AS alert_indexes
-  FROM sqlite_master
+ FROM sqlite_master
  WHERE (type = 'table' AND name IN (
-          'learning_calibration_audits', 'learning_pilot_authorization_uses', 'cron_alerts'
+          'learning_calibration_audits', 'learning_pilot_generated_drafts',
+          'learning_pilot_authorization_uses', 'cron_alerts'
        ))
     OR (type = 'index'
         AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
@@ -683,6 +687,7 @@ export interface RolloutObservation {
     latestPilotCron: CronObservation | null;
     latestReadinessCron: CronObservation | null;
     calibrationTablePresent: boolean;
+    generatedDraftTablePresent: boolean;
     alertSchemaReady: boolean;
     latestCalibrationCron: CronObservation | null;
     calibrationRows: number;
@@ -1193,6 +1198,11 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
     'safety',
   );
   add('staging_calibration_schema', input.staging.calibrationTablePresent, 'safety');
+  add(
+    'staging_generated_draft_schema',
+    input.staging.generatedDraftTablePresent,
+    'safety',
+  );
   add('staging_alert_schema', input.staging.alertSchemaReady, 'safety');
   add('production_alert_schema', input.production.alertSchemaReady, 'safety');
   add(
@@ -1723,6 +1733,10 @@ async function main(): Promise<void> {
   const stagingEnrollments = firstRow(stagingD1.rows[4]);
   const stagingSchema = firstRow(stagingD1.rows[5]);
   const stagingCalibrationTablePresent = numberField(stagingSchema, 'calibration_tables') === 1;
+  const stagingGeneratedDraftTablePresent = numberField(
+    stagingSchema,
+    'generated_draft_tables',
+  ) === 1;
   const stagingAuthorizationTableCount = numberField(
     stagingSchema,
     'owner_authorization_tables',
@@ -1831,6 +1845,7 @@ async function main(): Promise<void> {
       latestPilotCron: parseCron(stagingCrons, 'learning_pilot'),
       latestReadinessCron: parseCron(stagingCrons, 'learning_readiness'),
       calibrationTablePresent: stagingCalibrationTablePresent,
+      generatedDraftTablePresent: stagingGeneratedDraftTablePresent,
       alertSchemaReady: stagingAlertSchemaReady,
       latestCalibrationCron: parseCron(stagingCrons, 'learning_calibration'),
       calibrationRows: numberField(stagingCalibration, 'calibration_rows'),
@@ -1874,7 +1889,7 @@ async function main(): Promise<void> {
   );
   const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 10,
+    schemaVersion: 11,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,

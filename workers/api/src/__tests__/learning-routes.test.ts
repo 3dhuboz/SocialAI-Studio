@@ -14,8 +14,14 @@ vi.mock('../lib/learning/release-preflight', async (importOriginal) => {
   return { ...actual, runAndPersistReleasePipeline: vi.fn() };
 });
 
+vi.mock('../lib/learning/pilot-draft-generator', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/learning/pilot-draft-generator')>();
+  return { ...actual, generateRecordOnlyPilotDraft: vi.fn() };
+});
+
 import { registerLearningRoutes } from '../routes/learning';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import { generateRecordOnlyPilotDraft } from '../lib/learning/pilot-draft-generator';
 import {
   buildReleaseContentHash,
   runAndPersistReleasePipeline,
@@ -23,6 +29,7 @@ import {
 } from '../lib/learning/release-preflight';
 
 const runPilotPipeline = vi.mocked(runAndPersistReleasePipeline);
+const generatePilotDraft = vi.mocked(generateRecordOnlyPilotDraft);
 
 const adjudicationPost: PublishablePost = {
   id: 'post-sample-1',
@@ -109,6 +116,11 @@ describe('learning receipt routes', () => {
         }),
       }],
       ['/api/learning/pilot/candidates', { headers: adminRequestHeaders }],
+      ['/api/learning/pilot/generate-draft', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({ recordOnlyConfirmed: true }),
+      }],
       ['/api/learning/pilot/attest/post-1', {
         method: 'POST',
         headers: adminRequestHeaders,
@@ -302,6 +314,7 @@ describe('learning settings and release evidence routes', () => {
 
   beforeEach(() => {
     runPilotPipeline.mockReset();
+    generatePilotDraft.mockReset();
   });
 
   it('returns the authenticated client learning summary under its canonical tuple', async () => {
@@ -758,6 +771,290 @@ describe('learning settings and release evidence routes', () => {
     expect(claim.sql).toContain('pen.id = ?');
     expect(claim.sql).toContain('sample.content_hash = ?');
     expect(claim.binds).toContain('pilot-enrollment-1');
+  });
+
+  it('creates one provenance-bound unscheduled staging draft for a current pilot enrollment', async () => {
+    const generated = {
+      content: 'A smoother workflow starts by mapping one repeated handoff before choosing software. Which task creates the most friction in your week?',
+      hashtags: ['#WorkflowPlanning', '#SmallBusiness'],
+      imagePrompt: 'Bright natural-light photograph of a small business owner mapping a repeated workflow with blank sticky notes on a desk, no readable text',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      attemptCount: 1,
+    };
+    const postId = 'pilot-generated-route-1';
+    const contentHash = await buildReleaseContentHash({
+      id: postId,
+      user_id: 'owner_1',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner_1',
+      content: generated.content,
+      platform: 'facebook',
+      hashtags: JSON.stringify(generated.hashtags),
+      image_url: null,
+      post_type: 'text',
+      video_url: null,
+      video_status: null,
+      video_script: null,
+      video_shots: null,
+      archetype_slug: 'tech-saas-agency',
+    });
+    let receiptReads = 0;
+    const receipt = {
+      id: 'generated-receipt-1',
+      enrollment_id: 'pilot-enrollment-owner',
+      post_id: postId,
+      user_id: 'owner_1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner_1',
+      policy_version: AUTOPILOT_POLICY_VERSION,
+      content_hash: contentHash,
+      provider: generated.provider,
+      model: generated.model,
+      attempt_count: 1,
+      generated_at: '2026-07-24T04:00:00.000Z',
+      record_only: 1,
+      post_user_id: 'owner_1',
+      post_client_id: null,
+      post_owner_kind: 'user',
+      post_owner_id: 'owner_1',
+      post_status: 'Draft',
+      post_scheduled_for: null,
+      post_content: generated.content,
+      post_platform: 'facebook',
+      post_hashtags: JSON.stringify(generated.hashtags),
+      post_image_url: null,
+      post_type: 'text',
+      post_video_url: null,
+      post_video_status: null,
+      post_video_script: null,
+      post_video_shots: null,
+      post_archetype_slug: 'tech-saas-agency',
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      '/* pilot_draft_generation_enrollment */': [{
+        id: 'pilot-enrollment-owner',
+        user_id: 'owner_1',
+        workspace_key: '__owner__',
+        client_id: null,
+        owner_kind: 'user',
+        owner_id: 'owner_1',
+        policy_version: AUTOPILOT_POLICY_VERSION,
+        consent_basis: 'owner_self',
+        consent_confirmed_at: '2026-07-20T00:00:00.000Z',
+        consent_note: 'Authenticated owner enrolled their own workspace.',
+        monthly_ai_budget_usd_cents: 500,
+        archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+      '/* pilot_generated_draft_receipt */': () => {
+        receiptReads += 1;
+        return receiptReads === 1 ? [] : [receipt];
+      },
+      'SELECT profile FROM users': [{
+        profile: '{"description":"Custom software and workflow automation"}',
+      }],
+      'FROM client_facts': [],
+      'FROM posts': [],
+      'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
+    });
+    generatePilotDraft.mockImplementationOnce(async (_env, _identity, _context, generatedPostId) => {
+      receipt.post_id = generatedPostId;
+      receipt.post_user_id = 'owner_1';
+      return generated;
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/generate-draft', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ clientId: null, recordOnlyConfirmed: true }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      enrollmentId: 'pilot-enrollment-owner',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      sourceStatus: 'Draft',
+      scheduledFor: null,
+      publishingAllowed: false,
+      recordOnly: true,
+      created: true,
+    });
+    expect(generatePilotDraft).toHaveBeenCalledTimes(1);
+    const postInsert = calls.find((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO posts'))!;
+    expect(postInsert.sql).toContain("'Draft',NULL");
+    expect(postInsert.sql).toContain('w.autopublish_consent_at IS NULL');
+    expect(postInsert.sql).toContain('w.autopublish_policy_version IS NULL');
+    expect(postInsert.sql).toContain('w.experiment_rate = 0');
+    expect(postInsert.sql).toContain('NOT EXISTS');
+    expect(postInsert.sql).not.toContain("'Scheduled'");
+    const receiptInsert = calls.find((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO learning_pilot_generated_drafts'))!;
+    expect(receiptInsert.sql).toContain("p.status = 'Draft'");
+    expect(receiptInsert.sql).toContain('p.scheduled_for IS NULL');
+    expect(receiptInsert.sql).toContain('FROM publication_events pe');
+    expect(receiptInsert.sql).toContain('FROM publish_delivery_receipts delivery');
+    expect(calls.some((call) => /UPDATE\s+posts/i.test(call.sql))).toBe(false);
+
+    const repeat = await app.request('/api/learning/pilot/generate-draft', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ clientId: null, recordOnlyConfirmed: true }),
+    }, env);
+    expect(repeat.status).toBe(200);
+    await expect(repeat.json()).resolves.toMatchObject({
+      receiptId: 'generated-receipt-1',
+      postId: receipt.post_id,
+      created: false,
+      publishingAllowed: false,
+    });
+    expect(generatePilotDraft).toHaveBeenCalledTimes(1);
+    expect(calls.filter((call) =>
+      call.sql.includes('INSERT OR IGNORE INTO posts'))).toHaveLength(1);
+  });
+
+  it('requires an explicit record-only confirmation before generation reads consent', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/generate-draft', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ clientId: null }),
+    }, env);
+
+    expect(response.status).toBe(400);
+    expect(generatePilotDraft).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('SELECT email, is_admin');
+  });
+
+  it('does not call the generator or write a post without current pilot consent', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      '/* pilot_draft_generation_enrollment */': [],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/generate-draft', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ clientId: 'hughesq-001', recordOnlyConfirmed: true }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'No current record-only pilot consent is available for this workspace',
+      code: 'pilot_generation_not_authorized',
+    });
+    expect(generatePilotDraft).not.toHaveBeenCalled();
+    const consentRead = calls.find((call) =>
+      call.sql.includes('/* pilot_draft_generation_enrollment */'))!;
+    expect(consentRead.sql).toContain(
+      "COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'",
+    );
+    expect(calls.some((call) => /INSERT\s+(?:OR IGNORE\s+)?INTO\s+posts/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('removes its exact unreceipted draft when consent changes during persistence', async () => {
+    const generated = {
+      content: 'Map one repeated handoff before choosing software, then ask the people doing the work where the delay actually begins.',
+      hashtags: ['#WorkflowPlanning'],
+      imagePrompt: 'Bright natural-light photograph of a business owner mapping a repeated workflow using blank cards on a timber desk, no readable text',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      attemptCount: 1,
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      '/* pilot_draft_generation_enrollment */': [{
+        id: 'pilot-enrollment-race',
+        user_id: 'owner_1',
+        workspace_key: '__owner__',
+        client_id: null,
+        owner_kind: 'user',
+        owner_id: 'owner_1',
+        policy_version: AUTOPILOT_POLICY_VERSION,
+        consent_basis: 'owner_self',
+        consent_confirmed_at: '2026-07-20T00:00:00.000Z',
+        consent_note: 'Authenticated owner enrolled their own workspace.',
+        monthly_ai_budget_usd_cents: 500,
+        archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+      '/* pilot_generated_draft_receipt */': [],
+      'SELECT profile FROM users': [{
+        profile: '{"description":"Custom software and workflow automation"}',
+      }],
+      'FROM client_facts': [],
+      'FROM posts': [],
+      'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
+    });
+    generatePilotDraft.mockResolvedValueOnce(generated);
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/generate-draft', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ clientId: null, recordOnlyConfirmed: true }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Pilot consent changed before persistence; no generated draft was retained',
+      code: 'pilot_generation_authorization_changed',
+    });
+    const cleanup = calls.find((call) =>
+      /DELETE FROM\s+posts\b/i.test(call.sql))!;
+    expect(cleanup.sql).toContain('FROM learning_pilot_generated_drafts generated');
+    expect(cleanup.sql).toContain("LOWER(TRIM(COALESCE(status, ''))) = 'draft'");
+    expect(cleanup.sql).toContain('FROM publication_events event');
+    expect(cleanup.sql).toContain('FROM publish_delivery_receipts delivery');
+    expect(cleanup.binds).toEqual([
+      expect.stringMatching(/^pilot-generated-/),
+      'owner_1',
+      null,
+      'user',
+      'owner_1',
+      generated.content,
+      JSON.stringify(generated.hashtags),
+      generated.imagePrompt,
+    ]);
   });
 
   it('appends a positive real-post attestation without mutating the draft', async () => {
@@ -1529,12 +1826,16 @@ describe('learning settings and release evidence routes', () => {
       call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
-  it('withdraws exact pilot consent and derived evidence without touching drafts or publishing records', async () => {
+  it('withdraws exact consent and derived pilot drafts without touching source drafts or publications', async () => {
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
       'SELECT id\n      FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-1' }],
       'SELECT COUNT(*) AS decision_count': [{ decision_count: 2 }],
       'SELECT COUNT(*) AS sample_count': [{ sample_count: 1 }],
+      'COUNT(*) AS generated_draft_count': [{
+        generated_draft_count: 1,
+        unsafe_generated_draft_count: 0,
+      }],
       'SELECT COUNT(*) AS publication_count': [{ publication_count: 0 }],
       'SELECT COUNT(*) AS enrollment_count': [{ enrollment_count: 0 }],
     });
@@ -1568,6 +1869,7 @@ describe('learning settings and release evidence routes', () => {
       mode: 'shadow',
       decisionsRemoved: 2,
       samplesRemoved: 1,
+      generatedPilotDraftsDeleted: 1,
       sourcePostsDeleted: 0,
       publishingRecordsDeleted: 0,
       originalDraftsRetained: true,
@@ -1593,16 +1895,69 @@ describe('learning settings and release evidence routes', () => {
       'ai_usage',
       'learning_decisions',
       'learning_pilot_samples',
+      'learning_pilot_generated_drafts',
       'learning_pilot_enrollments',
     ]) {
       expect(calls.some((call) =>
         call.sql.includes(`DELETE FROM ${table}`))).toBe(true);
     }
-    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+    const generatedPostDelete = calls.find((call) =>
+      /DELETE FROM\s+posts\b/i.test(call.sql))!;
+    expect(generatedPostDelete.sql).toContain('FROM learning_pilot_generated_drafts generated');
+    expect(generatedPostDelete.sql).toContain(
+      "LOWER(TRIM(COALESCE(status, ''))) = 'draft'",
+    );
+    expect(generatedPostDelete.sql).toContain(
+      "NULLIF(TRIM(COALESCE(scheduled_for, '')), '') IS NULL",
+    );
+    expect(generatedPostDelete.sql).toContain('FROM publication_events pe');
+    expect(generatedPostDelete.sql).toContain('FROM publish_delivery_receipts delivery');
+    expect(calls.some((call) => /UPDATE\s+posts\b|INSERT INTO\s+posts\b/i.test(call.sql)))
       .toBe(false);
     expect(calls.some((call) => /DELETE FROM\s+publication_events/i.test(call.sql))).toBe(false);
     expect(calls.some((call) => /DELETE FROM\s+publish_delivery_receipts/i.test(call.sql)))
       .toBe(false);
+  });
+
+  it('fails withdrawal closed when a generated draft tenant or delivery state is unsafe', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT id\n      FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-unsafe' }],
+      'SELECT COUNT(*) AS decision_count': [{ decision_count: 0 }],
+      'SELECT COUNT(*) AS sample_count': [{ sample_count: 0 }],
+      'COUNT(*) AS generated_draft_count': [{
+        generated_draft_count: 1,
+        unsafe_generated_draft_count: 1,
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enrollment', {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-unsafe',
+        withdrawalConfirmed: true,
+        withdrawalNote: 'Customer withdrew record-only pilot consent in writing.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Record-only pilot withdrawal found an unsafe generated draft state and stopped',
+      code: 'pilot_withdrawal_generated_draft_conflict',
+    });
+    const generatedRead = calls.find((call) =>
+      call.sql.includes('COUNT(*) AS generated_draft_count'))!;
+    expect(generatedRead.sql).toContain('generated.user_id IS NOT ?');
+    expect(generatedRead.sql).toContain('generated.workspace_key IS NOT ?');
+    expect(calls.some((call) => /\bDELETE FROM\b|\bUPDATE\b/i.test(call.sql))).toBe(false);
   });
 
   it('requires an explicit withdrawal confirmation before reading or deleting pilot evidence', async () => {
@@ -1864,6 +2219,7 @@ describe('learning settings and release evidence routes', () => {
         enrolledAt: '2026-07-15T00:00:00.000Z',
         label: 'My workspace',
         recordOnly: true,
+        generatedDraft: null,
       }],
       candidates: [
         {
@@ -1892,6 +2248,8 @@ describe('learning settings and release evidence routes', () => {
     const query = calls.find((call) => call.sql.includes('GROUP BY p.user_id,p.client_id'))!;
     expect(query.binds).toEqual([AUTOPILOT_POLICY_VERSION, 'owner_1']);
     expect(query.sql).toContain('LEFT JOIN learning_pilot_enrollments pen');
+    expect(query.sql).toContain('LEFT JOIN learning_pilot_generated_drafts generated');
+    expect(query.sql).toContain('MAX(CASE WHEN generated.post_id = p.id THEN p.id END)');
     expect(query.sql).toContain('pen.policy_version = ?');
     expect(query.sql).toContain("p.status = 'Draft'");
     expect(query.sql).toContain("LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'");

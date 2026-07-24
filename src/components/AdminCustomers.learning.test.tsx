@@ -266,7 +266,12 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('aria-label="Consent evidence note for Active Client"');
     expect(html).toContain('Active Client enrollment stays disabled until both are complete');
     expect(html).toContain('Active record-only pilot consent');
-    expect(html).toContain('Original drafts, schedules, and publishing records are never deleted');
+    expect(html).toContain(
+      'Original customer/source drafts, schedules, and publishing records are never deleted',
+    );
+    expect(html).toContain('a draft generated only for this staging pilot is derived data');
+    expect(html).toContain('Generate one record-only staging draft');
+    expect(html).toContain('cannot enter any publishing or delivery path');
     expect(html).toContain('aria-label="Confirm pilot withdrawal for My workspace"');
     expect(html).toContain('aria-label="Pilot withdrawal note for My workspace"');
     expect(html).toContain('Withdraw pilot consent and erase derived evidence');

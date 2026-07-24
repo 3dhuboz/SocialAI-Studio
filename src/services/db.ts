@@ -410,6 +410,13 @@ export interface LearningPilotActiveEnrollment {
   enrolledAt: string;
   label: string;
   recordOnly: true;
+  generatedDraft?: {
+    postId: string;
+    contentHash: string;
+    provider: string;
+    model: string;
+    generatedAt: string;
+  } | null;
 }
 
 export interface LearningPilotCustomerConsent {
@@ -448,6 +455,22 @@ export interface LearningPilotValidation {
   postMutated: false;
 }
 
+export interface LearningPilotGeneratedDraft {
+  receiptId: string;
+  enrollmentId: string;
+  postId: string;
+  contentHash: string;
+  provider: string;
+  model: string;
+  attemptCount: number;
+  generatedAt: string;
+  recordOnly: true;
+  sourceStatus: 'Draft';
+  scheduledFor: null;
+  publishingAllowed: false;
+  created: boolean;
+}
+
 export interface LearningPilotWithdrawal {
   withdrawn: boolean;
   alreadyWithdrawn: boolean;
@@ -459,6 +482,7 @@ export interface LearningPilotWithdrawal {
   mode: 'shadow';
   decisionsRemoved: number;
   samplesRemoved: number;
+  generatedPilotDraftsDeleted: number;
   sourcePostsDeleted: 0;
   publishingRecordsDeleted: 0;
   originalDraftsRetained: true;
@@ -786,6 +810,16 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
         }),
       });
       return res.json() as Promise<LearningPilotWithdrawal>;
+    },
+
+    async generateLearningPilotDraft(
+      clientId: string | null,
+    ): Promise<LearningPilotGeneratedDraft> {
+      const res = await pilotF('/api/learning/pilot/generate-draft', j({
+        clientId,
+        recordOnlyConfirmed: true,
+      }));
+      return res.json() as Promise<LearningPilotGeneratedDraft>;
     },
 
     async attestLearningPilotDraft(

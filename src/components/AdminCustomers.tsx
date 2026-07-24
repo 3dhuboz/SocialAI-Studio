@@ -3,7 +3,7 @@ import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
   RefreshCw, Search, Loader2, ExternalLink, Clock,
   ChevronDown, ChevronRight, ShieldCheck, X, MessageSquare,
-  BrainCircuit, ClipboardCheck,
+  BrainCircuit, ClipboardCheck, Sparkles,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
@@ -207,6 +207,24 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
+  const generateLearningPilotDraft = async (clientId: string | null) => {
+    const actionKey = `generate:${clientId ?? '__owner__'}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      await db.generateLearningPilotDraft(clientId);
+      await reloadLearningPanels();
+    } catch (reason) {
+      setLearningError(
+        reason instanceof Error
+          ? reason.message
+          : 'Record-only pilot draft generation failed closed',
+      );
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
   const validateLearningPilotDraft = async (
     postId: string,
     expectedContentHash: string,
@@ -266,6 +284,7 @@ export const AdminCustomers: React.FC = () => {
         onAdjudicate={adjudicateLearningDecision}
         onPilotEnroll={enrollLearningPilot}
         onPilotWithdraw={withdrawLearningPilot}
+        onPilotGenerate={generateLearningPilotDraft}
         onPilotValidate={validateLearningPilotDraft}
       />
 
@@ -619,6 +638,7 @@ export const LearningOperationsCard: React.FC<{
     clientId: string | null,
     withdrawalNote: string,
   ) => Promise<void>;
+  onPilotGenerate?: (clientId: string | null) => Promise<void>;
   onPilotValidate?: (
     postId: string,
     expectedContentHash: string,
@@ -634,6 +654,7 @@ export const LearningOperationsCard: React.FC<{
   onAdjudicate,
   onPilotEnroll,
   onPilotWithdraw,
+  onPilotGenerate,
   onPilotValidate,
 }) => {
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
@@ -868,8 +889,9 @@ export const LearningOperationsCard: React.FC<{
                 </p>
                 <p className="mt-1 text-[9px] leading-relaxed text-white/35">
                   Withdrawal stops future pilot critics and removes exact pilot samples and
-                  derived critic evidence. Original drafts, schedules, and publishing records
-                  are never deleted.
+                  derived critic evidence. Original customer/source drafts, schedules, and
+                  publishing records are never deleted; a draft generated only for this staging
+                  pilot is derived data and is erased.
                 </p>
               </div>
               <div className="mt-2.5 grid gap-2">
@@ -882,6 +904,9 @@ export const LearningOperationsCard: React.FC<{
                     && trimmedNote.length <= 500;
                   const actionKey = `withdraw:${enrollment.clientId ?? '__owner__'}`;
                   const busy = pilotActionKey === actionKey;
+                  const generationActionKey = `generate:${enrollment.clientId ?? '__owner__'}`;
+                  const generating = pilotActionKey === generationActionKey;
+                  const generatedDraft = enrollment.generatedDraft ?? null;
                   return (
                     <div
                       key={enrollment.workspaceKey}
@@ -897,6 +922,42 @@ export const LearningOperationsCard: React.FC<{
                         <span className="rounded-full border border-rose-400/15 bg-rose-500/[0.06] px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-rose-100/60">
                           Consent active
                         </span>
+                      </div>
+                      <div className="mt-2.5 rounded-lg border border-cyan-400/15 bg-cyan-500/[0.035] p-2.5">
+                        {generatedDraft ? (
+                          <>
+                            <p className="text-[10px] font-black text-cyan-100/80">
+                              Genuine SocialAI staging draft ready
+                            </p>
+                            <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                              Draft {generatedDraft.postId} has immutable generation provenance
+                              from {generatedDraft.provider} / {generatedDraft.model}. Review the
+                              exact content below before creating any positive pilot receipt.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-[10px] font-black text-cyan-100/80">
+                              Authentic pilot input required
+                            </p>
+                            <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                              Create one real SocialAI output from this workspace's private
+                              business context. It remains an unscheduled staging Draft and
+                              cannot enter any publishing or delivery path.
+                            </p>
+                            <button
+                              type="button"
+                              disabled={pilotActionKey !== null}
+                              onClick={() => onPilotGenerate?.(enrollment.clientId)}
+                              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[9px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
+                            >
+                              {generating
+                                ? <Loader2 size={10} className="animate-spin" />
+                                : <Sparkles size={10} />}
+                              Generate one record-only staging draft
+                            </button>
+                          </>
+                        )}
                       </div>
                       <label className="mt-2 flex items-start gap-2 text-[9px] leading-relaxed text-white/45">
                         <input
@@ -951,6 +1012,8 @@ export const LearningOperationsCard: React.FC<{
                       <p className="mt-1.5 text-[8px] leading-relaxed text-white/25">
                         If data was copied under a separate staging-copy consent receipt, use that
                         receipt's scoped copy-erasure action to remove the imported draft or profile.
+                        A draft created by the button above is derived pilot data and is erased
+                        automatically by this withdrawal action.
                       </p>
                     </div>
                   );
@@ -1145,7 +1208,8 @@ export const LearningOperationsCard: React.FC<{
                             aria-label={`Confirm exact real draft for ${candidate.label}`}
                           />
                           I reviewed the exact draft shown above and confirm it is real business
-                          content, not synthetic or QA data.
+                          content or a genuine SocialAI output for this business, not a test fixture
+                          or fabricated QA sample.
                         </label>
                         <p className="mt-1.5 text-[9px] leading-relaxed text-white/30">
                           This creates an immutable pilot receipt for this exact draft version.

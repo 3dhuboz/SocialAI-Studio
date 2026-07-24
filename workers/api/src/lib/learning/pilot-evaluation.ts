@@ -48,6 +48,7 @@ export interface PilotWithdrawalResult {
   policyVersion: string;
   decisionsRemoved: number;
   samplesRemoved: number;
+  generatedPilotDraftsDeleted: number;
   sourcePostsDeleted: 0;
   publishingRecordsDeleted: 0;
 }
@@ -291,6 +292,7 @@ export async function withdrawRecordOnlyPilot(
       policyVersion: scopedPolicyVersion,
       decisionsRemoved: 0,
       samplesRemoved: 0,
+      generatedPilotDraftsDeleted: 0,
       sourcePostsDeleted: 0,
       publishingRecordsDeleted: 0,
     };
@@ -325,6 +327,51 @@ export async function withdrawRecordOnlyPilot(
     authorization.enrollmentId,
     authorization.policyVersion,
   ).first<{ sample_count: number | string | null }>();
+  const generatedDrafts = await db.prepare(`
+    SELECT
+      COUNT(*) AS generated_draft_count,
+      COALESCE(SUM(CASE
+        WHEN generated.user_id IS NOT ?
+          OR generated.workspace_key IS NOT ?
+          OR generated.client_id IS NOT ?
+          OR generated.owner_kind IS NOT ?
+          OR generated.owner_id IS NOT ?
+          OR generated.policy_version IS NOT ?
+          OR generated.record_only <> 1
+          OR p.id IS NULL
+          OR p.user_id IS NOT generated.user_id
+          OR p.client_id IS NOT generated.client_id
+          OR p.owner_kind IS NOT generated.owner_kind
+          OR p.owner_id IS NOT generated.owner_id
+          OR LOWER(TRIM(COALESCE(p.status, ''))) <> 'draft'
+          OR NULLIF(TRIM(COALESCE(p.scheduled_for, '')), '') IS NOT NULL
+          OR EXISTS (
+            SELECT 1 FROM publication_events pe WHERE pe.post_id = generated.post_id
+          )
+          OR EXISTS (
+            SELECT 1
+              FROM publish_delivery_receipts delivery
+             WHERE delivery.post_id = generated.post_id
+          )
+        THEN 1 ELSE 0 END), 0) AS unsafe_generated_draft_count
+    FROM learning_pilot_generated_drafts generated
+    LEFT JOIN posts p ON p.id = generated.post_id
+    WHERE generated.enrollment_id = ?
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    authorization.policyVersion,
+    authorization.enrollmentId,
+  ).first<{
+    generated_draft_count: number | string | null;
+    unsafe_generated_draft_count: number | string | null;
+  }>();
+  if (countValue(generatedDrafts?.unsafe_generated_draft_count) > 0) {
+    throw new Error('Record-only pilot withdrawal found an unsafe generated draft state and stopped');
+  }
   const published = await db.prepare(`
     SELECT COUNT(*) AS publication_count
       FROM publication_events pe
@@ -421,6 +468,90 @@ export async function withdrawRecordOnlyPilot(
       authorization.policyVersion,
     ),
     db.prepare(`
+      DELETE FROM ai_usage
+       WHERE operation = 'learning_pilot_draft_generation'
+         AND post_id IN (
+           SELECT generated.post_id
+             FROM learning_pilot_generated_drafts generated
+            WHERE generated.enrollment_id = ?
+              AND generated.user_id = ?
+              AND generated.workspace_key = ?
+              AND generated.client_id IS ?
+              AND generated.owner_kind = ?
+              AND generated.owner_id = ?
+              AND generated.policy_version = ?
+              AND generated.record_only = 1
+         )
+    `).bind(
+      authorization.enrollmentId,
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      authorization.policyVersion,
+    ),
+    db.prepare(`
+      DELETE FROM posts
+       WHERE id IN (
+         SELECT generated.post_id
+           FROM learning_pilot_generated_drafts generated
+          WHERE generated.enrollment_id = ?
+            AND generated.user_id = ?
+            AND generated.workspace_key = ?
+            AND generated.client_id IS ?
+            AND generated.owner_kind = ?
+            AND generated.owner_id = ?
+            AND generated.policy_version = ?
+            AND generated.record_only = 1
+       )
+         AND user_id = ?
+         AND client_id IS ?
+         AND owner_kind = ?
+         AND owner_id = ?
+         AND LOWER(TRIM(COALESCE(status, ''))) = 'draft'
+         AND NULLIF(TRIM(COALESCE(scheduled_for, '')), '') IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM publication_events pe WHERE pe.post_id = posts.id
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM publish_delivery_receipts delivery
+            WHERE delivery.post_id = posts.id
+         )
+    `).bind(
+      authorization.enrollmentId,
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      authorization.policyVersion,
+      identity.userId,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+    ),
+    db.prepare(`
+      DELETE FROM learning_pilot_generated_drafts
+       WHERE enrollment_id = ?
+         AND user_id = ?
+         AND workspace_key = ?
+         AND client_id IS ?
+         AND owner_kind = ?
+         AND owner_id = ?
+         AND policy_version = ?
+         AND record_only = 1
+    `).bind(
+      authorization.enrollmentId,
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      authorization.policyVersion,
+    ),
+    db.prepare(`
       DELETE FROM learning_pilot_enrollments
        WHERE id = ?
          AND user_id = ?
@@ -465,6 +596,7 @@ export async function withdrawRecordOnlyPilot(
     policyVersion: authorization.policyVersion,
     decisionsRemoved: countValue(decisionCount?.decision_count),
     samplesRemoved: countValue(sampleCount?.sample_count),
+    generatedPilotDraftsDeleted: countValue(generatedDrafts?.generated_draft_count),
     sourcePostsDeleted: 0,
     publishingRecordsDeleted: 0,
   };
