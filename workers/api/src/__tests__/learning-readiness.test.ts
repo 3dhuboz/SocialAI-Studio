@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { hasCompleteLearningReadinessChecksSchema } from '../../../../shared/learning-readiness-checks';
 import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 import {
@@ -15,7 +16,10 @@ import {
   type ReleaseEvidenceRow,
   type WorkspaceCostTelemetry,
 } from '../lib/learning/readiness';
-import { cronEvaluateLearningReadiness } from '../cron/evaluate-learning-readiness';
+import {
+  cronEvaluateLearningReadiness,
+  loadLearningReadinessSchemaState,
+} from '../cron/evaluate-learning-readiness';
 import {
   hasWorkspaceSevereFalsePass,
   loadWorkspaceLearningMode,
@@ -807,6 +811,10 @@ describe('learning release readiness', () => {
 });
 
 describe('readiness cron receipts', () => {
+  const completeSchema = async () => ({
+    pilotSamplesReady: true,
+    calibrationAuditsReady: true,
+  });
   const redSnapshot = {
     ready: false,
     metrics: { ...readyMetrics, severeFalsePasses: 1 },
@@ -827,6 +835,7 @@ describe('readiness cron receipts', () => {
       now: new Date('2026-07-14T01:00:00.000Z'),
       collect: async () => redSnapshot,
       loadPrevious: async () => ({ ready: 1 }),
+      loadSchemaState: completeSchema,
       quarantine,
       persist,
       alert,
@@ -868,6 +877,7 @@ describe('readiness cron receipts', () => {
         now: new Date('2026-07-14T01:00:00.000Z'),
         collect: async () => scenario.snapshot,
         loadPrevious: async () => scenario.previous,
+        loadSchemaState: completeSchema,
         quarantine: async () => 0,
         persist,
         alert,
@@ -888,6 +898,7 @@ describe('readiness cron receipts', () => {
         now: new Date('2026-07-14T01:00:00.000Z'),
         collect: async () => redSnapshot,
         loadPrevious: async () => ({ ready: 0 }),
+        loadSchemaState: completeSchema,
         quarantine: async () => 1,
         persist: async () => undefined,
         alert,
@@ -910,6 +921,7 @@ describe('readiness cron receipts', () => {
     await expect(cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
       collect: async () => { throw new Error('D1 unavailable'); },
       loadPrevious: async () => ({ ready: 1 }),
+      loadSchemaState: completeSchema,
       persist,
       alert: async () => undefined,
       randomId: () => 'never',
@@ -922,12 +934,121 @@ describe('readiness cron receipts', () => {
     await expect(cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
       collect: async () => redSnapshot,
       loadPrevious: async () => ({ ready: 1 }),
+      loadSchemaState: completeSchema,
       quarantine: async () => { throw new Error('quarantine unavailable'); },
       persist,
       alert: async () => undefined,
       randomId: () => 'never',
     })).rejects.toThrow('quarantine unavailable');
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('persists a complete red receipt without touching deferred pilot tables', async () => {
+    const collect = vi.fn(async () => redSnapshot);
+    const quarantine = vi.fn(async () => 1);
+    const persist = vi.fn(async () => undefined);
+    const alert = vi.fn(async () => undefined);
+
+    const result = await cronEvaluateLearningReadiness(
+      { DB: {} as D1Database } as Env,
+      {
+        now: new Date('2026-07-14T01:00:00.000Z'),
+        collect,
+        loadPrevious: async () => ({ ready: 0 }),
+        loadSchemaState: async () => ({
+          pilotSamplesReady: false,
+          calibrationAuditsReady: false,
+        }),
+        quarantine,
+        persist,
+        alert,
+        randomId: () => 'readiness-deferred',
+      },
+    );
+
+    expect(result).toEqual({
+      posts_processed: 0,
+      ready: false,
+      id: 'readiness-deferred',
+      workspaces_disabled: 0,
+      pilot_samples_schema_ready: 0,
+      calibration_audits_schema_ready: 0,
+    });
+    expect(collect).not.toHaveBeenCalled();
+    expect(quarantine).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+    expect(persist).toHaveBeenCalledOnce();
+    const persisted = persist.mock.calls[0][1];
+    expect(persisted.snapshot.ready).toBe(false);
+    expect(persisted.snapshot.metrics).toMatchObject({
+      pilotDecisions: 0,
+      falseHoldRate: 1,
+      publishingRegressions: 1,
+      costWithinBudget: false,
+      killSwitchTested: false,
+    });
+    expect(hasCompleteLearningReadinessChecksSchema(
+      persisted.snapshot.checks,
+    )).toBe(true);
+  });
+
+  it('alerts on a green-to-red transition when required schemas are deferred', async () => {
+    const alert = vi.fn(async () => undefined);
+
+    await cronEvaluateLearningReadiness(
+      { DB: {} as D1Database } as Env,
+      {
+        loadPrevious: async () => ({ ready: 1 }),
+        loadSchemaState: async () => ({
+          pilotSamplesReady: false,
+          calibrationAuditsReady: true,
+        }),
+        persist: async () => undefined,
+        alert,
+        randomId: () => 'readiness-deferred-transition',
+      },
+    );
+
+    expect(alert).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith(
+      expect.anything(),
+      'learning_readiness_green_to_red',
+      'critical',
+      expect.stringMatching(/Protected Autopilot readiness turned red/),
+    );
+  });
+});
+
+describe('readiness schema preflight', () => {
+  it('reports each deferred table independently without querying either table', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM sqlite_master': [{
+        pilot_samples_count: 1,
+        calibration_audits_count: 0,
+      }],
+    });
+
+    await expect(loadLearningReadinessSchemaState(db)).resolves.toEqual({
+      pilotSamplesReady: true,
+      calibrationAuditsReady: false,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('first');
+    expect(calls[0].sql).toContain('FROM sqlite_master');
+    expect(calls[0].sql).not.toContain('FROM learning_pilot_samples');
+    expect(calls[0].sql).not.toContain('FROM learning_calibration_audits');
+  });
+
+  it('rejects ambiguous schema metadata instead of assuming readiness', async () => {
+    const { db } = makeRecordingD1({
+      'FROM sqlite_master': [{
+        pilot_samples_count: 2,
+        calibration_audits_count: 1,
+      }],
+    });
+
+    await expect(loadLearningReadinessSchemaState(db))
+      .rejects.toThrow('invalid learning_pilot_samples count');
   });
 });
 

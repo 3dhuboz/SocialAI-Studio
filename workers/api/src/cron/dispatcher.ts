@@ -52,6 +52,8 @@ const LEARNING_PILOT_DETAIL_KEYS = [
 
 const LEARNING_READINESS_DETAIL_KEYS = [
   'workspaces_disabled',
+  'pilot_samples_schema_ready',
+  'calibration_audits_schema_ready',
 ] as const;
 
 const LEARNING_CALIBRATION_DETAIL_KEYS = [
@@ -69,6 +71,8 @@ const LEARNING_CALIBRATION_DETAIL_KEYS = [
 type TrackedCronResult = {
   posts_processed?: number;
   workspaces_disabled?: number;
+  pilot_samples_schema_ready?: number;
+  calibration_audits_schema_ready?: number;
 };
 
 export interface CronTriggerMetadata {

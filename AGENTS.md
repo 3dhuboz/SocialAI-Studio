@@ -218,7 +218,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Current source schema version:** v47
 
-**Current production schema version:** v42.
+**Current production schema version:** v43. Schemas v44-v47 remain deferred.
 
 **Current staging schema version:** v47.
 
@@ -230,7 +230,7 @@ non-active and on-hold clients, requires healthy per-workspace cost telemetry,
 never reuses the original release receipt, and quarantines a Protected
 Autopilot workspace when a verified recheck finds a release-critical false
 pass. The migration and matching Worker are live in staging only; production
-remains on schema v42 until every documented release gate passes.
+remains on schema v43 until every documented release gate passes.
 
 Positive pilot sample migration:
 `workers/api/schema_v46_learning_pilot_samples.sql`.
@@ -239,7 +239,7 @@ owner/customer business content rather than synthetic QA. Pilot validation,
 cron evaluation, readiness, and adjudication sampling all require the positive
 receipt in addition to consent; absence or content drift fails closed before AI
 spend. The migration and matching Worker are live in staging only; production
-remains on schema v42 and must not receive either until the release gates pass.
+remains on schema v43 and must not receive either until the release gates pass.
 
 Pilot AI cost attribution migration:
 `workers/api/schema_v45_learning_ai_usage_attribution.sql`.
@@ -260,9 +260,10 @@ migration is live in staging only and must precede matching Worker code.
 
 Pilot cron telemetry migration: `workers/api/schema_v43_cron_run_details.sql`.
 It adds a bounded `details_json` field to `cron_runs`; application code writes
-only allowlisted numeric record-only pilot counters. The migration is live in
-staging only and must be applied before deploying the matching Worker code to
-another environment.
+only allowlisted numeric record-only pilot/readiness counters. The migration is
+live in staging and production. Production received the exact additive migration
+on 2026-07-24 after the live Worker exposed the missing-column compatibility
+gap; schemas v44-v47 remain deferred and must not be applied before their gates.
 
 Delivery uncertainty migration: `workers/api/schema_v42_delivery_uncertainty_receipts.sql`.
 It adds tenant-scoped, append-only shadow evidence around provider delivery

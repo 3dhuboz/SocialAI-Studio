@@ -54,7 +54,13 @@ describe('learning pilot cron telemetry', () => {
     expect(JSON.parse(buildCronDetails('learning_readiness', {
       posts_processed: 30,
       workspaces_disabled: 2,
-    })!)).toEqual({ workspaces_disabled: 2 });
+      pilot_samples_schema_ready: 1,
+      calibration_audits_schema_ready: 1,
+    })!)).toEqual({
+      workspaces_disabled: 2,
+      pilot_samples_schema_ready: 1,
+      calibration_audits_schema_ready: 1,
+    });
     expect(JSON.parse(buildCronDetails(
       'learning_calibration',
       calibrationResult,
@@ -76,7 +82,11 @@ describe('learning pilot cron telemetry', () => {
 
   it.each([
     ['learning_pilot', { ...pilotResult, errors: undefined }],
-    ['learning_readiness', { posts_processed: 0 }],
+    ['learning_readiness', {
+      posts_processed: 0,
+      workspaces_disabled: 0,
+      pilot_samples_schema_ready: 1,
+    }],
     ['learning_calibration', { ...calibrationResult, errors: -1 }],
     ['learning_calibration', { ...calibrationResult, completed: 0.5 }],
   ])('fails closed when %s emits an invalid or missing counter', (cronType, result) => {
@@ -85,16 +95,22 @@ describe('learning pilot cron telemetry', () => {
     );
   });
 
-  it('persists only the quarantine count for readiness runs', async () => {
+  it('persists the quarantine count and deferred schema state for readiness runs', async () => {
     const { db, calls } = makeRecordingD1();
 
     await trackCron({ DB: db } as Env, 'learning_readiness', async () => ({
       posts_processed: 30,
       workspaces_disabled: 2,
+      pilot_samples_schema_ready: 0,
+      calibration_audits_schema_ready: 0,
     }));
 
     const insert = calls.find((call) => call.sql.includes('INSERT INTO cron_runs'))!;
-    expect(JSON.parse(String(insert.binds[5]))).toEqual({ workspaces_disabled: 2 });
+    expect(JSON.parse(String(insert.binds[5]))).toEqual({
+      workspaces_disabled: 2,
+      pilot_samples_schema_ready: 0,
+      calibration_audits_schema_ready: 0,
+    });
   });
 
   it('persists the sanitized details alongside the normal cron receipt', async () => {
