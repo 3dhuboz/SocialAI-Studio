@@ -328,6 +328,7 @@ describe('record-only pilot media jobs', () => {
       slot: 2,
     }, deps);
     expect(pending.state).toBe('generating');
+    expect(pending.providerState).toBe('pending');
     expect(db.prepare(
       'SELECT archetype_slug FROM learning_pilot_media_jobs WHERE id = ?',
     ).get(started.id)).toEqual({ archetype_slug: 'tech-saas-agency' });
@@ -342,6 +343,7 @@ describe('record-only pilot media jobs', () => {
       mediaKind: 'video',
       sourceStatus: 'Draft',
       mediaUrl: 'https://fal.example/pilot-video.mp4',
+      providerState: 'ready',
       publishingAllowed: false,
     });
     const post = db.prepare(
@@ -427,6 +429,7 @@ describe('record-only pilot media jobs', () => {
       mediaKind: 'video',
       postId: null,
       errorCode: 'pilot_media_video_timed_out',
+      providerState: 'pending',
       publishingAllowed: false,
     });
     expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
@@ -490,6 +493,7 @@ describe('record-only pilot media jobs', () => {
       sourceStatus: 'Draft',
       mediaUrl: 'https://fal.example/late-pilot-video.mp4',
       errorCode: null,
+      providerState: 'ready',
       publishingAllowed: false,
     });
     expect(deps.startVideo).toHaveBeenCalledOnce();
@@ -540,7 +544,13 @@ describe('record-only pilot media jobs', () => {
       slot: 2,
       mediaKind: 'video',
     }, deps);
-    expect(same).toEqual(timedOut);
+    expect(same).toMatchObject({
+      id: timedOut.id,
+      state: 'failed',
+      attemptCount: 1,
+      errorCode: 'pilot_media_video_timed_out',
+      providerState: null,
+    });
     await expect(startRecordOnlyPilotMediaJob(env, {
       identity,
       enrollment,

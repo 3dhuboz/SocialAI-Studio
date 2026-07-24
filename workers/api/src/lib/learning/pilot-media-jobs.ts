@@ -90,6 +90,7 @@ export interface PublicPilotMediaJob {
   errorCode: string | null;
   generatedAt: string;
   completedAt: string | null;
+  providerState: VideoPollResult['state'] | 'unavailable' | null;
   recordOnly: true;
   sourceStatus: 'Draft' | null;
   scheduledFor: null;
@@ -402,6 +403,7 @@ export function publicPilotMediaJob(row: PilotMediaJobRow): PublicPilotMediaJob 
     errorCode: row.error_code,
     generatedAt: row.claimed_at,
     completedAt: row.completed_at,
+    providerState: null,
     recordOnly: true,
     sourceStatus: row.state === 'ready' ? 'Draft' : null,
     scheduledFor: null,
@@ -1200,9 +1202,9 @@ export async function pollRecordOnlyPilotVideoJob(
         'pilot_media_video_timed_out',
         deps.now(),
       );
-      return publicPilotMediaJob(failed);
+      return { ...publicPilotMediaJob(failed), providerState: 'unavailable' };
     }
-    return publicPilotMediaJob(job);
+    return { ...publicPilotMediaJob(job), providerState: 'unavailable' };
   }
   if (result.state === 'pending') {
     if (leaseExpired && !lateRecovery) {
@@ -1213,12 +1215,14 @@ export async function pollRecordOnlyPilotVideoJob(
         'pilot_media_video_timed_out',
         deps.now(),
       );
-      return publicPilotMediaJob(failed);
+      return { ...publicPilotMediaJob(failed), providerState: 'pending' };
     }
-    return publicPilotMediaJob(job);
+    return { ...publicPilotMediaJob(job), providerState: 'pending' };
   }
   if (result.state === 'failed' || !result.videoUrl) {
-    if (lateRecovery) return publicPilotMediaJob(job);
+    if (lateRecovery) {
+      return { ...publicPilotMediaJob(job), providerState: 'failed' };
+    }
     const failed = await markPilotMediaJobFailed(
       env,
       job,
@@ -1226,7 +1230,7 @@ export async function pollRecordOnlyPilotVideoJob(
       result.errorCode ?? 'pilot_media_video_failed',
       deps.now(),
     );
-    return publicPilotMediaJob(failed);
+    return { ...publicPilotMediaJob(failed), providerState: 'failed' };
   }
 
   try {
@@ -1254,7 +1258,7 @@ export async function pollRecordOnlyPilotVideoJob(
       archetypeSlug: job.archetype_slug,
       now: deps.now(),
     });
-    return publicPilotMediaJob(ready);
+    return { ...publicPilotMediaJob(ready), providerState: 'ready' };
   } catch (error) {
     const failed = await markPilotMediaJobFailed(
       env,
