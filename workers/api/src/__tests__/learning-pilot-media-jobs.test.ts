@@ -329,6 +329,7 @@ describe('record-only pilot media jobs', () => {
     }, deps);
     expect(pending.state).toBe('generating');
     expect(pending.providerState).toBe('pending');
+    expect(pending.providerErrorCode).toBeNull();
     expect(db.prepare(
       'SELECT archetype_slug FROM learning_pilot_media_jobs WHERE id = ?',
     ).get(started.id)).toEqual({ archetype_slug: 'tech-saas-agency' });
@@ -344,6 +345,7 @@ describe('record-only pilot media jobs', () => {
       sourceStatus: 'Draft',
       mediaUrl: 'https://fal.example/pilot-video.mp4',
       providerState: 'ready',
+      providerErrorCode: null,
       publishingAllowed: false,
     });
     const post = db.prepare(
@@ -398,6 +400,39 @@ describe('record-only pilot media jobs', () => {
       .toEqual({ count: 0 });
   });
 
+  it('reports a sanitized provider status error without creating a post', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockRejectedValue(new Error('video_provider_status_http_404'));
+
+    await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    nowRef.value = new Date('2026-07-24T01:01:00.000Z');
+    const unavailable = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(unavailable).toMatchObject({
+      state: 'generating',
+      postId: null,
+      providerState: 'unavailable',
+      providerErrorCode: 'video_provider_status_http_404',
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
+  });
+
   it('times out an overdue provider video only after confirming it is still pending', async () => {
     const db = database();
     const env = environment(db);
@@ -430,6 +465,7 @@ describe('record-only pilot media jobs', () => {
       postId: null,
       errorCode: 'pilot_media_video_timed_out',
       providerState: 'pending',
+      providerErrorCode: null,
       publishingAllowed: false,
     });
     expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
@@ -494,6 +530,7 @@ describe('record-only pilot media jobs', () => {
       mediaUrl: 'https://fal.example/late-pilot-video.mp4',
       errorCode: null,
       providerState: 'ready',
+      providerErrorCode: null,
       publishingAllowed: false,
     });
     expect(deps.startVideo).toHaveBeenCalledOnce();

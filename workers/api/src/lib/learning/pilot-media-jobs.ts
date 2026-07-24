@@ -91,6 +91,7 @@ export interface PublicPilotMediaJob {
   generatedAt: string;
   completedAt: string | null;
   providerState: VideoPollResult['state'] | 'unavailable' | null;
+  providerErrorCode: string | null;
   recordOnly: true;
   sourceStatus: 'Draft' | null;
   scheduledFor: null;
@@ -337,7 +338,9 @@ async function defaultPollVideo(
     { headers, signal: AbortSignal.timeout(15_000) },
   );
   const statusData = await readJson(statusResponse);
-  if (!statusResponse.ok) throw new Error('video_provider_status_failed');
+  if (!statusResponse.ok) {
+    throw new Error(`video_provider_status_http_${statusResponse.status}`);
+  }
   const status = String(statusData.status ?? '').trim().toUpperCase();
   if (status === 'FAILED') {
     return { state: 'failed', errorCode: 'video_provider_reported_failed' };
@@ -404,6 +407,7 @@ export function publicPilotMediaJob(row: PilotMediaJobRow): PublicPilotMediaJob 
     generatedAt: row.claimed_at,
     completedAt: row.completed_at,
     providerState: null,
+    providerErrorCode: null,
     recordOnly: true,
     sourceStatus: row.state === 'ready' ? 'Draft' : null,
     scheduledFor: null,
@@ -1193,7 +1197,10 @@ export async function pollRecordOnlyPilotVideoJob(
       requestId: job.provider_request_id,
       model: job.media_model,
     });
-  } catch {
+  } catch (error) {
+    const providerErrorCode = boundedErrorCode(
+      error instanceof Error ? error.message : 'video_provider_poll_unavailable',
+    );
     if (leaseExpired && !lateRecovery) {
       const failed = await markPilotMediaJobFailed(
         env,
@@ -1202,9 +1209,17 @@ export async function pollRecordOnlyPilotVideoJob(
         'pilot_media_video_timed_out',
         deps.now(),
       );
-      return { ...publicPilotMediaJob(failed), providerState: 'unavailable' };
+      return {
+        ...publicPilotMediaJob(failed),
+        providerState: 'unavailable',
+        providerErrorCode,
+      };
     }
-    return { ...publicPilotMediaJob(job), providerState: 'unavailable' };
+    return {
+      ...publicPilotMediaJob(job),
+      providerState: 'unavailable',
+      providerErrorCode,
+    };
   }
   if (result.state === 'pending') {
     if (leaseExpired && !lateRecovery) {
@@ -1215,13 +1230,25 @@ export async function pollRecordOnlyPilotVideoJob(
         'pilot_media_video_timed_out',
         deps.now(),
       );
-      return { ...publicPilotMediaJob(failed), providerState: 'pending' };
+      return {
+        ...publicPilotMediaJob(failed),
+        providerState: 'pending',
+        providerErrorCode: null,
+      };
     }
-    return { ...publicPilotMediaJob(job), providerState: 'pending' };
+    return {
+      ...publicPilotMediaJob(job),
+      providerState: 'pending',
+      providerErrorCode: null,
+    };
   }
   if (result.state === 'failed' || !result.videoUrl) {
     if (lateRecovery) {
-      return { ...publicPilotMediaJob(job), providerState: 'failed' };
+      return {
+        ...publicPilotMediaJob(job),
+        providerState: 'failed',
+        providerErrorCode: result.errorCode ?? 'pilot_media_video_failed',
+      };
     }
     const failed = await markPilotMediaJobFailed(
       env,
@@ -1230,7 +1257,11 @@ export async function pollRecordOnlyPilotVideoJob(
       result.errorCode ?? 'pilot_media_video_failed',
       deps.now(),
     );
-    return { ...publicPilotMediaJob(failed), providerState: 'failed' };
+    return {
+      ...publicPilotMediaJob(failed),
+      providerState: 'failed',
+      providerErrorCode: result.errorCode ?? 'pilot_media_video_failed',
+    };
   }
 
   try {
@@ -1258,7 +1289,11 @@ export async function pollRecordOnlyPilotVideoJob(
       archetypeSlug: job.archetype_slug,
       now: deps.now(),
     });
-    return { ...publicPilotMediaJob(ready), providerState: 'ready' };
+    return {
+      ...publicPilotMediaJob(ready),
+      providerState: 'ready',
+      providerErrorCode: null,
+    };
   } catch (error) {
     const failed = await markPilotMediaJobFailed(
       env,
