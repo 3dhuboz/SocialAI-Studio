@@ -229,7 +229,7 @@ export function buildPilotVideoQueueUrl(
   if (!scopedRequestId || scopedRequestId.length > 500) {
     throw new Error('video_provider_request_id_invalid');
   }
-  const suffix = target === 'status' ? '/status' : '';
+  const suffix = target === 'status' ? '/status' : '/response';
   return `https://queue.fal.run/${KLING_STANDARD_VIDEO_MODEL}/requests/${
     encodeURIComponent(scopedRequestId)
   }${suffix}`;

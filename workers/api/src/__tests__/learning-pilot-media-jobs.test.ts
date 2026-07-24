@@ -240,7 +240,7 @@ describe('record-only pilot media jobs', () => {
       'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/request%2Fwith%20spaces/status',
     );
     expect(buildPilotVideoQueueUrl('request-1', 'result')).toBe(
-      'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/request-1',
+      'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/request-1/response',
     );
     expect(() => buildPilotVideoQueueUrl('  ', 'status'))
       .toThrow('video_provider_request_id_invalid');
