@@ -9,6 +9,7 @@ import {
   locateReelProjectTime,
   moveReelClip,
   redoEdit,
+  reelClipTransitionOpacity,
   reelProjectDuration,
   removeReelClip,
   splitReelClip,
@@ -69,6 +70,7 @@ describe('Reel editor timeline', () => {
       volume: -1,
       zoom: 12,
       saturation: 4,
+      transitionDurationSeconds: 8,
       trimStartSeconds: -4,
       trimEndSeconds: 99,
     });
@@ -77,9 +79,20 @@ describe('Reel editor timeline', () => {
       volume: 0,
       zoom: 2.5,
       saturation: 2,
+      transitionDurationSeconds: 1.5,
       trimStartSeconds: 0,
       trimEndSeconds: 12,
     });
+  });
+
+  it('calculates predictable fade boundaries for video and audio', () => {
+    const fading = { ...clip('fade', 4), transition: 'fade' as const, transitionDurationSeconds: 0.5 };
+    expect(reelClipTransitionOpacity(fading, 0)).toBe(0);
+    expect(reelClipTransitionOpacity(fading, 0.25)).toBe(0.5);
+    expect(reelClipTransitionOpacity(fading, 1)).toBe(1);
+    expect(reelClipTransitionOpacity(fading, 3.75)).toBe(0.5);
+    expect(reelClipTransitionOpacity(fading, 4)).toBe(0);
+    expect(reelClipTransitionOpacity({ ...fading, transition: 'cut' }, 0)).toBe(1);
   });
 
   it('maps a global playhead to the correct source frame', () => {

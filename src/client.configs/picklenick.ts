@@ -18,7 +18,7 @@ export const CLIENT = {
   defaultDescription: 'Handcrafted pickles, fermented goods and deli favourites. Small batch, big flavour.',
 
   accentColor: '#b5513c',
-  theme: 'light' as const,
+  theme: 'dark' as const,
 
   poweredBy: 'Powered by Penny Wise I.T',
   poweredByUrl: 'https://pennywiseit.com.au',
