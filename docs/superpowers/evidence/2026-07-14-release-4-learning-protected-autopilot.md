@@ -4453,3 +4453,87 @@ flag, schedule, or publishing behaviour changed. The credential-free receipt
 is:
 
 - `docs/superpowers/evidence/attestations/2026-07-24-staging-calibration-provenance-attestation.json`
+
+### Production Deferred-Schema Compatibility Recovery
+
+The live rollout exposed a production compatibility defect rather than a
+customer-content defect. Production D1 was intentionally on v42 while the
+deployed Worker expected the additive v43 `cron_runs.details_json` column.
+Before repair, the database was exported to:
+
+- `D:\GitHubBackup\SocialAi\database\socialai-db-pre-v43-repair-20260724T004731Z.sql`
+- bytes: `26,052,769`
+- SHA-256: `f5e3ffa693bab79045b6172c8ecadf0533e595825b13ef69a0fbc8f1acc02085`
+
+Only the exact additive v43 migration was applied. Its canonical SHA-256 was
+`5d5ea169b7b08e8859b09f104f6ca6366db621983a9562f54ad5a8aa5b6d79a2`,
+and Cloudflare returned D1 bookmark
+`00005a89-00000006-000050b2-e58a12c9e2a34540eda77090ceff51c7`.
+No v44-v47 migration was applied.
+
+Commits `5180df6f4f5a35f89a5644e90fea4062e9c906c2`,
+`2c42c18c942deb26768eea91a5674c810dd72468`, and
+`1222edeb71f44618158e3877e47ea06beecbed11` then closed the remaining
+runtime gap:
+
+- production readiness preflights v44, the v45 `ai_usage` attribution column,
+  v46, and v47 before querying deferred evidence;
+- a v43 production database receives a complete red readiness receipt with
+  all four schema markers set to zero;
+- record-only pilot and independent calibration execution are staging-only in
+  both dispatcher and job entry points;
+- staging-only adjudication and operations routes fail closed before deferred
+  table access outside staging; and
+- privacy deletion removes deferred-table rows only when those tables exist.
+
+Worker and root TypeScript both passed. The clean exact commit passed 496 of
+496 curated tests and all 119 required release checks with zero missing or
+failed checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-24T01-39-30-836Z.json`
+- payload SHA-256 `2243f486a6f53aed14b810d773245aef36cd499f780e34bdfa627497a0443ac8`
+- file SHA-256 `2c28ba27bb858225518d1473366b38d4be52a6274a86018020addbfd94dfd1e7`
+
+Staging Worker version `38ade0d0-f368-4cfa-82ce-08b8d530e9e2` retained the
+staging D1 binding and dormant release/application flags. Its first unattended
+post-deploy quarter-hour event recorded:
+
+- `health_sweep` success at `2026-07-24T01:45:10Z`;
+- `learning_pilot` success at `2026-07-24T01:45:11Z`, with zero candidates,
+  posts, errors, or other work; and
+- `learning_readiness` success at `2026-07-24T01:45:15Z`, with all four
+  deferred-schema markers equal to one.
+
+Production Worker version `20a4a18f-05ac-4f9b-8191-280a08b4b474` retained
+the production D1 binding, the existing production schedules, and disabled
+release enforcement, Protected Autopilot, and organic reach application. The
+pre-deploy `2026-07-24T01:45:05Z` pilot receipt had failed against the absent
+v46 table and the matching readiness receipt contained only two schema
+markers. The first unattended post-deploy event at `02:00Z` then proved the
+repair:
+
+- `health_sweep` succeeded at `2026-07-24T02:00:04Z`;
+- normal `publish` succeeded at `2026-07-24T02:00:05Z` with zero posts due;
+- `learning_readiness` succeeded at `2026-07-24T02:00:06Z` with all four
+  deferred-schema markers equal to zero; and
+- no new `learning_pilot` receipt was created, so the latest pilot receipt
+  remained the pre-deploy `01:45:05Z` row.
+
+The exact-version, read-only live judge returned `safe_hold` with no failed
+safety checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-24T02-00-59-938Z.json`
+- payload SHA-256 `8524304cb2c2151cb3ebb4dac10c081feab42e78d359a7e25a12a94ba69a47db`
+- file SHA-256 `5ef0b2a52033037fa773c9a1e2b8ed4396b2cfabf73d55267d2c65ff9b236aa0`
+
+Both Protected Autopilot counts remain zero, production `hughesq-001` remains
+`on_hold`, and v44-v47 remain absent from production. This recovery wrote only
+normal operational cron/readiness receipts. It did not mutate customer post
+content, media, schedules, publication state, consent, protection mode, or
+release/application flags.
+
+Promotion remains intentionally blocked on genuine owner/customer pilot
+evidence, green staging and production readiness, an unattended weekly staging
+calibration with verified evidence, and operator-gated production v44-v47
+schema work. The next safe phase remains `pilot_evidence`; automatic activation
+and automatic production mutation remain prohibited.
