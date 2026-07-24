@@ -110,6 +110,29 @@ describe('record-only pilot draft generator', () => {
     );
   });
 
+  it('retries unsupported first-person customer evidence before creating a receipt', async () => {
+    const unsupported = JSON.stringify({
+      content: 'Most small businesses we work with find at least one handoff where the same information gets entered twice.',
+      hashtags: ['#WorkflowAutomation'],
+      imagePrompt: 'Bright photograph of a small business owner mapping one repeated handoff with blank cards on a desk, no readable text',
+    });
+    const deps = depsFor(unsupported, safeResponse());
+
+    const result = await generateRecordOnlyPilotDraft(
+      {} as Env,
+      identity,
+      context,
+      'pilot-generated-customer-evidence',
+      deps,
+    );
+
+    expect(result.attemptCount).toBe(2);
+    expect(deps.callJson).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(deps.callJson).mock.calls[1][2]).toContain(
+      'unsupported generalized customer-experience claim',
+    );
+  });
+
   it.each([
     ['forbidden subject', JSON.stringify({
       content: 'A gambling workflow needs the same careful process mapping as any repeated task.',
