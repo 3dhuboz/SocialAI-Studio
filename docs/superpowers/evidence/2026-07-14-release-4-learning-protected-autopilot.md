@@ -4389,3 +4389,67 @@ green readiness, one natural weekly staging calibration, and the two deferred
 production schemas. This receipt authorizes record-only staging monitoring
 only; it does not authorize scheduling, publishing, production activation, or
 synthetic positive evidence.
+
+### Weekly Calibration Schedule-Provenance Gate
+
+The rollout verifier previously accepted a successful weekly calibration
+receipt based on freshness and clean counters alone. A Wrangler
+`--test-scheduled` invocation could therefore look identical to the required
+unattended weekly run and clear the cron portion of the calibration gate.
+
+Commit `b2be25fb251a81b445cc0c27db142a3147b63f3e` closes that
+evidence-integrity gap. Every weekly calibration receipt now records the
+Cloudflare event's exact `cron_expression` and `scheduled_for` timestamp. A
+calibration with missing or malformed provenance records a failed cron
+receipt. The rollout judge accepts the receipt only when:
+
+- the expression is exactly `0 21 * * SUN`;
+- the scheduled timestamp is exactly Sunday at `21:00:00.000Z`;
+- the database receipt is not earlier than that timestamp; and
+- execution begins no more than 30 minutes late.
+
+The focused calibration and wiring suites passed 33 of 33 tests. The rollout
+judge suite passed 54 of 54 tests, including missing provenance, wrong cron,
+non-Sunday timing, pre-schedule receipt, and excessive-delay attacks. Worker
+and root TypeScript both passed.
+
+Staging Worker version `447ab976-f2d5-431d-91b4-0ba0406cbba9` contains the
+hardening. It retains only the record-only `*/15` and weekly schedules, the
+staging D1 binding, and all release/application flags disabled. The exact
+commit passed all 114 offline release checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-24T00-37-53-403Z.json`
+- payload SHA-256 `74e397f4a54f70010139f76e3ea05bf680488b2dfe618ea6ba2ea7a2e67f98b1`
+- file SHA-256 `29032bd1392d6a4681fa2277eab8edc399752af69574ed690b06b8ad1e8f551c`
+
+The version-pinned live judge returned `safe_hold` with no failed safety
+checks. The old `2026-07-19T21:00:22Z` calibration receipt is now correctly
+insufficient because it predates provenance capture, so
+`staging_calibration_cron_fresh` remains blocked until the next unattended
+Cloudflare event:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-24T00-38-18-703Z.json`
+- payload SHA-256 `8c4ba768129a121bd5f57736bbf418f9fc37346cffe4135713099d0d5774e99e`
+- file SHA-256 `1b3dde6f0c7f4abab7c64fb09410a8d6cccf89570e3bacec13a30da40bd46ae8`
+
+The strict `--require-ready` pass retained `safe_hold` and returned the
+required exit code `1`:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-24T00-39-33-915Z.json`
+- payload SHA-256 `551763230d027e02f70f5224f5e4abd4fecc0eccd2914f5d6bccfbeba2f5c38b`
+- file SHA-256 `d72230fb8405b0bd5166fc018e35980b5be78d85905fe3eab830048b9846501a`
+
+Cloudflare does not expose a cryptographic natural-versus-test marker on a
+ScheduledEvent. The new control proves exact schedule alignment and bounded
+server-recorded completion, and rejects arbitrary/off-slot manual runs. A
+test fired at the exact weekly slot remains operationally indistinguishable,
+so no manual substitute is authorized and the next unattended event remains
+required.
+
+Production stayed on Worker version
+`cea92e31-2f0b-4948-99e9-7e9904e27e86`; both Protected Autopilot counts
+remain zero; `hughesq-001` remains `on_hold`; and no production data, schema,
+flag, schedule, or publishing behaviour changed. The credential-free receipt
+is:
+
+- `docs/superpowers/evidence/attestations/2026-07-24-staging-calibration-provenance-attestation.json`
