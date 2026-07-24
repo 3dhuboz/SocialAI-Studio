@@ -146,6 +146,7 @@ describe('media routes ai_usage telemetry', () => {
     expect(usage?.bindings[2]).toBe('openrouter');
     expect(usage?.bindings[3]).toBe('google/gemini-2.5-flash-image');
     expect(usage?.bindings[7]).toBe(1);
+    expect(usage?.sql).not.toContain('learning_decision_id');
     expect(usage?.bindings[10]).toBe(1);
   });
 
@@ -181,6 +182,7 @@ describe('media routes ai_usage telemetry', () => {
     expect(usage?.bindings[2]).toBe('fal');
     expect(usage?.bindings[3]).toBe('nano-banana-pro');
     expect(usage?.bindings[7]).toBe(1);
+    expect(usage?.sql).not.toContain('learning_decision_id');
     expect(usage?.bindings[10]).toBe(1);
   });
 
@@ -378,6 +380,7 @@ describe('media routes ai_usage telemetry', () => {
     expect(usage?.bindings[0]).toBe('user_1');
     expect(usage?.bindings[2]).toBe('runway');
     expect(usage?.bindings[3]).toBe('/image_to_video');
+    expect(usage?.sql).not.toContain('learning_decision_id');
     expect(usage?.bindings[10]).toBe(1);
   });
 
@@ -496,6 +499,7 @@ describe('prewarm video ai_usage telemetry', () => {
     expect(completed?.bindings[2]).toBe('fal');
     expect(completed?.bindings[3]).toBe('kling-video');
     expect(completed?.bindings[9]).toBe('post_done');
+    expect(completed?.sql).not.toContain('learning_decision_id');
     expect(completed?.bindings[10]).toBe(1);
   });
 });

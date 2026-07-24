@@ -1,4 +1,6 @@
 import type { Env } from '../../env';
+import { isProtectedAutopilotExperimentTransitionAllowed } from '../../../../../shared/protectedAutopilotExperiment';
+import { hasCompleteGreenLearningReadinessChecks } from '../../../../../shared/learning-readiness-checks';
 import {
   LEARNING_MODES,
   normalizeWorkspaceIdentity,
@@ -10,6 +12,7 @@ import {
 import { AUTOPILOT_POLICY_VERSION } from './readiness';
 
 const READINESS_MAX_AGE_MS = 20 * 60 * 1000;
+export const SEVERE_FALSE_PASS_DISABLED_REASON = 'severe_false_pass_pending_operator_review';
 
 type LearningSettingsRow = {
   mode?: unknown;
@@ -78,12 +81,20 @@ export async function saveWorkspaceLearningSettings(
       monthly_ai_budget_usd_cents,disabled_reason,created_at,updated_at
     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)
     ON CONFLICT(user_id,workspace_key) DO UPDATE SET
-      mode = excluded.mode,
+      mode = CASE
+        WHEN NULLIF(TRIM(COALESCE(workspace_learning_settings.disabled_reason, '')), '')
+             IS NOT NULL
+         AND excluded.mode = 'protected_autopilot' THEN 'approval'
+        ELSE excluded.mode
+      END,
       autopublish_consent_at = excluded.autopublish_consent_at,
       autopublish_policy_version = excluded.autopublish_policy_version,
-      experiment_rate = excluded.experiment_rate,
+      experiment_rate = CASE
+        WHEN NULLIF(TRIM(COALESCE(workspace_learning_settings.disabled_reason, '')), '')
+             IS NOT NULL THEN 0
+        ELSE excluded.experiment_rate
+      END,
       monthly_ai_budget_usd_cents = excluded.monthly_ai_budget_usd_cents,
-      disabled_reason = NULL,
       updated_at = excluded.updated_at
     WHERE workspace_learning_settings.client_id IS excluded.client_id
       AND workspace_learning_settings.owner_kind = excluded.owner_kind
@@ -105,6 +116,132 @@ export async function saveWorkspaceLearningSettings(
   ).run();
 }
 
+export async function hasWorkspaceSevereFalsePass(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+): Promise<boolean> {
+  const row = await db.prepare(`
+    SELECT 1 AS severe_false_pass
+     WHERE EXISTS (
+       SELECT 1
+         FROM learning_decisions d
+         INNER JOIN learning_adjudications a
+           ON a.decision_id = d.id
+          AND a.user_id = d.user_id
+          AND a.workspace_key = d.workspace_key
+          AND a.client_id IS d.client_id
+          AND a.owner_kind = d.owner_kind
+          AND a.owner_id = d.owner_id
+        WHERE d.user_id = ?
+          AND d.workspace_key = ?
+          AND d.client_id IS ?
+          AND d.owner_kind = ?
+          AND d.owner_id = ?
+          AND d.stage = 'release'
+          AND d.release_state = 'pass_green'
+          AND a.expected_state = 'block_red'
+          AND a.severity = 'release_critical'
+     )
+        OR EXISTS (
+          SELECT 1
+            FROM learning_calibration_audits audit
+            INNER JOIN learning_decisions calibrated
+              ON calibrated.id = audit.decision_id
+             AND calibrated.user_id = audit.user_id
+             AND calibrated.workspace_key = audit.workspace_key
+             AND calibrated.client_id IS audit.client_id
+             AND calibrated.owner_kind = audit.owner_kind
+             AND calibrated.owner_id = audit.owner_id
+           WHERE audit.user_id = ?
+             AND audit.workspace_key = ?
+             AND audit.client_id IS ?
+             AND audit.owner_kind = ?
+             AND audit.owner_id = ?
+             AND audit.audit_status = 'completed'
+             AND audit.source_status = 'verified'
+             AND audit.original_state = 'pass_green'
+             AND audit.expected_state = 'block_red'
+             AND audit.severity = 'release_critical'
+        )
+     LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+  ).first<{ severe_false_pass: number }>();
+  return row != null;
+}
+
+export async function quarantineSevereFalsePassWorkspaces(
+  db: D1Database,
+  now: string,
+): Promise<number> {
+  if (!Number.isFinite(Date.parse(now))) throw new Error('Quarantine timestamp is invalid');
+  const result = await db.prepare(`
+    UPDATE workspace_learning_settings
+       SET mode = 'approval',
+           experiment_rate = 0,
+           disabled_reason = COALESCE(
+             NULLIF(TRIM(disabled_reason), ''),
+             ?
+           ),
+           updated_at = ?
+     WHERE mode = 'protected_autopilot'
+       AND (
+         EXISTS (
+           SELECT 1
+             FROM learning_decisions d
+             INNER JOIN learning_adjudications a
+               ON a.decision_id = d.id
+              AND a.user_id = d.user_id
+              AND a.workspace_key = d.workspace_key
+              AND a.client_id IS d.client_id
+              AND a.owner_kind = d.owner_kind
+              AND a.owner_id = d.owner_id
+            WHERE d.user_id = workspace_learning_settings.user_id
+              AND d.workspace_key = workspace_learning_settings.workspace_key
+              AND d.client_id IS workspace_learning_settings.client_id
+              AND d.owner_kind = workspace_learning_settings.owner_kind
+              AND d.owner_id = workspace_learning_settings.owner_id
+              AND d.stage = 'release'
+              AND d.release_state = 'pass_green'
+              AND a.expected_state = 'block_red'
+              AND a.severity = 'release_critical'
+         )
+         OR EXISTS (
+           SELECT 1
+             FROM learning_calibration_audits audit
+             INNER JOIN learning_decisions calibrated
+               ON calibrated.id = audit.decision_id
+              AND calibrated.user_id = audit.user_id
+              AND calibrated.workspace_key = audit.workspace_key
+              AND calibrated.client_id IS audit.client_id
+              AND calibrated.owner_kind = audit.owner_kind
+              AND calibrated.owner_id = audit.owner_id
+            WHERE audit.user_id = workspace_learning_settings.user_id
+              AND audit.workspace_key = workspace_learning_settings.workspace_key
+              AND audit.client_id IS workspace_learning_settings.client_id
+              AND audit.owner_kind = workspace_learning_settings.owner_kind
+              AND audit.owner_id = workspace_learning_settings.owner_id
+              AND audit.audit_status = 'completed'
+              AND audit.source_status = 'verified'
+              AND audit.original_state = 'pass_green'
+              AND audit.expected_state = 'block_red'
+              AND audit.severity = 'release_critical'
+         )
+       )
+  `).bind(SEVERE_FALSE_PASS_DISABLED_REASON, now).run();
+  const changes = Number(result.meta?.changes ?? 0);
+  return Number.isSafeInteger(changes) && changes >= 0 ? changes : 0;
+}
+
 function currentMonthBounds(now: Date): [string, string] {
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
@@ -123,32 +260,44 @@ export async function getWorkspaceMonthlyAiSpend(
 ): Promise<WorkspaceMonthlyAiSpend> {
   const [monthStart, monthEnd] = currentMonthBounds(now);
   const sql = identity.clientId === null
-    ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+    ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+              COUNT(*) AS telemetry_count,
+              SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+                AS invalid_telemetry_count
          FROM ai_usage
-        WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
-    : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+        WHERE user_id = ? AND client_id IS NULL
+          AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`
+    : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+              COUNT(*) AS telemetry_count,
+              SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+                AS invalid_telemetry_count
          FROM ai_usage
-        WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
+        WHERE user_id = ? AND client_id = ?
+          AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`;
   const bindings = identity.clientId === null
     ? [identity.userId, monthStart, monthEnd]
     : [identity.userId, identity.clientId, monthStart, monthEnd];
   const row = await db.prepare(sql).bind(...bindings).first<{
     spend_usd: number | null;
     telemetry_count: number;
+    invalid_telemetry_count: number;
   }>();
   const spendUsd = Number(row?.spend_usd);
   const telemetryCount = Number(row?.telemetry_count ?? 0);
+  const invalidTelemetryCount = Number(row?.invalid_telemetry_count ?? 0);
   if (
     !row
     || !Number.isSafeInteger(telemetryCount)
     || telemetryCount <= 0
+    || !Number.isSafeInteger(invalidTelemetryCount)
+    || invalidTelemetryCount !== 0
     || !Number.isFinite(spendUsd)
     || spendUsd < 0
   ) {
     return { monthlyAiSpendUsdCents: null, telemetryCount: Math.max(0, telemetryCount || 0) };
   }
   return {
-    monthlyAiSpendUsdCents: Math.round(spendUsd * 100),
+    monthlyAiSpendUsdCents: Math.max(0, Math.ceil((spendUsd * 100) - 1e-7)),
     telemetryCount,
   };
 }
@@ -161,6 +310,77 @@ export function resolveLearningMode(
   return LEARNING_MODES.includes(settings.mode as LearningMode)
     ? settings.mode as LearningMode
     : 'shadow';
+}
+
+export function isProtectedExperimentRateTransitionAllowed(
+  current: WorkspaceLearningSettings,
+  requestedRate: number,
+): boolean {
+  const hasCurrentConsent = current.mode === 'protected_autopilot'
+    && current.autopublishConsentAt != null
+    && current.autopublishPolicyVersion === AUTOPILOT_POLICY_VERSION;
+  return isProtectedAutopilotExperimentTransitionAllowed({
+    hasCurrentConsent,
+    currentRate: current.experimentRate,
+    requestedRate,
+  });
+}
+
+export async function isProtectedAutopilotEligible(
+  env: Env,
+  identity: WorkspaceIdentity,
+  settings: WorkspaceLearningSettings,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (
+    env.LEARNING_BRAIN_ENABLED !== 'true'
+    || env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
+    || env.LEARNING_AUTOPILOT_ENABLED !== 'true'
+  ) return false;
+
+  const budgetCents = settings.monthlyAiBudgetUsdCents;
+  if (
+    settings.autopublishConsentAt == null
+    || settings.autopublishPolicyVersion !== AUTOPILOT_POLICY_VERSION
+    || (typeof settings.disabledReason === 'string' && settings.disabledReason.trim() !== '')
+    || !Number.isSafeInteger(budgetCents)
+    || Number(budgetCents) <= 0
+  ) return false;
+
+  if (await hasWorkspaceSevereFalsePass(env.DB, identity)) return false;
+
+  const readiness = await env.DB.prepare(`
+    SELECT ready, policy_version, checks_json, evaluated_at
+      FROM learning_release_readiness
+     WHERE policy_version = ?
+     ORDER BY evaluated_at DESC, id DESC
+     LIMIT 1
+  `).bind(AUTOPILOT_POLICY_VERSION).first<{
+    ready: number;
+    policy_version: string;
+    checks_json: string;
+    evaluated_at: string;
+  }>();
+  if (!readiness || readiness.ready !== 1 || readiness.policy_version !== AUTOPILOT_POLICY_VERSION) {
+    return false;
+  }
+  const evaluatedAt = Date.parse(readiness.evaluated_at);
+  const age = now.getTime() - evaluatedAt;
+  if (!Number.isFinite(evaluatedAt) || age < 0 || age > READINESS_MAX_AGE_MS) {
+    return false;
+  }
+  let parsedChecks: unknown;
+  try {
+    parsedChecks = JSON.parse(readiness.checks_json);
+  } catch {
+    return false;
+  }
+  if (!hasCompleteGreenLearningReadinessChecks(parsedChecks)) return false;
+  if (parsedChecks.tenancyProofs[identity.ownerKind] !== true) return false;
+
+  const cost = await getWorkspaceMonthlyAiSpend(env.DB, identity, now);
+  return cost.monthlyAiSpendUsdCents != null
+    && cost.monthlyAiSpendUsdCents < Number(budgetCents);
 }
 
 export async function loadWorkspaceLearningMode(
@@ -205,53 +425,7 @@ export async function loadWorkspaceLearningMode(
     return resolveLearningMode(env.LEARNING_BRAIN_ENABLED, settings);
   }
 
-  if (
-    env.LEARNING_BRAIN_ENABLED !== 'true'
-    || env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
-    || env.LEARNING_AUTOPILOT_ENABLED !== 'true'
-  ) return 'approval';
-
-  const budgetCents = settings.monthlyAiBudgetUsdCents;
-  if (
-    settings.autopublishConsentAt == null
-    || settings.autopublishPolicyVersion !== AUTOPILOT_POLICY_VERSION
-    || !Number.isSafeInteger(budgetCents)
-    || Number(budgetCents) <= 0
-  ) return 'approval';
-
-  const readiness = await env.DB.prepare(`
-    SELECT ready, policy_version, checks_json, evaluated_at
-      FROM learning_release_readiness
-     WHERE policy_version = ?
-     ORDER BY evaluated_at DESC
-     LIMIT 1
-  `).bind(AUTOPILOT_POLICY_VERSION).first<{
-    ready: number;
-    policy_version: string;
-    checks_json: string;
-    evaluated_at: string;
-  }>();
-  if (!readiness || readiness.ready !== 1 || readiness.policy_version !== AUTOPILOT_POLICY_VERSION) {
-    return 'approval';
-  }
-  const evaluatedAt = Date.parse(readiness.evaluated_at);
-  const age = now.getTime() - evaluatedAt;
-  if (!Number.isFinite(evaluatedAt) || age < 0 || age > READINESS_MAX_AGE_MS) {
-    return 'approval';
-  }
-  let checks: { tenancyProofs?: Partial<Record<WorkspaceOwnerKind, boolean>> };
-  try {
-    checks = JSON.parse(readiness.checks_json) as typeof checks;
-  } catch {
-    return 'approval';
-  }
-  if (checks.tenancyProofs?.[identity.ownerKind] !== true) return 'approval';
-
-  const cost = await getWorkspaceMonthlyAiSpend(env.DB, identity, now);
-  if (
-    cost.monthlyAiSpendUsdCents == null
-    || cost.monthlyAiSpendUsdCents >= Number(budgetCents)
-  ) return 'approval';
-
-  return 'protected_autopilot';
+  return await isProtectedAutopilotEligible(env, identity, settings, now)
+    ? 'protected_autopilot'
+    : 'approval';
 }

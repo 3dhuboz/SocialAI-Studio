@@ -256,6 +256,9 @@ describe('learning decision client', () => {
     });
 
     expect(operations.workspaces).toEqual([{ workspaceKey: 'client_1', mode: 'approval' }]);
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(
+      /^https:\/\/socialai-api\.steve-700\.workers\.dev\//,
+    );
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/learning/admin/operations?limit=75');
     const adjudicationCall = fetchMock.mock.calls[1];
     expect(String(adjudicationCall[0])).toContain(
@@ -270,7 +273,7 @@ describe('learning decision client', () => {
     expect(result).toEqual({ adjudicationId: 'adjudication_1' });
   });
 
-  it('uses the bounded pilot queue and explicit single-draft validation endpoints', async () => {
+  it('uses the bounded pilot queue and attests the exact real draft before validation', async () => {
     const calls: Array<{ url: string; method: string; body: unknown }> = [];
     const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = String(input);
@@ -285,14 +288,62 @@ describe('learning decision client', () => {
               workspaceKey: 'client_1', label: 'Active Client',
               eligibleDraftCount: 4, samplePostId: 'draft_1', enrolled: false,
               monthlyAiBudgetUsdCents: null,
+              sampleDraft: {
+                postId: 'draft_1', content: 'Real customer draft content.',
+                platform: 'facebook', hashtags: '["#RealBusiness"]',
+                imageUrl: 'https://cdn.example.test/draft.jpg', postType: 'image',
+                videoUrl: null, contentHash: 'a'.repeat(64),
+              },
             }],
           }
-        : url.includes('/pilot/enroll')
+        : url.endsWith('/pilot/enrollment')
+          ? {
+              withdrawn: true,
+              alreadyWithdrawn: false,
+              enrollmentId: 'pilot-enrollment-1',
+              policyVersion: '2026-07-14-v1',
+              workspaceKey: 'client_1',
+              ownerKind: 'client',
+              ownerId: 'client_1',
+              mode: 'shadow',
+              decisionsRemoved: 1,
+              samplesRemoved: 1,
+              generatedPilotDraftsDeleted: 1,
+              generatedPilotMediaDeleted: 1,
+              sourcePostsDeleted: 0,
+              publishingRecordsDeleted: 0,
+              originalDraftsRetained: true,
+              copiedStagingDataRequiresArtifactWithdrawal: true,
+            }
+          : url.includes('/pilot/generate-draft')
+          ? {
+              receiptId: 'generated-receipt-1',
+              enrollmentId: 'pilot-enrollment-1',
+              postId: 'draft_1',
+              contentHash: 'a'.repeat(64),
+              provider: 'anthropic',
+              model: 'claude-haiku-4-5',
+              attemptCount: 1,
+              generatedAt: '2026-07-24T04:00:00.000Z',
+              recordOnly: true,
+              sourceStatus: 'Draft',
+              scheduledFor: null,
+              publishingAllowed: false,
+              created: true,
+            }
+          : url.includes('/pilot/enroll')
           ? {
               workspaceKey: 'client_1', ownerKind: 'client', ownerId: 'client_1',
               mode: 'approval', monthlyAiBudgetUsdCents: 500,
               autopublishConsentAt: null, recordOnly: true,
             }
+          : url.includes('/pilot/attest')
+            ? {
+                sampleId: 'sample_1', postId: 'draft_1', contentHash: 'a'.repeat(64),
+                attestationBasis: 'customer_real_post',
+                attestedAt: '2026-07-19T00:00:00.000Z', created: true,
+                postMutated: false,
+              }
           : {
               decisionId: 'decision_1', releaseState: 'pass_green',
               postId: 'draft_1', sourceStatus: 'Draft', postMutated: false,
@@ -309,14 +360,46 @@ describe('learning decision client', () => {
       confirmed: true,
       note: 'Customer confirmed record-only pilot participation by phone.',
     });
+    const generated = await db.generateLearningPilotDraft('client_1');
+    const attested = await db.attestLearningPilotDraft(
+      'draft 1',
+      'a'.repeat(64),
+      'Admin confirmed this exact server-selected draft is a real business draft.',
+    );
     const validated = await db.validateLearningPilotDraft('draft 1');
+    const withdrawn = await db.withdrawLearningPilotWorkspace(
+      'client_1',
+      'Customer withdrew record-only pilot participation in writing.',
+    );
 
     expect(queue.recordOnly).toBe(true);
+    expect(queue.enrollments).toEqual([]);
     expect(queue.candidates[0].samplePostId).toBe('draft_1');
+    expect(queue.candidates[0].sampleDraft?.contentHash).toBe('a'.repeat(64));
     expect(enrolled).toMatchObject({ mode: 'approval', recordOnly: true });
+    expect(generated).toMatchObject({
+      postId: 'draft_1',
+      sourceStatus: 'Draft',
+      scheduledFor: null,
+      publishingAllowed: false,
+      recordOnly: true,
+    });
+    expect(attested).toMatchObject({
+      sampleId: 'sample_1', created: true, postMutated: false,
+    });
     expect(validated).toMatchObject({
       decisionId: 'decision_1', postMutated: false, sourceStatus: 'Draft',
     });
+    expect(withdrawn).toMatchObject({
+      withdrawn: true,
+      sourcePostsDeleted: 0,
+      publishingRecordsDeleted: 0,
+      originalDraftsRetained: true,
+      generatedPilotDraftsDeleted: 1,
+      generatedPilotMediaDeleted: 1,
+    });
+    expect(calls.every(({ url }) =>
+      url.startsWith('https://socialai-api-staging.steve-700.workers.dev/'))).toBe(true);
     expect(calls).toEqual([
       {
         url: expect.stringContaining('/api/learning/pilot/candidates'),
@@ -333,10 +416,137 @@ describe('learning decision client', () => {
         },
       },
       {
+        url: expect.stringContaining('/api/learning/pilot/generate-draft'),
+        method: 'POST',
+        body: {
+          clientId: 'client_1',
+          recordOnlyConfirmed: true,
+        },
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/attest/draft%201'),
+        method: 'POST',
+        body: {
+          realPostConfirmed: true,
+          expectedContentHash: 'a'.repeat(64),
+          note: 'Admin confirmed this exact server-selected draft is a real business draft.',
+        },
+      },
+      {
         url: expect.stringContaining('/api/learning/pilot/validate/draft%201'),
         method: 'POST', body: {},
       },
+      {
+        url: expect.stringContaining('/api/learning/pilot/enrollment'),
+        method: 'DELETE',
+        body: {
+          clientId: 'client_1',
+          withdrawalConfirmed: true,
+          withdrawalNote: 'Customer withdrew record-only pilot participation in writing.',
+        },
+      },
     ]);
+  });
+
+  it('lists, starts, and polls only record-only pilot media jobs', async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const imageJob = {
+      id: 'media-job-1',
+      enrollmentId: 'pilot-enrollment-1',
+      slot: 1,
+      mediaKind: 'image',
+      state: 'ready',
+      attemptCount: 1,
+      postId: 'pilot-media-media-job-1',
+      content: 'A verified business post.',
+      hashtags: ['#Gladstone'],
+      imagePrompt: 'A relevant daylight business scene with accurate details.',
+      thumbnailUrl: 'https://cdn.example.test/image.jpg',
+      mediaUrl: 'https://cdn.example.test/image.jpg',
+      contentHash: 'b'.repeat(64),
+      captionProvider: 'anthropic',
+      captionModel: 'claude-haiku-4-5',
+      mediaProvider: 'fal',
+      mediaModel: 'fal-ai/flux-pro',
+      errorCode: null,
+      generatedAt: '2026-07-24T04:00:00.000Z',
+      completedAt: '2026-07-24T04:00:08.000Z',
+      recordOnly: true,
+      sourceStatus: 'Draft',
+      scheduledFor: null,
+      publishingAllowed: false,
+    } as const;
+    const videoJob = {
+      ...imageJob,
+      id: 'media-job-2',
+      slot: 2,
+      mediaKind: 'video',
+      state: 'generating',
+      postId: null,
+      mediaUrl: null,
+      contentHash: null,
+      completedAt: null,
+      sourceStatus: null,
+    } as const;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ url, method, body });
+      const payload = url.endsWith('/media-jobs/start')
+        ? { recordOnly: true, publishingAllowed: false, job: imageJob }
+        : url.endsWith('/media-jobs/poll')
+          ? { recordOnly: true, publishingAllowed: false, job: videoJob }
+          : { recordOnly: true, publishingAllowed: false, jobs: [imageJob] };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const db = createDb(async () => 'token');
+
+    const queue = await db.listLearningPilotMediaJobs();
+    const started = await db.startLearningPilotMediaJob('client_1', 1, 'image');
+    const polled = await db.pollLearningPilotMediaJob('client_1', 2);
+
+    expect(queue).toEqual({
+      recordOnly: true,
+      publishingAllowed: false,
+      jobs: [imageJob],
+    });
+    expect(started).toEqual(imageJob);
+    expect(polled).toEqual(videoJob);
+    expect(started).not.toHaveProperty('providerRequestId');
+    expect(started).not.toHaveProperty('claimTokenHash');
+    expect(calls).toEqual([
+      {
+        url: expect.stringContaining('/api/learning/pilot/media-jobs'),
+        method: 'GET',
+        body: null,
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/media-jobs/start'),
+        method: 'POST',
+        body: {
+          clientId: 'client_1',
+          slot: 1,
+          mediaKind: 'image',
+          recordOnlyConfirmed: true,
+        },
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/media-jobs/poll'),
+        method: 'POST',
+        body: {
+          clientId: 'client_1',
+          slot: 2,
+          recordOnlyConfirmed: true,
+        },
+      },
+    ]);
+    expect(calls.every(({ url }) =>
+      url.startsWith('https://socialai-api-staging.steve-700.workers.dev/'))).toBe(true);
   });
 });
 

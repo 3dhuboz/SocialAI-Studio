@@ -177,4 +177,11 @@ describe('buildCritiqueSystemPrompt', () => {
     const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
     expect(prompt).toMatch(/on-archetype|even when the image is on-archetype/i);
   });
+
+  it('treats the intended image brief as an exact visual contract', () => {
+    const prompt = buildCritiqueSystemPrompt('tech-saas-agency');
+    expect(prompt).toMatch(/visual contract/i);
+    expect(prompt).toMatch(/whiteboard[\s\S]*notebook|notebook[\s\S]*whiteboard/i);
+    expect(prompt).toMatch(/score 1-3/i);
+  });
 });

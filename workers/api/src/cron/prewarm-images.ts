@@ -22,14 +22,14 @@
 
 import type { Env } from '../env';
 import { buildSafeImagePrompt } from '../lib/image-safety';
-import { generateImageWithGuardrails } from '../lib/image-gen';
+import { generateImageWithGuardrails, regenerateImageAfterCritique } from '../lib/image-gen';
 import { critiqueImageInternal } from '../lib/critique';
 import { buildCritiqueContextText } from '../lib/post-critique';
 import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 import { evaluateReleasePreflight } from '../lib/learning/release-preflight';
 import type { WorkspaceOwnerKind } from '../lib/learning/types';
 import { ACTIVE_CLIENT_FILTER } from './_shared';
-import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
+import { CRITIQUE_ACCEPT_THRESHOLD, MAX_REGEN_ATTEMPTS } from '../../../../shared/critique-thresholds';
 
 const CONCURRENCY = 3;
 const PREWARM_LOOKAHEAD_MINUTES = 60;
@@ -65,9 +65,10 @@ export async function cronPrewarmImages(env: Env): Promise<{ posts_processed: nu
        AND ${PREWARM_MISSING_IMAGE_PREDICATE}
        AND image_prompt IS NOT NULL AND image_prompt != '' AND image_prompt != 'N/A'
        AND length(image_prompt) > 5
+       AND COALESCE(image_regen_count, 0) < ?
        AND ${ACTIVE_CLIENT_FILTER}
      ORDER BY scheduled_for ASC LIMIT 8`,
-  ).bind(nowAEST, inLookaheadAEST).all<PostRow>();
+  ).bind(nowAEST, inLookaheadAEST, MAX_REGEN_ATTEMPTS).all<PostRow>();
   const posts = rows.results ?? [];
   if (posts.length === 0) return { posts_processed: 0 };
   console.log(`[CRON prewarm] ${posts.length} posts queued for image pre-warm (concurrency ${CONCURRENCY})`);
@@ -148,11 +149,17 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
         finalCritique = critique;
 
         if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
-          console.log(`[CRON prewarm] post ${postId} regenerating with forced archetype fallback (score ${critique.score} < ${CRITIQUE_ACCEPT_THRESHOLD})`);
-          const retry = await generateImageWithGuardrails(env, userId, clientId, safe, { forceFallback: true, caption, seedHint: postId });
+          console.log(`[CRON prewarm] post ${postId} running critic-guided relevance retry (score ${critique.score} < ${CRITIQUE_ACCEPT_THRESHOLD})`);
+          const retry = await regenerateImageAfterCritique(env, userId, clientId, safe, {
+            caption,
+            critiqueReasoning: critique.reasoning,
+            archetypeSlug,
+            modelUsed: gen.modelUsed,
+            seedHint: postId,
+          });
           if (retry.imageUrl) {
             finalUrl = retry.imageUrl;
-            finalModel = `${retry.modelUsed} (forced-fallback retry)`;
+            finalModel = `${retry.modelUsed} (critique-guided retry)`;
             // Re-critique so the persisted score reflects what actually shipped.
             const retryCritique = await critiqueImageInternal(env, {
               imageUrl: retry.imageUrl,
@@ -166,11 +173,13 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
             } else {
               // Re-critique failed (provider outage). Clear the stale score
               // so the audit trail doesn't report the original bad image's
-              // score against the fallback that actually shipped. The backlog
-              // cron will rescore on the next tick.
+              // score against the replacement candidate. It must not be saved
+              // unless a fresh verdict accepts the exact replacement image.
               finalCritique = null;
-              console.warn(`[CRON prewarm] post ${postId} re-critique failed after forceFallback — clearing stale score`);
+              console.warn(`[CRON prewarm] post ${postId} retry critique unavailable — image held`);
             }
+          } else {
+            finalUrl = null;
           }
         }
       } else if (env.ANTHROPIC_API_KEY || env.OPENROUTER_API_KEY) {
@@ -178,6 +187,12 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
         // or malformed upstream response. Image ships; backlog cron rescores.
         console.warn(`[CRON prewarm] post ${postId} critique unavailable — providers configured but returned no verdict. Backlog will rescore.`);
       }
+    }
+
+    if (!finalCritique || finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+      finalUrl = null;
+      const scoreLabel = finalCritique ? `${finalCritique.score}/10` : 'unavailable';
+      console.warn(`[CRON prewarm] post ${postId} image held by final critique gate (score ${scoreLabel})`);
     }
 
     if (finalUrl) {
@@ -203,6 +218,22 @@ async function processOne(env: Env, post: PostRow): Promise<boolean> {
       return true;
     }
     console.warn(`[CRON prewarm] no URL for post ${postId} via ${finalModel}`);
+    const failureReason = finalCritique
+      ? `Image held by critic (${finalCritique.score}/10): ${finalCritique.reasoning}`
+      : 'Image held because the critic was unavailable or generation returned no reviewable image';
+    await env.DB.prepare(
+      `UPDATE posts
+          SET image_regen_count = COALESCE(image_regen_count, 0) + 1,
+              image_critique_score = ?,
+              image_critique_reasoning = ?,
+              image_critique_at = ?
+        WHERE id = ?`,
+    ).bind(
+      finalCritique?.score ?? null,
+      failureReason,
+      finalCritique ? new Date().toISOString() : null,
+      postId,
+    ).run();
     return false;
   } catch (e: any) {
     console.warn(`[CRON prewarm] failed for post ${post.id}: ${e?.message}`);

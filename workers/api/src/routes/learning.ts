@@ -1,6 +1,13 @@
 import type { Hono } from 'hono';
 import type { Env } from '../env';
-import { BASE_REQUIRED_CRITICS } from '../lib/learning/critic-types';
+import {
+  BASE_REQUIRED_CRITICS,
+  DETERMINISTIC_REQUIRED_CRITICS,
+} from '../lib/learning/critic-types';
+import {
+  assessCriticContextReadiness,
+  loadCriticContext,
+} from '../lib/learning/critic-context';
 import { listDecisionReceipts } from '../lib/learning/decision-repository';
 import {
   normalizeWorkspaceIdentity,
@@ -11,16 +18,31 @@ import {
 import {
   AUTOPILOT_POLICY_VERSION,
   RELEASE_EVIDENCE_MAX_TTL_MS,
+  type ReleaseEvidenceKind,
 } from '../lib/learning/readiness';
 import { getWorkspaceLearningSummary } from '../lib/learning/read-model';
 import {
   buildReleaseContentHash,
-  runAndPersistReleasePipeline,
   type PublishablePost,
 } from '../lib/learning/release-preflight';
 import {
+  getRecordOnlyPilotBudgetStatus,
+  isSyntheticQaPilotPost,
+  runClaimedPilotEvaluation,
+  withdrawRecordOnlyPilot,
+} from '../lib/learning/pilot-evaluation';
+import { generateRecordOnlyPilotDraft } from '../lib/learning/pilot-draft-generator';
+import {
+  listPilotMediaJobs,
+  pollRecordOnlyPilotVideoJob,
+  startRecordOnlyPilotMediaJob,
+  type PilotMediaKind,
+} from '../lib/learning/pilot-media-jobs';
+import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
+  isProtectedAutopilotEligible,
+  isProtectedExperimentRateTransitionAllowed,
   loadWorkspaceLearningMode,
   saveWorkspaceLearningSettings,
   type StoredWorkspaceLearningSettings,
@@ -44,6 +66,7 @@ type PilotDraftRow = {
   owner_kind: string | null;
   owner_id: string | null;
   status: string | null;
+  scheduled_for: string | null;
   content: string;
   platform: string | null;
   hashtags: string | null;
@@ -68,11 +91,116 @@ type PilotCandidateRow = {
   sample_post_id: string;
   enrolled: number | string | null;
   monthly_ai_budget_usd_cents: number | string | null;
+  profile_json: string | null;
+  verified_fact_contents_json: string | null;
 };
 
 type PilotEnrollmentRow = {
   id: string;
   enrolled_at: string;
+};
+
+type PilotActiveEnrollmentRow = {
+  id: string;
+  client_id: string | null;
+  owner_kind: 'user' | 'client';
+  owner_id: string;
+  workspace_key: string;
+  policy_version: string;
+  enrolled_at: string;
+  label: string;
+  generated_draft_post_id: string | null;
+  generated_draft_content_hash: string | null;
+  generated_draft_provider: string | null;
+  generated_draft_model: string | null;
+  generated_draft_at: string | null;
+};
+
+type PilotDraftGenerationEnrollmentRow = {
+  id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  policy_version: string;
+  consent_basis: 'owner_self' | 'customer_attested';
+  consent_confirmed_at: string;
+  consent_note: string;
+  monthly_ai_budget_usd_cents: number | string;
+  archetype_slug: string | null;
+  client_status: string | null;
+};
+
+type PilotGeneratedDraftReceiptRow = {
+  id: string;
+  enrollment_id: string;
+  post_id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  policy_version: string;
+  content_hash: string;
+  provider: string;
+  model: string;
+  attempt_count: number | string;
+  generated_at: string;
+  record_only: number | string;
+  post_user_id: string | null;
+  post_client_id: string | null;
+  post_owner_kind: string | null;
+  post_owner_id: string | null;
+  post_status: string | null;
+  post_scheduled_for: string | null;
+  post_content: string | null;
+  post_platform: string | null;
+  post_hashtags: string | null;
+  post_image_url: string | null;
+  post_type: string | null;
+  post_video_url: string | null;
+  post_video_status: string | null;
+  post_video_script: string | null;
+  post_video_shots: string | null;
+  post_archetype_slug: string | null;
+};
+
+type PilotValidationEnrollmentRow = {
+  id: string;
+  monthly_ai_budget_usd_cents: number | string | null;
+  pilot_sample_content_hash: string | null;
+  pilot_sample_basis: string | null;
+  pilot_sample_attested_at: string | null;
+};
+
+type PilotSampleRow = {
+  id: string;
+  post_id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  content_hash: string;
+  attestation_basis: 'owner_real_post' | 'customer_real_post';
+  note: string;
+  attested_by: string;
+  attested_at: string;
+};
+
+type PilotDisqualificationRow = {
+  id: string;
+  decision_id: string;
+  user_id: string;
+  workspace_key: string;
+  client_id: string | null;
+  owner_kind: WorkspaceOwnerKind;
+  owner_id: string;
+  reason: 'synthetic_qa';
+  note: string;
+  excluded_by: string;
+  created_at: string;
 };
 
 type DecisionRow = Record<string, unknown> & {
@@ -135,9 +263,83 @@ type AdminOperationsRow = AdjudicationEvidenceSourceRow & {
   severe_false_passes: number | string | null;
   critic_total: number | string | null;
   critic_available: number | string | null;
+  judge_total: number | string | null;
   judge_available: number | string | null;
+  judge_telemetry_count: number | string | null;
   sample_decision_id: string | null;
 };
+
+type AdminReleaseEvidenceRow = {
+  evidence_kind: ReleaseEvidenceKind;
+  owner_kind: WorkspaceOwnerKind | null;
+  passed: number | string | null;
+  recorded_at: string;
+  expires_at: string | null;
+};
+
+const ADMIN_RELEASE_EVIDENCE_REQUIREMENTS: ReadonlyArray<{
+  evidenceKind: ReleaseEvidenceKind;
+  ownerKind: WorkspaceOwnerKind | null;
+}> = [
+  { evidenceKind: 'replay_red_team', ownerKind: null },
+  { evidenceKind: 'kill_switch', ownerKind: null },
+  { evidenceKind: 'publish_regression', ownerKind: null },
+  { evidenceKind: 'staging_green', ownerKind: 'user' },
+  { evidenceKind: 'staging_block', ownerKind: 'user' },
+  { evidenceKind: 'staging_green', ownerKind: 'client' },
+  { evidenceKind: 'staging_block', ownerKind: 'client' },
+  { evidenceKind: 'staging_green', ownerKind: 'shop' },
+  { evidenceKind: 'staging_block', ownerKind: 'shop' },
+];
+
+function summarizeAdminReleaseEvidence(
+  rows: AdminReleaseEvidenceRow[],
+  now: Date = new Date(),
+) {
+  const key = (
+    evidenceKind: ReleaseEvidenceKind,
+    ownerKind: WorkspaceOwnerKind | null,
+  ) => `${evidenceKind}:${ownerKind ?? '*'}`;
+  const latest = new Map<string, AdminReleaseEvidenceRow>();
+  for (const row of rows) {
+    const rowKey = key(row.evidence_kind, row.owner_kind);
+    const existing = latest.get(rowKey);
+    if (!existing || Date.parse(row.recorded_at) > Date.parse(existing.recorded_at)) {
+      latest.set(rowKey, row);
+    }
+  }
+
+  const nowMs = now.getTime();
+  let expiredCount = 0;
+  const validExpiryTimes: number[] = [];
+  for (const requirement of ADMIN_RELEASE_EVIDENCE_REQUIREMENTS) {
+    const row = latest.get(key(requirement.evidenceKind, requirement.ownerKind));
+    if (!row) continue;
+    const recordedAt = Date.parse(row.recorded_at);
+    const expiresAt = row.expires_at ? Date.parse(row.expires_at) : Number.NaN;
+    if (Number.isFinite(expiresAt) && expiresAt <= nowMs) expiredCount += 1;
+    const valid = Number(row.passed) === 1
+      && Number.isFinite(recordedAt)
+      && Number.isFinite(expiresAt)
+      && recordedAt <= nowMs
+      && expiresAt > nowMs
+      && expiresAt > recordedAt
+      && expiresAt - recordedAt <= RELEASE_EVIDENCE_MAX_TTL_MS;
+    if (valid) validExpiryTimes.push(expiresAt);
+  }
+
+  const validCount = validExpiryTimes.length;
+  const requiredCount = ADMIN_RELEASE_EVIDENCE_REQUIREMENTS.length;
+  const nextExpiryMs = validCount > 0 ? Math.min(...validExpiryTimes) : null;
+  return {
+    validCount,
+    requiredCount,
+    invalidOrMissingCount: requiredCount - validCount,
+    expiredCount,
+    complete: validCount === requiredCount,
+    nextExpiryAt: nextExpiryMs == null ? null : new Date(nextExpiryMs).toISOString(),
+  };
+}
 
 function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
   if (!value) return {};
@@ -161,6 +363,44 @@ function parseJsonStrings(value: string | null | undefined): string[] {
   } catch {
     return [];
   }
+}
+
+function pilotCandidateContextReadiness(row: PilotCandidateRow) {
+  const verifiedFacts = parseJsonStrings(row.verified_fact_contents_json).map((content) => ({
+    ownerKind: row.owner_kind,
+    ownerId: row.owner_id,
+    clientId: row.client_id,
+    factType: 'candidate_readiness',
+    content,
+    verifiedAt: null,
+  }));
+  return assessCriticContextReadiness({
+    profile: parseJsonObject(row.profile_json),
+    verifiedFacts,
+  });
+}
+
+function publishablePilotDraft(
+  row: PilotDraftRow,
+  identity: WorkspaceIdentity,
+): PublishablePost {
+  return {
+    id: row.id,
+    user_id: identity.userId,
+    client_id: identity.clientId,
+    owner_kind: identity.ownerKind,
+    owner_id: identity.ownerId,
+    content: row.content,
+    platform: row.platform?.trim() || 'facebook',
+    hashtags: row.hashtags,
+    image_url: row.image_url,
+    post_type: row.post_type,
+    video_url: row.video_url,
+    video_status: row.video_status,
+    video_script: row.video_script,
+    video_shots: row.video_shots,
+    archetype_slug: row.archetype_slug,
+  };
 }
 
 type AdjudicationEvidence = {
@@ -251,15 +491,37 @@ const CURRENT_POLICY_PILOT_COHORT_SQL = `
      (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
      OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
    )
+  INNER JOIN learning_pilot_samples sample
+    ON sample.user_id = d.user_id
+   AND sample.workspace_key = d.workspace_key
+   AND sample.client_id IS d.client_id
+   AND sample.owner_kind = d.owner_kind
+   AND sample.owner_id = d.owner_id
+   AND sample.post_id = d.post_id
+   AND sample.content_hash = d.content_hash
+   AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+   AND unixepoch(sample.attested_at) <= unixepoch(d.created_at)
+   AND (
+     (d.owner_kind = 'user' AND sample.attestation_basis = 'owner_real_post')
+     OR (d.owner_kind = 'client' AND sample.attestation_basis = 'customer_real_post')
+   )
   LEFT JOIN users pilot_user
     ON d.owner_kind = 'user' AND pilot_user.id = d.user_id
   LEFT JOIN clients pilot_client
     ON d.owner_kind = 'client'
    AND pilot_client.id = d.client_id
    AND pilot_client.user_id = d.user_id
+  LEFT JOIN learning_decision_disqualifications disq
+    ON disq.decision_id = d.id
+   AND disq.user_id = d.user_id
+   AND disq.workspace_key = d.workspace_key
+   AND disq.client_id IS d.client_id
+   AND disq.owner_kind = d.owner_kind
+   AND disq.owner_id = d.owner_id
   WHERE d.stage = 'release'
     AND d.mode = 'approval'
     AND d.owner_kind IN ('user','client')
+    AND disq.id IS NULL
     AND (
       (d.owner_kind = 'user' AND pilot_user.id IS NOT NULL)
       OR (
@@ -272,7 +534,10 @@ const CURRENT_POLICY_PILOT_COHORT_SQL = `
   LIMIT 30
 `;
 
-const BASE_REQUIRED_CRITICS_SQL = BASE_REQUIRED_CRITICS
+const DETERMINISTIC_REQUIRED_CRITICS_SQL = DETERMINISTIC_REQUIRED_CRITICS
+  .map((kind) => `'${kind}'`)
+  .join(', ');
+const ALL_REQUIRED_CRITICS_SQL = [...BASE_REQUIRED_CRITICS, 'image', 'video_manifest']
   .map((kind) => `'${kind}'`)
   .join(', ');
 
@@ -446,6 +711,323 @@ function dormantPilotEnabled(env: Env): boolean {
     && env.LEARNING_AUTOPILOT_ENABLED !== 'true';
 }
 
+function stagingEnvironment(env: Env): boolean {
+  return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+}
+
+function pilotStagingError(env: Env): {
+  error: string;
+  code: 'pilot_staging_only';
+} | null {
+  return stagingEnvironment(env) ? null : {
+    error: 'Approval-pilot operations are available only in isolated staging',
+    code: 'pilot_staging_only',
+  };
+}
+
+function existingPilotDisqualification(
+  db: D1Database,
+  decisionId: string,
+): Promise<PilotDisqualificationRow | null> {
+  return db.prepare(`
+    SELECT
+      id,decision_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+      reason,note,excluded_by,created_at
+    FROM learning_decision_disqualifications
+    WHERE decision_id = ?
+    LIMIT 1
+  `).bind(decisionId).first<PilotDisqualificationRow>();
+}
+
+function existingPilotSample(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  postId: string,
+  contentHash: string,
+): Promise<PilotSampleRow | null> {
+  return db.prepare(`
+    SELECT
+      id,post_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+      content_hash,attestation_basis,note,attested_by,attested_at
+    FROM learning_pilot_samples
+    WHERE user_id = ? AND workspace_key = ? AND client_id IS ?
+      AND owner_kind = ? AND owner_id = ? AND post_id = ? AND content_hash = ?
+    LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    postId,
+    contentHash,
+  ).first<PilotSampleRow>();
+}
+
+function loadGeneratedPilotDraftReceipt(
+  db: D1Database,
+  enrollmentId: string,
+): Promise<PilotGeneratedDraftReceiptRow | null> {
+  return db.prepare(`
+    /* pilot_generated_draft_receipt */
+    SELECT
+      generated.id,generated.enrollment_id,generated.post_id,
+      generated.user_id,generated.workspace_key,generated.client_id,
+      generated.owner_kind,generated.owner_id,generated.policy_version,
+      generated.content_hash,generated.provider,generated.model,
+      generated.attempt_count,generated.generated_at,generated.record_only,
+      p.user_id AS post_user_id,p.client_id AS post_client_id,
+      p.owner_kind AS post_owner_kind,p.owner_id AS post_owner_id,
+      p.status AS post_status,p.scheduled_for AS post_scheduled_for,
+      p.content AS post_content,p.platform AS post_platform,
+      p.hashtags AS post_hashtags,p.image_url AS post_image_url,
+      p.post_type,p.video_url AS post_video_url,
+      p.video_status AS post_video_status,p.video_script AS post_video_script,
+      p.video_shots AS post_video_shots,
+      COALESCE(client.archetype_slug, pilot_user.archetype_slug)
+        AS post_archetype_slug
+    FROM learning_pilot_generated_drafts generated
+    LEFT JOIN posts p
+      ON p.id = generated.post_id
+     AND p.user_id = generated.user_id
+     AND p.client_id IS generated.client_id
+    LEFT JOIN clients client
+      ON client.id = generated.client_id
+     AND client.user_id = generated.user_id
+    LEFT JOIN users pilot_user
+      ON pilot_user.id = generated.user_id
+    WHERE generated.enrollment_id = ?
+      AND generated.record_only = 1
+    LIMIT 1
+  `).bind(enrollmentId).first<PilotGeneratedDraftReceiptRow>();
+}
+
+async function removeUnreceiptedGeneratedPilotPost(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  postId: string,
+  content: string,
+  hashtags: string,
+  imagePrompt: string,
+): Promise<void> {
+  await db.prepare(`
+    DELETE FROM posts
+    WHERE id = ?
+      AND user_id = ?
+      AND client_id IS ?
+      AND owner_kind = ?
+      AND owner_id = ?
+      AND content = ?
+      AND platform = 'facebook'
+      AND LOWER(TRIM(COALESCE(status, ''))) = 'draft'
+      AND NULLIF(TRIM(COALESCE(scheduled_for, '')), '') IS NULL
+      AND hashtags = ?
+      AND image_url IS NULL
+      AND image_prompt = ?
+      AND post_type = 'text'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM learning_pilot_generated_drafts generated
+        WHERE generated.post_id = posts.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM publication_events event WHERE event.post_id = posts.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM publish_delivery_receipts delivery
+        WHERE delivery.post_id = posts.id
+      )
+  `).bind(
+    postId,
+    identity.userId,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    content,
+    hashtags,
+    imagePrompt,
+  ).run();
+  const retained = await db.prepare(`
+    SELECT id
+    FROM posts
+    WHERE id = ?
+      AND user_id = ?
+      AND client_id IS ?
+    LIMIT 1
+  `).bind(postId, identity.userId, identity.clientId).first<{ id: string }>();
+  if (retained) {
+    throw new Error('Unreceipted record-only pilot draft cleanup failed closed');
+  }
+}
+
+function generatedReceiptPost(
+  row: PilotGeneratedDraftReceiptRow,
+): PublishablePost | null {
+  if (
+    !row.post_user_id
+    || row.post_user_id !== row.user_id
+    || row.post_client_id !== row.client_id
+    || row.post_owner_kind !== row.owner_kind
+    || row.post_owner_id !== row.owner_id
+    || row.post_status?.trim().toLowerCase() !== 'draft'
+    || (row.post_scheduled_for?.trim() || null) !== null
+    || typeof row.post_content !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: row.post_id,
+    user_id: row.user_id,
+    client_id: row.client_id,
+    owner_kind: row.owner_kind,
+    owner_id: row.owner_id,
+    content: row.post_content,
+    platform: row.post_platform?.trim() || 'facebook',
+    hashtags: row.post_hashtags,
+    image_url: row.post_image_url,
+    post_type: row.post_type,
+    video_url: row.post_video_url,
+    video_status: row.post_video_status,
+    video_script: row.post_video_script,
+    video_shots: row.post_video_shots,
+    archetype_slug: row.post_archetype_slug,
+  };
+}
+
+async function publicGeneratedPilotDraft(
+  row: PilotGeneratedDraftReceiptRow,
+  created: boolean,
+) {
+  const post = generatedReceiptPost(row);
+  if (!post || await buildReleaseContentHash(post) !== row.content_hash) {
+    throw new Error('Generated pilot draft changed after its immutable provenance receipt');
+  }
+  return {
+    receiptId: row.id,
+    enrollmentId: row.enrollment_id,
+    postId: row.post_id,
+    contentHash: row.content_hash,
+    provider: row.provider,
+    model: row.model,
+    attemptCount: countValue(row.attempt_count),
+    generatedAt: row.generated_at,
+    recordOnly: true as const,
+    sourceStatus: 'Draft' as const,
+    scheduledFor: null,
+    publishingAllowed: false as const,
+    created,
+  };
+}
+
+function loadPilotGenerationEnrollment(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  nowIso: string,
+): Promise<PilotDraftGenerationEnrollmentRow | null> {
+  return db.prepare(`
+    /* pilot_draft_generation_enrollment */
+    SELECT
+      pen.id,pen.user_id,pen.workspace_key,pen.client_id,
+      pen.owner_kind,pen.owner_id,pen.policy_version,
+      pen.consent_basis,pen.consent_confirmed_at,pen.consent_note,
+      w.monthly_ai_budget_usd_cents,
+      COALESCE(client.archetype_slug, pilot_user.archetype_slug)
+        AS archetype_slug,
+      client.status AS client_status
+    FROM learning_pilot_enrollments pen
+    INNER JOIN workspace_learning_settings w
+      ON w.user_id = pen.user_id
+     AND w.workspace_key = pen.workspace_key
+     AND w.client_id IS pen.client_id
+     AND w.owner_kind = pen.owner_kind
+     AND w.owner_id = pen.owner_id
+     AND w.mode = 'approval'
+     AND w.autopublish_consent_at IS NULL
+     AND w.autopublish_policy_version IS NULL
+     AND w.experiment_rate = 0
+     AND w.monthly_ai_budget_usd_cents > 0
+     AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+    LEFT JOIN clients client
+      ON client.id = pen.client_id
+     AND client.user_id = pen.user_id
+    LEFT JOIN users pilot_user
+      ON pilot_user.id = pen.user_id
+    WHERE pen.user_id = ?
+      AND pen.workspace_key = ?
+      AND pen.client_id IS ?
+      AND pen.owner_kind = ?
+      AND pen.owner_id = ?
+      AND pen.policy_version = ?
+      AND pen.record_only = 1
+      AND pen.consent_confirmed_at IS NOT NULL
+      AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+      AND (
+        (
+          pen.owner_kind = 'user'
+          AND pen.consent_basis = 'owner_self'
+          AND pen.client_id IS NULL
+          AND pen.workspace_key = '__owner__'
+          AND pen.owner_id = pen.user_id
+        )
+        OR (
+          pen.owner_kind = 'client'
+          AND pen.consent_basis = 'customer_attested'
+          AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+          AND pen.client_id IS NOT NULL
+          AND pen.workspace_key = pen.client_id
+          AND pen.owner_id = pen.client_id
+          AND client.id IS NOT NULL
+          AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+        )
+      )
+    LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    AUTOPILOT_POLICY_VERSION,
+    nowIso,
+  ).first<PilotDraftGenerationEnrollmentRow>();
+}
+
+async function loadPilotCandidatePreviews(
+  db: D1Database,
+  userId: string,
+  postIds: string[],
+): Promise<PilotDraftRow[]> {
+  const uniquePostIds = [...new Set(postIds.map((id) => id.trim()).filter(Boolean))];
+  if (uniquePostIds.length === 0) return [];
+  const placeholders = uniquePostIds.map(() => '?').join(',');
+  const result = await db.prepare(`
+    /* pilot_candidate_previews */
+    SELECT
+      p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,p.scheduled_for,
+      p.content,p.platform,p.hashtags,p.image_url,p.post_type,
+      p.video_url,p.video_status,p.video_script,p.video_shots,
+      COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
+      c.status AS client_status
+    FROM posts p
+    LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+    LEFT JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = ? AND p.id IN (${placeholders})
+      AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+      AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
+      AND (
+        (p.client_id IS NULL AND (p.owner_kind IS NULL OR p.owner_kind = 'user'))
+        OR (
+          p.client_id IS NOT NULL
+          AND c.id IS NOT NULL
+          AND (p.owner_kind IS NULL OR p.owner_kind = 'client')
+          AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+        )
+      )
+  `).bind(userId, ...uniquePostIds).all<PilotDraftRow>();
+  return result.results ?? [];
+}
+
 function latestReadiness(db: D1Database) {
   return db.prepare(`
     SELECT id, ready, metrics_json, checks_json, evaluated_by, evaluated_at
@@ -512,12 +1094,14 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         }, 409);
       }
       const current = await getWorkspaceLearningSettings(c.env.DB, identity);
+      const disabledReason = current.disabledReason?.trim() ? current.disabledReason : null;
       const rate = experimentRate(body.experimentRate, Number(current.experimentRate ?? 0));
       const budget = budgetCents(
         body.monthlyAiBudgetUsdCents,
         current.monthlyAiBudgetUsdCents ?? null,
       );
-      const now = new Date().toISOString();
+      const requestedAt = new Date();
+      const now = requestedAt.toISOString();
       let mode: LearningMode;
       let consentAt: string | null;
       let policyVersion: string | null;
@@ -530,8 +1114,28 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         if (!Number.isSafeInteger(budget) || Number(budget) <= 0) {
           return c.json({ error: 'Protected Autopilot requires a positive monthly AI budget' }, 400);
         }
+        if (!isProtectedExperimentRateTransitionAllowed(current, rate)) {
+          return c.json({
+            error: 'Protected Autopilot experiments must start at 0 and advance only to 0.10 then 0.15',
+            code: 'protected_autopilot_experiment_ramp',
+          }, 409);
+        }
+        const requestedConsentAt = alreadyConsented ? current.autopublishConsentAt! : now;
+        if (!await isProtectedAutopilotEligible(c.env, identity, {
+          mode: 'protected_autopilot',
+          autopublishConsentAt: requestedConsentAt,
+          autopublishPolicyVersion: AUTOPILOT_POLICY_VERSION,
+          experimentRate: rate,
+          monthlyAiBudgetUsdCents: budget,
+          disabledReason,
+        }, requestedAt)) {
+          return c.json({
+            error: 'Protected Autopilot is unavailable until every activation gate passes',
+            code: 'protected_autopilot_not_ready',
+          }, 409);
+        }
         mode = 'protected_autopilot';
-        consentAt = alreadyConsented ? current.autopublishConsentAt! : now;
+        consentAt = requestedConsentAt;
         policyVersion = AUTOPILOT_POLICY_VERSION;
       } else {
         mode = c.env.LEARNING_RELEASE_ENFORCEMENT === 'true' ? 'approval' : 'shadow';
@@ -550,9 +1154,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         mode,
         autopublishConsentAt: consentAt,
         autopublishPolicyVersion: policyVersion,
-        experimentRate: rate,
+        experimentRate: disabledReason ? 0 : rate,
         monthlyAiBudgetUsdCents: budget,
-        disabledReason: null,
+        disabledReason,
       };
       const effectiveMode = await loadWorkspaceLearningMode(
         c.env,
@@ -572,6 +1176,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot enrollment is available only while learning enforcement and autopilot are disabled',
@@ -632,6 +1238,37 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         return c.json({ error: 'Workspace has no eligible Draft posts for pilot validation' }, 409);
       }
 
+      let contextReadiness;
+      try {
+        const criticContext = await loadCriticContext(
+          c.env,
+          identity.userId,
+          identity.clientId,
+          identity.ownerKind,
+          identity.ownerId,
+        );
+        contextReadiness = assessCriticContextReadiness(criticContext);
+      } catch (error) {
+        console.warn('[learning-pilot] enrollment context unavailable', {
+          workspaceKey: identity.workspaceKey,
+          reason: error instanceof Error ? error.message : 'unknown error',
+        });
+        return c.json({
+          error: 'Pilot business context could not be loaded; enrollment was not recorded',
+          code: 'pilot_context_unavailable',
+        }, 503);
+      }
+      if (!contextReadiness.ready) {
+        return c.json({
+          error: 'Pilot business context is incomplete; complete the business profile or add a verified fact before enrollment',
+          code: 'pilot_context_not_ready',
+          readiness: {
+            meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
+            verifiedFactCount: contextReadiness.verifiedFactCount,
+          },
+        }, 409);
+      }
+
       const existing = await c.env.DB.prepare(`
         SELECT COUNT(*) AS approval_count
         FROM learning_pilot_enrollments
@@ -650,13 +1287,6 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       }
 
       const now = new Date().toISOString();
-      await saveWorkspaceLearningSettings(c.env.DB, identity, {
-        mode: 'approval',
-        autopublishConsentAt: null,
-        autopublishPolicyVersion: null,
-        experimentRate: 0,
-        monthlyAiBudgetUsdCents: budget,
-      }, now);
       const enrollmentId = crypto.randomUUID();
       await c.env.DB.prepare(`
         INSERT OR IGNORE INTO learning_pilot_enrollments (
@@ -694,7 +1324,21 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         identity.ownerId,
         AUTOPILOT_POLICY_VERSION,
       ).first<PilotEnrollmentRow>();
-      if (!enrollment) throw new Error('Pilot enrollment receipt could not be persisted');
+      if (!enrollment) {
+        return c.json({
+          error: `Only one ${identity.ownerKind} workspace may be enrolled in the approval pilot`,
+        }, 409);
+      }
+      // The unique policy+owner-kind index is the final cohort lock. Only
+      // create approval settings after this exact workspace owns the immutable
+      // enrollment receipt, so a concurrent losing request leaves no stray mode.
+      await saveWorkspaceLearningSettings(c.env.DB, identity, {
+        mode: 'approval',
+        autopublishConsentAt: null,
+        autopublishPolicyVersion: null,
+        experimentRate: 0,
+        monthlyAiBudgetUsdCents: budget,
+      }, now);
       return c.json({
         workspaceKey: identity.workspaceKey,
         ownerKind: identity.ownerKind,
@@ -712,11 +1356,742 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     }
   });
 
+  app.delete('/api/learning/pilot/enrollment', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot withdrawal is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    try {
+      const body = await jsonBody(c.req.raw);
+      const withdrawalNote = typeof body.withdrawalNote === 'string'
+        ? body.withdrawalNote.trim()
+        : '';
+      if (
+        body.withdrawalConfirmed !== true
+        || withdrawalNote.length < 10
+        || withdrawalNote.length > 500
+      ) {
+        return c.json({
+          error: 'Pilot withdrawal requires explicit confirmation and a 10-500 character note',
+        }, 400);
+      }
+      const clientId = requestedClientId(body.clientId);
+      const identity = normalizeWorkspaceIdentity(
+        adminId,
+        clientId,
+        clientId === null ? 'user' : 'client',
+        clientId ?? adminId,
+      );
+      const result = await withdrawRecordOnlyPilot(
+        c.env.DB,
+        identity,
+        AUTOPILOT_POLICY_VERSION,
+      );
+      console.info('[learning-pilot] record-only consent withdrawal completed', {
+        workspaceKey: identity.workspaceKey,
+        ownerKind: identity.ownerKind,
+        withdrawn: result.withdrawn,
+        alreadyWithdrawn: result.alreadyWithdrawn,
+        decisionsRemoved: result.decisionsRemoved,
+        samplesRemoved: result.samplesRemoved,
+        generatedPilotDraftsDeleted: result.generatedPilotDraftsDeleted,
+        generatedPilotMediaDeleted: result.generatedPilotMediaDeleted,
+        withdrawalNoteLength: withdrawalNote.length,
+        sourcePostsDeleted: result.sourcePostsDeleted,
+        publishingRecordsDeleted: result.publishingRecordsDeleted,
+      });
+      return c.json({
+        ...result,
+        workspaceKey: identity.workspaceKey,
+        ownerKind: identity.ownerKind,
+        ownerId: identity.ownerId,
+        mode: 'shadow',
+        originalDraftsRetained: true,
+        copiedStagingDataRequiresArtifactWithdrawal: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Pilot withdrawal failed';
+      console.warn('[learning-pilot] consent withdrawal failed closed', {
+        reason: message,
+      });
+      if (message.includes('publication record')) {
+        return c.json({
+          error: message,
+          code: 'pilot_withdrawal_publication_conflict',
+        }, 409);
+      }
+      if (message.includes('unsafe generated draft state')) {
+        return c.json({
+          error: message,
+          code: 'pilot_withdrawal_generated_draft_conflict',
+        }, 409);
+      }
+      if (message.includes('unsafe media job state')) {
+        return c.json({
+          error: message,
+          code: 'pilot_withdrawal_media_conflict',
+        }, 409);
+      }
+      return c.json({
+        error: 'Pilot withdrawal failed closed; no source posts or publishing records were changed',
+      }, 503);
+    }
+  });
+
+  app.get('/api/learning/pilot/media-jobs', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot media jobs are available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+    try {
+      return c.json({
+        recordOnly: true,
+        publishingAllowed: false,
+        jobs: await listPilotMediaJobs(c.env.DB, adminId),
+      });
+    } catch (error) {
+      console.warn('[learning-pilot] media job listing failed closed', {
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot media jobs are unavailable until the staging-only media schema is ready',
+        code: 'pilot_media_schema_unavailable',
+      }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/media-jobs/start', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot media generation is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['clientId', 'recordOnlyConfirmed', 'slot', 'mediaKind'].includes(key),
+    );
+    const mediaKind = body.mediaKind;
+    const slot = body.slot;
+    if (
+      unexpected.length > 0
+      || body.recordOnlyConfirmed !== true
+      || !Number.isInteger(slot)
+      || Number(slot) < 1
+      || Number(slot) > 6
+      || !['image', 'video'].includes(String(mediaKind))
+      || (
+        body.clientId !== undefined
+        && body.clientId !== null
+        && typeof body.clientId !== 'string'
+      )
+    ) {
+      return c.json({
+        error: 'Pilot media generation requires only clientId, slot 1-6, mediaKind image|video, and recordOnlyConfirmed=true',
+      }, 400);
+    }
+
+    const clientId = requestedClientId(body.clientId);
+    const identity = normalizeWorkspaceIdentity(
+      adminId,
+      clientId,
+      clientId === null ? 'user' : 'client',
+      clientId ?? adminId,
+    );
+    const now = new Date();
+    const enrollment = await loadPilotGenerationEnrollment(
+      c.env.DB,
+      identity,
+      now.toISOString(),
+    );
+    if (!enrollment) {
+      return c.json({
+        error: 'No current record-only pilot consent is available for this workspace',
+        code: 'pilot_media_not_authorized',
+      }, 409);
+    }
+
+    let criticContext;
+    try {
+      criticContext = await loadCriticContext(
+        c.env,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+      );
+    } catch {
+      return c.json({
+        error: 'Pilot business context could not be loaded; no media job was started',
+        code: 'pilot_context_unavailable',
+      }, 503);
+    }
+    if (!assessCriticContextReadiness(criticContext).ready) {
+      return c.json({
+        error: 'Pilot business context is incomplete; no media job was started',
+        code: 'pilot_context_not_ready',
+      }, 409);
+    }
+
+    const monthlyBudgetUsdCents = countValue(enrollment.monthly_ai_budget_usd_cents);
+    const budget = await getRecordOnlyPilotBudgetStatus(
+      c.env.DB,
+      identity,
+      monthlyBudgetUsdCents,
+      now,
+    );
+    if (!budget.allowed) {
+      return c.json({
+        error: 'Pilot AI budget reserve is unavailable; no media job was started',
+        code: 'pilot_budget_unavailable',
+      }, 409);
+    }
+
+    try {
+      const job = await startRecordOnlyPilotMediaJob(c.env, {
+        identity,
+        enrollment: {
+          id: enrollment.id,
+          policyVersion: enrollment.policy_version,
+        },
+        context: criticContext,
+        adminId,
+        slot: Number(slot),
+        mediaKind: mediaKind as PilotMediaKind,
+      });
+      return c.json({ recordOnly: true, publishingAllowed: false, job });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      console.warn('[learning-pilot] media generation failed closed', {
+        workspaceKey: identity.workspaceKey,
+        slot,
+        mediaKind,
+        reason,
+      });
+      if (reason.includes('staging_fal_secret_missing')) {
+        return c.json({
+          error: 'The staging media provider is not configured; no media job was started',
+          code: 'pilot_media_provider_unconfigured',
+        }, 503);
+      }
+      if (reason.includes('slot_kind_conflict')) {
+        return c.json({
+          error: 'That immutable pilot slot is already reserved for another media type',
+          code: 'pilot_media_slot_conflict',
+        }, 409);
+      }
+      if (reason.includes('generation_in_progress')) {
+        return c.json({
+          error: 'Another media candidate is still generating for this workspace',
+          code: 'pilot_media_generation_in_progress',
+        }, 409);
+      }
+      if (reason.includes('not_authorized')) {
+        return c.json({
+          error: 'Pilot consent changed before the media slot could be reserved',
+          code: 'pilot_media_not_authorized',
+        }, 409);
+      }
+      return c.json({
+        error: 'Pilot media generation failed closed; nothing was scheduled or published',
+        code: 'pilot_media_generation_failed_closed',
+      }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/media-jobs/poll', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot media polling is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['clientId', 'recordOnlyConfirmed', 'slot'].includes(key),
+    );
+    if (
+      unexpected.length > 0
+      || body.recordOnlyConfirmed !== true
+      || !Number.isInteger(body.slot)
+      || Number(body.slot) < 1
+      || Number(body.slot) > 6
+      || (
+        body.clientId !== undefined
+        && body.clientId !== null
+        && typeof body.clientId !== 'string'
+      )
+    ) {
+      return c.json({
+        error: 'Pilot media polling requires only clientId, slot 1-6, and recordOnlyConfirmed=true',
+      }, 400);
+    }
+
+    const clientId = requestedClientId(body.clientId);
+    const identity = normalizeWorkspaceIdentity(
+      adminId,
+      clientId,
+      clientId === null ? 'user' : 'client',
+      clientId ?? adminId,
+    );
+    const enrollment = await loadPilotGenerationEnrollment(
+      c.env.DB,
+      identity,
+      new Date().toISOString(),
+    );
+    if (!enrollment) {
+      return c.json({
+        error: 'No current record-only pilot consent is available for this workspace',
+        code: 'pilot_media_not_authorized',
+      }, 409);
+    }
+
+    try {
+      const job = await pollRecordOnlyPilotVideoJob(c.env, {
+        identity,
+        enrollment: {
+          id: enrollment.id,
+          policyVersion: enrollment.policy_version,
+        },
+        slot: Number(body.slot),
+      });
+      return c.json({ recordOnly: true, publishingAllowed: false, job });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      if (reason.includes('staging_fal_secret_missing')) {
+        return c.json({
+          error: 'The staging media provider is not configured',
+          code: 'pilot_media_provider_unconfigured',
+        }, 503);
+      }
+      if (reason.includes('not_found')) {
+        return c.json({
+          error: 'The requested record-only pilot video job was not found',
+          code: 'pilot_media_job_not_found',
+        }, 404);
+      }
+      if (reason.includes('not_video')) {
+        return c.json({
+          error: 'Only pilot video jobs can be polled',
+          code: 'pilot_media_job_not_video',
+        }, 409);
+      }
+      console.warn('[learning-pilot] media polling failed closed', {
+        workspaceKey: identity.workspaceKey,
+        slot: body.slot,
+        reason,
+      });
+      return c.json({
+        error: 'Pilot media polling failed closed; nothing was scheduled or published',
+        code: 'pilot_media_poll_failed_closed',
+      }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/generate-draft', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot draft generation is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['clientId', 'recordOnlyConfirmed'].includes(key),
+    );
+    if (
+      unexpected.length > 0
+      || body.recordOnlyConfirmed !== true
+      || (
+        body.clientId !== undefined
+        && body.clientId !== null
+        && typeof body.clientId !== 'string'
+      )
+    ) {
+      return c.json({
+        error: 'Pilot draft generation requires only clientId and recordOnlyConfirmed=true',
+      }, 400);
+    }
+
+    const clientId = requestedClientId(body.clientId);
+    const identity = normalizeWorkspaceIdentity(
+      adminId,
+      clientId,
+      clientId === null ? 'user' : 'client',
+      clientId ?? adminId,
+    );
+    const now = new Date();
+    const enrollment = await loadPilotGenerationEnrollment(
+      c.env.DB,
+      identity,
+      now.toISOString(),
+    );
+    if (!enrollment) {
+      return c.json({
+        error: 'No current record-only pilot consent is available for this workspace',
+        code: 'pilot_generation_not_authorized',
+      }, 409);
+    }
+
+    const existing = await loadGeneratedPilotDraftReceipt(c.env.DB, enrollment.id);
+    if (existing) {
+      try {
+        return c.json(await publicGeneratedPilotDraft(existing, false));
+      } catch {
+        return c.json({
+          error: 'The generated pilot draft changed after its provenance receipt; generation stopped',
+          code: 'pilot_generated_draft_stale',
+        }, 409);
+      }
+    }
+
+    let criticContext;
+    try {
+      criticContext = await loadCriticContext(
+        c.env,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+      );
+    } catch (error) {
+      console.warn('[learning-pilot] generation context unavailable', {
+        workspaceKey: identity.workspaceKey,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot business context could not be loaded; no draft was created',
+        code: 'pilot_context_unavailable',
+      }, 503);
+    }
+    const contextReadiness = assessCriticContextReadiness(criticContext);
+    if (!contextReadiness.ready) {
+      return c.json({
+        error: 'Pilot business context is incomplete; no draft was created',
+        code: 'pilot_context_not_ready',
+      }, 409);
+    }
+
+    const monthlyBudgetUsdCents = countValue(enrollment.monthly_ai_budget_usd_cents);
+    const budget = await getRecordOnlyPilotBudgetStatus(
+      c.env.DB,
+      identity,
+      monthlyBudgetUsdCents,
+      now,
+    );
+    if (!budget.allowed) {
+      return c.json({
+        error: 'Pilot AI budget reserve is unavailable; no draft was created',
+        code: 'pilot_budget_unavailable',
+      }, 409);
+    }
+
+    const postId = `pilot-generated-${crypto.randomUUID()}`;
+    let generated;
+    try {
+      generated = await generateRecordOnlyPilotDraft(
+        c.env,
+        identity,
+        criticContext,
+        postId,
+      );
+    } catch (error) {
+      console.warn('[learning-pilot] draft generation failed closed', {
+        workspaceKey: identity.workspaceKey,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot draft generation failed its safety checks; no draft was created',
+        code: 'pilot_generation_failed_closed',
+      }, 503);
+    }
+
+    const receiptId = crypto.randomUUID();
+    const generatedAt = new Date().toISOString();
+    const hashtags = JSON.stringify(generated.hashtags);
+    const generatedPost: PublishablePost = {
+      id: postId,
+      user_id: identity.userId,
+      client_id: identity.clientId,
+      owner_kind: identity.ownerKind,
+      owner_id: identity.ownerId,
+      content: generated.content,
+      platform: 'facebook',
+      hashtags,
+      image_url: null,
+      post_type: 'text',
+      video_url: null,
+      video_status: null,
+      video_script: null,
+      video_shots: null,
+      archetype_slug: enrollment.archetype_slug,
+    };
+    const contentHash = await buildReleaseContentHash(generatedPost);
+    const reasoning = JSON.stringify({
+      source: 'learning_pilot_generation',
+      policyVersion: enrollment.policy_version,
+      receiptId,
+      recordOnly: true,
+    });
+
+    await c.env.DB.batch([
+      c.env.DB.prepare(`
+        INSERT OR IGNORE INTO posts (
+          id,user_id,client_id,owner_kind,owner_id,content,platform,status,
+          scheduled_for,hashtags,image_url,topic,pillar,image_prompt,reasoning,post_type
+        )
+        SELECT
+          ?,pen.user_id,pen.client_id,pen.owner_kind,pen.owner_id,
+          ?,'facebook','Draft',NULL,?,NULL,NULL,NULL,?,?,'text'
+        FROM learning_pilot_enrollments pen
+        INNER JOIN workspace_learning_settings w
+          ON w.user_id = pen.user_id
+         AND w.workspace_key = pen.workspace_key
+         AND w.client_id IS pen.client_id
+         AND w.owner_kind = pen.owner_kind
+         AND w.owner_id = pen.owner_id
+         AND w.mode = 'approval'
+         AND w.autopublish_consent_at IS NULL
+         AND w.autopublish_policy_version IS NULL
+         AND w.experiment_rate = 0
+         AND w.monthly_ai_budget_usd_cents > 0
+         AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+        LEFT JOIN clients client
+          ON client.id = pen.client_id
+         AND client.user_id = pen.user_id
+        WHERE pen.id = ?
+          AND pen.user_id = ?
+          AND pen.workspace_key = ?
+          AND pen.client_id IS ?
+          AND pen.owner_kind = ?
+          AND pen.owner_id = ?
+          AND pen.policy_version = ?
+          AND pen.record_only = 1
+          AND pen.consent_confirmed_at IS NOT NULL
+          AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+          AND (
+            (
+              pen.owner_kind = 'user'
+              AND pen.consent_basis = 'owner_self'
+              AND pen.client_id IS NULL
+            )
+            OR (
+              pen.owner_kind = 'client'
+              AND pen.consent_basis = 'customer_attested'
+              AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+              AND client.id IS NOT NULL
+              AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM learning_pilot_generated_drafts existing
+            WHERE existing.enrollment_id = pen.id
+          )
+      `).bind(
+        postId,
+        generated.content,
+        hashtags,
+        generated.imagePrompt,
+        reasoning,
+        enrollment.id,
+        identity.userId,
+        identity.workspaceKey,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+        AUTOPILOT_POLICY_VERSION,
+        generatedAt,
+      ),
+      c.env.DB.prepare(`
+        INSERT OR IGNORE INTO learning_pilot_generated_drafts (
+          id,enrollment_id,post_id,user_id,workspace_key,client_id,
+          owner_kind,owner_id,policy_version,content_hash,provider,model,
+          attempt_count,generated_by,generated_at,record_only
+        )
+        SELECT
+          ?,pen.id,p.id,pen.user_id,pen.workspace_key,pen.client_id,
+          pen.owner_kind,pen.owner_id,pen.policy_version,?,?,?,?,?,?,1
+        FROM posts p
+        INNER JOIN learning_pilot_enrollments pen
+          ON pen.id = ?
+         AND pen.user_id = p.user_id
+         AND pen.client_id IS p.client_id
+         AND pen.workspace_key = ?
+         AND pen.owner_kind = ?
+         AND pen.owner_id = ?
+         AND pen.policy_version = ?
+         AND pen.record_only = 1
+         AND pen.consent_confirmed_at IS NOT NULL
+         AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+        INNER JOIN workspace_learning_settings w
+          ON w.user_id = pen.user_id
+         AND w.workspace_key = pen.workspace_key
+         AND w.client_id IS pen.client_id
+         AND w.owner_kind = pen.owner_kind
+         AND w.owner_id = pen.owner_id
+         AND w.mode = 'approval'
+         AND w.autopublish_consent_at IS NULL
+         AND w.autopublish_policy_version IS NULL
+         AND w.experiment_rate = 0
+         AND w.monthly_ai_budget_usd_cents > 0
+         AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+        LEFT JOIN clients client
+          ON client.id = pen.client_id
+         AND client.user_id = pen.user_id
+        LEFT JOIN users pilot_user
+          ON pilot_user.id = pen.user_id
+        WHERE p.id = ?
+          AND p.user_id = ?
+          AND p.client_id IS ?
+          AND p.owner_kind = ?
+          AND p.owner_id = ?
+          AND p.status = 'Draft'
+          AND p.scheduled_for IS NULL
+          AND p.content = ?
+          AND p.platform = 'facebook'
+          AND p.hashtags = ?
+          AND p.image_url IS NULL
+          AND p.post_type = 'text'
+          AND COALESCE(client.archetype_slug, pilot_user.archetype_slug) IS ?
+          AND (
+            pen.owner_kind = 'user'
+            OR (
+              pen.owner_kind = 'client'
+              AND pen.consent_basis = 'customer_attested'
+              AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+              AND client.id IS NOT NULL
+              AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM publication_events pe WHERE pe.post_id = p.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM publish_delivery_receipts delivery WHERE delivery.post_id = p.id
+          )
+      `).bind(
+        receiptId,
+        contentHash,
+        generated.provider,
+        generated.model,
+        generated.attemptCount,
+        adminId,
+        generatedAt,
+        enrollment.id,
+        identity.workspaceKey,
+        identity.ownerKind,
+        identity.ownerId,
+        AUTOPILOT_POLICY_VERSION,
+        generatedAt,
+        postId,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+        generated.content,
+        hashtags,
+        enrollment.archetype_slug,
+      ),
+    ]);
+
+    const receipt = await loadGeneratedPilotDraftReceipt(c.env.DB, enrollment.id);
+    if (!receipt || receipt.post_id !== postId) {
+      try {
+        await removeUnreceiptedGeneratedPilotPost(
+          c.env.DB,
+          identity,
+          postId,
+          generated.content,
+          hashtags,
+          generated.imagePrompt,
+        );
+      } catch (error) {
+        console.error('[learning-pilot] unreceipted draft cleanup failed', {
+          workspaceKey: identity.workspaceKey,
+          postId,
+          reason: error instanceof Error ? error.message : 'unknown error',
+        });
+        return c.json({
+          error: 'Pilot draft persistence could not be verified; generation stopped',
+          code: 'pilot_generation_persistence_uncertain',
+        }, 503);
+      }
+    }
+    if (!receipt) {
+      return c.json({
+        error: 'Pilot consent changed before persistence; no generated draft was retained',
+        code: 'pilot_generation_authorization_changed',
+      }, 409);
+    }
+    try {
+      return c.json(await publicGeneratedPilotDraft(
+        receipt,
+        receipt.post_id === postId,
+      ));
+    } catch {
+      return c.json({
+        error: 'Generated pilot draft provenance could not be verified',
+        code: 'pilot_generated_draft_stale',
+      }, 409);
+    }
+  });
+
   app.get('/api/learning/pilot/candidates', async (c) => {
     const adminId = c.get('uid') as string;
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot candidates are available only while learning enforcement and autopilot are disabled',
@@ -733,10 +2108,26 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         CASE WHEN p.client_id IS NULL THEN 'My workspace'
              ELSE COALESCE(NULLIF(TRIM(c.name), ''), 'Client workspace') END AS label,
         COUNT(*) AS eligible_draft_count,
-        MIN(p.id) AS sample_post_id,
+        COALESCE(
+          MAX(CASE WHEN generated.post_id = p.id THEN p.id END),
+          MIN(p.id)
+        ) AS sample_post_id,
         MAX(CASE WHEN pen.id IS NOT NULL AND w.mode = 'approval' THEN 1 ELSE 0 END) AS enrolled,
-        MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents
+        MAX(w.monthly_ai_budget_usd_cents) AS monthly_ai_budget_usd_cents,
+        CASE WHEN p.client_id IS NULL THEN u.profile ELSE c.profile END AS profile_json,
+        (
+          SELECT json_group_array(f.content)
+          FROM (
+            SELECT cf.content
+            FROM client_facts cf
+            WHERE cf.user_id = p.user_id
+              AND cf.client_id IS p.client_id
+            ORDER BY cf.verified_at DESC
+            LIMIT 80
+          ) f
+        ) AS verified_fact_contents_json
       FROM posts p
+      LEFT JOIN users u ON u.id = p.user_id
       LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
       LEFT JOIN workspace_learning_settings w
         ON w.user_id = p.user_id
@@ -754,8 +2145,18 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
        AND pen.owner_id = CASE WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
        AND pen.policy_version = ?
        AND pen.record_only = 1
+      LEFT JOIN learning_pilot_generated_drafts generated
+        ON generated.enrollment_id = pen.id
+       AND generated.user_id = pen.user_id
+       AND generated.workspace_key = pen.workspace_key
+       AND generated.client_id IS pen.client_id
+       AND generated.owner_kind = pen.owner_kind
+       AND generated.owner_id = pen.owner_id
+       AND generated.policy_version = pen.policy_version
+       AND generated.record_only = 1
       WHERE p.user_id = ?
         AND p.status = 'Draft'
+        AND LENGTH(TRIM(COALESCE(p.content, ''))) BETWEEN 1 AND 5000
         AND (
           (p.client_id IS NULL AND (p.owner_kind IS NULL OR p.owner_kind = 'user'))
           OR (
@@ -773,14 +2174,96 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
               WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
             AND d.post_id = p.id
             AND d.stage = 'release'
+            AND d.release_state IN ('pass_green','hold_amber','block_red')
+            AND CAST(
+              COALESCE(json_extract(d.summary_json, '$.verdictCount'), -1)
+              AS INTEGER
+            ) = (
+              SELECT COUNT(*)
+              FROM learning_critic_verdicts v
+              WHERE v.decision_id = d.id
+            )
+            AND CAST(
+              COALESCE(json_extract(d.summary_json, '$.verdictCount'), 0)
+              AS INTEGER
+            ) > 0
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM learning_decisions synthetic_decision
+          INNER JOIN learning_decision_disqualifications synthetic_disq
+            ON synthetic_disq.decision_id = synthetic_decision.id
+           AND synthetic_disq.user_id = synthetic_decision.user_id
+           AND synthetic_disq.workspace_key = synthetic_decision.workspace_key
+           AND synthetic_disq.client_id IS synthetic_decision.client_id
+           AND synthetic_disq.owner_kind = synthetic_decision.owner_kind
+           AND synthetic_disq.owner_id = synthetic_decision.owner_id
+          WHERE synthetic_decision.user_id = p.user_id
+            AND synthetic_decision.workspace_key = CASE
+              WHEN p.client_id IS NULL THEN '__owner__' ELSE p.client_id END
+            AND synthetic_decision.client_id IS p.client_id
+            AND synthetic_decision.owner_kind = CASE
+              WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+            AND synthetic_decision.owner_id = CASE
+              WHEN p.client_id IS NULL THEN p.user_id ELSE p.client_id END
+            AND synthetic_decision.post_id = p.id
+            AND synthetic_disq.reason = 'synthetic_qa'
         )
       GROUP BY p.user_id,p.client_id
       ORDER BY CASE WHEN p.client_id IS NULL THEN 0 ELSE 1 END, label
       LIMIT 50
     `).bind(AUTOPILOT_POLICY_VERSION, adminId).all<PilotCandidateRow>();
-    return c.json({
-      recordOnly: true,
-      candidates: (rows.results ?? []).map((row) => ({
+    const candidateRows = rows.results ?? [];
+    const enrollmentRows = await c.env.DB.prepare(`
+      SELECT
+        pen.id,
+        pen.client_id,
+        pen.owner_kind,
+        pen.owner_id,
+        pen.workspace_key,
+        pen.policy_version,
+        pen.enrolled_at,
+        generated.post_id AS generated_draft_post_id,
+        generated.content_hash AS generated_draft_content_hash,
+        generated.provider AS generated_draft_provider,
+        generated.model AS generated_draft_model,
+        generated.generated_at AS generated_draft_at,
+        CASE
+          WHEN pen.owner_kind = 'user' THEN 'My workspace'
+          ELSE COALESCE(NULLIF(TRIM(client.name), ''), 'Client workspace')
+        END AS label
+      FROM learning_pilot_enrollments pen
+      LEFT JOIN clients client
+        ON client.id = pen.client_id
+       AND client.user_id = pen.user_id
+      LEFT JOIN learning_pilot_generated_drafts generated
+        ON generated.enrollment_id = pen.id
+       AND generated.user_id = pen.user_id
+       AND generated.workspace_key = pen.workspace_key
+       AND generated.client_id IS pen.client_id
+       AND generated.owner_kind = pen.owner_kind
+       AND generated.owner_id = pen.owner_id
+       AND generated.policy_version = pen.policy_version
+       AND generated.record_only = 1
+      WHERE pen.user_id = ?
+        AND pen.policy_version = ?
+        AND pen.record_only = 1
+        AND pen.owner_kind IN ('user','client')
+      ORDER BY CASE pen.owner_kind WHEN 'user' THEN 0 ELSE 1 END, label
+      LIMIT 10
+    `).bind(adminId, AUTOPILOT_POLICY_VERSION).all<PilotActiveEnrollmentRow>();
+    const previewRows = await loadPilotCandidatePreviews(
+      c.env.DB,
+      adminId,
+      candidateRows
+        .filter((row) => countValue(row.enrolled) > 0)
+        .map((row) => row.sample_post_id),
+    );
+    const previewsById = new Map(previewRows.map((row) => [row.id, row]));
+    const candidates = (await Promise.all(candidateRows.map(async (row) => {
+      const enrolled = countValue(row.enrolled) > 0;
+      const contextReadiness = pilotCandidateContextReadiness(row);
+      const candidate = {
         clientId: row.client_id,
         ownerKind: row.owner_kind,
         ownerId: row.owner_id,
@@ -788,11 +2271,329 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         label: row.label,
         eligibleDraftCount: countValue(row.eligible_draft_count),
         samplePostId: row.sample_post_id,
-        enrolled: countValue(row.enrolled) > 0,
+        enrolled,
         monthlyAiBudgetUsdCents: row.monthly_ai_budget_usd_cents == null
           ? null
           : countValue(row.monthly_ai_budget_usd_cents),
+        contextReady: contextReadiness.ready,
+        contextReason: contextReadiness.reason,
+        meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
+        verifiedFactCount: contextReadiness.verifiedFactCount,
+      };
+      if (!enrolled) return { ...candidate, sampleDraft: null };
+      const preview = previewsById.get(row.sample_post_id);
+      if (!preview) return { ...candidate, sampleDraft: null };
+      const previewClientId = preview.client_id?.trim() || null;
+      const previewOwnerKind: WorkspaceOwnerKind = previewClientId === null ? 'user' : 'client';
+      const previewOwnerId = preview.owner_id?.trim()
+        || previewClientId
+        || preview.user_id;
+      if (
+        preview.user_id !== row.user_id
+        || previewClientId !== row.client_id
+        || previewOwnerKind !== row.owner_kind
+        || previewOwnerId !== row.owner_id
+      ) return { ...candidate, sampleDraft: null };
+      const identity = normalizeWorkspaceIdentity(
+        preview.user_id,
+        previewClientId,
+        previewOwnerKind,
+        previewOwnerId,
+      );
+      const post = publishablePilotDraft(preview, identity);
+      return {
+        ...candidate,
+        sampleDraft: {
+          postId: post.id,
+          content: post.content,
+          platform: post.platform,
+          hashtags: post.hashtags,
+          imageUrl: post.image_url,
+          postType: post.post_type,
+          videoUrl: post.video_url,
+          contentHash: await buildReleaseContentHash(post),
+        },
+      };
+    })));
+    return c.json({
+      recordOnly: true,
+      enrollments: (enrollmentRows.results ?? []).map((row) => ({
+        enrollmentId: row.id,
+        clientId: row.client_id,
+        ownerKind: row.owner_kind,
+        ownerId: row.owner_id,
+        workspaceKey: row.workspace_key,
+        policyVersion: row.policy_version,
+        enrolledAt: row.enrolled_at,
+        label: row.label,
+        recordOnly: true,
+        generatedDraft: row.generated_draft_post_id
+          && row.generated_draft_content_hash
+          && row.generated_draft_provider
+          && row.generated_draft_model
+          && row.generated_draft_at
+          ? {
+              postId: row.generated_draft_post_id,
+              contentHash: row.generated_draft_content_hash,
+              provider: row.generated_draft_provider,
+              model: row.generated_draft_model,
+              generatedAt: row.generated_draft_at,
+            }
+          : null,
       })),
+      candidates,
+    });
+  });
+
+  app.post('/api/learning/pilot/attest/:postId', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot attestation is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['realPostConfirmed', 'expectedContentHash', 'note'].includes(key),
+    );
+    const expectedContentHash = typeof body.expectedContentHash === 'string'
+      ? body.expectedContentHash.trim().toLowerCase()
+      : '';
+    if (
+      unexpected.length > 0
+      || body.realPostConfirmed !== true
+      || !/^[a-f0-9]{64}$/.test(expectedContentHash)
+    ) {
+      return c.json({
+        error: 'Attestation requires only realPostConfirmed=true, expectedContentHash, and note',
+      }, 400);
+    }
+    const note = typeof body.note === 'string' ? body.note.trim() : '';
+    if (note.length < 10 || note.length > 2000) {
+      return c.json({ error: 'note must be between 10 and 2000 characters' }, 400);
+    }
+
+    const postId = c.req.param('postId').trim();
+    if (!postId) return c.json({ error: 'Not found' }, 404);
+    const row = await c.env.DB.prepare(`
+      SELECT
+        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,p.scheduled_for,
+        p.content,p.platform,p.hashtags,p.image_url,p.post_type,
+        p.video_url,p.video_status,p.video_script,p.video_shots,
+        COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
+        c.status AS client_status
+      FROM posts p
+      LEFT JOIN clients c ON c.id = p.client_id AND c.user_id = p.user_id
+      LEFT JOIN users u ON u.id = p.user_id
+      WHERE p.id = ? AND p.user_id = ?
+      LIMIT 1
+    `).bind(postId, adminId).first<PilotDraftRow>();
+    if (!row) return c.json({ error: 'Not found' }, 404);
+    if (row.status?.trim().toLowerCase() !== 'draft') {
+      return c.json({ error: 'Pilot attestation accepts Draft posts only' }, 409);
+    }
+    const contentLength = row.content?.trim().length ?? 0;
+    if (contentLength < 1 || contentLength > 5000) {
+      return c.json({
+        error: 'Pilot attestation requires draft content between 1 and 5000 characters',
+      }, 409);
+    }
+
+    const clientId = row.client_id?.trim() || null;
+    const ownerKind: WorkspaceOwnerKind = clientId === null ? 'user' : 'client';
+    if (row.owner_kind && row.owner_kind !== ownerKind) {
+      return c.json({ error: 'Pilot attestation supports canonical user and client drafts only' }, 409);
+    }
+    if (clientId && row.client_status?.trim().toLowerCase() === 'on_hold') {
+      return c.json({ error: 'Pilot attestation cannot include an on-hold client' }, 409);
+    }
+    if (clientId && row.client_status == null) return c.json({ error: 'Not found' }, 404);
+
+    const identity = normalizeWorkspaceIdentity(
+      row.user_id,
+      clientId,
+      ownerKind,
+      row.owner_id?.trim() || clientId || row.user_id,
+    );
+    const post = publishablePilotDraft(row, identity);
+    const contentHash = await buildReleaseContentHash(post);
+    if (contentHash !== expectedContentHash) {
+      return c.json({
+        error: 'Draft changed after preview; refresh before attesting',
+        code: 'pilot_sample_preview_stale',
+      }, 409);
+    }
+    if (await isSyntheticQaPilotPost(c.env.DB, identity, postId)) {
+      return c.json({
+        error: 'Known synthetic-QA posts cannot enter real pilot evidence',
+        code: 'pilot_sample_synthetic_qa',
+      }, 409);
+    }
+    const existing = await existingPilotSample(c.env.DB, identity, postId, contentHash);
+    if (existing) {
+      return c.json({
+        sampleId: existing.id,
+        postId: existing.post_id,
+        contentHash: existing.content_hash,
+        attestationBasis: existing.attestation_basis,
+        attestedAt: existing.attested_at,
+        created: false,
+        postMutated: false,
+      });
+    }
+
+    const sampleId = crypto.randomUUID();
+    const attestedAt = new Date().toISOString();
+    const attestationBasis = identity.ownerKind === 'user'
+      ? 'owner_real_post'
+      : 'customer_real_post';
+    const sample = await c.env.DB.prepare(`
+      INSERT OR IGNORE INTO learning_pilot_samples (
+        id,post_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+        content_hash,attestation_basis,note,attested_by,attested_at
+      )
+      SELECT
+        ?,p.id,pen.user_id,pen.workspace_key,pen.client_id,pen.owner_kind,pen.owner_id,
+        ?,?,?,?,?
+      FROM posts p
+      INNER JOIN learning_pilot_enrollments pen
+        ON pen.user_id = p.user_id
+       AND pen.client_id IS p.client_id
+       AND pen.workspace_key = ?
+       AND pen.owner_kind = ?
+       AND pen.owner_id = ?
+       AND pen.policy_version = ?
+       AND pen.record_only = 1
+       AND pen.consent_confirmed_at IS NOT NULL
+       AND unixepoch(pen.enrolled_at) <= unixepoch(?)
+       AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+      INNER JOIN workspace_learning_settings w
+        ON w.user_id = pen.user_id
+       AND w.workspace_key = pen.workspace_key
+       AND w.client_id IS pen.client_id
+       AND w.owner_kind = pen.owner_kind
+       AND w.owner_id = pen.owner_id
+       AND w.mode = 'approval'
+       AND w.monthly_ai_budget_usd_cents > 0
+       AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+      LEFT JOIN clients c
+        ON c.id = pen.client_id AND c.user_id = pen.user_id
+      LEFT JOIN users u
+        ON u.id = pen.user_id
+      WHERE p.id = ? AND p.user_id = ? AND p.client_id IS ?
+        AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+        AND COALESCE(p.content, '') = ?
+        AND COALESCE(NULLIF(TRIM(p.platform), ''), 'facebook') = ?
+        AND p.hashtags IS ? AND p.image_url IS ?
+        AND p.post_type IS ? AND p.video_url IS ? AND p.video_status IS ?
+        AND p.video_script IS ? AND p.video_shots IS ?
+        AND (
+          NULLIF(TRIM(COALESCE(p.owner_kind, '')), '') IS NULL
+          OR p.owner_kind = ?
+        )
+        AND (
+          NULLIF(TRIM(COALESCE(p.owner_id, '')), '') IS NULL
+          OR p.owner_id = ?
+        )
+        AND COALESCE(c.archetype_slug, u.archetype_slug) IS ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM learning_decisions synthetic_decision
+          INNER JOIN learning_decision_disqualifications synthetic_disq
+            ON synthetic_disq.decision_id = synthetic_decision.id
+           AND synthetic_disq.user_id = synthetic_decision.user_id
+           AND synthetic_disq.workspace_key = synthetic_decision.workspace_key
+           AND synthetic_disq.client_id IS synthetic_decision.client_id
+           AND synthetic_disq.owner_kind = synthetic_decision.owner_kind
+           AND synthetic_disq.owner_id = synthetic_decision.owner_id
+          WHERE synthetic_decision.user_id = pen.user_id
+            AND synthetic_decision.workspace_key = pen.workspace_key
+            AND synthetic_decision.client_id IS pen.client_id
+            AND synthetic_decision.owner_kind = pen.owner_kind
+            AND synthetic_decision.owner_id = pen.owner_id
+            AND synthetic_decision.post_id = p.id
+            AND synthetic_disq.reason = 'synthetic_qa'
+        )
+        AND (
+          (
+            pen.owner_kind = 'user'
+            AND pen.consent_basis = 'owner_self'
+            AND pen.client_id IS NULL
+            AND pen.workspace_key = '__owner__'
+            AND pen.owner_id = pen.user_id
+            AND ? = 'owner_real_post'
+          )
+          OR (
+            pen.owner_kind = 'client'
+            AND pen.consent_basis = 'customer_attested'
+            AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+            AND pen.client_id IS NOT NULL
+            AND pen.workspace_key = pen.client_id
+            AND pen.owner_id = pen.client_id
+            AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
+            AND ? = 'customer_real_post'
+          )
+        )
+      RETURNING
+        id,post_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+        content_hash,attestation_basis,note,attested_by,attested_at
+    `).bind(
+      sampleId,
+      contentHash,
+      attestationBasis,
+      note,
+      adminId,
+      attestedAt,
+      identity.workspaceKey,
+      identity.ownerKind,
+      identity.ownerId,
+      AUTOPILOT_POLICY_VERSION,
+      attestedAt,
+      attestedAt,
+      postId,
+      identity.userId,
+      identity.clientId,
+      row.content,
+      row.platform,
+      row.hashtags,
+      row.image_url,
+      row.post_type,
+      row.video_url,
+      row.video_status,
+      row.video_script,
+      row.video_shots,
+      identity.ownerKind,
+      identity.ownerId,
+      row.archetype_slug,
+      attestationBasis,
+      attestationBasis,
+    ).first<PilotSampleRow>();
+    const receipt = sample
+      ?? await existingPilotSample(c.env.DB, identity, postId, contentHash);
+    if (!receipt) {
+      return c.json({
+        error: 'Pilot attestation failed closed because the draft or consent changed',
+      }, 409);
+    }
+    return c.json({
+      sampleId: receipt.id,
+      postId: receipt.post_id,
+      contentHash: receipt.content_hash,
+      attestationBasis: receipt.attestation_basis,
+      attestedAt: receipt.attested_at,
+      created: sample != null,
+      postMutated: false,
     });
   });
 
@@ -801,6 +2602,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     if (!dormantPilotEnabled(c.env)) {
       return c.json({
         error: 'Pilot validation is available only while learning enforcement and autopilot are disabled',
@@ -811,7 +2614,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!postId) return c.json({ error: 'Not found' }, 404);
     const row = await c.env.DB.prepare(`
       SELECT
-        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,
+        p.id,p.user_id,p.client_id,p.owner_kind,p.owner_id,p.status,p.scheduled_for,
         p.content,p.platform,p.hashtags,p.image_url,p.post_type,
         p.video_url,p.video_status,p.video_script,p.video_shots,
         COALESCE(c.archetype_slug, u.archetype_slug) AS archetype_slug,
@@ -855,24 +2658,95 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (mode !== 'approval') {
       return c.json({ error: 'Workspace must be enrolled in approval-mode pilot validation' }, 409);
     }
+    const validationNow = new Date();
     const enrollment = await c.env.DB.prepare(`
-      SELECT id FROM learning_pilot_enrollments
-      WHERE user_id = ? AND workspace_key = ?
-        AND client_id IS ? AND owner_kind = ? AND owner_id = ?
-        AND policy_version = ? AND record_only = 1
+      SELECT
+        pen.id,w.monthly_ai_budget_usd_cents,
+        sample.content_hash AS pilot_sample_content_hash,
+        sample.attestation_basis AS pilot_sample_basis,
+        sample.attested_at AS pilot_sample_attested_at
+      FROM learning_pilot_enrollments pen
+      INNER JOIN workspace_learning_settings w
+        ON w.user_id = pen.user_id
+       AND w.workspace_key = pen.workspace_key
+       AND w.client_id IS pen.client_id
+       AND w.owner_kind = pen.owner_kind
+       AND w.owner_id = pen.owner_id
+      LEFT JOIN learning_pilot_samples sample
+        ON sample.user_id = pen.user_id
+       AND sample.workspace_key = pen.workspace_key
+       AND sample.client_id IS pen.client_id
+       AND sample.owner_kind = pen.owner_kind
+       AND sample.owner_id = pen.owner_id
+       AND sample.post_id = ?
+       AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+       AND unixepoch(sample.attested_at) <= unixepoch(?)
+       AND sample.attestation_basis = CASE pen.owner_kind
+         WHEN 'user' THEN 'owner_real_post'
+         ELSE 'customer_real_post'
+       END
+       AND sample.id = (
+         SELECT latest_sample.id
+         FROM learning_pilot_samples latest_sample
+         WHERE latest_sample.user_id = pen.user_id
+           AND latest_sample.workspace_key = pen.workspace_key
+           AND latest_sample.client_id IS pen.client_id
+           AND latest_sample.owner_kind = pen.owner_kind
+           AND latest_sample.owner_id = pen.owner_id
+           AND latest_sample.post_id = sample.post_id
+         ORDER BY latest_sample.attested_at DESC, latest_sample.id DESC
+         LIMIT 1
+       )
+      WHERE pen.user_id = ? AND pen.workspace_key = ?
+        AND pen.client_id IS ? AND pen.owner_kind = ? AND pen.owner_id = ?
+        AND pen.policy_version = ? AND pen.record_only = 1
+        AND pen.consent_confirmed_at IS NOT NULL
+        AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+        AND w.mode = 'approval'
+        AND w.monthly_ai_budget_usd_cents > 0
+        AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+        AND (
+          (pen.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
+          OR (
+            pen.owner_kind = 'client'
+            AND pen.consent_basis = 'customer_attested'
+            AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+          )
+        )
       LIMIT 1
     `).bind(
+      postId,
+      validationNow.toISOString(),
       identity.userId,
       identity.workspaceKey,
       identity.clientId,
       identity.ownerKind,
       identity.ownerId,
       AUTOPILOT_POLICY_VERSION,
-    ).first<{ id: string }>();
+      validationNow.toISOString(),
+    ).first<PilotValidationEnrollmentRow>();
     if (!enrollment) {
       return c.json({ error: 'Workspace has no current-policy pilot enrollment receipt' }, 409);
     }
-
+    const expectedContentHash = enrollment.pilot_sample_content_hash?.trim() ?? '';
+    if (!/^[0-9a-f]{64}$/.test(expectedContentHash)) {
+      return c.json({
+        error: 'Exact draft version has no positive real-post pilot attestation',
+        code: 'pilot_sample_not_attested',
+      }, 409);
+    }
+    const expectedBasis = identity.ownerKind === 'user'
+      ? 'owner_real_post'
+      : 'customer_real_post';
+    if (
+      enrollment.pilot_sample_basis !== expectedBasis
+      || !Number.isFinite(Date.parse(enrollment.pilot_sample_attested_at ?? ''))
+    ) {
+      return c.json({
+        error: 'Pilot sample attestation is invalid for this workspace',
+        code: 'pilot_sample_invalid',
+      }, 409);
+    }
     const post: PublishablePost = {
       id: row.id,
       user_id: identity.userId,
@@ -890,11 +2764,89 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       video_shots: row.video_shots,
       archetype_slug: row.archetype_slug,
     };
-    try {
-      const result = await runAndPersistReleasePipeline(c.env, post, 'approval');
+    if (await buildReleaseContentHash(post) !== expectedContentHash) {
       return c.json({
-        decisionId: result.id,
-        releaseState: result.state,
+        error: 'Draft changed after its real-post pilot attestation',
+        code: 'pilot_sample_stale',
+      }, 409);
+    }
+    if (await isSyntheticQaPilotPost(c.env.DB, identity, postId)) {
+      return c.json({
+        error: 'Known synthetic-QA posts cannot enter real pilot evidence',
+        code: 'pilot_sample_synthetic_qa',
+      }, 409);
+    }
+    let contextReadiness;
+    try {
+      const criticContext = await loadCriticContext(
+        c.env,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+      );
+      contextReadiness = assessCriticContextReadiness(criticContext);
+    } catch (error) {
+      console.warn('[learning-pilot] critic context unavailable', {
+        postId: row.id,
+        workspaceKey: identity.workspaceKey,
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot business context could not be loaded; no critics ran',
+        code: 'pilot_context_unavailable',
+      }, 503);
+    }
+    if (!contextReadiness.ready) {
+      return c.json({
+        error: 'Pilot business context is incomplete; complete the business profile or add a verified fact before running critics',
+        code: 'pilot_context_not_ready',
+        readiness: {
+          meaningfulProfileFieldCount: contextReadiness.meaningfulProfileFields.length,
+          verifiedFactCount: contextReadiness.verifiedFactCount,
+        },
+      }, 409);
+    }
+    const budgetUsdCents = Number(enrollment.monthly_ai_budget_usd_cents);
+    const budget = await getRecordOnlyPilotBudgetStatus(
+      c.env.DB,
+      identity,
+      budgetUsdCents,
+      validationNow,
+    );
+    if (!budget.allowed) {
+      const telemetryUnavailable = budget.reason === 'telemetry_unavailable';
+      return c.json({
+        error: telemetryUnavailable
+          ? 'Pilot cost telemetry is unavailable; no critics ran'
+          : 'Pilot AI budget reserve is unavailable; no critics ran',
+      }, telemetryUnavailable ? 503 : 409);
+    }
+
+    try {
+      const result = await runClaimedPilotEvaluation(
+        c.env,
+        post,
+        undefined,
+        validationNow,
+        expectedContentHash,
+        {
+          enrollmentId: enrollment.id,
+          policyVersion: AUTOPILOT_POLICY_VERSION,
+        },
+      );
+      if (
+        result.status === 'busy'
+        || result.decisionId == null
+        || result.releaseState == null
+      ) {
+        return c.json({
+          error: 'Pilot validation is already running; no duplicate critic spend was started',
+        }, 409);
+      }
+      return c.json({
+        decisionId: result.decisionId,
+        releaseState: result.releaseState,
         postId: row.id,
         sourceStatus: 'Draft',
         postMutated: false,
@@ -907,6 +2859,181 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       return c.json({
         error: 'Pilot validation failed closed; no post changes were made',
       }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/disqualify/:decisionId', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot disqualification is available only while enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    try {
+      const body = await jsonBody(c.req.raw);
+      const unexpected = Object.keys(body).filter(
+        (key) => key !== 'reason' && key !== 'note',
+      );
+      if (unexpected.length > 0) {
+        return c.json({ error: 'Disqualification accepts only reason and note' }, 400);
+      }
+      if (body.reason !== 'synthetic_qa') {
+        return c.json({ error: 'reason must be synthetic_qa' }, 400);
+      }
+      const note = typeof body.note === 'string' ? body.note.trim() : '';
+      if (note.length < 10 || note.length > 2000) {
+        return c.json({ error: 'note must be between 10 and 2000 characters' }, 400);
+      }
+      const decisionId = c.req.param('decisionId').trim();
+      if (!decisionId) return c.json({ error: 'Not found' }, 404);
+
+      const existing = await existingPilotDisqualification(c.env.DB, decisionId);
+      if (existing) {
+        return c.json({
+          disqualificationId: existing.id,
+          decisionId: existing.decision_id,
+          reason: existing.reason,
+          createdAt: existing.created_at,
+          created: false,
+          postMutated: false,
+        });
+      }
+
+      const id = crypto.randomUUID();
+      const createdAt = new Date().toISOString();
+      const receipt = await c.env.DB.prepare(`
+        INSERT INTO learning_decision_disqualifications (
+          id,decision_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+          reason,note,excluded_by,created_at
+        )
+        SELECT
+          ?,d.id,d.user_id,d.workspace_key,d.client_id,d.owner_kind,d.owner_id,
+          ?,?,?,?
+        FROM learning_decisions d
+        INNER JOIN learning_pilot_enrollments pen
+          ON pen.user_id = d.user_id
+         AND pen.workspace_key = d.workspace_key
+         AND pen.client_id IS d.client_id
+         AND pen.owner_kind = d.owner_kind
+         AND pen.owner_id = d.owner_id
+         AND pen.policy_version = ?
+         AND pen.record_only = 1
+         AND unixepoch(d.created_at) >= unixepoch(pen.enrolled_at)
+         AND unixepoch(pen.consent_confirmed_at) <= unixepoch(d.created_at)
+         AND (
+           (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
+           OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
+         )
+        INNER JOIN posts p
+          ON p.id = d.post_id
+         AND TRIM(p.user_id) = d.user_id
+         AND p.client_id IS d.client_id
+         AND COALESCE(
+           NULLIF(TRIM(p.owner_kind), ''),
+           CASE WHEN p.client_id IS NULL THEN 'user' ELSE 'client' END
+         ) = d.owner_kind
+         AND CASE
+           WHEN d.owner_kind = 'client' THEN TRIM(COALESCE(p.owner_id, p.client_id))
+           ELSE TRIM(COALESCE(p.owner_id, p.user_id))
+         END = d.owner_id
+         AND LOWER(TRIM(COALESCE(p.status, ''))) = 'draft'
+         AND NULLIF(TRIM(COALESCE(p.scheduled_for, '')), '') IS NULL
+        LEFT JOIN users pilot_user
+          ON d.owner_kind = 'user' AND pilot_user.id = d.user_id
+        LEFT JOIN clients pilot_client
+          ON d.owner_kind = 'client'
+         AND pilot_client.id = d.client_id
+         AND pilot_client.user_id = d.user_id
+        WHERE d.id = ?
+          AND d.stage = 'release'
+          AND d.mode = 'approval'
+          AND d.owner_kind IN ('user','client')
+          AND (
+            (d.owner_kind = 'user' AND pilot_user.id IS NOT NULL)
+            OR (
+              d.owner_kind = 'client'
+              AND pilot_client.id IS NOT NULL
+              AND COALESCE(LOWER(TRIM(pilot_client.status)), 'active') <> 'on_hold'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM learning_adjudications a
+            WHERE a.decision_id = d.id
+              AND a.user_id = d.user_id
+              AND a.workspace_key = d.workspace_key
+              AND a.client_id IS d.client_id
+              AND a.owner_kind = d.owner_kind
+              AND a.owner_id = d.owner_id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM publication_events pe
+            WHERE pe.decision_id = d.id
+              AND pe.user_id = d.user_id
+              AND pe.workspace_key = d.workspace_key
+              AND pe.client_id IS d.client_id
+              AND pe.owner_kind = d.owner_kind
+              AND pe.owner_id = d.owner_id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM learning_decision_disqualifications disq
+            WHERE disq.decision_id = d.id
+          )
+        RETURNING
+          id,decision_id,user_id,workspace_key,client_id,owner_kind,owner_id,
+          reason,note,excluded_by,created_at
+      `).bind(
+        id,
+        body.reason,
+        note,
+        adminId,
+        createdAt,
+        AUTOPILOT_POLICY_VERSION,
+        decisionId,
+      ).first<PilotDisqualificationRow>();
+
+      if (!receipt) {
+        return c.json({
+          error: 'Only an unpublished, unadjudicated, unscheduled current-pilot Draft can be disqualified',
+        }, 409);
+      }
+      return c.json({
+        disqualificationId: receipt.id,
+        decisionId: receipt.decision_id,
+        reason: receipt.reason,
+        createdAt: receipt.created_at,
+        created: true,
+        postMutated: false,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (/unique/i.test(message)) {
+        const decisionId = c.req.param('decisionId').trim();
+        const existing = await existingPilotDisqualification(c.env.DB, decisionId);
+        if (existing) {
+          return c.json({
+            disqualificationId: existing.id,
+            decisionId: existing.decision_id,
+            reason: existing.reason,
+            createdAt: existing.created_at,
+            created: false,
+            postMutated: false,
+          });
+        }
+      }
+      console.warn('[learning-pilot] disqualification failed closed', {
+        decisionId: c.req.param('decisionId'),
+        reason: message || 'unknown error',
+      });
+      return c.json({ error: 'Pilot disqualification failed closed' }, 503);
     }
   });
 
@@ -1057,6 +3184,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adjudicator))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     try {
       const body = await jsonBody(c.req.raw);
       if (!['pass_green', 'hold_amber', 'block_red'].includes(String(body.expectedState))) {
@@ -1223,6 +3352,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     const rawLimit = c.req.query('limit');
     const limit = rawLimit == null || rawLimit === '' ? 100 : Number(rawLimit);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
@@ -1231,20 +3362,32 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     const rows = await c.env.DB.prepare(`
       WITH pilot_cohort AS (
         ${CURRENT_POLICY_PILOT_COHORT_SQL}
-      ), verdict_attempts AS (
-        SELECT v.decision_id, v.critic_kind, v.verdict, v.attempt,
-               MAX(v.attempt) OVER (
-                 PARTITION BY v.decision_id, v.critic_kind
-               ) AS latest_attempt
+      ), verdict_sources AS (
+        SELECT v.decision_id,
+               CASE
+                 WHEN v.critic_kind IN ('image','video_manifest') THEN 'media'
+                 WHEN v.provider = 'deterministic'
+                  AND v.critic_kind IN (${DETERMINISTIC_REQUIRED_CRITICS_SQL})
+                 THEN 'deterministic'
+                 ELSE 'independent'
+               END AS critic_lane,
+               v.critic_kind, v.verdict, v.attempt
           FROM learning_critic_verdicts v
           INNER JOIN pilot_cohort r ON r.id = v.decision_id
-         WHERE v.critic_kind IN (${BASE_REQUIRED_CRITICS_SQL})
+         WHERE v.critic_kind IN (${ALL_REQUIRED_CRITICS_SQL})
+      ), verdict_attempts AS (
+        SELECT v.decision_id, v.critic_lane, v.critic_kind, v.verdict, v.attempt,
+               MAX(v.attempt) OVER (
+                 PARTITION BY v.decision_id, v.critic_lane, v.critic_kind
+               ) AS latest_attempt
+          FROM verdict_sources v
       ), verdict_slots AS (
-        SELECT v.decision_id, v.critic_kind,
-               MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS available
+        SELECT v.decision_id, v.critic_lane, v.critic_kind,
+               MAX(CASE WHEN v.verdict != 'unavailable' THEN 1 ELSE 0 END) AS available,
+               MAX(CASE WHEN v.verdict = 'block' THEN 1 ELSE 0 END) AS blocked
           FROM verdict_attempts v
          WHERE v.attempt = v.latest_attempt
-         GROUP BY v.decision_id, v.critic_kind
+         GROUP BY v.decision_id, v.critic_lane, v.critic_kind
       ), decision_metrics AS (
         SELECT r.user_id, r.workspace_key,
                COUNT(*) AS decision_count,
@@ -1260,22 +3403,67 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
                   AND r.release_state = 'pass_green' THEN 1 ELSE 0 END
                ) AS severe_false_passes,
                SUM(CASE
-                 WHEN json_extract(r.summary_json, '$.persistenceState') = 'complete'
-                  AND json_extract(r.summary_json, '$.pipelineState') IS NOT NULL
+                 WHEN json_extract(r.summary_json, '$.judgeStatus')
+                      IN ('available','unavailable')
                  THEN 1 ELSE 0 END
-               ) AS judge_available
+               ) AS judge_total,
+               SUM(CASE
+                 WHEN json_extract(r.summary_json, '$.judgeStatus') = 'available'
+                 THEN 1 ELSE 0 END
+               ) AS judge_available,
+               SUM(CASE
+                 WHEN json_extract(r.summary_json, '$.judgeStatus')
+                      IN ('available','unavailable','not_run')
+                 THEN 1 ELSE 0 END
+               ) AS judge_telemetry_count
           FROM pilot_cohort r
           LEFT JOIN learning_adjudications a ON a.decision_id = r.id
            AND a.user_id = r.user_id AND a.workspace_key = r.workspace_key
            AND a.owner_kind = r.owner_kind AND a.owner_id = r.owner_id
          GROUP BY r.user_id, r.workspace_key
-      ), verdict_metrics AS (
-        SELECT r.user_id, r.workspace_key,
-               COUNT(v.critic_kind) AS critic_total,
-               SUM(v.available) AS critic_available
+      ), decision_critic_paths AS (
+        SELECT r.id, r.user_id, r.workspace_key, r.summary_json,
+               MAX(CASE
+                 WHEN v.critic_lane = 'deterministic' AND v.blocked = 1
+                 THEN 1 ELSE 0 END
+               ) AS deterministic_block
           FROM pilot_cohort r
-          JOIN verdict_slots v ON v.decision_id = r.id
-         GROUP BY r.user_id, r.workspace_key
+          LEFT JOIN verdict_slots v ON v.decision_id = r.id
+         GROUP BY r.id, r.user_id, r.workspace_key, r.summary_json
+      ), expected_critic_metrics AS (
+        SELECT p.user_id, p.workspace_key,
+               SUM(CASE
+                 WHEN p.deterministic_block = 1
+                 THEN ${DETERMINISTIC_REQUIRED_CRITICS.length}
+                 ELSE ${
+                   BASE_REQUIRED_CRITICS.length + DETERMINISTIC_REQUIRED_CRITICS.length
+                 } + CASE
+                   WHEN json_extract(p.summary_json, '$.mediaKind') IN ('image','video')
+                   THEN 1 ELSE 0 END
+                 END
+               ) AS critic_total
+          FROM decision_critic_paths p
+         GROUP BY p.user_id, p.workspace_key
+      ), verdict_metrics AS (
+        SELECT p.user_id, p.workspace_key,
+               SUM(CASE
+                 WHEN v.critic_lane = 'deterministic'
+                   OR (p.deterministic_block = 0 AND v.critic_lane = 'independent')
+                   OR (
+                     p.deterministic_block = 0
+                     AND json_extract(p.summary_json, '$.mediaKind') = 'image'
+                     AND v.critic_kind = 'image'
+                   )
+                   OR (
+                     p.deterministic_block = 0
+                     AND json_extract(p.summary_json, '$.mediaKind') = 'video'
+                     AND v.critic_kind = 'video_manifest'
+                   )
+                 THEN v.available ELSE 0 END
+               ) AS critic_available
+          FROM decision_critic_paths p
+          LEFT JOIN verdict_slots v ON v.decision_id = p.id
+         GROUP BY p.user_id, p.workspace_key
       ), sample_candidates AS (
         SELECT r.user_id, r.workspace_key, r.owner_kind, r.owner_id,
                r.id AS sample_decision_id, r.post_id AS sample_post_id,
@@ -1324,7 +3512,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
              s.uninstalled_at AS shop_uninstalled_at,
              dm.decision_count, dm.hold_count, dm.adjudicated_count,
               dm.false_hold_count, dm.severe_false_passes,
-              vm.critic_total, vm.critic_available, dm.judge_available,
+              em.critic_total, vm.critic_available,
+              dm.judge_total, dm.judge_available, dm.judge_telemetry_count,
               sc.sample_decision_id, sc.sample_post_id,
               sc.review_content_hash,sc.review_content,sc.review_platform,
               sc.review_hashtags,sc.review_image_url,sc.review_post_type,
@@ -1338,6 +3527,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
          AND LOWER(s.shop_domain) = w.owner_id
         LEFT JOIN decision_metrics dm ON dm.user_id = w.user_id
          AND dm.workspace_key = w.workspace_key
+        LEFT JOIN expected_critic_metrics em ON em.user_id = w.user_id
+         AND em.workspace_key = w.workspace_key
         LEFT JOIN verdict_metrics vm ON vm.user_id = w.user_id
          AND vm.workspace_key = w.workspace_key
         LEFT JOIN sample_candidates sc ON sc.user_id = w.user_id
@@ -1348,6 +3539,26 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
        LIMIT ?
     `).bind(AUTOPILOT_POLICY_VERSION, limit).all<AdminOperationsRow>();
     const readinessRow = await latestReadiness(c.env.DB);
+    const evidenceRows = await c.env.DB.prepare(`
+      WITH latest_evidence AS (
+        SELECT evidence_kind, owner_kind, passed, recorded_at, expires_at,
+               ROW_NUMBER() OVER (
+                 PARTITION BY evidence_kind, COALESCE(owner_kind, '')
+                 ORDER BY recorded_at DESC, id DESC
+               ) AS evidence_rank
+          FROM learning_release_evidence
+         WHERE policy_version = ?
+      )
+      SELECT evidence_kind, owner_kind, passed, recorded_at, expires_at
+        FROM latest_evidence
+       WHERE evidence_rank = 1
+       ORDER BY evidence_kind, owner_kind
+       LIMIT ?
+    `).bind(
+      AUTOPILOT_POLICY_VERSION,
+      ADMIN_RELEASE_EVIDENCE_REQUIREMENTS.length,
+    ).all<AdminReleaseEvidenceRow>();
+    const releaseEvidence = summarizeAdminReleaseEvidence(evidenceRows.results ?? []);
     const readinessAgeMs = readinessRow
       ? Date.now() - Date.parse(readinessRow.evaluated_at)
       : Number.POSITIVE_INFINITY;
@@ -1363,7 +3574,9 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       const falseHoldCount = countValue(row.false_hold_count);
       const criticTotal = countValue(row.critic_total);
       const criticAvailable = countValue(row.critic_available);
+      const judgeTotal = countValue(row.judge_total);
       const judgeAvailable = countValue(row.judge_available);
+      const judgeTelemetryCount = countValue(row.judge_telemetry_count);
       const onHold = row.owner_kind === 'client'
         && row.client_status?.trim().toLowerCase() === 'on_hold';
       const active = row.owner_kind === 'user' ? row.user_exists != null
@@ -1387,7 +3600,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         holdRate: ratio(holdCount, decisionCount),
         sampledFalseHoldRate: ratio(falseHoldCount, adjudicatedCount),
         criticAvailability: ratio(criticAvailable, criticTotal),
-        judgeAvailability: ratio(judgeAvailable, decisionCount),
+        judgeAvailability: ratio(judgeAvailable, judgeTotal),
+        judgeTelemetryCoverage: ratio(judgeTelemetryCount, decisionCount),
         severeFalsePasses: countValue(row.severe_false_passes),
         adjudicationCoverage: ratio(adjudicatedCount, decisionCount),
         globalKillSwitchEnabled: globalSwitches.protectedAutopilot,
@@ -1401,6 +3615,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     return c.json({
       policyVersion: AUTOPILOT_POLICY_VERSION,
       globalSwitches,
+      releaseEvidence,
       readiness: {
         ready: readinessRow?.ready === 1
           && readinessAgeMs >= 0

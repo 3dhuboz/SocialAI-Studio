@@ -7,15 +7,18 @@
 //
 //   - publish_failure_burst : N posts marked Missed in the last 30 min
 //   - publish_zombie        : posts stuck in status='Publishing' for >30 min
+//   - learning_calibration_receipt_stale : established weekly receipt stopped arriving
+//   - alert_persistence_schema : the incident ledger and both indexes exist
+//   - learning_readiness_receipt_schema : latest readiness receipt uses the full schema
 //
-// Two checks for v1 — deliberately small. Each is dark-launched by default
+// Five checks for v1 - deliberately small. Each incident is dark-launched by default
 // per the cron_alerts schema, so the first week is calibration-only (rows
 // get written, no emails go out). Steve flips the per-key dark_launch flag
 // after the noise level is known.
 //
 // 15-min cadence matches the spec from the alerting plan: "within an hour"
 // detection budget with 4 sweeps per hour and headroom for the deploy window.
-// One cheap COUNT(*) query per check, so even when there's nothing to alert
+// One cheap aggregate query per check, so even when there's nothing to alert
 // the sweep is near-free.
 //
 // If you add a check, also add it to `dispatchScheduled` via `trackCron`
@@ -28,6 +31,8 @@
 
 import type { Env } from '../env';
 import { fireAlert, resolveAlert } from '../lib/alerts';
+import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
+import { hasCompleteLearningReadinessChecksSchema } from '../../../../shared/learning-readiness-checks';
 
 /** Threshold knobs centralised here so calibration after the dark-launch
  *  week is a one-file change. Conservative defaults: prefer false-negatives
@@ -37,6 +42,7 @@ const THRESHOLDS = {
   publishFailuresIn30Min: 5,
   /** Stuck-Publishing threshold — minutes since claim. */
   publishZombieMinutes: 30,
+  learningCalibrationMaxAgeMinutes: (7 * 24 * 60) + 60,
 };
 
 interface CheckResult {
@@ -45,12 +51,18 @@ interface CheckResult {
   detail?: string;
 }
 
-/** Run all sweep checks. Each check is wrapped so one failing check
- *  doesn't take down the whole sweep — the dispatcher's `trackCron`
- *  also catches, but we want partial results in the happy-ish case. */
+/** Run every sweep check even when one fails, then throw one aggregate error
+ *  so the dispatcher's `trackCron` records a failed natural receipt. */
 export async function cronHealthSweep(env: Env): Promise<{ posts_processed: number; checks: CheckResult[] }> {
   const checks: CheckResult[] = [];
-  for (const check of [checkPublishFailureBurst, checkPublishZombie]) {
+  const failedChecks: string[] = [];
+  for (const check of [
+    checkAlertPersistenceSchema,
+    checkLearningReadinessReceiptSchema,
+    checkPublishFailureBurst,
+    checkPublishZombie,
+    checkLearningCalibrationFreshness,
+  ]) {
     try {
       checks.push(await check(env));
     } catch (e: any) {
@@ -60,10 +72,76 @@ export async function cronHealthSweep(env: Env): Promise<{ posts_processed: numb
       console.error(`[health-sweep] check ${check.name} threw:`, e?.message);
       await fireAlert(env, `health_sweep_check_failed:${check.name}`, 'warn', e?.message || String(e));
       checks.push({ key: check.name, fired: false, detail: `check threw: ${e?.message}` });
+      failedChecks.push(check.name);
     }
+  }
+  if (failedChecks.length > 0) {
+    const label = failedChecks.length === 1 ? 'check' : 'checks';
+    throw new Error(
+      `Health sweep completed with ${failedChecks.length} failed ${label}: ${failedChecks.join(', ')}`,
+    );
   }
   const fired = checks.filter((c) => c.fired).length;
   return { posts_processed: fired, checks };
+}
+
+// Alert delivery stays best-effort so an alert-ledger or Resend outage cannot
+// interrupt customer publishing. This health-lane sentinel independently
+// makes missing persistence infrastructure visible in the cron receipt.
+async function checkAlertPersistenceSchema(env: Env): Promise<CheckResult> {
+  const key = 'alert_persistence_schema';
+  const row = await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE
+              WHEN type = 'table' AND name = 'cron_alerts' THEN 1 ELSE 0
+            END), 0) AS alert_tables,
+            COALESCE(SUM(CASE
+              WHEN type = 'index'
+               AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved')
+              THEN 1 ELSE 0
+            END), 0) AS alert_indexes
+       FROM sqlite_master
+      WHERE (type = 'table' AND name = 'cron_alerts')
+         OR (type = 'index'
+             AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'))`,
+  ).first<{ alert_tables: number; alert_indexes: number }>();
+  const tables = Number(row?.alert_tables ?? 0);
+  const indexes = Number(row?.alert_indexes ?? 0);
+  const detail = `table=${tables} indexes=${indexes}`;
+  if (tables !== 1 || indexes !== 2) {
+    throw new Error(`Alert persistence schema is incomplete (${detail})`);
+  }
+  return { key, fired: false, detail };
+}
+
+// Before the first readiness receipt, the rollout gate remains the authority.
+// Once receipts exist, malformed or truncated checks must surface as a failed
+// natural health receipt rather than silently reducing operator visibility.
+async function checkLearningReadinessReceiptSchema(env: Env): Promise<CheckResult> {
+  const key = 'learning_readiness_receipt_schema';
+  const row = await env.DB.prepare(
+    `SELECT checks_json
+       FROM learning_release_readiness
+      WHERE policy_version = ?
+      ORDER BY evaluated_at DESC, id DESC
+      LIMIT 1`,
+  ).bind(AUTOPILOT_POLICY_VERSION).first<{ checks_json: string | null }>();
+
+  if (!row) {
+    return { key, fired: false, detail: 'monitor not established' };
+  }
+
+  let checks: unknown = null;
+  try {
+    checks = JSON.parse(row.checks_json ?? '');
+  } catch {
+    // The shared schema validator below owns the fail-closed result.
+  }
+
+  if (!hasCompleteLearningReadinessChecksSchema(checks)) {
+    throw new Error('Latest learning readiness receipt has an incomplete checks schema');
+  }
+
+  return { key, fired: false, detail: 'complete current schema' };
 }
 
 // ── Check: publish_failure_burst ────────────────────────────────────────
@@ -121,9 +199,61 @@ async function checkPublishZombie(env: Env): Promise<CheckResult> {
   return { key, fired: false, detail: '0 stuck' };
 }
 
+// Once the first successful weekly receipt exists, it must keep arriving.
+// Before that point, the promotion verifier remains the activation authority.
+async function checkLearningCalibrationFreshness(
+  env: Env,
+  now = new Date(),
+): Promise<CheckResult> {
+  const key = 'learning_calibration_receipt_stale';
+  const row = await env.DB.prepare(
+    `SELECT MAX(run_at) AS last_success_at
+       FROM cron_runs
+      WHERE cron_type = 'learning_calibration'
+        AND success = 1`,
+  ).first<{ last_success_at: string | null }>();
+  const lastSuccessAt = typeof row?.last_success_at === 'string'
+    ? row.last_success_at.trim()
+    : '';
+  if (!lastSuccessAt) {
+    return { key, fired: false, detail: 'monitor not established' };
+  }
+
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(lastSuccessAt)
+    ? lastSuccessAt
+    : `${lastSuccessAt.replace(' ', 'T')}Z`;
+  const observedAt = Date.parse(normalized);
+  const ageMinutes = (now.getTime() - observedAt) / 60_000;
+  if (!Number.isFinite(observedAt) || !Number.isFinite(ageMinutes) || ageMinutes < 0) {
+    const detail = 'The last successful weekly independent calibration receipt has an invalid '
+      + 'or future timestamp; operator review required.';
+    await fireAlert(env, key, 'critical', detail);
+    return { key, fired: true, detail };
+  }
+
+  if (ageMinutes > THRESHOLDS.learningCalibrationMaxAgeMinutes) {
+    const roundedAge = Math.floor(ageMinutes);
+    const detail = `The last successful weekly independent calibration receipt is ${roundedAge} `
+      + `minutes old, older than the ${THRESHOLDS.learningCalibrationMaxAgeMinutes}-minute `
+      + 'limit; operator review required.';
+    await fireAlert(env, key, 'critical', detail);
+    return { key, fired: true, detail };
+  }
+
+  await resolveAlert(env, key);
+  return {
+    key,
+    fired: false,
+    detail: `${Math.floor(ageMinutes)}/${THRESHOLDS.learningCalibrationMaxAgeMinutes} minutes`,
+  };
+}
+
 // Exported for unit tests to reach into without re-running the whole sweep.
 export const __test = {
   THRESHOLDS,
+  checkAlertPersistenceSchema,
+  checkLearningReadinessReceiptSchema,
   checkPublishFailureBurst,
   checkPublishZombie,
+  checkLearningCalibrationFreshness,
 };

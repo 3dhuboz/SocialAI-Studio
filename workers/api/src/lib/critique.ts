@@ -90,6 +90,14 @@ Score the image-caption pair on a 0-10 scale:
 
 ${archetypeLine}
 
+EXACT-BRIEF HARD RULE: When the caption includes an "Intended image brief",
+treat that brief as the visual contract. If the image changes the requested
+main subject, camera angle, setting, count of important objects, or includes
+an explicitly excluded object, score 1-3 with match="no". Broad thematic
+similarity is not enough. Example: a whiteboard workflow grid does NOT satisfy
+an overhead open-notebook brief requiring boxes, arrows, a pencil, and three
+index cards. Name the missing or substituted requirement.
+
 HARD RULES — any of these conditions force a score of 1-2, no exceptions:
 - Caption is about SaaS/software/AI/platform/agency tools/marketing automation
   AND the image shows food, plated meals, restaurant interiors, BBQ, brisket,

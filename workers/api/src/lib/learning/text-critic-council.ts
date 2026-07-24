@@ -18,8 +18,11 @@ const TEXT_CRITIC_KINDS = [
 const VERDICTS = new Set(['pass', 'warn_repairable', 'block', 'unavailable']);
 const SEVERITIES = new Set(['advisory', 'release_critical']);
 
+export const SAFE_FACT_REPAIR =
+  'Remove or soften unsupported factual claims. Never add metrics, testimonials, case studies, customer counts, outcomes, or other proof; use only supplied verified facts.';
+
 export const STRICT_CRITIC_SCHEMA_INSTRUCTIONS =
-  'Each requested critic value must contain verdict, severity, confidence, evidence, and repairs. The JSON object key is the canonical critic kind. Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable". Severity must be exactly one of "advisory" or "release_critical". Confidence must be a number from 0 to 1. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair. Use unavailable only when the critic genuinely cannot evaluate; unavailable must be release_critical with confidence 0.';
+  'Each requested critic value must contain verdict, severity, confidence, evidence, and repairs. The JSON object key is the canonical critic kind. Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable". Severity must be exactly one of "advisory" or "release_critical". Confidence must be a number from 0 to 1. Evidence and repairs must each contain at most 3 strings of at most 240 characters each. Use repairs=[] unless verdict is warn_repairable; warn_repairable requires at least one concrete repair. A fact repair may only remove or soften an unsupported claim or reuse a supplied verified fact; never propose new metrics, testimonials, case studies, customer counts, outcomes, or proof. Use unavailable only when the critic genuinely cannot evaluate; unavailable must be release_critical with confidence 0.';
 
 function strictCriticStrings(
   value: unknown,
@@ -75,19 +78,25 @@ export function parseCriticResult(
   if (row.verdict === 'warn_repairable' && repairs.length === 0) {
     throw new Error(`Missing ${expectedKind} repair`);
   }
+  if (row.verdict !== 'warn_repairable' && repairs.length > 0) {
+    throw new Error(`Unexpected ${expectedKind} repair`);
+  }
   if (row.verdict === 'unavailable' && row.severity !== 'release_critical') {
     throw new Error(`Invalid ${expectedKind} unavailable severity`);
   }
   if (row.verdict === 'unavailable' && confidence !== 0) {
     throw new Error(`Invalid ${expectedKind} unavailable confidence`);
   }
+  const normalizedRepairs = expectedKind === 'fact' && row.verdict === 'warn_repairable'
+    ? [SAFE_FACT_REPAIR]
+    : repairs;
   return {
     kind: expectedKind,
     verdict: row.verdict as CriticVerdict,
     severity: row.severity as CriticSeverity,
     confidence,
     evidence,
-    repairs,
+    repairs: normalizedRepairs,
     provider: String(row.provider ?? ''),
     model: String(row.model ?? ''),
   };
@@ -124,7 +133,7 @@ export async function runTextCriticCouncil(
   context: TextCriticContext,
   call: CriticJsonCaller,
 ): Promise<CriticResult[]> {
-  const systemPrompt = `${UNTRUSTED_CONTENT_DIRECTIVE}\n\nYou are an independent social-post critic council. Return one strict verdict for brand, fact, repetition, and platform. Never approve unsupported claims.`;
+  const systemPrompt = `${UNTRUSTED_CONTENT_DIRECTIVE}\n\nYou are an independent social-post critic council. Return one strict verdict for brand, fact, repetition, and platform. Never approve unsupported claims. Never suggest inventing evidence to repair a claim. Rhetorical questions and requests for audience input are not factual claims. Recent posts are repetition context only; they are never evidence for or against the current caption's factual accuracy.`;
   const prompt = [
     wrapUntrusted(input.content, 'candidate_caption', { maxLen: 4_000 }),
     wrapUntrusted(input.hashtags.join(' '), 'candidate_hashtags'),
@@ -133,6 +142,8 @@ export async function runTextCriticCouncil(
     wrapUntrusted(context.forbiddenSubjects.join('\n'), 'forbidden_subjects'),
     wrapUntrusted(context.recentPostDigests.join('\n'), 'recent_posts', { maxLen: 8_000 }),
     'No factual claims to verify means pass, not unavailable. A missing risk is a pass; unavailable is only for a genuine inability to evaluate.',
+    'For fact warnings, only recommend removing or softening unsupported wording, or substituting a fact already present in verified_facts or business_profile. Never recommend adding a statistic, metric, testimonial, case study, customer count, result, or other unsupplied proof.',
+    'Use recent_posts only to judge repetition. Do not use another draft to support, contradict, or characterize the factual accuracy of candidate_caption.',
     `Return exactly one JSON object keyed by brand, fact, repetition, and platform. ${STRICT_CRITIC_SCHEMA_INSTRUCTIONS}`,
   ].join('\n\n');
 

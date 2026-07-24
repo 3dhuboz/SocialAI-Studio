@@ -124,12 +124,14 @@ async function main(): Promise<void> {
   });
 
   writeFileSync(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
-  writeFileSync(hashPath, `${artifact.artifactSha256}  ${artifactPath}\n`, 'utf8');
+  const artifactFileSha256 = sha256File(artifactPath);
+  writeFileSync(hashPath, `${artifactFileSha256}  ${artifactPath}\n`, 'utf8');
 
   process.stdout.write([
     `Release proof: ${artifact.payload.result}`,
     `Artifact: ${artifactPath}`,
-    `SHA-256: ${artifact.artifactSha256}`,
+    `Payload SHA-256: ${artifact.artifactSha256}`,
+    `Artifact file SHA-256: ${artifactFileSha256}`,
     `Raw Vitest report: ${rawReportPath}`,
     'Live staging proven: false',
     'Authenticated evidence submitted: false',

@@ -19,6 +19,7 @@ import { checkBillingGate } from '../lib/billing-gate';
 import { critiqueImageInternal } from '../lib/critique';
 import { loadForbiddenSubjects } from '../lib/profile-guards';
 import { wrapUntrusted, UNTRUSTED_CONTENT_DIRECTIVE } from '../lib/prompt-safety';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
   // ── Vision-grounded image+caption critique (2026-05 image-stack upgrade) ──
@@ -114,7 +115,7 @@ export function registerPostQualityRoutes(app: Hono<{ Bindings: Env }>): void {
       score: result.score,
       match: result.match,
       reasoning: result.reasoning,
-      regenerate: result.score <= 4,
+      regenerate: result.score < CRITIQUE_ACCEPT_THRESHOLD,
     });
   });
 

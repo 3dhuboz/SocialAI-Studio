@@ -4,11 +4,15 @@ export interface RecordedD1Call {
   method: 'run' | 'all' | 'first';
 }
 
-export function makeRecordingD1(fixtures: Record<string, unknown[]> = {}) {
+type RecordingFixture = unknown[] | (() => unknown[]);
+
+export function makeRecordingD1(fixtures: Record<string, RecordingFixture> = {}) {
   const calls: RecordedD1Call[] = [];
   const rowsFor = (sql: string) => {
     const key = Object.keys(fixtures).find((candidate) => sql.includes(candidate));
-    return key ? fixtures[key] : [];
+    if (!key) return [];
+    const fixture = fixtures[key];
+    return typeof fixture === 'function' ? fixture() : fixture;
   };
   const db = {
     prepare(sql: string) {

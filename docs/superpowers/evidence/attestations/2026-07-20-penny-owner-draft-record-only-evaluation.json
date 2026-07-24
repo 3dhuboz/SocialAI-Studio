@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "pilot-evaluation-penny-owner-22a8f261ae1170b876d0d523",
+  "capturedAt": "2026-07-20T01:47:33.413Z",
+  "source": {
+    "kind": "user_provided_copy_consent",
+    "threadId": "019ed317-7f47-7b22-ae5e-0fab6b0218c6"
+  },
+  "statement": "I consent to SocialAI Studio copying one server-selected unpublished Penny Wise I.T Draft into isolated staging for record-only safety evaluation. No other post content may be copied, nothing may be scheduled or published, and consent may be withdrawn.",
+  "scope": {
+    "environment": "staging",
+    "recordOnly": true,
+    "maximumDrafts": 1,
+    "serverSelected": true,
+    "scheduleAllowed": false,
+    "publishAllowed": false,
+    "learningApplyAllowed": false,
+    "withdrawalAllowed": true
+  },
+  "copyReceipt": {
+    "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-owner-pilot-staging-copy-2026-07-20T02-04-04-663Z.json",
+    "authorizationSha256": "074a21e0a89c91b2c8de6c4416802ce9d47ecd1c3a6afb0a112fd71813f8a82c",
+    "sourceSnapshotSha256": "98554ea60c6ce37e77055b6a49622a1856633d5ccb21642ceb6b1030800674db",
+    "productionRecheckSha256": "98554ea60c6ce37e77055b6a49622a1856633d5ccb21642ceb6b1030800674db",
+    "copiedPostId": "pilot-owner-copy-22a8f261ae1170b876d0d523",
+    "copiedDraftCount": 1,
+    "profileCopied": false,
+    "tokensCopied": false,
+    "scheduleCopied": false,
+    "publishMetadataCopied": false
+  },
+  "candidate": {
+    "postId": "pilot-owner-copy-22a8f261ae1170b876d0d523",
+    "clientId": null,
+    "ownerKind": "user",
+    "ownerId": "user_3B9YKodZsIQjLdGW8wtwd7mmBMQ",
+    "contentHash": "6ac8a8be00a9c1df9af940cfc1fe9a96e794f6e7966870264b6f9554a3e1c976",
+    "platform": "Facebook",
+    "postType": "image",
+    "content": "How much time do you spend on social media each week? Most small business owners we talk to say 5 \u2014 10 hours just trying to keep up with posting, captions, and hashtags. That's time you could spend actually running your business. What if you could cut that down to zero? Learn how to automate your posting at pennywiseit.com.au",
+    "hashtags": [
+      "#SmallBusiness",
+      "#SocialMedia"
+    ],
+    "imageUrl": "https://v3b.fal.media/files/b/0a9b2e33/GT7n9Gnh_2BfMYItaoqKU.jpg"
+  },
+  "attestationReceipt": {
+    "sampleId": "fb433deb-1bd2-46b5-9881-e558da3c68a1",
+    "attestationBasis": "owner_real_post",
+    "attestedAt": "2026-07-20T02:26:11.180Z",
+    "provenanceBasis": "exact unchanged production Draft copied by the scoped deterministic copier",
+    "postMutated": false
+  },
+  "criticDecision": {
+    "decisionId": "14f38fa2-9eb1-44a6-9bbd-8265a2363cad",
+    "releaseState": "block_red",
+    "sourceStatus": "Draft",
+    "postMutated": false,
+    "verdictCount": 10,
+    "imageCritic": {
+      "verdict": "block",
+      "severity": "release_critical",
+      "confidence": 1,
+      "score": 3,
+      "reason": "The caption is a social-media automation pitch, while the image is a generic notebook-and-pen flatlay that does not depict the product, automation capability, or time-saving pain point."
+    },
+    "factCritic": {
+      "verdict": "warn_repairable",
+      "severity": "release_critical",
+      "confidence": 0.92,
+      "reason": "The 5-10 hour statistic is undocumented and the promise to cut social-media work to zero is unsupported."
+    }
+  },
+  "humanAdjudication": null,
+  "humanAdjudicationReason": "Consent authorized record-only safety evaluation, not an independent human quality label.",
+  "independentDatabaseAudit": {
+    "postStatus": "Draft",
+    "scheduledFor": null,
+    "publishAttempts": 0,
+    "providerPublishFieldsPresent": false,
+    "publicationEventCount": 0,
+    "deliveryReceiptCount": 0,
+    "workspaceMode": "approval",
+    "autopublishConsentAt": null,
+    "experimentRate": 0,
+    "protectedAutopilotWorkspaceCount": 0,
+    "productionPilotRowCount": 0,
+    "productionMutationPerformed": false,
+    "rowsWrittenByAudit": 0,
+    "changedDbByAudit": false
+  },
+  "deploymentBoundary": {
+    "stagingWorkerVersion": "17cca808-bf93-49b6-9fc9-4b270b236a92",
+    "productionWorkerVersion": "3b963ed1-c9e1-42d6-9bff-68da2efa9215",
+    "productionDeploymentPerformed": false,
+    "schemaApplied": false,
+    "releaseEnforcementEnabled": false,
+    "protectedAutopilotEnabled": false,
+    "organicReachApplyEnabled": false
+  }
+}

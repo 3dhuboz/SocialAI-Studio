@@ -1,7 +1,86 @@
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../env';
-import { loadCriticContext } from '../lib/learning/critic-context';
+import {
+  assessCriticContextReadiness,
+  loadCriticContext,
+  type CriticContext,
+} from '../lib/learning/critic-context';
 import { makeRecordingD1 } from './helpers/recording-d1';
+
+function readinessContext(
+  profile: Record<string, unknown>,
+  factContents: string[] = [],
+): CriticContext {
+  return {
+    profile,
+    verifiedFacts: factContents.map((content, index) => ({
+      ownerKind: 'user',
+      ownerId: 'owner_1',
+      clientId: null,
+      factType: `fact_${index}`,
+      content,
+      verifiedAt: '2026-07-17T00:00:00.000Z',
+    })),
+    recentPosts: [],
+    forbiddenSubjects: [],
+  };
+}
+
+describe('assessCriticContextReadiness', () => {
+  it('rejects an empty or metadata-only profile without verified facts', () => {
+    const result = assessCriticContextReadiness(readinessContext({
+      name: 'Penny Wise I.T',
+      tone: 'Professional',
+      location: 'Gladstone',
+      logoUrl: 'https://images.example/logo.png',
+      socialGoal: 'Grow followers',
+      forbiddenSubjects: 'competitor-logo',
+    }));
+
+    expect(result).toEqual({
+      ready: false,
+      reason: 'missing_business_context',
+      meaningfulProfileFields: [],
+      verifiedFactCount: 0,
+    });
+  });
+
+  it('accepts a substantive business profile field and normalizes aliases', () => {
+    const result = assessCriticContextReadiness(readinessContext({
+      products_services: 'Custom software and workflow automation',
+    }));
+
+    expect(result).toEqual({
+      ready: true,
+      reason: 'business_profile',
+      meaningfulProfileFields: ['products_services'],
+      verifiedFactCount: 0,
+    });
+  });
+
+  it('accepts a verified fact even when the business profile is empty', () => {
+    const result = assessCriticContextReadiness(
+      readinessContext({}, ['Custom-coded websites for Australian small businesses']),
+    );
+
+    expect(result).toEqual({
+      ready: true,
+      reason: 'verified_facts',
+      meaningfulProfileFields: [],
+      verifiedFactCount: 1,
+    });
+  });
+
+  it('does not treat placeholder profile or fact values as context', () => {
+    const result = assessCriticContextReadiness(
+      readinessContext({ description: 'TBD', productsServices: ['N/A', ' '] }, ['unknown']),
+    );
+
+    expect(result.ready).toBe(false);
+    expect(result.verifiedFactCount).toBe(0);
+    expect(result.meaningfulProfileFields).toEqual([]);
+  });
+});
 
 describe('loadCriticContext', () => {
   it('loads facts, posts, and denylist only for the requested client', async () => {

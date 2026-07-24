@@ -15,6 +15,7 @@ import {
 import {
   parseCriticResult,
   runTextCriticCouncil,
+  SAFE_FACT_REPAIR,
 } from '../lib/learning/text-critic-council';
 
 const input: TextCriticCandidate = {
@@ -237,6 +238,52 @@ describe('callIndependentJson', () => {
     expect(result.text).toBe('{"ok":true}');
   });
 
+  it('extracts a single balanced JSON object after harmless provider preamble', async () => {
+    const result = await callIndependentJson(
+      { ANTHROPIC_API_KEY: 'anthropic-key' } as Env,
+      'system',
+      'prompt',
+      {
+        operation: 'learning_harm_critic',
+        userId: 'u1',
+        clientId: null,
+        postId: 'p1',
+      },
+      {
+        callAnthropic: async () => ({
+          text: 'Here is the JSON:\n{"business_harm":{"verdict":"pass","severity":"advisory","confidence":0.92,"evidence":["checked"],"repairs":[]}}',
+        }),
+        callOpenRouter: async () => {
+          throw new Error('unexpected fallback');
+        },
+      },
+    );
+
+    expect(result.text).toBe('{"business_harm":{"verdict":"pass","severity":"advisory","confidence":0.92,"evidence":["checked"],"repairs":[]}}');
+  });
+
+  it('keeps ambiguous wrapped provider text invalid for strict parsing', async () => {
+    const result = await callIndependentJson(
+      { ANTHROPIC_API_KEY: 'anthropic-key' } as Env,
+      'system',
+      'prompt',
+      {
+        operation: 'learning_harm_critic',
+        userId: 'u1',
+        clientId: null,
+        postId: 'p1',
+      },
+      {
+        callAnthropic: async () => ({ text: 'I would use {"ok":true} for this post.' }),
+        callOpenRouter: async () => {
+          throw new Error('unexpected fallback');
+        },
+      },
+    );
+
+    expect(result.text).toBe('I would use {"ok":true} for this post.');
+  });
+
   it('fails closed when no independent provider is configured', async () => {
     await expect(
       callIndependentJson({} as Env, 'system', 'prompt', {
@@ -259,8 +306,10 @@ describe('callIndependentJson', () => {
 
 describe('independent model critics', () => {
   it('strictly parses exactly four text verdicts and wraps untrusted context', async () => {
+    let systemPrompt = '';
     let prompt = '';
-    const result = await runTextCriticCouncil(input, context, async (_system, userPrompt) => {
+    const result = await runTextCriticCouncil(input, context, async (system, userPrompt) => {
+      systemPrompt = system;
       prompt = userPrompt;
       return {
         text: JSON.stringify({
@@ -287,6 +336,10 @@ describe('independent model critics', () => {
     expect(prompt).toContain('at least one concrete repair');
     expect(prompt).toContain('at most 3 strings of at most 240 characters each');
     expect(prompt).toContain('No factual claims to verify means pass, not unavailable');
+    expect(prompt).toContain('Never recommend adding a statistic, metric, testimonial');
+    expect(prompt).toContain('Use recent_posts only to judge repetition');
+    expect(systemPrompt).toContain('Never suggest inventing evidence');
+    expect(systemPrompt).toContain('Rhetorical questions and requests for audience input are not factual claims');
   });
 
   it('retries one schema-invalid council response before returning verdicts', async () => {
@@ -426,6 +479,29 @@ describe('independent model critics', () => {
         'fact',
       ),
     ).toThrow('Missing fact repair');
+  });
+
+  it('rejects repair suggestions on non-repairable verdicts', () => {
+    expect(() => parseCriticResult({
+      ...critic('fact'),
+      verdict: 'block',
+      severity: 'release_critical',
+      repairs: ['Add a money-back guarantee.'],
+    }, 'fact')).toThrow('Unexpected fact repair');
+  });
+
+  it('replaces unsafe model-proposed fact proof with removal-only guidance', () => {
+    const result = parseCriticResult({
+      ...critic('fact'),
+      verdict: 'warn_repairable',
+      repairs: [
+        'Add a case study claiming 60% less admin time.',
+        'Include a testimonial from 15 clients.',
+      ],
+    }, 'fact');
+
+    expect(result.repairs).toEqual([SAFE_FACT_REPAIR]);
+    expect(result.repairs.join(' ')).not.toMatch(/\b60%|\b15 clients|testimonial from/i);
   });
 
   it('reserves unavailable for release-critical zero-confidence failures', () => {

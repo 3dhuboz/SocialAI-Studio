@@ -3,6 +3,9 @@ import { ShieldAlert, Trash2, Loader2, CheckCircle, Facebook, Instagram, ShieldC
 import { useDb } from '../hooks/useDb';
 import type { FlaggedPost } from '../services/db';
 import type { SocialPost } from '../types';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../shared/critique-thresholds';
+
+const LOW_SCORE_CUTOFF = CRITIQUE_ACCEPT_THRESHOLD - 1;
 
 /**
  * AdminQualityScan — collapsible admin card. Read-only by default: the scan
@@ -24,7 +27,7 @@ export const AdminQualityScan: React.FC = () => {
   // existing posts that pre-date the cron's vision-critique gate:
   //   1. backfillCritiqueScores — scores every post that has image_url but
   //      no image_critique_score yet (50 per click, paged)
-  //   2. bulkRegenLowScoreImages — regenerates all posts where score ≤4
+  //   2. bulkRegenLowScoreImages — regenerates all posts below acceptance
   //      using the forced-archetype-fallback path (20 per click)
   const [backfillLoading, setBackfillLoading] = useState(false);
   const [backfillResult, setBackfillResult] = useState<{
@@ -49,11 +52,11 @@ export const AdminQualityScan: React.FC = () => {
   };
 
   const runBulkRegen = async () => {
-    if (!confirm('Regenerate images for all posts scoring ≤4? This costs ~$0.04 per post and takes ~15s per post.')) return;
+    if (!confirm(`Regenerate images for all posts scoring ≤${LOW_SCORE_CUTOFF}? This uses paid image generation and may take several minutes.`)) return;
     setRegenLoading(true);
     setRegenResult(null);
     try {
-      const res = await db.bulkRegenLowScoreImages(4, 20);
+      const res = await db.bulkRegenLowScoreImages(LOW_SCORE_CUTOFF, 20);
       setRegenResult(res);
     } catch (e: any) {
       alert(`Bulk regen failed: ${e?.message || e}`);
@@ -155,7 +158,7 @@ export const AdminQualityScan: React.FC = () => {
           {/* ── Vision critique backfill + bulk regen ────────────────────
               Two retroactive ops for cleaning up posts that pre-date the
               cron's vision-critique gate. Backfill scores existing images,
-              bulk regen replaces all ≤4 scores. Both are paged — re-click
+              bulk regen replaces all scores below the publish threshold. Both are paged — re-click
               until done. */}
           <div className="bg-black/30 border border-white/[0.08] rounded-2xl p-3 space-y-3">
             <div>
@@ -179,13 +182,13 @@ export const AdminQualityScan: React.FC = () => {
                 className="text-xs font-bold bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition disabled:opacity-40"
               >
                 {regenLoading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                {regenLoading ? 'Regenerating…' : 'Regen ≤4 scores (20)'}
+                {regenLoading ? 'Regenerating…' : `Regen ≤${LOW_SCORE_CUTOFF} scores (20)`}
               </button>
             </div>
             {backfillResult && (
               <p className="text-[11px] text-sky-300/80">
                 ✓ Scored {backfillResult.scored} posts ·{' '}
-                <span className="text-rose-300">{backfillResult.low_scores} flagged ≤4</span>
+                <span className="text-rose-300">{backfillResult.low_scores} flagged ≤{LOW_SCORE_CUTOFF}</span>
                 {backfillResult.failed > 0 && <> · {backfillResult.failed} failed</>}
                 {backfillResult.remaining_estimate === 'more available — run again' && (
                   <span className="text-white/40"> · more remaining, click again</span>

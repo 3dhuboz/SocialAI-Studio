@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { logAiUsage, withLearningDecisionUsageScope } from '../lib/ai-usage';
 import {
+  assertSafeIndependentRepair,
   buildReleaseContentHash,
   evaluateReleasePreflight,
   runAndPersistReleasePipeline,
+  TEXT_REPAIR_SAFETY_RULES,
   type PublishablePost,
 } from '../lib/learning/release-preflight';
 import type { CriticResult } from '../lib/learning/critic-types';
 import type { ReleasePipelineResult } from '../lib/learning/release-pipeline';
 import type { ReleaseState } from '../lib/learning/types';
+import { makeRecordingD1 } from './helpers/recording-d1';
 
 const post: PublishablePost = {
   id: 'p1',
@@ -204,6 +208,7 @@ describe('runAndPersistReleasePipeline', () => {
       candidate: {} as any,
       attempts: [[verdict]],
       repairHistory: [],
+      judgeStatus: 'available',
     };
 
     const result = await runAndPersistReleasePipeline(
@@ -246,7 +251,13 @@ describe('runAndPersistReleasePipeline', () => {
       postId: 'p1',
       stage: 'release',
       releaseState: 'pass_green',
-      summary: { verdictCount: 1, attemptCount: 1, predictedOutcomeScore: 77 },
+      summary: {
+        verdictCount: 1,
+        attemptCount: 1,
+        predictedOutcomeScore: 77,
+        judgeStatus: 'available',
+        judgeTelemetryVersion: 1,
+      },
     });
     expect(verdictsSeen).toEqual([[verdict]]);
     expect(result).toEqual({ id: 'decision-1', state: 'pass_green' });
@@ -271,6 +282,121 @@ describe('runAndPersistReleasePipeline', () => {
     expect(expensiveCalls).toBe(0);
   });
 
+  it('never recreates a claimed pilot receipt after its lease is deleted', async () => {
+    let updateCount = 0;
+    const { db, calls } = makeRecordingD1({
+      'UPDATE learning_decisions': () => {
+        updateCount += 1;
+        return updateCount === 1 ? [{ id: 'decision-claimed' }] : [];
+      },
+    });
+    const createReceipt = vi.fn(async () => 'decision-recreated');
+
+    await expect(runAndPersistReleasePipeline(
+      { DB: db } as Env,
+      post,
+      'approval',
+      {
+        findFreshReceipt: async () => null,
+        loadContext: async () => ({
+          profile: {}, verifiedFacts: [], forbiddenSubjects: [], recentPostDigests: [],
+        }),
+        executePipeline: async (_env, candidate) => ({
+          state: 'pass_green',
+          candidate,
+          attempts: [[verdict]],
+          repairHistory: [],
+          judgeStatus: 'available',
+        }),
+        createReceipt,
+        replaceVerdicts: async () => {},
+      },
+      'decision-claimed',
+    )).rejects.toThrow('Claimed learning decision lease is no longer available');
+
+    expect(createReceipt).not.toHaveBeenCalled();
+    const receiptWrites = calls.filter((call) =>
+      call.sql.includes('UPDATE learning_decisions'));
+    expect(receiptWrites).toHaveLength(2);
+    expect(receiptWrites.every((call) =>
+      call.sql.includes("IN ('claim','writing')")
+      && call.sql.includes('WHERE id = ?')
+      && call.binds.includes('decision-claimed'))).toBe(true);
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
+  });
+
+  it('refuses to mark a scoped decision complete after any metering write fails', async () => {
+    let usageWrites = 0;
+    const baseEnv = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            run: async () => {
+              usageWrites += 1;
+              if (usageWrites === 2) throw new Error('D1 unavailable');
+              return { success: true };
+            },
+          }),
+        }),
+      } as unknown as D1Database,
+      ENVIRONMENT: 'staging',
+    } as Env;
+    const scopedEnv = withLearningDecisionUsageScope(baseEnv, 'decision-metered');
+    const receipts: Array<Record<string, any>> = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* swallow */ });
+
+    await expect(runAndPersistReleasePipeline(
+      scopedEnv,
+      post,
+      'approval',
+      {
+        findFreshReceipt: async () => null,
+        loadContext: async () => ({
+          profile: {}, verifiedFacts: [], forbiddenSubjects: [], recentPostDigests: [],
+        }),
+        executePipeline: async (env, candidate) => {
+          await logAiUsage(env, {
+            userId: post.user_id,
+            provider: 'anthropic',
+            model: 'claude-haiku-4-5',
+            operation: 'learning_text_council',
+            postId: post.id,
+            estCostUsd: 0.001,
+          });
+          try {
+            await logAiUsage(env, {
+              userId: post.user_id,
+              provider: 'anthropic',
+              model: 'claude-haiku-4-5',
+              operation: 'learning_release_judge',
+              postId: post.id,
+              estCostUsd: 0.001,
+            });
+          } catch {
+            // Mirrors a critic/provider fallback that catches a metering error.
+          }
+          return {
+            state: 'pass_green',
+            candidate,
+            attempts: [[verdict]],
+            repairHistory: [],
+            judgeStatus: 'available',
+          };
+        },
+        createReceipt: async (_db, input) => {
+          receipts.push(input as unknown as Record<string, any>);
+          return 'decision-metered';
+        },
+        replaceVerdicts: async () => {},
+      },
+    )).rejects.toThrow('Learning AI usage attribution is incomplete');
+
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].summary).toMatchObject({ persistenceState: 'writing' });
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
   it('never marks an unapplied repaired candidate green', async () => {
     let receiptState = '';
     const result = await runAndPersistReleasePipeline(
@@ -287,6 +413,7 @@ describe('runAndPersistReleasePipeline', () => {
           candidate: { ...candidate, content: 'Repaired but not persisted' },
           attempts: [[verdict]],
           repairHistory: [['rewrite']],
+          judgeStatus: 'available',
         }),
         createReceipt: async (_db, input) => {
           receiptState = input.releaseState;
@@ -323,5 +450,46 @@ describe('runAndPersistReleasePipeline', () => {
     });
 
     expect(new Set([noMedia, image, videoPending, videoReady]).size).toBe(4);
+  });
+});
+
+describe('independent repair safety', () => {
+  const candidate = {
+    userId: 'u1',
+    clientId: null,
+    ownerKind: 'user' as const,
+    ownerId: 'u1',
+    postId: 'p1',
+    mode: 'approval' as const,
+    content: 'What workflow step would you simplify first?',
+    platform: 'facebook',
+    hashtags: [],
+    media: { kind: 'none' as const, url: null, thumbnailUrl: null },
+  };
+  const context = {
+    profile: { businessName: 'Penny Wise I.T' },
+    verifiedFacts: ['Penny Wise I.T builds custom software.'],
+    forbiddenSubjects: [],
+    recentPostDigests: [],
+  };
+
+  it('documents removal-only repair rules', () => {
+    expect(TEXT_REPAIR_SAFETY_RULES).toContain('remove or soften');
+    expect(TEXT_REPAIR_SAFETY_RULES).toContain('Never invent or add metrics');
+  });
+
+  it('accepts a claim-free repaired caption', () => {
+    expect(() => assertSafeIndependentRepair(candidate, context)).not.toThrow();
+  });
+
+  it('rejects newly invented metrics and testimonials', () => {
+    expect(() => assertSafeIndependentRepair({
+      ...candidate,
+      content: 'Our software saves every client 60% of their admin time.',
+    }, context)).toThrow('unsupported concrete claims');
+    expect(() => assertSafeIndependentRepair({
+      ...candidate,
+      content: 'A local owner said: "This doubled our sales."',
+    }, context)).toThrow('fabrication-pattern content');
   });
 });

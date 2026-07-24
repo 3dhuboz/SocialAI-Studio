@@ -4,9 +4,13 @@
  * Replaces all direct Firestore SDK calls.
  */
 import type { SocialPost } from '../types';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../shared/critique-thresholds';
 
 const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
+const LEARNING_PILOT_BASE =
+  (import.meta.env as Record<string, string>).VITE_LEARNING_PILOT_WORKER_URL
+  || 'https://socialai-api-staging.steve-700.workers.dev';
 
 type GetToken = () => Promise<string | null>;
 type AuthMode = 'clerk' | 'portal' | 'embed';
@@ -42,13 +46,14 @@ async function apiFetch(
   path: string,
   options: RequestInit = {},
   authMode: AuthMode = 'clerk',
+  base: string = BASE,
 ): Promise<Response> {
   const token = await getToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) {
     headers['Authorization'] = authMode === 'portal' ? `Portal ${token}` : authMode === 'embed' ? `Embed ${token}` : `Bearer ${token}`;
   }
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${base.replace(/\/+$/, '')}${path}`, { ...options, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let body: ApiError['body'] = null;
@@ -226,11 +231,15 @@ export interface LearningSettingsUpdate {
 
 export interface LearningReadinessChecks {
   pilot?: boolean;
+  pilotCohort?: boolean;
   adjudications?: boolean;
   severeFalsePasses?: boolean;
   falseHolds?: boolean;
   availability?: boolean;
+  releaseJudgeAvailability?: boolean;
+  releaseJudgeTelemetry?: boolean;
   receipts?: boolean;
+  predictionCoverage?: boolean;
   predictionLift?: boolean;
   rankCorrelation?: boolean;
   criticalBypasses?: boolean;
@@ -244,11 +253,20 @@ export interface LearningReadinessChecks {
 
 export interface LearningReadinessMetrics {
   pilotDecisions?: number;
+  pilotWorkspaceCount?: number;
+  pilotUserDecisions?: number;
+  pilotClientDecisions?: number;
   adjudicatedDecisions?: number;
   severeFalsePasses?: number;
   falseHoldRate?: number;
   requiredAvailability?: number;
+  releaseJudgeAvailability?: number;
+  releaseJudgeTelemetryCoverage?: number;
+  releaseJudgeInvocations?: number;
   decisionReceiptCoverage?: number;
+  predictionSampleCount?: number;
+  predictionWorkspaceCount?: number;
+  predictionMinWorkspaceSamples?: number;
   predictionLift?: number;
   rankCorrelation?: number;
   criticalBypasses?: number;
@@ -324,6 +342,7 @@ export interface AdminLearningWorkspace {
   sampledFalseHoldRate: number | null;
   criticAvailability: number | null;
   judgeAvailability: number | null;
+  judgeTelemetryCoverage: number | null;
   severeFalsePasses: number;
   adjudicationCoverage: number | null;
   globalKillSwitchEnabled: boolean;
@@ -337,6 +356,14 @@ export interface AdminLearningWorkspace {
 export interface AdminLearningOperations {
   policyVersion: string;
   globalSwitches: LearningGlobalSwitches;
+  releaseEvidence?: {
+    validCount: number;
+    requiredCount: number;
+    invalidOrMissingCount: number;
+    expiredCount: number;
+    complete: boolean;
+    nextExpiryAt: string | null;
+  };
   readiness: Omit<LearningReadinessResponse, 'policyVersion' | 'effectiveMode' | 'cost' | 'globalSwitches'>;
   workspaces: AdminLearningWorkspace[];
 }
@@ -351,11 +378,45 @@ export interface LearningPilotCandidate {
   samplePostId: string;
   enrolled: boolean;
   monthlyAiBudgetUsdCents: number | null;
+  contextReady: boolean;
+  contextReason: 'business_profile' | 'verified_facts' | 'missing_business_context';
+  meaningfulProfileFieldCount: number;
+  verifiedFactCount: number;
+  sampleDraft?: {
+    postId: string;
+    content: string;
+    platform: string;
+    hashtags: string | null;
+    imageUrl: string | null;
+    postType: string | null;
+    videoUrl: string | null;
+    contentHash: string;
+  } | null;
 }
 
 export interface LearningPilotQueue {
   recordOnly: true;
+  enrollments?: LearningPilotActiveEnrollment[];
   candidates: LearningPilotCandidate[];
+}
+
+export interface LearningPilotActiveEnrollment {
+  enrollmentId: string;
+  clientId: string | null;
+  ownerKind: 'user' | 'client';
+  ownerId: string;
+  workspaceKey: string;
+  policyVersion: string;
+  enrolledAt: string;
+  label: string;
+  recordOnly: true;
+  generatedDraft?: {
+    postId: string;
+    contentHash: string;
+    provider: string;
+    model: string;
+    generatedAt: string;
+  } | null;
 }
 
 export interface LearningPilotCustomerConsent {
@@ -376,12 +437,93 @@ export interface LearningPilotEnrollment {
   enrolledAt: string;
 }
 
+export interface LearningPilotSampleAttestation {
+  sampleId: string;
+  postId: string;
+  contentHash: string;
+  attestationBasis: 'owner_real_post' | 'customer_real_post';
+  attestedAt: string;
+  created: boolean;
+  postMutated: false;
+}
+
 export interface LearningPilotValidation {
   decisionId: string;
   releaseState: 'pass_green' | 'hold_amber' | 'block_red';
   postId: string;
   sourceStatus: 'Draft';
   postMutated: false;
+}
+
+export interface LearningPilotGeneratedDraft {
+  receiptId: string;
+  enrollmentId: string;
+  postId: string;
+  contentHash: string;
+  provider: string;
+  model: string;
+  attemptCount: number;
+  generatedAt: string;
+  recordOnly: true;
+  sourceStatus: 'Draft';
+  scheduledFor: null;
+  publishingAllowed: false;
+  created: boolean;
+}
+
+export type LearningPilotMediaKind = 'image' | 'video';
+export type LearningPilotMediaState = 'claimed' | 'generating' | 'ready' | 'failed';
+
+export interface LearningPilotMediaJob {
+  id: string;
+  enrollmentId: string;
+  slot: number;
+  mediaKind: LearningPilotMediaKind;
+  state: LearningPilotMediaState;
+  attemptCount: number;
+  postId: string | null;
+  content: string | null;
+  hashtags: string[];
+  imagePrompt: string | null;
+  thumbnailUrl: string | null;
+  mediaUrl: string | null;
+  contentHash: string | null;
+  captionProvider: string | null;
+  captionModel: string | null;
+  mediaProvider: string | null;
+  mediaModel: string | null;
+  errorCode: string | null;
+  generatedAt: string;
+  completedAt: string | null;
+  recordOnly: true;
+  sourceStatus: 'Draft' | null;
+  scheduledFor: null;
+  publishingAllowed: false;
+}
+
+export interface LearningPilotMediaQueue {
+  recordOnly: true;
+  publishingAllowed: false;
+  jobs: LearningPilotMediaJob[];
+}
+
+export interface LearningPilotWithdrawal {
+  withdrawn: boolean;
+  alreadyWithdrawn: boolean;
+  enrollmentId: string | null;
+  policyVersion: string;
+  workspaceKey: string;
+  ownerKind: 'user' | 'client';
+  ownerId: string;
+  mode: 'shadow';
+  decisionsRemoved: number;
+  samplesRemoved: number;
+  generatedPilotDraftsDeleted: number;
+  generatedPilotMediaDeleted: number;
+  sourcePostsDeleted: 0;
+  publishingRecordsDeleted: 0;
+  originalDraftsRetained: true;
+  copiedStagingDataRequiresArtifactWithdrawal: true;
 }
 
 export type OrganicReachPlatform = 'facebook' | 'instagram';
@@ -566,6 +708,8 @@ export interface AdminUserAddonsPatch {
 
 export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
   const f = (path: string, opts: RequestInit = {}) => apiFetch(getToken, path, opts, authMode);
+  const pilotF = (path: string, opts: RequestInit = {}) =>
+    apiFetch(getToken, path, opts, authMode, LEARNING_PILOT_BASE);
   const j = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body) });
   const put = (body: unknown) => ({ method: 'PUT', body: JSON.stringify(body) });
   const del = () => ({ method: 'DELETE' });
@@ -667,8 +811,13 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     },
 
     async getLearningPilotCandidates(): Promise<LearningPilotQueue> {
-      const res = await f('/api/learning/pilot/candidates');
-      return res.json() as Promise<LearningPilotQueue>;
+      const res = await pilotF('/api/learning/pilot/candidates');
+      const data = await res.json() as LearningPilotQueue;
+      return {
+        recordOnly: true,
+        enrollments: data.enrollments ?? [],
+        candidates: data.candidates ?? [],
+      };
     },
 
     async enrollLearningPilotWorkspace(
@@ -676,7 +825,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       monthlyAiBudgetUsdCents: number,
       customerConsent?: LearningPilotCustomerConsent,
     ): Promise<LearningPilotEnrollment> {
-      const res = await f('/api/learning/pilot/enroll', j({
+      const res = await pilotF('/api/learning/pilot/enroll', j({
         clientId,
         monthlyAiBudgetUsdCents,
         customerConsentConfirmed: customerConsent?.confirmed,
@@ -685,8 +834,91 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       return res.json() as Promise<LearningPilotEnrollment>;
     },
 
+    async withdrawLearningPilotWorkspace(
+      clientId: string | null,
+      withdrawalNote: string,
+    ): Promise<LearningPilotWithdrawal> {
+      const res = await pilotF('/api/learning/pilot/enrollment', {
+        method: 'DELETE',
+        body: JSON.stringify({
+          clientId,
+          withdrawalConfirmed: true,
+          withdrawalNote,
+        }),
+      });
+      return res.json() as Promise<LearningPilotWithdrawal>;
+    },
+
+    async generateLearningPilotDraft(
+      clientId: string | null,
+    ): Promise<LearningPilotGeneratedDraft> {
+      const res = await pilotF('/api/learning/pilot/generate-draft', j({
+        clientId,
+        recordOnlyConfirmed: true,
+      }));
+      return res.json() as Promise<LearningPilotGeneratedDraft>;
+    },
+
+    async listLearningPilotMediaJobs(): Promise<LearningPilotMediaQueue> {
+      const res = await pilotF('/api/learning/pilot/media-jobs');
+      const data = await res.json() as LearningPilotMediaQueue;
+      return {
+        recordOnly: true,
+        publishingAllowed: false,
+        jobs: data.jobs ?? [],
+      };
+    },
+
+    async startLearningPilotMediaJob(
+      clientId: string | null,
+      slot: number,
+      mediaKind: LearningPilotMediaKind,
+    ): Promise<LearningPilotMediaJob> {
+      const res = await pilotF('/api/learning/pilot/media-jobs/start', j({
+        clientId,
+        slot,
+        mediaKind,
+        recordOnlyConfirmed: true,
+      }));
+      const data = await res.json() as {
+        recordOnly: true;
+        publishingAllowed: false;
+        job: LearningPilotMediaJob;
+      };
+      return data.job;
+    },
+
+    async pollLearningPilotMediaJob(
+      clientId: string | null,
+      slot: number,
+    ): Promise<LearningPilotMediaJob> {
+      const res = await pilotF('/api/learning/pilot/media-jobs/poll', j({
+        clientId,
+        slot,
+        recordOnlyConfirmed: true,
+      }));
+      const data = await res.json() as {
+        recordOnly: true;
+        publishingAllowed: false;
+        job: LearningPilotMediaJob;
+      };
+      return data.job;
+    },
+
+    async attestLearningPilotDraft(
+      postId: string,
+      expectedContentHash: string,
+      note: string,
+    ): Promise<LearningPilotSampleAttestation> {
+      const res = await pilotF(
+        `/api/learning/pilot/attest/${encodeURIComponent(postId)}`,
+        j({ realPostConfirmed: true, expectedContentHash, note }),
+      );
+      return res.json() as Promise<LearningPilotSampleAttestation>;
+    },
+
     async validateLearningPilotDraft(postId: string): Promise<LearningPilotValidation> {
-      const res = await f(
+      const res = await pilotF(
         `/api/learning/pilot/validate/${encodeURIComponent(postId)}`,
         j({}),
       );
@@ -1071,7 +1303,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
      * image is guaranteed on-archetype. Re-critiques and persists the new
      * score in one round-trip. Caps at 20 per call.
      */
-    async bulkRegenLowScoreImages(threshold = 4, limit = 20): Promise<{
+    async bulkRegenLowScoreImages(threshold = CRITIQUE_ACCEPT_THRESHOLD - 1, limit = 20): Promise<{
       found: number;
       regenerated: number;
       failed: number;
@@ -1149,9 +1381,8 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
      * Catches the failure mode the user screenshotted today — food image
      * on a SaaS post — BEFORE it gets published. ~$0.003/image, ~500ms.
      *
-     * Recommended threshold: if score <= 4 OR regenerate=true, run the
-     * image-gen again with a refined prompt; if score 5-7, flag for human
-     * review on the calendar; if score 8+, ship it.
+     * Scores below the shared acceptance threshold require regeneration;
+     * accepted images are specific matches and can proceed unattended.
      */
     async critiqueImageCaption(input: CritiqueImageInput): Promise<ImageCritique> {
       const res = await f('/api/critique-image-caption', {

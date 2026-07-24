@@ -156,7 +156,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
-| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, consent-attested record-only pilot enrollment/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
+| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, staging-only provenance-bound pilot text/media generation, exact-version real-post pilot attestation/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
 | `tracking.ts` | Public HTTPS-only short-link redirects with aggregate, bot-filtered click counts and no personal tracking |
 | `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
 | `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
@@ -185,7 +185,10 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `paypal.ts` | PayPal API helpers |
 | `lib/learning/` | Tenant-scoped critic council, bounded repair, Release Judge, decision receipts, immutable outcomes, bounded strategy learning, and safe experiment policy |
 | `lib/learning/archetype-aggregates.ts` | Privacy-gated coarse fleet learning with 10-workspace/100-post thresholds and atomic per-archetype rebuilds |
-| `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, prediction quality, and strict tenant-scoped metric collection |
+| `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, complete 168-hour outcome coverage and prediction quality, and strict tenant-scoped metric collection |
+| `lib/learning/calibration-audit.ts` | Bounded tenant-scoped weekly calibration claims and privacy-safe independent recheck receipts, kept separate from human adjudication |
+| `lib/learning/pilot-draft-generator.ts` | Staging-only high-assurance SocialAI draft generation with bounded retries, deterministic fabrication/denylist/repetition checks, and literal image-direction relevance gates |
+| `lib/learning/pilot-media-jobs.ts` | Staging-only six-slot image/video evidence jobs with exact consent/tenant binding, one active lease per workspace, two-attempt cap, immutable Draft provenance, and model-scoped fal queue polling |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 | `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
@@ -197,7 +200,9 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
 | `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
-| `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
+| `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Staging-only, lease-guarded record-only critique of at most one exact-version, positively attested Draft per explicitly consented pilot workspace |
+| `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions; preflight deferred v44-v47 structures before querying them |
+| `cron/evaluate-learning-calibration.ts` | `0 21 * * SUN` | Staging-only recheck of a bounded fair sample of unchanged green decisions before strategy learning, with severe-false-pass quarantine |
 | `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
 | `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
@@ -213,9 +218,81 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v42
+**Current source schema version:** v49
 
-**Current production schema version:** v42.
+**Current production schema version:** v43. Schemas v44-v49 remain absent.
+
+**Current staging schema version:** v49. The record-only pilot media job table and all nine immutable/egress-blocking triggers are present.
+
+The record-only pilot and independent calibration jobs are hard-gated to
+`ENVIRONMENT=staging` in both dispatcher and job entry points. Production
+readiness remains safe on v43: it checks v44, the v45 `ai_usage` attribution
+column, v46, and v47 first, then writes a complete red receipt without querying
+or mutating deferred tables. Privacy deletion similarly removes deferred rows
+only when their tables exist.
+
+Pilot media evidence migration:
+`workers/api/schema_v49_learning_pilot_media_jobs.sql`.
+It adds six immutable image/video evidence slots per exact pilot enrollment,
+serializes active generation per workspace, caps provider attempts at two, and
+keeps video jobs out of `posts` until a result is ready. Database triggers block
+post mutation, publication, delivery, unsafe direct receipt deletion, and
+parent-enrollment deletion that could orphan a generated Draft. Consent
+withdrawal deletes only exact derived media posts, jobs, and scoped usage.
+This table is staging-only and must never be applied to production.
+
+Pilot-generated draft migration:
+`workers/api/schema_v48_learning_pilot_generated_drafts.sql`.
+It adds one immutable provenance receipt per current pilot enrollment and
+database triggers that prevent the derived staging Draft from being scheduled,
+published, or placed into delivery. Generation is server-side, context-ready,
+budget-capped, idempotent, and hard-gated to staging while enforcement and
+autopilot remain disabled. Consent withdrawal deletes only this derived pilot
+Draft and its generation usage; original customer/source posts remain intact.
+Production does not need or receive this staging-only table.
+
+Weekly calibration migration:
+`workers/api/schema_v47_learning_calibration_audits.sql`.
+It adds bounded tenant-scoped claims and privacy-safe receipts for the weekly
+independent recheck of unchanged green release decisions. The job excludes
+non-active and on-hold clients, requires healthy per-workspace cost telemetry,
+never reuses the original release receipt, and quarantines a Protected
+Autopilot workspace when a verified recheck finds a release-critical false
+pass. The migration and matching Worker are live in staging only; production
+remains on schema v43 until every documented release gate passes.
+
+Positive pilot sample migration:
+`workers/api/schema_v46_learning_pilot_samples.sql`.
+It adds append-only, exact-content-hash receipts proving that a Draft is real
+owner/customer business content rather than synthetic QA. Pilot validation,
+cron evaluation, readiness, and adjudication sampling all require the positive
+receipt in addition to consent; absence or content drift fails closed before AI
+spend. The migration and matching Worker are live in staging only; production
+remains on schema v43 and must not receive either until the release gates pass.
+
+Pilot AI cost attribution migration:
+`workers/api/schema_v45_learning_ai_usage_attribution.sql`.
+It adds an immutable, tenant-and-post guarded decision scope to `ai_usage`.
+Record-only pilot calls fail closed if scoped metering cannot persist, and
+readiness requires exact coverage for every eligible pilot decision while the
+existing full-workspace monthly ledger remains the budget cap. The migration
+is live in staging only and must precede matching Worker code in every other
+environment.
+
+Pilot QA disqualification migration:
+`workers/api/schema_v44_learning_decision_disqualifications.sql`.
+It adds append-only, tenant-scoped `synthetic_qa` receipts so authenticated
+staging fixtures cannot count toward readiness or enter adjudication sampling.
+The route is staging-only and accepts only unpublished, unadjudicated,
+unscheduled current-pilot Drafts. It never mutates posts or decisions. The
+migration is live in staging only and must precede matching Worker code.
+
+Pilot cron telemetry migration: `workers/api/schema_v43_cron_run_details.sql`.
+It adds a bounded `details_json` field to `cron_runs`; application code writes
+only allowlisted numeric record-only pilot/readiness counters. The migration is
+live in staging and production. Production received the exact additive migration
+on 2026-07-24 after the live Worker exposed the missing-column compatibility
+gap; schemas v44-v47 remain deferred and must not be applied before their gates.
 
 Delivery uncertainty migration: `workers/api/schema_v42_delivery_uncertainty_receipts.sql`.
 It adds tenant-scoped, append-only shadow evidence around provider delivery
@@ -288,7 +365,12 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `tracking_links` | Tenant-scoped organic action and conversion tracking links |
 | `conversion_feedback` | Owner-recorded calls, messages, leads, bookings, sales, and order value |
 | `learning_adjudications` | Admin pilot labels for sampled immutable release decisions |
+| `learning_decision_disqualifications` | Immutable staging QA exclusions that keep synthetic decisions out of readiness and adjudication |
+| `ai_usage` | Workspace-wide AI spend ledger with optional exact learning-decision attribution |
 | `learning_pilot_enrollments` | Policy-versioned record-only pilot cohort and consent receipts; update-blocked but privacy-deletable |
+| `learning_pilot_samples` | Immutable positive receipts for exact real owner/customer Draft versions admitted to the temporary record-only pilot |
+| `learning_pilot_generated_drafts` | Staging-only immutable provenance for derived record-only text Drafts |
+| `learning_pilot_media_jobs` | Staging-only six-slot image/video evidence ledger with bounded leases, exact derived Draft linkage, and permanent egress blocks |
 | `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
 | `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
 
@@ -315,13 +397,15 @@ npm run build    # outputs to dist/
 ```bash
 wrangler secret put SECRET_NAME   # from workers/api/
 ```
-Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FAL_ADMIN_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`, `SOCIALAI_STUDIO_API_KEY`, `MY_ASSISTANT_INGEST_API_KEY`. Use `FAL_ADMIN_API_KEY` only for fal account billing checks; generation continues to use the least-privilege `FAL_API_KEY`. My Assistant routing vars: `MY_ASSISTANT_AGENT_ACCOUNT_ID`, `MY_ASSISTANT_WORKSPACE_ID`. Image rollout control: set `IMAGE_GEN_PROVIDER=gpt-image-2` as a Worker secret to use GPT Image 2 medium; unset it or set `flux-dev` for immediate rollback. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
+Key secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_JWT_KEY`, `FAL_API_KEY`, `FAL_ADMIN_API_KEY`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `RESEND_API_KEY`, `POSTPROXY_API_KEY`, `POSTPROXY_WEBHOOK_SECRET` or `POSTPROXY_WEBHOOK_QUERY_SECRET`, `SHOPIFY_API_SECRET`, `MASTER_ENCRYPTION_KEY`, `MONITOR_SECRET`, `SOCIALAI_STUDIO_API_KEY`, `MY_ASSISTANT_INGEST_API_KEY`. Use `FAL_ADMIN_API_KEY` only for fal account billing checks; generation continues to use the least-privilege `FAL_API_KEY`. My Assistant routing vars: `MY_ASSISTANT_AGENT_ACCOUNT_ID`, `MY_ASSISTANT_WORKSPACE_ID`. Image rollout control: set the non-secret Worker var `IMAGE_GEN_PROVIDER=gpt-image-2` to use GPT Image 2 medium; unset it or set `flux-dev` for immediate rollback. Optional future image-provider secrets: `HIGGSFIELD_API_KEY`, `HIGGSFIELD_API_SECRET`; do not use a desktop CLI/browser OAuth token in production.
+
+Staging bearer auth may use Clerk's public `CLERK_JWT_KEY`, but it must also set both `STAGING_AUTH_ALLOWED_USER_IDS` (as a staging Worker secret) and `STAGING_AUTH_AUTHORIZED_PARTIES`. Missing either value fails closed; production does not use these staging-only vars.
 
 Release 2 runs the Customer Learning Brain in shadow mode in production and staging with `LEARNING_BRAIN_ENABLED="true"`. Release enforcement remains disabled with `LEARNING_RELEASE_ENFORCEMENT="false"`. Shadow mode may record decision receipts and critic verdicts only. It cannot hold or change post content, media, schedules, status, or publishing behavior.
 
 Release 3 enables organic reach planning in shadow with `ORGANIC_REACH_ENABLED="true"` and keeps application disabled with `ORGANIC_REACH_APPLY_ENABLED="false"` in production and staging. Recommendation timing changes additionally require an explicit `dryRun=false` request and a confirmed reach profile, so the disabled apply flag prevents schedule writes even when a caller requests application.
 
-Release 4 controls are deployed but activation remains gated. Keep `LEARNING_RELEASE_ENFORCEMENT="false"`, `LEARNING_AUTOPILOT_ENABLED="false"`, and `ORGANIC_REACH_APPLY_ENABLED="false"` until the current-policy readiness snapshot passes every documented check with at least 30 real pilot decisions and 30 sampled adjudications. Never manufacture readiness rows or insert release evidence directly into D1; use the authenticated admin evidence route. On-hold clients, including Hugheseys Que, remain ineligible and must retain normal app access without learning release activation. Higgsfield remains a separate production gate and is not enabled by learning readiness.
+Release 4 controls are deployed but activation remains gated. Keep `LEARNING_RELEASE_ENFORCEMENT="false"`, `LEARNING_AUTOPILOT_ENABLED="false"`, and `ORGANIC_REACH_APPLY_ENABLED="false"` until the current-policy readiness snapshot passes every documented check with at least 30 real pilot decisions, 30 sampled adjudications, and 20 complete 168-hour outcomes across both pilot workspaces with at least 8 per workspace. Never manufacture readiness rows or insert release evidence directly into D1; use the authenticated admin evidence route. On-hold clients, including Hugheseys Que, remain ineligible and must retain normal app access without learning release activation. Higgsfield remains a separate production gate and is not enabled by learning readiness.
 
 ---
 

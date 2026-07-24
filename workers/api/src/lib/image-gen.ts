@@ -37,6 +37,91 @@ import { hashStringToSceneSeed, ARCHETYPE_POSITIVE_SUBJECTS } from '../../../../
 import { resolveArchetypeSlug } from './archetypes';
 import { logAiUsage } from './ai-usage';
 
+export function shouldForceCuratedFallbackForCritiqueRetry(
+  _archetypeSlug: string | null,
+  modelUsed: string,
+): boolean {
+  // GPT Image 2 can follow a concrete corrected prompt across archetypes.
+  // Normal archetype guardrails still replace forbidden or missing subjects;
+  // forcing the scene bank here would discard the critic's exact correction.
+  return !modelUsed.startsWith('gpt-image-2');
+}
+
+function compactRetryText(value: string | null | undefined, maxLength: number): string {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+export function buildCritiqueGuidedRetryPlan(input: {
+  safePrompt: { prompt: string; negativePrompt: string };
+  caption?: string | null;
+  critiqueReasoning?: string | null;
+  archetypeSlug: string | null;
+  modelUsed: string;
+}): {
+  safePrompt: { prompt: string; negativePrompt: string };
+  forceFallback: boolean;
+} {
+  const exactBrief = compactRetryText(input.safePrompt.prompt, 1_200);
+  const caption = compactRetryText(input.caption, 800);
+  const critiqueReasoning = compactRetryText(input.critiqueReasoning, 400);
+  const forceFallback = shouldForceCuratedFallbackForCritiqueRetry(
+    input.archetypeSlug,
+    input.modelUsed,
+  );
+
+  if (forceFallback) {
+    return { safePrompt: input.safePrompt, forceFallback: true };
+  }
+
+  const correctedPrompt = [
+    'STRICT RELEVANCE-CORRECTION RETRY.',
+    `Render this exact visual brief literally: ${exactBrief}.`,
+    caption ? `The photograph must directly communicate this post without rendering the words as text: ${caption}.` : '',
+    critiqueReasoning ? `The prior result was rejected for this mismatch; correct it rather than repeating it: ${critiqueReasoning}.` : '',
+    'Show concrete physical evidence of the requested subject or action. Do not substitute a generic desk, coffee, laptop, notebook, stock flatlay, abstract symbol, or unrelated prop unless that object is explicitly required by the exact visual brief.',
+    'Any primary object not required by the exact brief should be absent. No logos, no watermarks, no readable text, no interface mockups.',
+  ].filter(Boolean).join(' ');
+
+  return {
+    safePrompt: {
+      prompt: correctedPrompt,
+      negativePrompt: `${input.safePrompt.negativePrompt}, generic unrelated stock image, vague symbolic substitute, irrelevant props, scene that does not visibly depict the requested subject`,
+    },
+    forceFallback: false,
+  };
+}
+
+export async function regenerateImageAfterCritique(
+  env: Env,
+  userId: string,
+  clientId: string | null,
+  safePrompt: { prompt: string; negativePrompt: string },
+  options: {
+    caption?: string | null;
+    critiqueReasoning?: string | null;
+    archetypeSlug: string | null;
+    modelUsed: string;
+    seedHint?: string | null;
+  },
+): Promise<{ imageUrl: string | null; modelUsed: string; archetypeSlug: string | null }> {
+  const retryPlan = buildCritiqueGuidedRetryPlan({
+    safePrompt,
+    caption: options.caption,
+    critiqueReasoning: options.critiqueReasoning,
+    archetypeSlug: options.archetypeSlug,
+    modelUsed: options.modelUsed,
+  });
+  return generateImageWithGuardrails(env, userId, clientId, retryPlan.safePrompt, {
+    forceFallback: retryPlan.forceFallback,
+    caption: options.caption,
+    seedHint: `${options.seedHint || safePrompt.prompt}:critique-retry`,
+  });
+}
+
 // Per-model rough cost estimates for ai_usage logging. Refined when the
 // fal.ai invoice settles each month — these are the published per-MP rates
 // for square_hd outputs at the steps/guidance defaults used here.
@@ -92,10 +177,17 @@ export async function generateImageWithGuardrails(
   userId: string,
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
-  options: { forceFallback?: boolean; caption?: string | null; seedHint?: string | null } = {},
+  options: {
+    forceFallback?: boolean;
+    caption?: string | null;
+    seedHint?: string | null;
+    postId?: string | null;
+    usageOperation?: string;
+  } = {},
 ): Promise<{ imageUrl: string | null; modelUsed: string; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
   const useGptImage2 = env.IMAGE_GEN_PROVIDER === 'gpt-image-2';
+  const usageOperation = options.usageOperation?.trim() || 'image-gen';
 
   const archetypeSlugRaw = await resolveArchetypeSlug(env, userId, clientId);
 
@@ -231,9 +323,10 @@ export async function generateImageWithGuardrails(
         clientId,
         provider: 'fal',
         model: 'nano-banana-pro-bbq-cut',
-        operation: 'image-gen',
+        operation: usageOperation,
         imagesGenerated: imageUrl ? 1 : 0,
         estCostUsd: imageUrl ? NANO_BANANA_PRO_COST_USD : 0,
+        postId: options.postId ?? null,
         ok: !!imageUrl,
       });
       if (imageUrl) return { imageUrl, modelUsed: 'nano-banana-pro-bbq-cut', archetypeSlug };
@@ -244,9 +337,10 @@ export async function generateImageWithGuardrails(
         clientId,
         provider: 'fal',
         model: 'nano-banana-pro-bbq-cut',
-        operation: 'image-gen',
+        operation: usageOperation,
         imagesGenerated: 0,
         estCostUsd: 0,
+        postId: options.postId ?? null,
         ok: false,
       });
     }
@@ -254,7 +348,7 @@ export async function generateImageWithGuardrails(
 
   if (useGptImage2) {
     const gptPrompt = `${guarded.prompt}. Hard exclusions: ${guarded.negativePrompt}. Do not add logos, watermarks, personal data, fake interface labels, or unrelated props. Do not render legible text unless the prompt explicitly requires it.`;
-    const gptRes = await fetch('https://fal.run/fal-ai/gpt-image-2', {
+    const gptRes = await fetch('https://fal.run/openai/gpt-image-2', {
       method: 'POST',
       headers: authHeader,
       body: JSON.stringify({
@@ -272,9 +366,10 @@ export async function generateImageWithGuardrails(
       clientId,
       provider: 'fal',
       model: 'gpt-image-2-medium',
-      operation: 'image-gen',
+      operation: usageOperation,
       imagesGenerated: imageUrl ? 1 : 0,
       estCostUsd: imageUrl ? GPT_IMAGE_2_MEDIUM_COST_USD : 0,
+      postId: options.postId ?? null,
       ok: !!imageUrl,
     });
     if (imageUrl) {
@@ -318,9 +413,10 @@ export async function generateImageWithGuardrails(
       clientId,
       provider: 'fal',
       model: fluxModelName,
-      operation: 'image-gen',
+      operation: usageOperation,
       imagesGenerated: 0,
       estCostUsd: 0,
+      postId: options.postId ?? null,
       ok: false,
     });
     return { imageUrl: null, modelUsed: modelName, archetypeSlug };
@@ -331,9 +427,10 @@ export async function generateImageWithGuardrails(
     clientId,
     provider: 'fal',
     model: fluxModelName,
-    operation: 'image-gen',
+    operation: usageOperation,
     imagesGenerated: imageUrl ? 1 : 0,
     estCostUsd: imageUrl ? costUsd : 0,
+    postId: options.postId ?? null,
     ok: !!imageUrl,
   });
   return { imageUrl, modelUsed: modelName, archetypeSlug };

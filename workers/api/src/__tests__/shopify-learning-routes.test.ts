@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
 const mocks = vi.hoisted(() => ({
@@ -346,13 +347,131 @@ describe('Shopify learning settings and readiness', () => {
     expect(read.binds).not.toContain('evil.myshopify.com');
   });
 
-  it('stores protected consent under the signed shop and ignores forged identity fields', async () => {
+  it('does not bank shop consent before every activation gate passes', async () => {
+    const evaluatedAt = new Date().toISOString();
     const { db, calls } = makeRecordingD1({
       'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
       'FROM workspace_learning_settings': [],
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        metrics_json: '{}',
+        checks_json: JSON.stringify(learningReadinessChecks()),
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
     });
     const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
     env.LEARNING_RELEASE_ENFORCEMENT = 'true';
+    env.LEARNING_AUTOPILOT_ENABLED = 'false';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT',
+      headers: validHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 1800,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Protected Autopilot is unavailable until every activation gate passes',
+      code: 'protected_autopilot_not_ready',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
+  it('does not bank shop consent while operator review is pending', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 1800,
+        disabled_reason: 'severe_false_pass_pending_operator_review',
+      }],
+      'FROM learning_release_readiness': [{
+        ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        checks_json: JSON.stringify(learningReadinessChecks()),
+        evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'true';
+    env.LEARNING_AUTOPILOT_ENABLED = 'true';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT', headers: validHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 1800, experimentRate: 0,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'protected_autopilot_not_ready',
+    });
+    expect(calls.some((call) =>
+      call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
+  it('does not skip the shop experiment ramp on first activation', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [],
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        metrics_json: '{}',
+        checks_json: JSON.stringify(learningReadinessChecks()),
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'true';
+    env.LEARNING_AUTOPILOT_ENABLED = 'true';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT',
+      headers: validHeaders,
+      body: JSON.stringify({
+        mode: 'protected_autopilot', consent: true,
+        monthlyAiBudgetUsdCents: 1800, experimentRate: 0.15,
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Protected Autopilot experiments must start at 0 and advance only to 0.10 then 0.15',
+      code: 'protected_autopilot_experiment_ramp',
+    });
+    expect(calls.some((call) => call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
+  });
+
+  it('stores protected consent under the signed shop and ignores forged identity fields', async () => {
+    const evaluatedAt = new Date().toISOString();
+    const { db, calls } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [],
+      'FROM learning_release_readiness': [{
+        id: 'ready-1', ready: 1, policy_version: AUTOPILOT_POLICY_VERSION,
+        metrics_json: '{}',
+        checks_json: JSON.stringify(learningReadinessChecks()),
+        evaluated_by: 'cron', evaluated_at: evaluatedAt,
+      }],
+      'FROM ai_usage': [{ spend_usd: 0.5, telemetry_count: 1 }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'true';
+    env.LEARNING_AUTOPILOT_ENABLED = 'true';
     const response = await app.request('/api/shopify/learning/settings', {
       method: 'PUT',
       headers: validHeaders,
@@ -374,6 +493,35 @@ describe('Shopify learning settings and readiness', () => {
     expect(write.binds).not.toContain('forged');
   });
 
+  it('returns the preserved shop quarantine and zero experiment rate after a safer update', async () => {
+    const reason = 'severe_false_pass_pending_operator_review';
+    const { db } = makeRecordingD1({
+      'FROM shopify_stores': [{ shop_domain: 'store.myshopify.com' }],
+      'FROM workspace_learning_settings': [{
+        mode: 'approval', autopublish_consent_at: null,
+        autopublish_policy_version: null, experiment_rate: 0,
+        monthly_ai_budget_usd_cents: 1800, disabled_reason: reason,
+      }],
+    });
+    const { app, env } = makeApp(db);
+    env.LEARNING_BRAIN_ENABLED = 'true';
+    env.LEARNING_RELEASE_ENFORCEMENT = 'false';
+
+    const response = await app.request('/api/shopify/learning/settings', {
+      method: 'PUT', headers: validHeaders,
+      body: JSON.stringify({ mode: 'approval', experimentRate: 0.15 }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      settings: {
+        mode: 'shadow',
+        experimentRate: 0,
+        disabledReason: reason,
+      },
+    });
+  });
+
   it('returns the current policy receipt and effective shop mode', async () => {
     const evaluatedAt = new Date().toISOString();
     const { db } = makeRecordingD1({
@@ -384,8 +532,24 @@ describe('Shopify learning settings and readiness', () => {
         monthly_ai_budget_usd_cents: 1200, disabled_reason: null,
       }],
       'FROM learning_release_readiness': [{
-        id: 'ready-1', ready: 0, metrics_json: '{}',
-        checks_json: '{"pilot":false}', evaluated_by: 'cron', evaluated_at: evaluatedAt,
+        id: 'ready-1',
+        ready: 0,
+        metrics_json: JSON.stringify({
+          pilotWorkspaceCount: 1,
+          pilotUserDecisions: 5,
+          pilotClientDecisions: 0,
+          releaseJudgeAvailability: 0.997,
+          releaseJudgeTelemetryCoverage: 1,
+          releaseJudgeInvocations: 30,
+        }),
+        checks_json: JSON.stringify({
+          pilot: false,
+          pilotCohort: false,
+          releaseJudgeAvailability: true,
+          releaseJudgeTelemetry: true,
+        }),
+        evaluated_by: 'cron',
+        evaluated_at: evaluatedAt,
       }],
       'FROM ai_usage': [{ spend_usd: 3.5, telemetry_count: 2 }],
     });
@@ -401,7 +565,20 @@ describe('Shopify learning settings and readiness', () => {
       policyVersion: AUTOPILOT_POLICY_VERSION,
       ready: false,
       effectiveMode: 'approval',
-      checks: { pilot: false },
+      checks: {
+        pilot: false,
+        pilotCohort: false,
+        releaseJudgeAvailability: true,
+        releaseJudgeTelemetry: true,
+      },
+      metrics: {
+        pilotWorkspaceCount: 1,
+        pilotUserDecisions: 5,
+        pilotClientDecisions: 0,
+        releaseJudgeAvailability: 0.997,
+        releaseJudgeTelemetryCoverage: 1,
+        releaseJudgeInvocations: 30,
+      },
       cost: {
         monthlyAiSpendUsdCents: 350,
         monthlyAiBudgetUsdCents: 1200,

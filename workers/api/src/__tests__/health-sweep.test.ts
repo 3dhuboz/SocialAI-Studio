@@ -1,7 +1,8 @@
 /**
  * Unit tests for cron/health-sweep.ts — the threshold-based sweep that
  * complements lib/alerts.ts's crash alerting with statistical failure
- * detection (5+ Missed in 30min, posts stuck Publishing > 30min).
+ * detection (5+ Missed in 30min, posts stuck Publishing > 30min, and stale
+ * weekly calibration receipts after the monitor has been established).
  *
  * Each test exercises ONE check in isolation by mocking the D1 COUNT
  * response, then asserts whether fireAlert OR resolveAlert was called
@@ -9,6 +10,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Env } from '../env';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 
 const alertCalls: Array<{ key: string; severity: string; body: string }> = [];
 const resolveCalls: string[] = [];
@@ -23,24 +25,29 @@ vi.mock('../lib/alerts', () => ({
 
 import { cronHealthSweep, __test } from '../cron/health-sweep';
 
-function makeEnv(countByPattern: Record<string, number>): Env {
+type CannedRow = number | Record<string, unknown> | null;
+
+function makeEnv(rowByPattern: Record<string, CannedRow>): Env {
   const prepare = vi.fn().mockImplementation((sql: string) => {
+    const cannedRow = (): Record<string, unknown> | null => {
+      for (const [pattern, value] of Object.entries(rowByPattern)) {
+        if (!sql.includes(pattern)) continue;
+        if (value == null) return null;
+        return typeof value === 'number' ? { n: value } : value;
+      }
+      if (sql.includes('FROM sqlite_master')) {
+        return { alert_tables: 1, alert_indexes: 2 };
+      }
+      if (sql.includes('FROM learning_release_readiness')) {
+        return { checks_json: JSON.stringify(learningReadinessChecks()) };
+      }
+      return { n: 0 };
+    };
     return {
       bind: () => ({
-        first: async () => {
-          // Match the test SQL against canned counts by substring.
-          for (const [pattern, n] of Object.entries(countByPattern)) {
-            if (sql.includes(pattern)) return { n };
-          }
-          return { n: 0 };
-        },
+        first: async () => cannedRow(),
       }),
-      first: async () => {
-        for (const [pattern, n] of Object.entries(countByPattern)) {
-          if (sql.includes(pattern)) return { n };
-        }
-        return { n: 0 };
-      },
+      first: async () => cannedRow(),
     };
   });
   return { DB: { prepare } } as unknown as Env;
@@ -110,36 +117,176 @@ describe('checkPublishZombie', () => {
   });
 });
 
+describe('checkLearningCalibrationFreshness', () => {
+  const now = new Date('2026-07-26T22:01:00.000Z');
+
+  it('stays neutral before the first successful weekly receipt establishes monitoring', async () => {
+    const env = makeEnv({ FROM_cron_runs_never_matches: 0 });
+
+    const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+    expect(result).toMatchObject({ fired: false, detail: 'monitor not established' });
+    expect(alertCalls).toHaveLength(0);
+    expect(resolveCalls).not.toContain('learning_calibration_receipt_stale');
+  });
+
+  it('resolves the stale-receipt alert while the latest success is within the weekly window', async () => {
+    const env = makeEnv({
+      'FROM cron_runs': { last_success_at: '2026-07-19 21:01:00' },
+    });
+
+    const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+    expect(result.fired).toBe(false);
+    expect(alertCalls).toHaveLength(0);
+    expect(resolveCalls).toContain('learning_calibration_receipt_stale');
+  });
+
+  it('fires critical after one weekly interval plus the one-hour grace period', async () => {
+    const env = makeEnv({
+      'FROM cron_runs': { last_success_at: '2026-07-19 21:00:00' },
+    });
+
+    const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+    expect(result.fired).toBe(true);
+    expect(alertCalls).toEqual([expect.objectContaining({
+      key: 'learning_calibration_receipt_stale',
+      severity: 'critical',
+      body: expect.stringMatching(/last successful.*older than.*operator review/i),
+    })]);
+    expect(resolveCalls).not.toContain('learning_calibration_receipt_stale');
+  });
+
+  it.each(['not-a-timestamp', '2026-07-27 00:00:00'])(
+    'fails closed for invalid or future receipt timestamp %s',
+    async (lastSuccessAt) => {
+      const env = makeEnv({ 'FROM cron_runs': { last_success_at: lastSuccessAt } });
+
+      const result = await __test.checkLearningCalibrationFreshness(env, now);
+
+      expect(result.fired).toBe(true);
+      expect(alertCalls[0]).toMatchObject({
+        key: 'learning_calibration_receipt_stale',
+        severity: 'critical',
+      });
+    },
+  );
+});
+
+describe('checkAlertPersistenceSchema', () => {
+  it('accepts the alert table only when both operational indexes exist', async () => {
+    const env = makeEnv({});
+
+    const result = await __test.checkAlertPersistenceSchema(env);
+
+    expect(result).toMatchObject({
+      key: 'alert_persistence_schema',
+      fired: false,
+      detail: 'table=1 indexes=2',
+    });
+  });
+
+  it.each([
+    [{ alert_tables: 0, alert_indexes: 0 }, 'table=0 indexes=0'],
+    [{ alert_tables: 1, alert_indexes: 1 }, 'table=1 indexes=1'],
+  ])('fails closed for incomplete alert persistence %#', async (schema, detail) => {
+    const env = makeEnv({ 'FROM sqlite_master': schema });
+
+    await expect(__test.checkAlertPersistenceSchema(env))
+      .rejects.toThrow(`Alert persistence schema is incomplete (${detail})`);
+  });
+});
+
+describe('checkLearningReadinessReceiptSchema', () => {
+  it('accepts a complete current readiness receipt', async () => {
+    const result = await __test.checkLearningReadinessReceiptSchema(makeEnv({}));
+
+    expect(result).toMatchObject({
+      key: 'learning_readiness_receipt_schema',
+      fired: false,
+      detail: 'complete current schema',
+    });
+  });
+
+  it('accepts a complete hold receipt with red readiness gates', async () => {
+    const checks = { ...learningReadinessChecks(), pilot: false, cost: false };
+    const env = makeEnv({
+      'FROM learning_release_readiness': { checks_json: JSON.stringify(checks) },
+    });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env)).resolves.toMatchObject({
+      fired: false,
+      detail: 'complete current schema',
+    });
+  });
+
+  it('stays neutral before the first readiness receipt exists', async () => {
+    const env = makeEnv({ 'FROM learning_release_readiness': null });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env)).resolves.toMatchObject({
+      fired: false,
+      detail: 'monitor not established',
+    });
+  });
+
+  it('fails closed for a truncated readiness payload', async () => {
+    const env = makeEnv({
+      'FROM learning_release_readiness': {
+        checks_json: JSON.stringify({ tenancyProofs: { client: true } }),
+      },
+    });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env))
+      .rejects.toThrow('Latest learning readiness receipt has an incomplete checks schema');
+  });
+
+  it('fails closed for malformed readiness JSON', async () => {
+    const env = makeEnv({
+      'FROM learning_release_readiness': { checks_json: '{not-json' },
+    });
+
+    await expect(__test.checkLearningReadinessReceiptSchema(env))
+      .rejects.toThrow('Latest learning readiness receipt has an incomplete checks schema');
+  });
+});
+
 // ── Sweep orchestration ─────────────────────────────────────────────────
 
 describe('cronHealthSweep', () => {
-  it('runs both checks and reports fire count', async () => {
+  it('runs all checks and reports fire count', async () => {
     const env = makeEnv({
       "status = 'Missed'": __test.THRESHOLDS.publishFailuresIn30Min + 1,
       "status = 'Publishing'": 2,
     });
     const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(2);
-    expect(result.posts_processed).toBe(2); // both fired
+    expect(result.checks).toHaveLength(5);
+    expect(result.posts_processed).toBe(2);
     expect(alertCalls.map((a) => a.key).sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
 
   it('quiet day: zero alerts fired, both resolve', async () => {
     const env = makeEnv({});
     const result = await cronHealthSweep(env);
+    expect(result.checks).toHaveLength(5);
     expect(result.posts_processed).toBe(0);
     expect(alertCalls).toHaveLength(0);
     expect(resolveCalls.sort()).toEqual(['publish_failure_burst', 'publish_zombie']);
   });
 
-  it('a single check throwing does not block the others', async () => {
-    // First check throws; second still runs. We simulate this by making
-    // the burst query throw via a bad prepare implementation, but still
-    // return a clean zombie count.
+  it('continues remaining checks then fails the cron receipt when one check throws', async () => {
+    // The burst check throws, while the surrounding checks still run. The
+    // readiness fixture remains valid so this isolates the simulated failure.
     let firstCallSeen = false;
     const prepare = vi.fn().mockImplementation((sql: string) => ({
       bind: () => ({
         first: async () => {
+          if (sql.includes('FROM sqlite_master')) {
+            return { alert_tables: 1, alert_indexes: 2 };
+          }
+          if (sql.includes('FROM learning_release_readiness')) {
+            return { checks_json: JSON.stringify(learningReadinessChecks()) };
+          }
           if (sql.includes("status = 'Missed'") && !firstCallSeen) {
             firstCallSeen = true;
             throw new Error('simulated D1 failure');
@@ -149,6 +296,9 @@ describe('cronHealthSweep', () => {
         },
       }),
       first: async () => {
+        if (sql.includes('FROM sqlite_master')) {
+          return { alert_tables: 1, alert_indexes: 2 };
+        }
         if (sql.includes("status = 'Missed'") && !firstCallSeen) {
           firstCallSeen = true;
           throw new Error('simulated D1 failure');
@@ -158,8 +308,9 @@ describe('cronHealthSweep', () => {
       },
     }));
     const env = { DB: { prepare } } as unknown as Env;
-    const result = await cronHealthSweep(env);
-    expect(result.checks).toHaveLength(2);
+    await expect(cronHealthSweep(env)).rejects.toThrow(
+      'Health sweep completed with 1 failed check: checkPublishFailureBurst',
+    );
     // The throwing check produces a `health_sweep_check_failed:...` alert,
     // and the other check still ran and resolved.
     expect(alertCalls.find((a) => a.key.startsWith('health_sweep_check_failed:'))).toBeDefined();
