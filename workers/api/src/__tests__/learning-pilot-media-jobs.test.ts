@@ -355,6 +355,79 @@ describe('record-only pilot media jobs', () => {
     ).get(ready.id)).toEqual({ archetype_slug: 'tech-saas-agency' });
   });
 
+  it('retains a completed provider video when the next poll is after the lease deadline', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started.state).toBe('generating');
+
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const ready = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(deps.pollVideo).toHaveBeenCalledOnce();
+    expect(ready).toMatchObject({
+      state: 'ready',
+      mediaKind: 'video',
+      sourceStatus: 'Draft',
+      mediaUrl: 'https://fal.example/pilot-video.mp4',
+      errorCode: null,
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM publication_events').get())
+      .toEqual({ count: 0 });
+  });
+
+  it('times out an overdue provider video only after confirming it is still pending', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({ state: 'pending' });
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started.state).toBe('generating');
+
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const failed = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(deps.pollVideo).toHaveBeenCalledOnce();
+    expect(failed).toMatchObject({
+      state: 'failed',
+      mediaKind: 'video',
+      postId: null,
+      errorCode: 'pilot_media_video_timed_out',
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
+  });
+
   it('allows one lease-expired retry and never a third provider attempt', async () => {
     const db = database();
     const env = environment(db);

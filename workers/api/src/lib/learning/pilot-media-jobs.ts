@@ -1125,16 +1125,7 @@ export async function pollRecordOnlyPilotVideoJob(
     );
     return publicPilotMediaJob(failed);
   }
-  if (Date.parse(job.lease_expires_at) <= deps.now().getTime()) {
-    const failed = await markPilotMediaJobFailed(
-      env,
-      job,
-      job.claim_token_hash,
-      'pilot_media_video_timed_out',
-      deps.now(),
-    );
-    return publicPilotMediaJob(failed);
-  }
+  const leaseExpired = Date.parse(job.lease_expires_at) <= deps.now().getTime();
 
   let result: VideoPollResult;
   try {
@@ -1146,9 +1137,31 @@ export async function pollRecordOnlyPilotVideoJob(
       model: job.media_model,
     });
   } catch {
+    if (leaseExpired) {
+      const failed = await markPilotMediaJobFailed(
+        env,
+        job,
+        job.claim_token_hash,
+        'pilot_media_video_timed_out',
+        deps.now(),
+      );
+      return publicPilotMediaJob(failed);
+    }
     return publicPilotMediaJob(job);
   }
-  if (result.state === 'pending') return publicPilotMediaJob(job);
+  if (result.state === 'pending') {
+    if (leaseExpired) {
+      const failed = await markPilotMediaJobFailed(
+        env,
+        job,
+        job.claim_token_hash,
+        'pilot_media_video_timed_out',
+        deps.now(),
+      );
+      return publicPilotMediaJob(failed);
+    }
+    return publicPilotMediaJob(job);
+  }
   if (result.state === 'failed' || !result.videoUrl) {
     const failed = await markPilotMediaJobFailed(
       env,
