@@ -49,10 +49,10 @@ export function buildCritiqueContextText(input: CritiqueContextInput): string {
   if (caption) parts.push(caption);
   if (hashtags.length > 0) parts.push(`Hashtags: ${hashtags.join(' ')}`);
 
-  // When the publish caption is too short to ground the verdict, fold in the
-  // intended image brief so the critic can still catch cross-domain or surreal
-  // outputs on terse posts like "Now open" or "Book now".
-  if ((caption.length < 20 || parts.join(' ').length < 30) && imagePrompt) {
+  // The critic must always see the visual contract. A long caption can match
+  // the broad theme while the image still ignores required objects, camera
+  // angle, or exclusions from the brief.
+  if (imagePrompt) {
     parts.push(`Intended image brief: ${imagePrompt.slice(0, 600)}`);
   }
 

@@ -3671,12 +3671,12 @@ const Dashboard: React.FC = () => {
                 <div>
                   <label className="text-[10px] font-semibold text-white/30 uppercase tracking-widest block mb-1.5">Content Type</label>
                   <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => setContentType('text')}
+                    <button type="button" aria-pressed={contentType === 'text'} onClick={() => setContentType('text')}
                       className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'text' ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                       <MessageSquare size={14} /> Text
                     </button>
                     {canUseImages ? (
-                      <button onClick={() => setContentType('image')}
+                      <button type="button" aria-pressed={contentType === 'image'} onClick={() => setContentType('image')}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'image' ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                         <ImageIcon size={14} /> Text + Image
                       </button>
@@ -3686,7 +3686,7 @@ const Dashboard: React.FC = () => {
                       </div>
                     )}
                     {(effectivePlan === 'pro' || effectivePlan === 'agency' || (isAdminMode && !activeClientId)) ? (
-                      <button onClick={() => setContentType('video')}
+                      <button type="button" aria-pressed={contentType === 'video'} onClick={() => setContentType('video')}
                         className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border rounded-xl transition ${contentType === 'video' ? 'bg-purple-500/20 border-purple-500/40 text-purple-300' : 'glass-card border-white/[0.08] text-white/40 hover:text-white/60'}`}>
                         <Play size={14} /> Text + Video Brief
                       </button>
@@ -7106,22 +7106,31 @@ const AuthGate: React.FC = () => {
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_30%,rgba(245,158,11,0.08),transparent_65%)] pointer-events-none" />
         <AppLogo size={100} />
         <div className="text-center space-y-3 max-w-sm">
-          <p className="text-red-400 font-bold text-base">Authentication not configured</p>
+          <p className="text-red-400 font-bold text-base">Sign-in is taking longer than expected</p>
           <p className="text-white/40 text-sm leading-relaxed">
-            <code className="text-amber-300/80 bg-white/5 px-1.5 py-0.5 rounded text-xs">VITE_CLERK_PUBLISHABLE_KEY</code> is missing from your Cloudflare Pages environment variables.
+            The secure sign-in service did not finish loading. Your session and account data
+            have not been changed.
           </p>
           <p className="text-white/25 text-xs">
-            Add it in Cloudflare Pages → Settings → Environment Variables, then redeploy.
+            Reload once. If this continues, contact support so we can check the sign-in
+            service and this site&apos;s approved domain.
           </p>
         </div>
-        <a
-          href="https://dashboard.clerk.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-amber-400/60 hover:text-amber-400 underline transition"
-        >
-          Open Clerk Dashboard →
-        </a>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/15"
+          >
+            Reload sign-in
+          </button>
+          <a
+            href={`mailto:${CLIENT.supportEmail}`}
+            className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/50 transition hover:border-white/20 hover:text-white/70"
+          >
+            Contact support
+          </a>
+        </div>
       </div>
     );
   }

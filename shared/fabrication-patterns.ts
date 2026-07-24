@@ -21,6 +21,8 @@ export const FAB_PATTERNS: Array<[RegExp, string]> = [
   // ── Fake customer testimonials ──────────────────────────────────────────
   [/\b(?:a\s+)?(?:local|nearby|happy|recent)\s+(?:cafe|restaurant|business|client|customer|owner|food\s+truck|shop|store)\s+(?:in|from|at|near)?\s*[A-Z][a-z]+/i, 'invented customer testimonial'],
   [/\b(?:one\s+of\s+our|another)\s+(?:happy\s+)?(?:client|customer|user)/i, 'invented customer story'],
+  [/\b(?:most|many|the\s+majority\s+of)\s+(?:of\s+)?(?:the\s+)?(?:small\s+)?(?:business(?:es| owners?)|clients?|customers?)\s+(?:we|our\s+team)\s+(?:work|worked|have\s+worked|has\s+worked)\s+with\b/i, 'unsupported generalized customer-experience claim'],
+  [/\b(?:we|our\s+team)\s+(?:see|find|hear)\s+(?:it|this)\s+(?:all\s+the\s+time|every\s+time|constantly|often|usually)\b/i, 'unsupported generalized customer-experience claim'],
   // Invented quote: matches `<subject> says: "..."` but excludes rhetorical
   // anthropomorphizing like `It says: "..."`, `the stock photo says: "..."`
   // — those are figures of speech, not fake testimonials. Real fabrications

@@ -43,6 +43,7 @@ npm run build
 
 Deploy to Cloudflare Pages with environment variables:
 - `VITE_AI_WORKER_URL`: Your Cloudflare Worker URL
+- `VITE_LEARNING_PILOT_WORKER_URL`: Isolated staging Worker for admin-only, record-only pilot operations
 - `VITE_CLERK_PUBLISHABLE_KEY`: Clerk publishable key
 
 ## Richo Road Integration

@@ -7,6 +7,14 @@ import {
 } from '../lib/learning/deletion';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
+const DEFERRED_TABLE_ROWS = [
+  { name: 'learning_calibration_audits' },
+  { name: 'learning_decision_disqualifications' },
+  { name: 'learning_pilot_generated_drafts' },
+  { name: 'learning_pilot_media_jobs' },
+  { name: 'learning_pilot_samples' },
+];
+
 describe('learning data deletion', () => {
   it.each([
     ['owner', 'owner_1', '__owner__'],
@@ -17,35 +25,86 @@ describe('learning data deletion', () => {
     userId,
     workspaceKey,
   ) => {
-    const { db, calls } = makeRecordingD1();
+    const { db, calls } = makeRecordingD1({
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
+    });
 
     await deleteLearningWorkspaceData(db, userId, workspaceKey);
 
     const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
-    expect(deletes).toHaveLength(14);
+    expect(deletes).toHaveLength(20);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_samples'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_generated_drafts'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_media_jobs'))).toBe(true);
+    const pilotPostDelete = deletes.find((call) =>
+      call.sql.includes('DELETE FROM posts'));
+    expect(pilotPostDelete?.sql).toContain('FROM learning_pilot_media_jobs');
+    expect(pilotPostDelete?.sql).toContain("state = 'ready'");
+    expect(pilotPostDelete?.binds).toEqual([userId, userId, workspaceKey]);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_decision_disqualifications'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_calibration_audits'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_enrollments'))).toBe(true);
+    expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
+    expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
+    expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
+    expect(deletes.filter((call) => call !== pilotPostDelete).every((call) =>
+      call.binds[0] === userId && call.binds[1] === workspaceKey,
+    )).toBe(true);
+  });
+
+  it('deletes every learning workspace before its user account', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
+    });
+
+    await deleteLearningUserData(db, 'owner_1');
+
+    const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
+    expect(deletes).toHaveLength(20);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_samples'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_generated_drafts'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_pilot_media_jobs'))).toBe(true);
+    const pilotPostDelete = deletes.find((call) =>
+      call.sql.includes('DELETE FROM posts'));
+    expect(pilotPostDelete?.sql).toContain('FROM learning_pilot_media_jobs');
+    expect(pilotPostDelete?.binds).toEqual(['owner_1', 'owner_1']);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_decision_disqualifications'))).toBe(true);
+    expect(deletes.some((call) =>
+      call.sql.includes('DELETE FROM learning_calibration_audits'))).toBe(true);
     expect(deletes.some((call) =>
       call.sql.includes('DELETE FROM learning_pilot_enrollments'))).toBe(true);
     expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
     expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
     expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
     expect(deletes.every((call) =>
-      call.binds[0] === userId && call.binds[1] === workspaceKey,
-    )).toBe(true);
+      call.binds.length >= 1 && call.binds.every((bind) => bind === 'owner_1'))).toBe(true);
   });
 
-  it('deletes every learning workspace before its user account', async () => {
-    const { db, calls } = makeRecordingD1();
+  it('deletes every available production row when deferred tables are absent', async () => {
+    const { db, calls } = makeRecordingD1({ 'FROM sqlite_master': [] });
 
-    await deleteLearningUserData(db, 'owner_1');
+    await deleteLearningWorkspaceData(db, 'owner_1', 'client_1');
 
-    const deletes = calls.filter((call) => /^\s*DELETE\s+FROM/i.test(call.sql));
-    expect(deletes).toHaveLength(14);
-    expect(deletes.some((call) =>
-      call.sql.includes('DELETE FROM learning_pilot_enrollments'))).toBe(true);
-    expect(deletes.at(-3)?.sql).toContain('DELETE FROM learning_critic_verdicts');
-    expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
-    expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
-    expect(deletes.every((call) => call.binds[0] === 'owner_1')).toBe(true);
+    const sql = calls.map((call) => call.sql).join('\n');
+    expect(sql).not.toContain('DELETE FROM learning_pilot_samples');
+    expect(sql).not.toContain('DELETE FROM learning_pilot_generated_drafts');
+    expect(sql).not.toContain('DELETE FROM learning_pilot_media_jobs');
+    expect(sql).not.toContain('DELETE FROM learning_decision_disqualifications');
+    expect(sql).not.toContain('DELETE FROM learning_calibration_audits');
+    expect(sql).toContain('DELETE FROM learning_adjudications');
+    expect(sql).toContain('DELETE FROM learning_pilot_enrollments');
+    expect(sql).toContain('DELETE FROM learning_decisions');
+    expect(sql).toContain('DELETE FROM workspace_learning_settings');
   });
 
   it('wires cleanup before every parent deletion', () => {

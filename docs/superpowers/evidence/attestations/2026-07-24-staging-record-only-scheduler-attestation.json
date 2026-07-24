@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "staging-record-only-scheduler-attestation-20260724",
+  "capturedAt": "2026-07-24T00:20:44.6847795Z",
+  "scope": {
+    "environmentChanged": "staging",
+    "productionObservedReadOnly": true,
+    "purpose": "automatic_record_only_learning_monitoring",
+    "productionBehaviorChangeAllowed": false,
+    "releaseFlagChangeAllowed": false,
+    "schemaApplicationAllowed": false,
+    "automaticActivationAllowed": false
+  },
+  "source": {
+    "commit": "31bdb899df142de30f4885baca12b9f19346a136",
+    "branch": "codex/learning-pilot-progress",
+    "workerTree": "eaa1e5ac021f05964bcd459aa85dbff21180cb82",
+    "gitCleanAtProof": true
+  },
+  "stagingDeployment": {
+    "workerName": "socialai-api-staging",
+    "versionId": "2b06c28d-e9f3-4a0b-a98e-a0a2fa5b15a4",
+    "versionNumber": 126,
+    "createdAt": "2026-07-24T00:03:02.467442Z",
+    "source": "wrangler",
+    "trigger": "version_upload",
+    "scriptEtag": "324a28a20f5050cbfde0b8f76e341926a5d4dbd4d4a298e10344c32d95a92832",
+    "handlers": [
+      "fetch",
+      "scheduled"
+    ],
+    "environmentBinding": "staging",
+    "databaseBindingId": "0ce38359-c7d6-4d6e-b278-7ca1a719dbb4",
+    "cronTriggers": [
+      "*/15 * * * *",
+      "0 21 * * SUN"
+    ],
+    "allowedScheduledWork": [
+      "health_sweep",
+      "consent_gated_record_only_learning_pilot",
+      "learning_readiness",
+      "learning_calibration"
+    ],
+    "excludedScheduledWork": [
+      "post_publishing",
+      "media_prewarm",
+      "Facebook_refresh",
+      "Shopify_reconciliation",
+      "strategy_application",
+      "weekly_review_email"
+    ]
+  },
+  "productionPin": {
+    "workerName": "socialai-api",
+    "versionId": "cea92e31-2f0b-4948-99e9-7e9904e27e86",
+    "changed": false
+  },
+  "verification": {
+    "workerTypecheck": "passed",
+    "focusedRecordOnlyTests": {
+      "filesPassed": 4,
+      "testsPassed": 64,
+      "testsFailed": 0
+    },
+    "publicationBoundaryTests": {
+      "filesPassed": 3,
+      "testsPassed": 49,
+      "testsFailed": 0
+    },
+    "offlineReleaseProof": {
+      "result": "offline_pass",
+      "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-release-proof-2026-07-24T00-03-46-398Z.json",
+      "payloadSha256": "c54933a52e384c601beec27fcdf739143203447812317773158632347b7f30fe",
+      "fileSha256": "1d70cdd7583a23e603d6136e3af5744a9dca5928a3f6a8e24ea90e10af858fb3",
+      "requiredChecks": 114,
+      "failedChecks": 0
+    },
+    "initialPostDeployFailClosed": {
+      "result": "unsafe_or_unverified",
+      "reason": "pre-deployment staging health and scheduler receipts were stale before the first natural cron",
+      "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-rollout-state-2026-07-24T00-04-12-410Z.json",
+      "payloadSha256": "6a0dab05df1a4c104e0dada718a234ab698d67082651b60b84662beba6aebdc0",
+      "fileSha256": "fd29546728568c7c94f40e0f424a5c9be38aa33c87d006e0a5a9dbd6df2e1abc",
+      "automaticActivationAllowed": false
+    },
+    "firstNaturalCron": {
+      "healthSweepAt": "2026-07-24T00:15:10Z",
+      "learningPilotAt": "2026-07-24T00:15:11Z",
+      "learningReadinessAt": "2026-07-24T00:15:14Z",
+      "pilotDetails": {
+        "postsProcessed": 0,
+        "candidatesConsidered": 0,
+        "evaluated": 0,
+        "reused": 0,
+        "claimedElsewhere": 0,
+        "budgetSkipped": 0,
+        "contextNotReady": 0,
+        "invalidSkipped": 0,
+        "errors": 0
+      }
+    },
+    "liveRolloutState": {
+      "result": "safe_hold",
+      "promotionReady": false,
+      "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-rollout-state-2026-07-24T00-16-25-892Z.json",
+      "payloadSha256": "83f9b6a3f662c4a28e6fef68fdddfa4194bb2700e72cb1792002f07ce17d847c",
+      "fileSha256": "8cd3808062b5f89058415c1553bcb3d012d196e42647bd5ba356920511332a40",
+      "failedSafetyChecks": [],
+      "productionMutationPerformed": false,
+      "releaseFlagsChanged": false,
+      "stagingD1ReadOnly": true,
+      "productionD1ReadOnly": true
+    },
+    "strictRequireReady": {
+      "expectedExitCode": 1,
+      "observedExitCode": 1,
+      "result": "safe_hold",
+      "promotionReady": false,
+      "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-rollout-state-2026-07-24T00-17-42-643Z.json",
+      "payloadSha256": "d69a0fa31c64413e5d5132ff2c9678b44199c363c2c26b92c1df130e5aa3ea62",
+      "fileSha256": "7e883ff3f3b41cc5a14f8cf3e699b2cf322022d5767db61c025e1cd4be4a5009"
+    }
+  },
+  "safetyInvariants": {
+    "LEARNING_BRAIN_ENABLED": true,
+    "LEARNING_RELEASE_ENFORCEMENT": false,
+    "LEARNING_AUTOPILOT_ENABLED": false,
+    "ORGANIC_REACH_ENABLED": true,
+    "ORGANIC_REACH_APPLY_ENABLED": false,
+    "protectedAutopilotWorkspaceCountStaging": 0,
+    "protectedAutopilotWorkspaceCountProduction": 0,
+    "hugheseysQueStatus": "on_hold",
+    "productionMutationPerformed": false,
+    "releaseFlagsChanged": false
+  },
+  "remainingPromotionBlockers": [
+    "staging_readiness_green",
+    "production_readiness_green",
+    "positive_pilot_samples",
+    "staging_calibration_evidence",
+    "production_positive_sample_schema",
+    "production_calibration_schema"
+  ],
+  "attestation": {
+    "decision": "accepted_for_staging_record_only_monitoring",
+    "doesNotAuthorize": [
+      "Protected Autopilot activation",
+      "learning release enforcement",
+      "organic reach application",
+      "production schema changes",
+      "post scheduling or publishing",
+      "synthetic positive pilot evidence"
+    ]
+  }
+}

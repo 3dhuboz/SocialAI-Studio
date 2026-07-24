@@ -14,6 +14,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './env';
 import { dispatchScheduled } from './cron/dispatcher';
+import { stagingBearerIdentityGuard } from './middleware/auth';
 import { requestIdMiddleware } from './middleware/request-id';
 import { registerCampaignRoutes } from './routes/campaigns';
 import { registerHealthRoutes } from './routes/health';
@@ -108,6 +109,11 @@ app.use(
 // registerXRoutes call mounts a handful of endpoints onto the shared app
 // instance. Order doesn't matter unless two registrations share a path
 // prefix (none currently do).
+// Staging may verify production Clerk sessions with the instance's public
+// signing key, but only explicitly configured operator identities and browser
+// origins may reach any route with a bearer token.
+app.use('*', stagingBearerIdentityGuard);
+
 registerHealthRoutes(app);
 registerAiRoutes(app);
 registerUserRoutes(app);

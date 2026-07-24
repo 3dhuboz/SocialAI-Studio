@@ -1,5 +1,8 @@
 import { normalizeWorkspaceIdentity } from './types';
-import type { CriticResult } from './critic-types';
+import {
+  RELEASE_CRITIC_POLICY_VERSION,
+  type CriticResult,
+} from './critic-types';
 import type {
   DecisionReceiptInput,
   LearningMode,
@@ -130,6 +133,7 @@ export async function findFreshReleaseReceipt(
        AND d.stage = 'release'
        AND d.release_state IN ('pass_green','hold_amber','block_red')
        AND d.updated_at >= datetime('now', '-24 hours')
+       AND json_extract(d.summary_json, '$.criticPolicyVersion') = ?
        AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), -1) AS INTEGER) =
            (SELECT COUNT(*) FROM learning_critic_verdicts v WHERE v.decision_id = d.id)
        AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), 0) AS INTEGER) > 0
@@ -144,6 +148,7 @@ export async function findFreshReleaseReceipt(
     postId,
     contentHash,
     mode,
+    RELEASE_CRITIC_POLICY_VERSION,
   ).first<{ id: string; release_state: ReleaseState }>();
 
   if (!row || !['pass_green', 'hold_amber', 'block_red'].includes(row.release_state)) {

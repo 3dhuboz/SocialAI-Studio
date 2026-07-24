@@ -38,36 +38,77 @@
 import type { Env } from '../env';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import {
+  publishPersistedPost,
   recordPublishedPostBestEffort,
+  type PersistedPublishPost,
   type PublicationOwnedPost,
 } from '../lib/publishing/publish-orchestrator';
-import { loadSocialTokensForPosts, lookupSocialTokens } from './_shared';
+import {
+  buildPublishCaption,
+  loadSocialTokensForPosts,
+  lookupSocialTokens,
+  normalizePostPlatform,
+} from './_shared';
 
 const TICK_BUDGET_MS = 10_000;
-const STALE_KICK_THRESHOLD_MS = 8 * 60 * 1000; // 8 min — FB Reel p99 is ~2-3 min
 
-// Phase 4 — finish: flip the FB reel to PUBLISHED with the caption.
-// Caller passes the captioned description that was stashed on the post row
-// at kick time (in posts.reasoning with the `fb-page-reel-pending:` prefix),
-// so we don't re-derive it from content + hashtags and risk drift.
-async function finishFacebookReel(
-  pageId: string,
-  pageAccessToken: string,
-  description: string,
-  videoId: string,
-): Promise<void> {
-  const base = 'https://graph.facebook.com/v21.0';
-  const finishUrl =
-    `${base}/${pageId}/video_reels`
-    + `?upload_phase=finish&video_id=${encodeURIComponent(videoId)}`
-    + `&video_state=PUBLISHED&description=${encodeURIComponent(description)}`
-    + `&access_token=${encodeURIComponent(pageAccessToken)}`;
-  const finishRes = await fetch(finishUrl, { method: 'POST' });
-  const finishData = await finishRes.json() as any;
-  if (finishData.error) throw new Error(`FB reel publish: ${finishData.error.message}`);
-  if (finishData.success === false) throw new Error('FB reel publish: finish phase rejected');
+function parseHashtags(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((tag): tag is string => typeof tag === 'string')
+      : [];
+  } catch {
+    return [];
+  }
 }
 
+function persistedReelPost(post: {
+  id: string;
+  user_id: string | null;
+  client_id: string | null;
+  owner_kind: string | null;
+  owner_id: string | null;
+  content: string | null;
+  platform: string | null;
+  hashtags: string | null;
+  image_url: string | null;
+  post_type: string | null;
+  publish_video_url: string | null;
+  video_status: string | null;
+  video_script: string | null;
+  video_shots: string | null;
+}): PersistedPublishPost {
+  if (
+    !post.user_id
+    || !post.owner_id
+    || !['user', 'client', 'shop'].includes(post.owner_kind ?? '')
+  ) {
+    throw new Error(`Post ${post.id} has incomplete ownership metadata`);
+  }
+  return {
+    id: post.id,
+    user_id: post.user_id,
+    client_id: post.client_id,
+    owner_kind: post.owner_kind as PersistedPublishPost['owner_kind'],
+    owner_id: post.owner_id,
+    content: post.content ?? '',
+    platform: normalizePostPlatform(post.platform),
+    hashtags: post.hashtags,
+    image_url: post.image_url,
+    post_type: post.post_type,
+    video_url: post.publish_video_url,
+    video_status: post.video_status,
+    video_script: post.video_script,
+    video_shots: post.video_shots,
+  };
+}
+const STALE_KICK_THRESHOLD_MS = 8 * 60 * 1000; // 8 min — FB Reel p99 is ~2-3 min
+
+// Phase 4 — finish: flip the FB reel to PUBLISHED only after rebuilding the
+// current caption/media candidate and running a fresh centralized preflight.
+// The kick-time reasoning value is diagnostics only, never publish input.
 export async function cronPollPendingReels(env: Env): Promise<{ posts_processed: number }> {
   const startedAt = Date.now();
   const nowAEST = new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString().replace('Z', '');
@@ -76,7 +117,9 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
   // (poll cron typically catches up within 1-2 ticks of a kick), so the gate
   // turns those ticks into a single DB call.
   const dueCheck = await env.DB.prepare(
-    `SELECT COUNT(*) as c FROM posts WHERE fb_publish_state IN ('kicked', 'polling')`
+    `SELECT COUNT(*) as c FROM posts
+      WHERE status = 'Publishing'
+        AND fb_publish_state IN ('kicked', 'polling')`
   ).first<{ c: number }>();
   if (!dueCheck || dueCheck.c === 0) {
     return { posts_processed: 0 };
@@ -88,9 +131,12 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
   const rows = await env.DB.prepare(
     `SELECT id, user_id, client_id, owner_kind, owner_id,
             fb_video_id, fb_publish_state, fb_kicked_at,
-            reasoning, post_type
+            content, platform, hashtags, image_url,
+            post_type, COALESCE(audio_mixed_url, video_url) AS publish_video_url,
+            video_status, video_script, video_shots
      FROM posts
-     WHERE fb_publish_state IN ('kicked', 'polling')
+     WHERE status = 'Publishing'
+       AND fb_publish_state IN ('kicked', 'polling')
        AND fb_video_id IS NOT NULL
      ORDER BY fb_kicked_at ASC LIMIT 10`
   ).all<{
@@ -102,8 +148,15 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
     fb_video_id: string;
     fb_publish_state: string;
     fb_kicked_at: string | null;
-    reasoning: string | null;
+    content: string | null;
+    platform: string | null;
+    hashtags: string | null;
+    image_url: string | null;
     post_type: string | null;
+    publish_video_url: string | null;
+    video_status: string | null;
+    video_script: string | null;
+    video_shots: string | null;
   }>();
 
   const posts = rows.results ?? [];
@@ -231,32 +284,36 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
         continue;
       }
 
-      // Recover the caption stashed by the kick. We persisted it as
-      // `fb-page-reel-pending:<caption>` in posts.reasoning so the finish
-      // phase has the exact caption the kick decided on — re-deriving from
-      // content + hashtags here would risk drift if the user edited the post
-      // between kick and poll.
-      const reasonField = post.reasoning || '';
-      const caption = reasonField.startsWith('fb-page-reel-pending:')
-        ? reasonField.slice('fb-page-reel-pending:'.length)
-        : '';
-      if (!caption) {
-        // Defensive — shouldn't happen because we always stash on kick. If
-        // somehow missing, fail loudly rather than ship an empty reel.
-        const reason = 'Internal: reel caption missing at finish-phase time. Open Calendar to retry.';
-        await env.DB.prepare(
-          `UPDATE posts SET status = 'Missed', reasoning = ?,
-                            fb_publish_state = 'failed', fb_finished_at = ?,
-                            claim_id = NULL, claim_at = NULL
-           WHERE id = ?`
-        ).bind(reason, nowAEST, post.id).run();
-        await notifyOwnerOnFailure(env, post, reason, 'reel');
-        processed++;
-        continue;
-      }
-
       try {
-        await finishFacebookReel(tokens.facebookPageId, tokens.facebookPageAccessToken, caption, post.fb_video_id);
+        // Build the exact current candidate inside the guarded finish block so
+        // malformed ownership/content fails closed and is surfaced consistently.
+        const actualPost = persistedReelPost(post);
+        const currentCaption = buildPublishCaption({
+          content: actualPost.content,
+          hashtags: parseHashtags(actualPost.hashtags),
+          hasImage: Boolean(actualPost.image_url),
+        });
+        const caption = currentCaption.length > 2_200
+          ? currentCaption.slice(0, 2_199)
+          : currentCaption;
+        if (!caption) {
+          throw new Error('Internal: reel caption missing at finish-phase time');
+        }
+
+        const outcome = await publishPersistedPost(
+          env,
+          actualPost,
+          {
+            backend: 'graph_reel',
+            pageId: tokens.facebookPageId,
+            pageAccessToken: tokens.facebookPageAccessToken,
+            description: caption,
+            videoId: post.fb_video_id,
+          },
+        );
+        if (outcome.backend !== 'graph_reel') {
+          throw new Error('Unexpected publish backend');
+        }
         const publishedAt = new Date().toISOString();
         await env.DB.prepare(
           `UPDATE posts SET status = 'Posted', reasoning = 'fb-page-reel',
@@ -266,7 +323,7 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
         ).bind(nowAEST, post.id).run();
         await recordPublishedPostBestEffort(
           env,
-          post as PublicationOwnedPost,
+          actualPost as PublicationOwnedPost,
           {
             platform: 'facebook',
             remotePostId: post.fb_video_id,
@@ -278,13 +335,41 @@ export async function cronPollPendingReels(env: Env): Promise<{ posts_processed:
         console.log(`[CRON poll-reels] reel ${post.id} -> Posted (fb_video_id=${post.fb_video_id})`);
         processed++;
       } catch (finishErr: any) {
-        const reason = `Facebook reel publish (finish) failed: ${finishErr?.message || 'unknown'}. Open Calendar to retry.`;
+        const finishMessage = String(finishErr?.message || finishErr);
+        if (/release preflight/i.test(finishMessage)) {
+          await env.DB.prepare(
+            `UPDATE posts SET fb_publish_state = 'failed', fb_finished_at = ?,
+                               video_error = ?
+             WHERE id = ? AND status = 'Draft'`
+          ).bind(
+            nowAEST,
+            `Reel held by release preflight: ${finishMessage.slice(0, 350)}`,
+            post.id,
+          ).run();
+          console.warn(`[CRON poll-reels] reel ${post.id} held by fresh release preflight`);
+          processed++;
+          continue;
+        }
+        if (/workspace inactive/i.test(finishMessage)) {
+          const reason = `Reel held because the workspace is inactive: ${finishMessage.slice(0, 350)}`;
+          await env.DB.prepare(
+            `UPDATE posts SET status = 'Draft', scheduled_for = NULL,
+                              reasoning = ?, video_error = ?,
+                              fb_publish_state = 'failed', fb_finished_at = ?,
+                              claim_id = NULL, claim_at = NULL
+             WHERE id = ? AND status = 'Publishing'`
+          ).bind(reason, reason, nowAEST, post.id).run();
+          console.warn(`[CRON poll-reels] reel ${post.id} held because its workspace is inactive`);
+          processed++;
+          continue;
+        }
+        const reason = `Facebook reel publish (finish) failed: ${finishMessage || 'unknown'}. Open Calendar to retry.`;
         await env.DB.prepare(
           `UPDATE posts SET status = 'Missed', reasoning = ?, video_error = ?,
                             fb_publish_state = 'failed', fb_finished_at = ?,
                             claim_id = NULL, claim_at = NULL
            WHERE id = ?`
-        ).bind(reason, `FB reel finish error: ${(finishErr?.message || 'unknown').slice(0, 400)}`, nowAEST, post.id).run();
+        ).bind(reason, `FB reel finish error: ${(finishMessage || 'unknown').slice(0, 400)}`, nowAEST, post.id).run();
         await notifyOwnerOnFailure(env, post, reason, 'reel');
         console.warn(`[CRON poll-reels] reel ${post.id} finish failed: ${finishErr?.message}`);
         processed++;

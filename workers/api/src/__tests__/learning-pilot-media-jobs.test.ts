@@ -1,0 +1,764 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Env } from '../env';
+import type { CriticContext } from '../lib/learning/critic-context';
+import {
+  pollRecordOnlyPilotVideoJob,
+  startRecordOnlyPilotMediaJob,
+  type PilotMediaJobDeps,
+  validatePilotVideoQueueUrl,
+} from '../lib/learning/pilot-media-jobs';
+import type { WorkspaceIdentity } from '../lib/learning/types';
+
+interface TestD1Statement {
+  bind(...values: unknown[]): TestD1Statement;
+  run(): Promise<{ success: true; meta: { changes: number } }>;
+  first<T>(): Promise<T | null>;
+  all<T>(): Promise<{ results: T[] }>;
+}
+
+function sqliteD1(db: DatabaseSync): D1Database {
+  const statement = (sql: string): TestD1Statement => {
+    let bindings: unknown[] = [];
+    const api: TestD1Statement = {
+      bind(...values: unknown[]) {
+        bindings = values;
+        return api;
+      },
+      async run() {
+        const result = db.prepare(sql).run(...bindings as any[]);
+        return { success: true, meta: { changes: Number(result.changes) } };
+      },
+      async first<T>() {
+        return (db.prepare(sql).get(...bindings as any[]) ?? null) as T | null;
+      },
+      async all<T>() {
+        return { results: db.prepare(sql).all(...bindings as any[]) as T[] };
+      },
+    };
+    return api;
+  };
+
+  return {
+    prepare: statement,
+    async batch(statements: TestD1Statement[]) {
+      db.exec('BEGIN');
+      try {
+        const results = [];
+        for (const item of statements) results.push(await item.run());
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  } as unknown as D1Database;
+}
+
+function database(): DatabaseSync {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE posts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      client_id TEXT,
+      owner_kind TEXT,
+      owner_id TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      platform TEXT,
+      status TEXT,
+      scheduled_for TEXT,
+      hashtags TEXT DEFAULT '[]',
+      image_url TEXT,
+      topic TEXT,
+      pillar TEXT,
+      image_prompt TEXT,
+      reasoning TEXT,
+      post_type TEXT,
+      video_url TEXT,
+      video_status TEXT,
+      video_script TEXT,
+      video_shots TEXT,
+      video_request_id TEXT,
+      publish_attempts INTEGER DEFAULT 0
+    );
+    CREATE TABLE learning_pilot_enrollments (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      workspace_key TEXT NOT NULL,
+      client_id TEXT,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      consent_basis TEXT NOT NULL,
+      consent_confirmed_at TEXT,
+      consent_note TEXT,
+      record_only INTEGER NOT NULL
+    );
+    CREATE TABLE workspace_learning_settings (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      workspace_key TEXT NOT NULL,
+      client_id TEXT,
+      owner_kind TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      autopublish_consent_at TEXT,
+      autopublish_policy_version TEXT,
+      experiment_rate INTEGER NOT NULL,
+      monthly_ai_budget_usd_cents INTEGER NOT NULL,
+      disabled_reason TEXT
+    );
+    CREATE TABLE clients (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT,
+      status TEXT
+    );
+    CREATE TABLE publication_events (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL
+    );
+    CREATE TABLE publish_delivery_receipts (
+      id TEXT PRIMARY KEY,
+      post_id TEXT NOT NULL
+    );
+  `);
+  db.exec(readFileSync(
+    resolve(process.cwd(), 'schema_v49_learning_pilot_media_jobs.sql'),
+    'utf8',
+  ));
+  db.exec(readFileSync(
+    resolve(process.cwd(), 'schema_v50_learning_pilot_media_late_recovery.sql'),
+    'utf8',
+  ));
+  db.exec(readFileSync(
+    resolve(process.cwd(), 'schema_v51_learning_pilot_media_provider_receipts.sql'),
+    'utf8',
+  ));
+  db.exec(`
+    INSERT INTO learning_pilot_enrollments (
+      id,user_id,workspace_key,client_id,owner_kind,owner_id,policy_version,
+      consent_basis,consent_confirmed_at,consent_note,record_only
+    ) VALUES (
+      'enrollment-1','owner-1','__owner__',NULL,'user','owner-1',
+      '2026-07-14-v1','owner_self','2026-07-24T00:00:00.000Z',
+      'Owner approved record-only staging evaluation.',1
+    );
+    INSERT INTO workspace_learning_settings (
+      id,user_id,workspace_key,client_id,owner_kind,owner_id,mode,
+      autopublish_consent_at,autopublish_policy_version,experiment_rate,
+      monthly_ai_budget_usd_cents,disabled_reason
+    ) VALUES (
+      'settings-1','owner-1','__owner__',NULL,'user','owner-1','approval',
+      NULL,NULL,0,500,NULL
+    );
+  `);
+  return db;
+}
+
+const identity: WorkspaceIdentity = {
+  userId: 'owner-1',
+  workspaceKey: '__owner__',
+  clientId: null,
+  ownerKind: 'user',
+  ownerId: 'owner-1',
+};
+
+const context: CriticContext = {
+  profile: {
+    name: 'Penny Wise I.T',
+    type: 'Technology consultancy and custom software development',
+    description: 'Builds custom workflow software for small businesses.',
+  },
+  verifiedFacts: [{
+    ownerKind: 'user',
+    ownerId: 'owner-1',
+    clientId: null,
+    factType: 'service',
+    content: 'Custom workflow software development.',
+    verifiedAt: '2026-07-20T00:00:00.000Z',
+  }],
+  recentPosts: [],
+  forbiddenSubjects: ['circuit boards'],
+};
+
+function dependencies(nowRef: { value: Date }): PilotMediaJobDeps {
+  let uuid = 0;
+  return {
+    generateDraft: vi.fn(async () => ({
+      content: 'Map one repeated handoff before choosing the workflow automation that removes it.',
+      hashtags: ['#WorkflowAutomation'],
+      imagePrompt: 'Bright overhead photograph of a paper workflow map with arrows and one repeated handoff circled',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      attemptCount: 1,
+    })),
+    generateImage: vi.fn(async () => ({
+      imageUrl: 'https://fal.example/pilot-image.webp',
+      modelUsed: 'gpt-image-2-medium',
+      archetypeSlug: 'tech-saas-agency',
+    })),
+    startVideo: vi.fn(async () => ({
+      requestId: 'request-1',
+      statusUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/status',
+      responseUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/response',
+      provider: 'fal' as const,
+      model: 'kling-video/v1.6/standard/image-to-video' as const,
+    })),
+    pollVideo: vi.fn(async () => ({
+      state: 'ready' as const,
+      videoUrl: 'https://fal.example/pilot-video.mp4',
+    })),
+    now: () => new Date(nowRef.value),
+    randomUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, '0')}`,
+  };
+}
+
+const enrollment = {
+  id: 'enrollment-1',
+  policyVersion: '2026-07-14-v1',
+};
+
+const openDatabases: DatabaseSync[] = [];
+
+afterEach(() => {
+  while (openDatabases.length) openDatabases.pop()?.close();
+});
+
+function environment(db: DatabaseSync): Env {
+  openDatabases.push(db);
+  return {
+    DB: sqliteD1(db),
+    FAL_API_KEY: 'test-fal-key',
+    IMAGE_GEN_PROVIDER: 'gpt-image-2',
+    ENVIRONMENT: 'local-test',
+  } as Env;
+}
+
+describe('record-only pilot media jobs', () => {
+  it('accepts only Fal-returned queue URLs bound to the exact request', () => {
+    expect(validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/status',
+      'request-1',
+      'status',
+    )).toBe(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/status',
+    );
+    expect(validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/response',
+      'request-1',
+      'response',
+    )).toBe(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/response',
+    );
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/model/requests/request-1/status',
+      '  ',
+      'status',
+    ))
+      .toThrow('video_provider_request_id_invalid');
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run.evil.example/fal-ai/model/requests/request-1/status',
+      'request-1',
+      'status',
+    )).toThrow('video_provider_status_url_invalid');
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/model/requests/other-request/status',
+      'request-1',
+      'status',
+    )).toThrow('video_provider_status_url_invalid');
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/model/requests/request-1/status?token=secret',
+      'request-1',
+      'status',
+    )).toThrow();
+  });
+
+  it('creates one immutable image Draft and returns it idempotently', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+
+    const first = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 1,
+      mediaKind: 'image',
+    }, deps);
+    const second = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 1,
+      mediaKind: 'image',
+    }, deps);
+
+    expect(first).toMatchObject({
+      state: 'ready',
+      mediaKind: 'image',
+      slot: 1,
+      sourceStatus: 'Draft',
+      scheduledFor: null,
+      publishingAllowed: false,
+    });
+    expect(second).toEqual(first);
+    expect(deps.generateDraft).toHaveBeenCalledOnce();
+    expect(deps.generateImage).toHaveBeenCalledOnce();
+    const post = db.prepare(
+      'SELECT status,scheduled_for,image_url,post_type FROM posts WHERE id = ?',
+    ).get(first.postId!) as Record<string, unknown>;
+    expect(post).toMatchObject({
+      status: 'Draft',
+      scheduled_for: null,
+      image_url: 'https://fal.example/pilot-image.webp',
+      post_type: 'image',
+    });
+    expect(() => db.exec(
+      `INSERT INTO publication_events (id,post_id) VALUES ('event-1','${first.postId}')`,
+    )).toThrow(/cannot be published/);
+  });
+
+  it('keeps a video out of posts until the provider result is ready', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ state: 'pending' })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        videoUrl: 'https://fal.example/pilot-video.mp4',
+      });
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started).toMatchObject({
+      state: 'generating',
+      mediaKind: 'video',
+      postId: null,
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
+
+    const pending = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+    expect(pending.state).toBe('generating');
+    expect(pending.providerState).toBe('pending');
+    expect(pending.providerErrorCode).toBeNull();
+    expect(deps.pollVideo).toHaveBeenLastCalledWith(
+      env,
+      expect.objectContaining({
+        requestId: 'request-1',
+        statusUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/status',
+        responseUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/response',
+      }),
+    );
+    expect(db.prepare(
+      `SELECT archetype_slug,provider_status_url,provider_response_url
+       FROM learning_pilot_media_jobs WHERE id = ?`,
+    ).get(started.id)).toEqual({
+      archetype_slug: 'tech-saas-agency',
+      provider_status_url:
+        'https://queue.fal.run/fal-ai/kling-video/requests/request-1/status',
+      provider_response_url:
+        'https://queue.fal.run/fal-ai/kling-video/requests/request-1/response',
+    });
+
+    const ready = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+    expect(ready).toMatchObject({
+      state: 'ready',
+      mediaKind: 'video',
+      sourceStatus: 'Draft',
+      mediaUrl: 'https://fal.example/pilot-video.mp4',
+      providerState: 'ready',
+      providerErrorCode: null,
+      publishingAllowed: false,
+    });
+    const post = db.prepare(
+      'SELECT status,scheduled_for,post_type,video_status,video_url FROM posts WHERE id = ?',
+    ).get(ready.postId!) as Record<string, unknown>;
+    expect(post).toMatchObject({
+      status: 'Draft',
+      scheduled_for: null,
+      post_type: 'video',
+      video_status: 'ready',
+      video_url: 'https://fal.example/pilot-video.mp4',
+    });
+    expect(db.prepare(
+      'SELECT archetype_slug FROM learning_pilot_media_jobs WHERE id = ?',
+    ).get(ready.id)).toEqual({ archetype_slug: 'tech-saas-agency' });
+  });
+
+  it('retains a completed provider video when the next poll is after the lease deadline', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started.state).toBe('generating');
+
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const ready = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(deps.pollVideo).toHaveBeenCalledOnce();
+    expect(ready).toMatchObject({
+      state: 'ready',
+      mediaKind: 'video',
+      sourceStatus: 'Draft',
+      mediaUrl: 'https://fal.example/pilot-video.mp4',
+      errorCode: null,
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM publication_events').get())
+      .toEqual({ count: 0 });
+  });
+
+  it('reports a sanitized provider status error without creating a post', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockRejectedValue(new Error('video_provider_status_http_404'));
+
+    await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    nowRef.value = new Date('2026-07-24T01:01:00.000Z');
+    const unavailable = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(unavailable).toMatchObject({
+      state: 'generating',
+      postId: null,
+      providerState: 'unavailable',
+      providerErrorCode: 'video_provider_status_http_404',
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
+  });
+
+  it('times out an overdue provider video only after confirming it is still pending', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({ state: 'pending' });
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started.state).toBe('generating');
+
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const failed = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(deps.pollVideo).toHaveBeenCalledOnce();
+    expect(failed).toMatchObject({
+      state: 'failed',
+      mediaKind: 'video',
+      postId: null,
+      errorCode: 'pilot_media_video_timed_out',
+      providerState: 'pending',
+      providerErrorCode: null,
+      publishingAllowed: false,
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
+  });
+
+  it('recovers an already-paid timed-out video when Fal completes within the recovery window', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ state: 'pending' })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        videoUrl: 'https://fal.example/late-pilot-video.mp4',
+      });
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started.state).toBe('generating');
+
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const timedOut = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+    expect(timedOut).toMatchObject({
+      state: 'failed',
+      errorCode: 'pilot_media_video_timed_out',
+      postId: null,
+    });
+    expect(db.prepare(`
+      SELECT state,error_code,provider_request_id,completed_at
+      FROM learning_pilot_media_jobs
+      WHERE id = ?
+    `).get(started.id)).toMatchObject({
+      state: 'failed',
+      error_code: 'pilot_media_video_timed_out',
+      provider_request_id: 'request-1',
+      completed_at: '2026-07-24T01:16:00.000Z',
+    });
+
+    nowRef.value = new Date('2026-07-24T01:17:00.000Z');
+    const recovered = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(deps.pollVideo).toHaveBeenCalledTimes(2);
+    expect(recovered).toMatchObject({
+      state: 'ready',
+      attemptCount: 1,
+      sourceStatus: 'Draft',
+      mediaUrl: 'https://fal.example/late-pilot-video.mp4',
+      errorCode: null,
+      providerState: 'ready',
+      providerErrorCode: null,
+      publishingAllowed: false,
+    });
+    expect(deps.startVideo).toHaveBeenCalledOnce();
+    expect(db.prepare(
+      'SELECT status,scheduled_for,post_type,video_status FROM posts WHERE id = ?',
+    ).get(recovered.postId!)).toMatchObject({
+      status: 'Draft',
+      scheduled_for: null,
+      post_type: 'video',
+      video_status: 'ready',
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM publication_events').get())
+      .toEqual({ count: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM publish_delivery_receipts').get())
+      .toEqual({ count: 0 });
+  });
+
+  it('blocks duplicate media spend while timed-out video recovery remains possible', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({ state: 'pending' });
+
+    await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const timedOut = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+    expect(timedOut.state).toBe('failed');
+
+    nowRef.value = new Date('2026-07-24T01:17:00.000Z');
+    const same = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(same).toMatchObject({
+      id: timedOut.id,
+      state: 'failed',
+      attemptCount: 1,
+      errorCode: 'pilot_media_video_timed_out',
+      providerState: null,
+    });
+    await expect(startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 3,
+      mediaKind: 'image',
+    }, deps)).rejects.toThrow('pilot_media_generation_in_progress');
+    expect(deps.generateDraft).toHaveBeenCalledOnce();
+    expect(deps.generateImage).toHaveBeenCalledOnce();
+    expect(deps.startVideo).toHaveBeenCalledOnce();
+
+    nowRef.value = new Date('2026-07-24T03:17:00.000Z');
+    const retried = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(retried).toMatchObject({ state: 'generating', attemptCount: 2 });
+    expect(deps.generateDraft).toHaveBeenCalledTimes(2);
+    expect(deps.generateImage).toHaveBeenCalledTimes(2);
+    expect(deps.startVideo).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows one lease-expired retry and never a third provider attempt', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.generateImage as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('provider unavailable'))
+      .mockResolvedValueOnce({
+        imageUrl: 'https://fal.example/retry-image.webp',
+        modelUsed: 'gpt-image-2-medium',
+        archetypeSlug: 'tech-saas-agency',
+      });
+
+    const failed = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 3,
+      mediaKind: 'image',
+    }, deps);
+    expect(failed).toMatchObject({ state: 'failed', attemptCount: 1 });
+
+    nowRef.value = new Date('2026-07-24T01:06:00.000Z');
+    const ready = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 3,
+      mediaKind: 'image',
+    }, deps);
+    expect(ready).toMatchObject({ state: 'ready', attemptCount: 2 });
+
+    const same = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 3,
+      mediaKind: 'image',
+    }, deps);
+    expect(same).toEqual(ready);
+    expect(deps.generateImage).toHaveBeenCalledTimes(2);
+  });
+
+  it('permits only one active media generation lease per workspace', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+
+    const generating = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 1,
+      mediaKind: 'video',
+    }, deps);
+    expect(generating.state).toBe('generating');
+
+    await expect(startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'image',
+    }, deps)).rejects.toThrow('pilot_media_generation_in_progress');
+
+    expect(db.prepare(
+      'SELECT COUNT(*) AS count FROM learning_pilot_media_jobs',
+    ).get()).toEqual({ count: 1 });
+    expect(deps.generateDraft).toHaveBeenCalledOnce();
+    expect(deps.generateImage).toHaveBeenCalledOnce();
+  });
+
+  it('fails before reserving a slot when the staging Fal secret is absent', async () => {
+    const db = database();
+    const env = environment(db);
+    delete env.FAL_API_KEY;
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+
+    await expect(startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 1,
+      mediaKind: 'image',
+    }, deps)).rejects.toThrow('staging_fal_secret_missing');
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM learning_pilot_media_jobs').get())
+      .toEqual({ count: 0 });
+    expect(deps.generateDraft).not.toHaveBeenCalled();
+  });
+});

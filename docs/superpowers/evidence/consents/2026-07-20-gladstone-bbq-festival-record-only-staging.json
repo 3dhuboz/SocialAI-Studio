@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "consent-gladstonebbq-001-20260720-record-only",
+  "capturedAt": "2026-07-19T22:40:07.724Z",
+  "source": {
+    "kind": "user_provided_attestation",
+    "threadId": "019ed317-7f47-7b22-ae5e-0fab6b0218c6"
+  },
+  "customer": {
+    "name": "Gladstone BBQ Festival",
+    "clientId": "gladstonebbq-001",
+    "userId": "user_3B9YKodZsIQjLdGW8wtwd7mmBMQ"
+  },
+  "statement": "I consent to SocialAI Studio copying Gladstone BBQ Festival\u2019s non-secret business profile and up to four unpublished drafts into isolated staging for record-only safety evaluation. Nothing may be scheduled or published, and consent may be withdrawn.",
+  "scope": {
+    "maxDrafts": 4,
+    "requiresUnpublished": true,
+    "isolatedStaging": true,
+    "recordOnly": true,
+    "scheduleAllowed": false,
+    "publishAllowed": false
+  },
+  "withdrawal": {
+    "allowed": true,
+    "effect": "Delete imported staging profile, drafts, enrollment, settings, and derived learning data."
+  }
+}

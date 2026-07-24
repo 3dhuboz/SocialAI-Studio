@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-21T00:35:07.001Z",
+  "scope": "staging_only_live_evaluation",
+  "git": {
+    "branch": "codex/learning-pilot-progress",
+    "commit": "b576da19f15ac18db5f3ff351cbee43330a4f1de",
+    "pullRequest": "https://github.com/3dhuboz/SocialAI-Studio/pull/209"
+  },
+  "deployment": {
+    "environment": "staging",
+    "worker": "socialai-api-staging",
+    "versionId": "6b5957c5-74ab-47df-9982-07bf77df04c9",
+    "database": "socialai-db-staging",
+    "databaseId": "0ce38359-c7d6-4d6e-b278-7ca1a719dbb4",
+    "healthStatus": 200,
+    "flags": {
+      "LEARNING_RELEASE_ENFORCEMENT": false,
+      "LEARNING_AUTOPILOT_ENABLED": false,
+      "ORGANIC_REACH_APPLY_ENABLED": false
+    }
+  },
+  "naturalCronEvidence": {
+    "windowStart": "2026-07-21T00:25:00.000Z",
+    "readinessEvaluatedAt": "2026-07-21T00:30:10.256Z",
+    "successfulLanes": [
+      "prewarm_images",
+      "prewarm_videos",
+      "learning_shadow",
+      "publish",
+      "poll_pending_reels",
+      "health_sweep",
+      "shopify_reconcile",
+      "learning_pilot",
+      "learning_readiness"
+    ],
+    "failedLanes": [],
+    "publishPostsProcessed": 0,
+    "prewarmPostsProcessed": 0,
+    "learningPilotPostsProcessed": 0,
+    "workspacesDisabled": 0,
+    "releaseReady": false
+  },
+  "recordOnlyInvariants": {
+    "postCount": 10,
+    "draftCount": 10,
+    "scheduledCount": 0,
+    "externalPublishMarkers": 0,
+    "publicationEvents": 0,
+    "deliveryReceipts": 0,
+    "ownerCopyRows": 1,
+    "authorizationUseReceipts": 1,
+    "gladstoneExactPostId": "pilot-copy-be692c0a252f57aa0bf77f89",
+    "gladstoneExpectedState": "block_red",
+    "gladstoneReleaseCriticalAdjudicationCount": 1
+  },
+  "authorizationReplay": {
+    "authorizationSha256": "074a21e0a89c91b2c8de6c4416802ce9d47ecd1c3a6afb0a112fd71813f8a82c",
+    "state": "consumed",
+    "replayExitCode": 1,
+    "replayResult": "Owner-copy authorization is already consumed and cannot be replayed",
+    "additionalDraftCopied": false
+  },
+  "productionInvariants": {
+    "workerVersionId": "7fb945de-36a7-442e-8d45-8139d5a1a841",
+    "deployed": false,
+    "databaseMutated": false,
+    "hugheseysQueStatus": "on_hold"
+  },
+  "rollout": {
+    "result": "safe_hold",
+    "promotionReady": false,
+    "automaticActivationAllowed": false,
+    "normalArtifact": {
+      "path": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-rollout-state-2026-07-21T00-32-02-768Z.json",
+      "payloadSha256": "d46d5b447c102b4454acf82eaa151f452320b9c8fbe5400cdab396cbd58c5142",
+      "fileSha256": "823efe2370cacc22a6e86fc79eb4bfbf7ea10f43c870f915e36b85d3f0e3d6db"
+    },
+    "strictArtifact": {
+      "path": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-rollout-state-2026-07-21T00-33-33-654Z.json",
+      "payloadSha256": "6a0b7233b160b40b059e98a690bd91da75a197bc0a1d9c06ee77d7c1df72c394",
+      "fileSha256": "e97fa476d8ea8ba24adf28e2991a5b40dc031eee040d6169a6e1a99e42e24b66",
+      "expectedExitCode": 1,
+      "observedExitCode": 1
+    },
+    "blockers": [
+      "staging_readiness_green",
+      "production_readiness_green",
+      "positive_pilot_samples",
+      "staging_calibration_evidence",
+      "production_positive_sample_schema",
+      "production_calibration_schema"
+    ]
+  },
+  "limitations": [
+    "The repeated Penny Wise I.T statement did not create a fresh authorization receipt.",
+    "The existing one-Draft authorization remains consumed and cannot be replayed.",
+    "This receipt records staging-only evidence and grants no production activation authority."
+  ]
+}

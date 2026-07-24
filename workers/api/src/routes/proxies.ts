@@ -27,7 +27,10 @@ import type { Env } from '../env';
 import { getAuthUserId, isRateLimited } from '../auth';
 import { checkBillingGate } from '../lib/billing-gate';
 import { FLUX_NEGATIVE_PROMPT } from '../lib/image-safety';
-import { generateImageWithGuardrails } from '../lib/image-gen';
+import {
+  generateImageWithGuardrails,
+  regenerateImageAfterCritique,
+} from '../lib/image-gen';
 import { logAiUsage } from '../lib/ai-usage';
 import { critiqueImageInternal } from '../lib/critique';
 import { buildCritiqueContextText } from '../lib/post-critique';
@@ -199,11 +202,17 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
           if (critique) {
             finalCritique = critique;
             if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) {
-              console.warn(`[fal-proxy] generate-image critique score=${critique.score} for uid=${uid} — retrying with forced archetype fallback`);
-              const retry = await generateImageWithGuardrails(
+              console.warn(`[fal-proxy] generate-image critique score=${critique.score} for uid=${uid} — running one critic-guided relevance retry`);
+              const retry = await regenerateImageAfterCritique(
                 c.env, uid, resolvedClientId,
                 { prompt, negativePrompt: negativePrompt || FLUX_NEGATIVE_PROMPT },
-                { forceFallback: true, caption: captionText, seedHint: resolvedSeedHint },
+                {
+                  caption: captionText,
+                  critiqueReasoning: critique.reasoning,
+                  archetypeSlug: result.archetypeSlug,
+                  modelUsed: result.modelUsed,
+                  seedHint: resolvedSeedHint,
+                },
               );
               if (retry.imageUrl) {
                 finalImageUrl = retry.imageUrl;
@@ -235,6 +244,8 @@ export function registerProxyRoutes(app: Hono<{ Bindings: Env }>): void {
         }, 503);
       }
       if (finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+        const rejectionReason = finalCritique.reasoning.replace(/[\r\n]+/g, ' ').slice(0, 300);
+        console.warn(`[fal-proxy] final image rejected score=${finalCritique.score} archetype=${result.archetypeSlug || 'unclassified'} model=${finalModelUsed} reason=${rejectionReason}`);
         return c.json({
           error: 'Generated image did not pass safety and relevance review',
           critique_score: finalCritique.score,

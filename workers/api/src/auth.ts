@@ -52,10 +52,11 @@ function isPortalAllowedPath(req: Request): boolean {
 // keep an audit trail without hammering D1 on every request.
 export async function getAuthUserId(
   req: Request,
-  secretKey: string,
+  secretKey?: string,
   jwtKey?: string,
   db?: D1Database,
   embedSecret?: string,
+  constraints?: { authorizedParties?: string[] },
 ): Promise<string | null> {
   const auth = req.headers.get('Authorization');
   if (!auth) return null;
@@ -127,7 +128,16 @@ export async function getAuthUserId(
   const token = auth.slice(7);
   try {
     const normalizedKey = jwtKey?.replace(/\\n/g, '\n');
-    const opts: Record<string, string> = normalizedKey ? { jwtKey: normalizedKey, secretKey } : { secretKey };
+    const opts: {
+      jwtKey?: string;
+      secretKey?: string;
+      authorizedParties?: string[];
+    } = {};
+    if (normalizedKey) opts.jwtKey = normalizedKey;
+    else if (secretKey) opts.secretKey = secretKey;
+    if (constraints?.authorizedParties?.length) {
+      opts.authorizedParties = constraints.authorizedParties;
+    }
     const payload = await verifyToken(token, opts as any);
     return (payload as any).sub ?? null;
   } catch (e) {

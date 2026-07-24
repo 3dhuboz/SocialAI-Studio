@@ -39,6 +39,10 @@ import {
 } from '../api';
 import { OrganicReachCard } from '../components/OrganicReachCard';
 import { initFB, loginFB } from '../fb-sdk';
+import {
+  nextProtectedAutopilotExperimentRate,
+  type ProtectedAutopilotExperimentRate,
+} from '../../../shared/protectedAutopilotExperiment';
 import './settings.css';
 
 /**
@@ -617,7 +621,10 @@ function ProtectedAutopilotSettingsCard() {
     return () => controller.abort();
   }, [loadLearning]);
 
-  const saveMode = async (mode: 'approval' | 'protected_autopilot') => {
+  const saveMode = async (
+    mode: 'approval' | 'protected_autopilot',
+    requestedExperimentRate?: ProtectedAutopilotExperimentRate,
+  ) => {
     const cents = learningBudgetCents(budget);
     if (mode === 'protected_autopilot' && cents == null) {
       setLoadError('Enter a positive monthly AI ceiling with no more than two decimal places.');
@@ -628,7 +635,8 @@ function ProtectedAutopilotSettingsCard() {
     try {
       await updateShopifyLearningSettings({
         mode,
-        consent: mode === 'protected_autopilot' ? true : undefined,
+        consent: mode === 'protected_autopilot' && requestedExperimentRate === 0 ? true : undefined,
+        experimentRate: mode === 'protected_autopilot' ? requestedExperimentRate : undefined,
         monthlyAiBudgetUsdCents: mode === 'protected_autopilot' ? cents : undefined,
       });
       await loadLearning();
@@ -682,16 +690,20 @@ function ProtectedAutopilotSettingsCard() {
     readiness.cost.monthlyAiSpendUsdCents != null && !readiness.cost.withinBudget
       ? 'AI spend is not proven below the monthly ceiling.'
       : null,
+    learningBudgetCents(budget) == null ? 'A positive monthly AI ceiling is required.' : null,
   ].filter((reason): reason is string => Boolean(reason));
   const tenancy = readiness.checks.tenancyProofs;
   const tenancyPassed = typeof tenancy === 'object'
     && tenancy.user === true && tenancy.client === true && tenancy.shop === true;
   const gates = [
     ['Pilot decisions', readiness.checks.pilot === true],
+    ['Owner + client pilot cohort', readiness.checks.pilotCohort === true],
     ['Adjudicated decisions', readiness.checks.adjudications === true],
     ['No severe false passes', readiness.checks.severeFalsePasses === true],
     ['False-hold rate', readiness.checks.falseHolds === true],
     ['Critic availability', readiness.checks.availability === true],
+    ['Release Judge availability', readiness.checks.releaseJudgeAvailability === true],
+    ['Release Judge telemetry coverage', readiness.checks.releaseJudgeTelemetry === true],
     ['Decision receipt coverage', readiness.checks.receipts === true],
     ['Prediction lift', readiness.checks.predictionLift === true],
     ['Rank correlation', readiness.checks.rankCorrelation === true],
@@ -703,6 +715,14 @@ function ProtectedAutopilotSettingsCard() {
     ['Publish regression proof', readiness.checks.publishRegression === true],
     ['Tenant isolation proofs', tenancyPassed],
   ] as const;
+  const experimentRate = Number(settings.settings.experimentRate);
+  const currentExperimentRate = Number.isFinite(experimentRate) && experimentRate >= 0
+    ? experimentRate
+    : 0;
+  const nextExperimentRate = active
+    ? nextProtectedAutopilotExperimentRate(currentExperimentRate)
+    : null;
+  const canRequestProtected = !requested && blockers.length === 0;
 
   return (
     <Card>
@@ -759,6 +779,40 @@ function ProtectedAutopilotSettingsCard() {
 
         <Divider />
 
+        {requested && (
+          <>
+            <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+              <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" fontWeight="bold">Protected experiment rollout</Text>
+                  <Text as="p" variant="headingMd">
+                    Current experiment rate: {Math.round(currentExperimentRate * 100)}%
+                  </Text>
+                  <Text as="p" variant="bodyXs" tone="subdued">Approved sequence: 0% -&gt; 10% -&gt; 15%</Text>
+                </BlockStack>
+                {active && nextExperimentRate != null ? (
+                  <Button
+                    variant="primary"
+                    tone="success"
+                    loading={saving}
+                    disabled={saving || blockers.length > 0}
+                    onClick={() => { void saveMode('protected_autopilot', nextExperimentRate); }}
+                  >
+                    {nextExperimentRate === 0.1 ? 'Increase to 10%' : 'Increase to 15%'}
+                  </Button>
+                ) : active ? (
+                  <Text as="p" variant="bodySm" tone="success">Maximum protected experiment rate reached</Text>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    The experiment remains at 0% until Protected Autopilot is active.
+                  </Text>
+                )}
+              </InlineStack>
+            </Box>
+            <Divider />
+          </>
+        )}
+
         <BlockStack gap="200">
           <InlineStack align="space-between" blockAlign="center">
             <Text as="h4" variant="headingSm">Permanent release gates</Text>
@@ -782,7 +836,9 @@ function ProtectedAutopilotSettingsCard() {
 
         <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
           <Text as="p" variant="bodySm" tone="subdued">
-            A request will not activate until every gate passes. This is one workspace-level consent, not per-post approval.
+            {!canRequestProtected && !requested
+              ? 'Activation unlocks only after every gate is green. A request will not activate until every gate passes. This is one workspace-level consent, not per-post approval.'
+              : 'A request will not activate until every gate passes. This is one workspace-level consent, not per-post approval.'}
           </Text>
           {requested ? (
             <Button loading={saving} disabled={saving} onClick={() => { void saveMode('approval'); }}>
@@ -793,8 +849,8 @@ function ProtectedAutopilotSettingsCard() {
               variant="primary"
               tone="success"
               loading={saving}
-              disabled={saving || learningBudgetCents(budget) == null}
-              onClick={() => { void saveMode('protected_autopilot'); }}
+              disabled={saving || !canRequestProtected}
+              onClick={() => { void saveMode('protected_autopilot', 0); }}
             >
               Consent and request Protected Autopilot
             </Button>

@@ -39,4 +39,71 @@ describe('learning shadow wiring', () => {
     expect(env).toContain('LEARNING_AUTOPILOT_ENABLED?: string;');
     expect(wrangler.match(/LEARNING_AUTOPILOT_ENABLED\s*=\s*"false"/g)).toHaveLength(2);
   });
+
+  it('runs the bounded record-only collector only on the dormant 15-minute lane', () => {
+    const dispatcher = readFileSync(resolve(process.cwd(), 'src/cron/dispatcher.ts'), 'utf8');
+    const lane = dispatcher.indexOf("if (cron === '*/15 * * * *')");
+    const importIndex = dispatcher.indexOf(
+      "import { cronEvaluateLearningPilot } from './evaluate-learning-pilot';",
+    );
+    const helperStart = dispatcher.indexOf('export function shouldRunRecordOnlyPilot');
+    const helperEnd = dispatcher.indexOf(
+      'export function shouldRunLearningCalibration',
+      helperStart,
+    );
+    const helper = dispatcher.slice(helperStart, helperEnd);
+    const pilotGuard = dispatcher.indexOf('if (shouldRunRecordOnlyPilot(env))', lane);
+    const collector = dispatcher.indexOf("trackCron(env, 'learning_pilot'", lane);
+    const readiness = dispatcher.indexOf("trackCron(env, 'learning_readiness'", lane);
+
+    expect(importIndex).toBeGreaterThan(-1);
+    expect(helper).toContain('stagingEnvironment(env)');
+    expect(helper).toContain("env.LEARNING_RELEASE_ENFORCEMENT !== 'true'");
+    expect(helper).toContain("env.LEARNING_AUTOPILOT_ENABLED !== 'true'");
+    expect(pilotGuard).toBeGreaterThan(lane);
+    expect(collector).toBeGreaterThan(pilotGuard);
+    expect(readiness).toBeGreaterThan(collector);
+  });
+
+  it('gives staging only record-only learning schedules', () => {
+    const dispatcher = readFileSync(resolve(process.cwd(), 'src/cron/dispatcher.ts'), 'utf8');
+    const wrangler = readFileSync(resolve(process.cwd(), 'wrangler.toml'), 'utf8');
+    const staging = wrangler.slice(wrangler.indexOf('[env.staging]'));
+    const triggerStart = staging.indexOf('[env.staging.triggers]');
+    const stagingTriggers = staging.slice(
+      triggerStart,
+      staging.indexOf('[[env.staging.r2_buckets]]', triggerStart),
+    );
+    const fifteenMinuteLane = dispatcher.slice(
+      dispatcher.indexOf("if (cron === '*/15 * * * *')"),
+      dispatcher.indexOf("if (cron === '0 21 * * SUN')"),
+    );
+    const weeklyLane = dispatcher.slice(
+      dispatcher.indexOf("if (cron === '0 21 * * SUN')"),
+      dispatcher.indexOf('// Unknown cron expression'),
+    );
+
+    expect(stagingTriggers).toContain(
+      'crons = ["*/15 * * * *", "0 21 * * SUN"]',
+    );
+    expect(dispatcher).toContain('const recordOnlyStaging = stagingEnvironment(env);');
+    expect(dispatcher).toContain(
+      "return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';",
+    );
+    expect(fifteenMinuteLane).toContain("trackCron(env, 'health_sweep'");
+    expect(fifteenMinuteLane).toContain("trackCron(env, 'learning_pilot'");
+    expect(fifteenMinuteLane).toContain("trackCron(env, 'learning_readiness'");
+    expect(fifteenMinuteLane).toMatch(
+      /if \(!recordOnlyStaging\) \{\s+await trackCron\(env, 'shopify_reconcile'/,
+    );
+    expect(weeklyLane).toMatch(
+      /trackCron\(\s+env,\s+'learning_calibration',[\s\S]+cronExpression: cron,\s+scheduledTime: event\.scheduledTime/,
+    );
+    expect(weeklyLane).toMatch(
+      /if \(env\.LEARNING_BRAIN_ENABLED === 'true' && !recordOnlyStaging\) \{\s+await trackCron\(env, 'learn_strategies'/,
+    );
+    expect(weeklyLane).toMatch(
+      /if \(!recordOnlyStaging\) \{\s+await trackCron\(env, 'weekly_review'/,
+    );
+  });
 });

@@ -85,6 +85,28 @@ describe('FAB_PATTERNS — full pattern bank present', () => {
   });
 });
 
+describe('FAB_PATTERNS - unsupported generalized customer evidence', () => {
+  it.each([
+    'Most small businesses we work with find at least one duplicated handoff.',
+    'Many clients our team has worked with usually re-enter the same details.',
+    'We see this every time a workflow changes hands.',
+  ])('flags unsupported first-person evidence: %s', (sample) => {
+    expect(scanContentForTropes(sample)).toContain(
+      'unsupported generalized customer-experience claim',
+    );
+  });
+
+  it.each([
+    'We work with small businesses to connect repetitive workflows.',
+    'Map one repeated handoff before choosing software.',
+    'Which repetitive task costs your team the most time?',
+  ])('does not flag a factual service statement or audience question: %s', (sample) => {
+    expect(scanContentForTropes(sample)).not.toContain(
+      'unsupported generalized customer-experience claim',
+    );
+  });
+});
+
 describe('scanContentForTropes — cadence detector threshold', () => {
   it(`fires at ${AI_CADENCE_THRESHOLD}+ consecutive short sentences`, () => {
     // 5 short sentences (≤6 words each) → must trip the cadence detector

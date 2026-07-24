@@ -290,6 +290,7 @@ describe('callAnthropicDirect — error paths', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].bindings[2]).toBe('anthropic');
     expect(calls[0].bindings[4]).toBe('learning_text_council');
+    expect(calls[0].sql).not.toContain('learning_decision_id');
     expect(calls[0].bindings[10]).toBe(0);
   });
 
@@ -547,6 +548,7 @@ describe('callOpenRouter', () => {
       9: 'p1',
       10: 1,
     });
+    expect(calls[0].sql).not.toContain('learning_decision_id');
   });
 
   it('records failed OpenRouter attempts before throwing', async () => {
@@ -581,6 +583,7 @@ describe('callOpenRouter', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].bindings[2]).toBe('openrouter');
     expect(calls[0].bindings[4]).toBe('learning_harm_critic');
+    expect(calls[0].sql).not.toContain('learning_decision_id');
     expect(calls[0].bindings[10]).toBe(0);
   });
 

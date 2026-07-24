@@ -95,15 +95,35 @@ export function needsSafeFallback(prompt: string): boolean {
   return false;
 }
 
+// Safety prompts routinely end with exclusions such as "no readable text" or
+// "do not render a dashboard". Those phrases describe what must be absent,
+// not what the image should depict. Remove only recognised negated visual
+// terms before intent detection so the guardrail does not replace an exact
+// user brief with a generic fallback scene.
+const NEGATED_VISUAL_PREFIX =
+  String.raw`(?:no|without|avoid(?:ing)?|exclude(?:d|s|ing)?|never|do\s+not|don't)`;
+const NEGATED_VISUAL_TERM =
+  String.raw`(?:any\s+)?(?:(?:render|show|include|display|depict|add)\s+)?(?:(?:readable|visible|legible|printed|handwritten|lettered|branded|fake)\s+)?(?:text(?:\s+overlay)?|words?|letters?|typography|copy|headline|title|labels?|logos?|watermarks?|screens?|dashboards?|charts?|graphs?|tables?|infographics?|diagrams?|wireframes?|mockups?|ui|ux|user\s+interfaces?|app\s+(?:screens?|ui)|people|persons?|faces?|hands?|fingers?)`;
+const NEGATED_VISUAL_LIST_RE = new RegExp(
+  String.raw`\b${NEGATED_VISUAL_PREFIX}\s+${NEGATED_VISUAL_TERM}(?:\s*(?:,\s*(?:and|or)?|and|or)\s*(?:${NEGATED_VISUAL_PREFIX}\s+)?${NEGATED_VISUAL_TERM})*`,
+  'gi',
+);
+
+function positiveVisualIntent(prompt: string): string {
+  return prompt.replace(NEGATED_VISUAL_LIST_RE, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export function isTextRenderingPrompt(prompt: string): boolean {
   if (!prompt) return false;
-  if (/\bwristbands?\b/i.test(prompt)) return true;
-  if (/['"`][^'"`]{2,80}['"`]/.test(prompt)) return true;
-  if (/\b(?:readable|visible|bold|large|printed|handwritten|lettered|branded)\s+(?:text|words?|letters?|type|typography|copy|name|headline|title|label|price|pricing)\b/i.test(prompt)) return true;
-  if (/\b(?:printed|handwritten|lettered|branded)\s+(?:tickets?|passes?|entry\s+passes?|menus?|labels?|posters?|flyers?|badges?|wristbands?)\b/i.test(prompt)) return true;
-  if (/\b(?:text|words?|letters?|typography|copy|headline|title|brand\s+name|business\s+name|event\s+name|festival\s+name)\s+(?:on|across|inside|over|written|printed|displayed|visible)\b/i.test(prompt)) return true;
-  if (/\b(?:signage|sign|banner|poster|flyer|placard|billboard|marquee|menu\s+board|chalkboard|label|sticker|ticket|wristband|entry\s+pass|price\s+tag|badge)\b/i.test(prompt)
-      && /\b(?:with|showing|displaying|reading|says?|named|branded|logo|text|words?|letters?|printed|visible|bold|festival|venue|business|brand|name|price|pricing)\b/i.test(prompt)) {
+  const intent = positiveVisualIntent(prompt);
+  if (!intent) return false;
+  if (/\bwristbands?\b/i.test(intent)) return true;
+  if (/['"`][^'"`]{2,80}['"`]/.test(intent)) return true;
+  if (/\b(?:readable|visible|bold|large|printed|handwritten|lettered|branded)\s+(?:text|words?|letters?|type|typography|copy|name|headline|title|label|price|pricing)\b/i.test(intent)) return true;
+  if (/\b(?:printed|handwritten|lettered|branded)\s+(?:tickets?|passes?|entry\s+passes?|menus?|labels?|posters?|flyers?|badges?|wristbands?)\b/i.test(intent)) return true;
+  if (/\b(?:text|words?|letters?|typography|copy|headline|title|brand\s+name|business\s+name|event\s+name|festival\s+name)\s+(?:on|across|inside|over|written|printed|displayed|visible)\b/i.test(intent)) return true;
+  if (/\b(?:signage|sign|banner|poster|flyer|placard|billboard|marquee|menu\s+board|chalkboard|label|sticker|ticket|wristband|entry\s+pass|price\s+tag|badge)\b/i.test(intent)
+      && /\b(?:with|showing|displaying|reading|says?|named|branded|logo|text|words?|letters?|printed|visible|bold|festival|venue|business|brand|name|price|pricing)\b/i.test(intent)) {
     return true;
   }
   return false;
@@ -119,21 +139,23 @@ export function isTextRenderingPrompt(prompt: string): boolean {
 // legitimate small-business phrases like "meal plan", "wine tier",
 // "tea table", "fence grid", "centre column".
 export function isAbstractUIPrompt(prompt: string): boolean {
-  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(prompt)) return true;
-  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(prompt)) return true;
-  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(prompt)) return true;
-  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(prompt)) return true;
-  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(prompt)) return true;
+  const intent = positiveVisualIntent(prompt);
+  if (!intent) return false;
+  if (/\b(dashboard|infographic|wireframe|mockup|landing page|website screenshot|screenshot|logo design|3D render|marketing graphic|app screen|app screens|UI|UX|user interface)\b/i.test(intent)) return true;
+  if (/\b(pricing|comparison|feature)\s+(table|tier|grid|plan|chart|page|column|tiers|grids|plans|charts|pages|columns)\b/i.test(intent)) return true;
+  if (/\b(bar|pie|line|data|stat|stats)\s+(chart|graph|charts|graphs)\b/i.test(intent)) return true;
+  if (/\b(architecture|flow|org|system|workflow)\s+(diagram|diagrams)\b/i.test(intent)) return true;
+  if (/\b(an?\s+|the\s+)?(illustration|diagram|infographic)\s+(of|showing|depicting|with)\b/i.test(intent)) return true;
   // Hashtag / social-feed abstractions — flux cannot render hashtag-the-concept;
   // it produces noise → safety_checker rejects → black square. Catch any
   // mention of "hashtag" in an image prompt (it's never a photographable
   // subject) plus social-feed / post-grid mockups.
-  if (/\b(hashtag|hashtags|tag\s+cloud|social\s+feed|news\s+feed|content\s+feed|post\s+(?:carousel|grid|feed|preview|preview\s+grid))\b/i.test(prompt)) return true;
+  if (/\b(hashtag|hashtags|tag\s+cloud|social\s+feed|news\s+feed|content\s+feed|post\s+(?:carousel|grid|feed|preview|preview\s+grid))\b/i.test(intent)) return true;
   // Generic "website" prompts that aren't already caught by "website screenshot".
   // SaaS posts about web design typically generate "modern website on a laptop",
   // "small business website hero", etc. — flux renders them as flat washed-out
   // white screens. Catch when "website" appears with a UI-context noun.
-  if (/\b(website|webpage|web\s+page)\s+(?:design|hero|homepage|template|refresh|rebuild|redesign|on\s+(?:a\s+)?(?:laptop|screen|monitor|browser|computer|tablet))\b/i.test(prompt)) return true;
+  if (/\b(website|webpage|web\s+page)\s+(?:design|hero|homepage|template|refresh|rebuild|redesign|on\s+(?:a\s+)?(?:laptop|screen|monitor|browser|computer|tablet))\b/i.test(intent)) return true;
   return false;
 }
 

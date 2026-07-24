@@ -4,10 +4,18 @@ import {
   type LearningMode,
   type ReleaseState,
 } from './types';
-import { BASE_REQUIRED_CRITICS, type CriticKind } from './critic-types';
+import {
+  BASE_REQUIRED_CRITICS,
+  DETERMINISTIC_REQUIRED_CRITICS,
+  type CriticKind,
+} from './critic-types';
+import type { ReleaseJudgeStatus } from './release-pipeline';
 
 export const AUTOPILOT_POLICY_VERSION = '2026-07-14-v1';
 export const RELEASE_EVIDENCE_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const MIN_PREDICTION_SAMPLE_COUNT = 20;
+export const MIN_PREDICTION_SAMPLES_PER_WORKSPACE = 8;
+export const REQUIRED_PREDICTION_WORKSPACE_COUNT = 2;
 
 export type ReleaseEvidenceKind =
   | 'replay_red_team'
@@ -33,7 +41,13 @@ export interface ReadinessMetrics {
   severeFalsePasses: number;
   falseHoldRate: number;
   requiredAvailability: number;
+  releaseJudgeAvailability: number;
+  releaseJudgeTelemetryCoverage: number;
+  releaseJudgeInvocations: number;
   decisionReceiptCoverage: number;
+  predictionSampleCount: number;
+  predictionWorkspaceCount: number;
+  predictionMinWorkspaceSamples: number;
   predictionLift: number;
   rankCorrelation: number;
   criticalBypasses: number;
@@ -54,6 +68,7 @@ export interface PilotDecisionRow {
   summary_json: string;
   publication_event_id: string | null;
   normalized_score: number | string | null;
+  outcome_source_status?: 'complete' | 'partial' | 'unavailable' | null;
   expected_state: ReleaseState | null;
   adjudication_severity: 'advisory' | 'release_critical' | null;
 }
@@ -63,6 +78,7 @@ export interface PilotVerdictRow {
   critic_kind: CriticKind;
   verdict: string;
   attempt: number;
+  provider?: string | null;
 }
 
 export interface WorkspaceCostTelemetry {
@@ -71,6 +87,11 @@ export interface WorkspaceCostTelemetry {
   budgetUsdCents: number | null;
   spendUsd: number;
   telemetryCount: number;
+  invalidTelemetryCount: number;
+  pilotSpendUsd: number;
+  pilotTelemetryCount: number;
+  pilotInvalidTelemetryCount: number;
+  meteredPilotDecisionCount: number;
 }
 
 export interface PredictionSample {
@@ -86,7 +107,10 @@ export interface ReadinessChecks {
   severeFalsePasses: boolean;
   falseHolds: boolean;
   availability: boolean;
+  releaseJudgeAvailability: boolean;
+  releaseJudgeTelemetry: boolean;
   receipts: boolean;
+  predictionCoverage: boolean;
   predictionLift: boolean;
   rankCorrelation: boolean;
   criticalBypasses: boolean;
@@ -120,7 +144,12 @@ export function evaluateReadiness(metrics: ReadinessMetrics): {
     severeFalsePasses: metrics.severeFalsePasses === 0,
     falseHolds: metrics.falseHoldRate < 0.05,
     availability: metrics.requiredAvailability >= 0.995,
+    releaseJudgeAvailability: metrics.releaseJudgeAvailability >= 0.995,
+    releaseJudgeTelemetry: metrics.releaseJudgeTelemetryCoverage === 1,
     receipts: metrics.decisionReceiptCoverage === 1,
+    predictionCoverage: metrics.predictionSampleCount >= MIN_PREDICTION_SAMPLE_COUNT
+      && metrics.predictionWorkspaceCount === REQUIRED_PREDICTION_WORKSPACE_COUNT
+      && metrics.predictionMinWorkspaceSamples >= MIN_PREDICTION_SAMPLES_PER_WORKSPACE,
     predictionLift: metrics.predictionLift >= 0.15,
     rankCorrelation: metrics.rankCorrelation > 0,
     criticalBypasses: metrics.criticalBypasses === 0,
@@ -220,6 +249,82 @@ function workspaceTelemetryKey(userId: string, workspaceKey: string): string {
   return `${userId}\u0000${workspaceKey}`;
 }
 
+type LatestCriticSlot = {
+  attempt: number;
+  available: boolean;
+  hasBlock: boolean;
+  hasPass: boolean;
+  hasUnavailable: boolean;
+  hasWarning: boolean;
+};
+
+type CriticLane = 'deterministic' | 'independent' | 'media';
+type RequiredCriticSlot = { lane: CriticLane; kind: CriticKind };
+
+function requiredCriticSlots(summary: Record<string, unknown>): RequiredCriticSlot[] {
+  const slots: RequiredCriticSlot[] = [
+    ...DETERMINISTIC_REQUIRED_CRITICS.map((kind) => ({
+      lane: 'deterministic' as const,
+      kind,
+    })),
+    ...BASE_REQUIRED_CRITICS.map((kind) => ({
+      lane: 'independent' as const,
+      kind,
+    })),
+  ];
+  if (summary.mediaKind === 'image') slots.push({ lane: 'media', kind: 'image' });
+  if (summary.mediaKind === 'video') {
+    slots.push({ lane: 'media', kind: 'video_manifest' });
+  }
+  return slots;
+}
+
+function criticLane(verdict: PilotVerdictRow): CriticLane {
+  if (verdict.critic_kind === 'image' || verdict.critic_kind === 'video_manifest') {
+    return 'media';
+  }
+  if (
+    verdict.provider === 'deterministic'
+    && DETERMINISTIC_REQUIRED_CRITICS.includes(verdict.critic_kind)
+  ) {
+    return 'deterministic';
+  }
+  return 'independent';
+}
+
+function criticSlotKey(
+  decisionId: string,
+  lane: CriticLane,
+  kind: CriticKind,
+): string {
+  return `${decisionId}\u0000${lane}\u0000${kind}`;
+}
+
+function slotPreventsJudge(slot: LatestCriticSlot | undefined): boolean {
+  return !slot || slot.hasBlock || slot.hasUnavailable || slot.hasWarning || !slot.hasPass;
+}
+
+function resolveJudgeStatus(
+  summary: Record<string, unknown>,
+  slots: Array<LatestCriticSlot | undefined>,
+): ReleaseJudgeStatus {
+  const explicit = typeof summary.judgeStatus === 'string'
+    && ['available', 'unavailable', 'not_run'].includes(summary.judgeStatus)
+    ? summary.judgeStatus as Exclude<ReleaseJudgeStatus, 'unknown'>
+    : null;
+  const prevented = slots.some(slotPreventsJudge);
+
+  if (explicit === 'not_run') return prevented ? explicit : 'unknown';
+  if (explicit === 'available' || explicit === 'unavailable') {
+    return prevented ? 'unknown' : explicit;
+  }
+  if (prevented) return 'not_run';
+  if (summary.pipelineState === 'pass_green' || summary.pipelineState === 'block_red') {
+    return 'available';
+  }
+  return 'unknown';
+}
+
 export function buildReadinessMetrics(
   decisions: PilotDecisionRow[],
   verdicts: PilotVerdictRow[],
@@ -228,30 +333,77 @@ export function buildReadinessMetrics(
   const pilotDecisions = decisions.filter((decision) =>
     decision.mode === 'approval'
     && (decision.owner_kind === 'user' || decision.owner_kind === 'client'));
-  const latestCriticSlots = new Map<string, { attempt: number; available: boolean }>();
+  const latestCriticSlots = new Map<string, LatestCriticSlot>();
   for (const verdict of verdicts) {
-    if (!BASE_REQUIRED_CRITICS.includes(verdict.critic_kind)) continue;
-    const key = `${verdict.decision_id}\u0000${verdict.critic_kind}`;
+    const key = criticSlotKey(
+      verdict.decision_id,
+      criticLane(verdict),
+      verdict.critic_kind,
+    );
     const current = latestCriticSlots.get(key);
-    const available = verdict.verdict !== 'unavailable';
     if (!current || verdict.attempt > current.attempt) {
-      latestCriticSlots.set(key, { attempt: verdict.attempt, available });
-    } else if (verdict.attempt === current.attempt && available && !current.available) {
-      latestCriticSlots.set(key, { attempt: verdict.attempt, available: true });
+      latestCriticSlots.set(key, {
+        attempt: verdict.attempt,
+        available: verdict.verdict !== 'unavailable',
+        hasBlock: verdict.verdict === 'block',
+        hasPass: verdict.verdict === 'pass',
+        hasUnavailable: verdict.verdict === 'unavailable',
+        hasWarning: verdict.verdict === 'warn_repairable',
+      });
+    } else if (verdict.attempt === current.attempt) {
+      current.available ||= verdict.verdict !== 'unavailable';
+      current.hasBlock ||= verdict.verdict === 'block';
+      current.hasPass ||= verdict.verdict === 'pass';
+      current.hasUnavailable ||= verdict.verdict === 'unavailable';
+      current.hasWarning ||= verdict.verdict === 'warn_repairable';
     }
   }
 
-  const expectedSlots = pilotDecisions.length * BASE_REQUIRED_CRITICS.length;
+  let expectedSlots = 0;
   let availableSlots = 0;
   let completeReceipts = 0;
+  let judgeAvailable = 0;
+  let judgeInvocations = 0;
+  let judgeTelemetryCount = 0;
   const predictionSamples: PredictionSample[] = [];
+  const predictionSamplesByWorkspace = new Map<string, number>();
+  for (const decision of pilotDecisions) {
+    predictionSamplesByWorkspace.set(
+      workspaceTelemetryKey(decision.user_id, decision.workspace_key),
+      0,
+    );
+  }
   for (const decision of pilotDecisions) {
     const summary = parseSummary(decision.summary_json);
-    const hasEveryCritic = BASE_REQUIRED_CRITICS.every((kind) =>
-      latestCriticSlots.has(`${decision.id}\u0000${kind}`));
-    if (summary.persistenceState === 'complete' && hasEveryCritic) completeReceipts += 1;
-    for (const kind of BASE_REQUIRED_CRITICS) {
-      const slot = latestCriticSlots.get(`${decision.id}\u0000${kind}`);
+    const deterministicRequired = DETERMINISTIC_REQUIRED_CRITICS.map((kind) => ({
+      lane: 'deterministic' as const,
+      kind,
+    }));
+    const deterministicSlots = deterministicRequired.map(({ lane, kind }) =>
+      latestCriticSlots.get(criticSlotKey(decision.id, lane, kind)));
+    const deterministicBlocked = deterministicSlots.some((slot) => slot?.hasBlock);
+    const required = deterministicBlocked
+      ? deterministicRequired
+      : requiredCriticSlots(summary);
+    const requiredSlots = required.map(({ lane, kind }) =>
+      latestCriticSlots.get(criticSlotKey(decision.id, lane, kind)));
+    expectedSlots += required.length;
+    const hasEveryCritic = requiredSlots.every(Boolean);
+    const judgeStatus = resolveJudgeStatus(summary, requiredSlots);
+    if (judgeStatus !== 'unknown') judgeTelemetryCount += 1;
+    if (judgeStatus === 'available' || judgeStatus === 'unavailable') {
+      judgeInvocations += 1;
+      if (judgeStatus === 'available') judgeAvailable += 1;
+    }
+    if (
+      summary.persistenceState === 'complete'
+      && hasEveryCritic
+      && judgeStatus !== 'unknown'
+    ) {
+      completeReceipts += 1;
+    }
+    for (const { lane, kind } of required) {
+      const slot = latestCriticSlots.get(criticSlotKey(decision.id, lane, kind));
       if (slot?.available) availableSlots += 1;
     }
     const predicted = typeof summary.predictedOutcomeScore === 'number'
@@ -260,12 +412,23 @@ export function buildReadinessMetrics(
     const actual = decision.normalized_score == null
       ? Number.NaN
       : Number(decision.normalized_score);
-    if (Number.isFinite(predicted) && Number.isFinite(actual)) {
+    if (
+      decision.release_state === 'pass_green'
+      && decision.publication_event_id != null
+      && decision.outcome_source_status === 'complete'
+      && Number.isFinite(predicted)
+      && Number.isFinite(actual)
+    ) {
+      const workspaceKey = workspaceTelemetryKey(decision.user_id, decision.workspace_key);
       predictionSamples.push({
-        workspaceKey: workspaceTelemetryKey(decision.user_id, decision.workspace_key),
+        workspaceKey,
         predicted,
         actual,
       });
+      predictionSamplesByWorkspace.set(
+        workspaceKey,
+        (predictionSamplesByWorkspace.get(workspaceKey) ?? 0) + 1,
+      );
     }
   }
 
@@ -284,24 +447,51 @@ export function buildReadinessMetrics(
 
   const workspaceKeys = new Set(pilotDecisions.map((decision) =>
     workspaceTelemetryKey(decision.user_id, decision.workspace_key)));
+  const pilotDecisionCounts = new Map<string, number>();
+  for (const decision of pilotDecisions) {
+    const key = workspaceTelemetryKey(decision.user_id, decision.workspace_key);
+    pilotDecisionCounts.set(key, (pilotDecisionCounts.get(key) ?? 0) + 1);
+  }
   const costsByWorkspace = new Map(costs.map((cost) => [
     workspaceTelemetryKey(cost.userId, cost.workspaceKey),
     cost,
   ]));
   const costWithinBudget = workspaceKeys.size > 0 && [...workspaceKeys].every((key) => {
     const cost = costsByWorkspace.get(key);
+    const expectedDecisionCount = pilotDecisionCounts.get(key) ?? 0;
     return Boolean(
       cost
       && Number.isSafeInteger(cost.budgetUsdCents)
       && Number(cost.budgetUsdCents) > 0
       && Number.isFinite(cost.spendUsd)
+      && cost.spendUsd >= 0
       && Number.isSafeInteger(cost.telemetryCount)
       && cost.telemetryCount > 0
+      && Number.isSafeInteger(cost.invalidTelemetryCount)
+      && cost.invalidTelemetryCount === 0
+      && Number.isFinite(cost.pilotSpendUsd)
+      && cost.pilotSpendUsd > 0
+      && cost.pilotSpendUsd <= cost.spendUsd + 1e-9
+      && Number.isSafeInteger(cost.pilotTelemetryCount)
+      && cost.pilotTelemetryCount >= expectedDecisionCount
+      && cost.pilotTelemetryCount <= cost.telemetryCount
+      && Number.isSafeInteger(cost.pilotInvalidTelemetryCount)
+      && cost.pilotInvalidTelemetryCount === 0
+      && Number.isSafeInteger(cost.meteredPilotDecisionCount)
+      && cost.meteredPilotDecisionCount === expectedDecisionCount
       && cost.spendUsd * 100 < Number(cost.budgetUsdCents),
     );
   });
 
-  const quality = predictionSamples.length === pilotDecisions.length && pilotDecisions.length >= 30
+  const predictionWorkspaceCounts = [...predictionSamplesByWorkspace.values()];
+  const predictionWorkspaceCount = predictionWorkspaceCounts.filter((count) => count > 0).length;
+  const predictionMinWorkspaceSamples = predictionWorkspaceCounts.length === 0
+    ? 0
+    : Math.min(...predictionWorkspaceCounts);
+  const hasPredictionCoverage = predictionSamples.length >= MIN_PREDICTION_SAMPLE_COUNT
+    && predictionWorkspaceCount === REQUIRED_PREDICTION_WORKSPACE_COUNT
+    && predictionMinWorkspaceSamples >= MIN_PREDICTION_SAMPLES_PER_WORKSPACE;
+  const quality = hasPredictionCoverage
     ? calculatePredictionQuality(predictionSamples)
     : { predictionLift: 0, rankCorrelation: 0 };
   return {
@@ -313,9 +503,17 @@ export function buildReadinessMetrics(
     severeFalsePasses,
     falseHoldRate: adjudicated.length === 0 ? 1 : falseHolds / adjudicated.length,
     requiredAvailability: expectedSlots === 0 ? 0 : availableSlots / expectedSlots,
+    releaseJudgeAvailability: judgeInvocations === 0 ? 0 : judgeAvailable / judgeInvocations,
+    releaseJudgeTelemetryCoverage: pilotDecisions.length === 0
+      ? 0
+      : judgeTelemetryCount / pilotDecisions.length,
+    releaseJudgeInvocations: judgeInvocations,
     decisionReceiptCoverage: pilotDecisions.length === 0
       ? 0
       : completeReceipts / pilotDecisions.length,
+    predictionSampleCount: predictionSamples.length,
+    predictionWorkspaceCount,
+    predictionMinWorkspaceSamples,
     predictionLift: quality.predictionLift,
     rankCorrelation: quality.rankCorrelation,
     criticalBypasses,
@@ -393,7 +591,8 @@ export async function collectLearningReadiness(
       d.mode, d.release_state, d.summary_json,
       a.expected_state, a.severity AS adjudication_severity,
       pe.id AS publication_event_id,
-      lo.normalized_score
+      lo.normalized_score,
+      lo.source_status AS outcome_source_status
     FROM learning_decisions d
     INNER JOIN learning_pilot_enrollments pen
       ON pen.user_id = d.user_id
@@ -409,12 +608,33 @@ export async function collectLearningReadiness(
        (d.owner_kind = 'user' AND pen.consent_basis = 'owner_self')
        OR (d.owner_kind = 'client' AND pen.consent_basis = 'customer_attested')
      )
+    INNER JOIN learning_pilot_samples sample
+      ON sample.user_id = d.user_id
+     AND sample.workspace_key = d.workspace_key
+     AND sample.client_id IS d.client_id
+     AND sample.owner_kind = d.owner_kind
+     AND sample.owner_id = d.owner_id
+     AND sample.post_id = d.post_id
+     AND sample.content_hash = d.content_hash
+     AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+     AND unixepoch(sample.attested_at) <= unixepoch(d.created_at)
+     AND (
+       (d.owner_kind = 'user' AND sample.attestation_basis = 'owner_real_post')
+       OR (d.owner_kind = 'client' AND sample.attestation_basis = 'customer_real_post')
+     )
     LEFT JOIN users u
       ON d.owner_kind = 'user' AND u.id = d.user_id
     LEFT JOIN clients c
       ON d.owner_kind = 'client'
      AND c.id = d.client_id
      AND c.user_id = d.user_id
+    LEFT JOIN learning_decision_disqualifications disq
+      ON disq.decision_id = d.id
+     AND disq.user_id = d.user_id
+     AND disq.workspace_key = d.workspace_key
+     AND disq.client_id IS d.client_id
+     AND disq.owner_kind = d.owner_kind
+     AND disq.owner_id = d.owner_id
     LEFT JOIN learning_adjudications a
       ON a.decision_id = d.id
      AND a.user_id = d.user_id
@@ -444,6 +664,7 @@ export async function collectLearningReadiness(
     WHERE d.stage = 'release'
       AND d.mode = 'approval'
       AND d.owner_kind IN ('user','client')
+      AND disq.id IS NULL
       AND (
         (d.owner_kind = 'user' AND u.id IS NOT NULL)
         OR (
@@ -461,7 +682,7 @@ export async function collectLearningReadiness(
   if (decisions.length > 0) {
     const placeholders = decisions.map(() => '?').join(',');
     const rows = await db.prepare(`
-      SELECT decision_id, critic_kind, verdict, attempt
+      SELECT decision_id, critic_kind, verdict, attempt, provider
       FROM learning_critic_verdicts
       WHERE decision_id IN (${placeholders})
       ORDER BY decision_id, critic_kind, attempt
@@ -494,6 +715,11 @@ export async function collectLearningReadiness(
   const [monthStart, monthEnd] = utcMonthBounds(now);
   const costs: WorkspaceCostTelemetry[] = [];
   for (const identity of identities.values()) {
+    const workspaceDecisionIds = decisions
+      .filter((decision) =>
+        decision.user_id === identity.userId
+        && decision.workspace_key === identity.workspaceKey)
+      .map((decision) => decision.id);
     const setting = await db.prepare(`
       SELECT monthly_ai_budget_usd_cents
       FROM workspace_learning_settings
@@ -508,25 +734,88 @@ export async function collectLearningReadiness(
       identity.ownerId,
     ).first<{ monthly_ai_budget_usd_cents: number | null }>();
     const costSql = identity.clientId === null
-      ? `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+      ? `SELECT
+           COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+           COUNT(*) AS telemetry_count,
+           SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS invalid_telemetry_count
            FROM ai_usage
-          WHERE user_id = ? AND client_id IS NULL AND ts >= ? AND ts < ?`
-      : `SELECT COALESCE(SUM(est_cost_usd), 0) AS spend_usd, COUNT(*) AS telemetry_count
+          WHERE user_id = ? AND client_id IS NULL
+            AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`
+      : `SELECT
+           COALESCE(SUM(est_cost_usd), 0) AS spend_usd,
+           COUNT(*) AS telemetry_count,
+           SUM(CASE WHEN est_cost_usd IS NULL OR est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS invalid_telemetry_count
            FROM ai_usage
-          WHERE user_id = ? AND client_id = ? AND ts >= ? AND ts < ?`;
+          WHERE user_id = ? AND client_id = ?
+            AND unixepoch(ts) >= unixepoch(?) AND unixepoch(ts) < unixepoch(?)`;
     const bindings = identity.clientId === null
       ? [identity.userId, monthStart, monthEnd]
       : [identity.userId, identity.clientId, monthStart, monthEnd];
     const usage = await db.prepare(costSql).bind(...bindings).first<{
       spend_usd: number | null;
       telemetry_count: number;
+      invalid_telemetry_count: number;
     }>();
+    const decisionPlaceholders = workspaceDecisionIds.map(() => '?').join(',');
+    const attributedCostSql = identity.clientId === null
+      ? `SELECT
+           COALESCE(SUM(u.est_cost_usd), 0) AS pilot_spend_usd,
+           COUNT(*) AS pilot_telemetry_count,
+           SUM(CASE WHEN u.est_cost_usd IS NULL OR u.est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS pilot_invalid_telemetry_count,
+           COUNT(DISTINCT u.learning_decision_id) AS metered_decision_count
+         FROM ai_usage u
+         INNER JOIN learning_decisions usage_decision
+           ON usage_decision.id = u.learning_decision_id
+          AND usage_decision.user_id = u.user_id
+          AND usage_decision.client_id IS u.client_id
+          AND usage_decision.post_id = u.post_id
+         WHERE u.user_id = ? AND u.client_id IS NULL
+           AND u.learning_decision_id IN (${decisionPlaceholders})
+           AND unixepoch(u.ts) >= unixepoch(?)
+           AND unixepoch(u.ts) < unixepoch(?)`
+      : `SELECT
+           COALESCE(SUM(u.est_cost_usd), 0) AS pilot_spend_usd,
+           COUNT(*) AS pilot_telemetry_count,
+           SUM(CASE WHEN u.est_cost_usd IS NULL OR u.est_cost_usd < 0 THEN 1 ELSE 0 END)
+             AS pilot_invalid_telemetry_count,
+           COUNT(DISTINCT u.learning_decision_id) AS metered_decision_count
+         FROM ai_usage u
+         INNER JOIN learning_decisions usage_decision
+           ON usage_decision.id = u.learning_decision_id
+          AND usage_decision.user_id = u.user_id
+          AND usage_decision.client_id IS u.client_id
+          AND usage_decision.post_id = u.post_id
+         WHERE u.user_id = ? AND u.client_id = ?
+           AND u.learning_decision_id IN (${decisionPlaceholders})
+           AND unixepoch(u.ts) >= unixepoch(?)
+           AND unixepoch(u.ts) < unixepoch(?)`;
+    const attributedBindings = identity.clientId === null
+      ? [identity.userId, ...workspaceDecisionIds, monthStart, monthEnd]
+      : [identity.userId, identity.clientId, ...workspaceDecisionIds, monthStart, monthEnd];
+    const attributedUsage = await db.prepare(attributedCostSql)
+      .bind(...attributedBindings)
+      .first<{
+        pilot_spend_usd: number | null;
+        pilot_telemetry_count: number;
+        pilot_invalid_telemetry_count: number;
+        metered_decision_count: number;
+      }>();
     costs.push({
       userId: identity.userId,
       workspaceKey: identity.workspaceKey,
       budgetUsdCents: setting?.monthly_ai_budget_usd_cents ?? null,
       spendUsd: Number(usage?.spend_usd ?? Number.NaN),
       telemetryCount: Number(usage?.telemetry_count ?? 0),
+      invalidTelemetryCount: Number(usage?.invalid_telemetry_count ?? 0),
+      pilotSpendUsd: Number(attributedUsage?.pilot_spend_usd ?? Number.NaN),
+      pilotTelemetryCount: Number(attributedUsage?.pilot_telemetry_count ?? 0),
+      pilotInvalidTelemetryCount: Number(
+        attributedUsage?.pilot_invalid_telemetry_count ?? 0,
+      ),
+      meteredPilotDecisionCount: Number(attributedUsage?.metered_decision_count ?? 0),
     });
   }
 

@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "production-worker-version-attestation-7fb945de-20260721",
+  "capturedAt": "2026-07-20T22:38:46.722Z",
+  "scope": {
+    "environment": "production",
+    "workerName": "socialai-api",
+    "purpose": "learning_release_safety_and_worker_identity_pin",
+    "productionBehaviorChangeAllowed": false,
+    "releaseFlagChangeAllowed": false,
+    "automaticActivationAllowed": false
+  },
+  "observedVersion": {
+    "versionId": "7fb945de-36a7-442e-8d45-8139d5a1a841",
+    "versionNumber": 291,
+    "createdAt": "2026-07-20T21:40:56.824Z",
+    "source": "wrangler",
+    "trigger": "version_upload",
+    "scriptEtag": "81da428e4ae21517f4c168cff09d949de2404549f2acebafae254996b2b919ce",
+    "handlers": [
+      "fetch",
+      "scheduled"
+    ],
+    "compatibilityDate": "2024-09-01",
+    "compatibilityFlags": [
+      "nodejs_compat"
+    ],
+    "environmentBinding": "production",
+    "databaseBindingId": "6295841e-e5f7-4355-b0e0-c5f22e58d99d",
+    "mediaBindingPresent": true,
+    "reelsBucket": "socialai-reels",
+    "posterBucket": "socialai-posters"
+  },
+  "previousAttestedVersion": {
+    "versionId": "3b963ed1-c9e1-42d6-9bff-68da2efa9215",
+    "versionNumber": 290,
+    "createdAt": "2026-07-19T19:46:46.306Z",
+    "scriptEtag": "a37779027b4c1598e8c7523215480b038991463e292c8e8bc839c7160427732b",
+    "mediaBindingPresent": false
+  },
+  "sourceCorrelation": {
+    "pullRequest": 211,
+    "pullRequestUrl": "https://github.com/3dhuboz/SocialAI-Studio/pull/211",
+    "title": "feat: add owner Reel Studio upload and finishing",
+    "mergedAt": "2026-07-20T21:38:48Z",
+    "mergeCommit": "078b7a02c3141c3c56bc27f56087370a9788ba1d",
+    "reviewedHeadCommit": "7a28caa411273b96997775715f37807ef48e1be6",
+    "baseCommit": "489761a47f045a6488e090c6a6267879abe2ebed",
+    "secondsFromMergeToVersionUpload": 128.824,
+    "mergeWorkerTree": "e424641e102933669a615469a0ee60f1053c80ba",
+    "reviewedHeadWorkerTree": "e424641e102933669a615469a0ee60f1053c80ba",
+    "workerTreesMatch": true,
+    "uniqueCorrelationSignals": [
+      "The version upload followed the PR merge by 128.824 seconds.",
+      "The uploaded version added the MEDIA binding introduced by PR 211.",
+      "The reviewed PR head and merge commit have the same workers/api Git tree.",
+      "The upload and merge were performed by the same repository and Cloudflare account owner."
+    ]
+  },
+  "changeBoundary": {
+    "changedWorkerSourcePaths": [
+      "workers/api/src/__tests__/postproxy-media.test.ts",
+      "workers/api/src/__tests__/reel-media.test.ts",
+      "workers/api/src/env.ts",
+      "workers/api/src/index.ts",
+      "workers/api/src/lib/postproxy-media.ts",
+      "workers/api/src/routes/postproxy.ts",
+      "workers/api/src/routes/reel-media.ts"
+    ],
+    "learningModulesChanged": false,
+    "releaseJudgeChanged": false,
+    "workspaceModeChanged": false,
+    "learningCronChanged": false,
+    "publishOrchestratorChanged": false,
+    "postproxyBoundaryChange": "Blocks legacy immediate Reel publishing when the current PostProxy connection is unavailable; it does not add a publish bypass.",
+    "reelMediaBoundary": "Authenticated, workspace-owned upload and media finishing only; no schedule, publish, Facebook, Instagram, or PostProxy action exists in the route."
+  },
+  "verification": {
+    "githubCi": {
+      "name": "typecheck-and-build",
+      "conclusion": "SUCCESS",
+      "url": "https://github.com/3dhuboz/SocialAI-Studio/actions/runs/29745478556/job/88362241731"
+    },
+    "exactWorkerTreeTests": {
+      "testFilesPassed": 90,
+      "testsPassed": 1166,
+      "testsFailed": 0
+    },
+    "exactWorkerTreeTypecheck": "passed",
+    "liveHealth": {
+      "ok": true,
+      "service": "socialai-api"
+    }
+  },
+  "safetyInvariants": {
+    "LEARNING_BRAIN_ENABLED": true,
+    "LEARNING_RELEASE_ENFORCEMENT": false,
+    "LEARNING_AUTOPILOT_ENABLED": false,
+    "ORGANIC_REACH_ENABLED": true,
+    "ORGANIC_REACH_APPLY_ENABLED": false,
+    "protectedAutopilotWorkspaceCount": 0,
+    "hugheseysQueStatus": "on_hold"
+  },
+  "attestation": {
+    "decision": "accepted_for_read_only_rollout_version_pin",
+    "versionId": "7fb945de-36a7-442e-8d45-8139d5a1a841",
+    "reason": "The version is strongly correlated to merged and reviewed PR 211, its exact Worker tree passed the full suite and typecheck, its publishing-boundary change is restrictive, no learning control-plane module changed, and every learning apply switch remains disabled.",
+    "doesNotAuthorize": [
+      "Protected Autopilot activation",
+      "release enforcement",
+      "organic reach application",
+      "production schema changes",
+      "post scheduling or publishing"
+    ],
+    "limitation": "Cloudflare version metadata does not contain a Git commit annotation, so this is a scoped operator attestation supported by timing, binding, tree, review, and test evidence rather than a byte-for-byte source attestation."
+  }
+}

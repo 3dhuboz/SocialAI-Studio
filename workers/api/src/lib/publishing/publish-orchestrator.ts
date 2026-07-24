@@ -19,6 +19,7 @@ import {
 } from '../learning/publication-repository';
 import { normalizeWorkspaceIdentity } from '../learning/types';
 import { fireAlert } from '../alerts';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../../shared/critique-thresholds';
 
 export type PersistedPublishPost = PublishablePost;
 
@@ -43,6 +44,13 @@ export type PublishTarget =
       pageAccessToken: string;
       description: string;
       videoUrl: string;
+    }
+  | {
+      backend: 'graph_reel';
+      pageId: string;
+      pageAccessToken: string;
+      description: string;
+      videoId: string;
     }
   | {
       backend: 'graph_instagram';
@@ -76,6 +84,10 @@ export type PublishOrchestratorResult =
 
 export interface PublishOrchestratorDeps {
   validateWorkspace(env: Env, post: PersistedPublishPost): Promise<void>;
+  evaluatePermanentBlock(
+    env: Env,
+    post: PersistedPublishPost,
+  ): Promise<PreflightDecision | null>;
   evaluatePreflight(
     env: Env,
     post: PublishablePost,
@@ -240,6 +252,161 @@ async function validateWorkspace(
     'SELECT id FROM users WHERE id = ?',
   ).bind(identity.userId).first<{ id: string }>();
   if (!user) throw new Error('workspace inactive: user not found');
+}
+
+export async function evaluatePermanentPublishBlock(
+  env: Env,
+  post: PersistedPublishPost,
+): Promise<PreflightDecision | null> {
+  if (/\[staging qa fixture - never publish\]/i.test(post.content)) {
+    return {
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    };
+  }
+
+  const isStaging = env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+  if (isStaging) {
+    const recordOnlyPilot = await env.DB.prepare(`
+      WITH identity(
+        user_id, workspace_key, client_id, owner_kind, owner_id, post_id
+      ) AS (
+        SELECT ?, ?, ?, ?, ?, ?
+      )
+      SELECT 'record_only_enrollment' AS block_source
+      FROM identity
+      INNER JOIN learning_pilot_enrollments enrollment
+        ON enrollment.user_id = identity.user_id
+       AND enrollment.workspace_key = identity.workspace_key
+       AND enrollment.client_id IS identity.client_id
+       AND enrollment.owner_kind = identity.owner_kind
+       AND enrollment.owner_id = identity.owner_id
+       AND enrollment.record_only = 1
+      UNION ALL
+      SELECT 'generated_pilot_draft' AS block_source
+      FROM identity
+      INNER JOIN learning_pilot_generated_drafts generated
+        ON generated.user_id = identity.user_id
+       AND generated.workspace_key = identity.workspace_key
+       AND generated.client_id IS identity.client_id
+       AND generated.owner_kind = identity.owner_kind
+       AND generated.owner_id = identity.owner_id
+       AND generated.post_id = identity.post_id
+       AND generated.record_only = 1
+      UNION ALL
+      SELECT 'generated_pilot_media' AS block_source
+      FROM identity
+      INNER JOIN learning_pilot_media_jobs media
+        ON media.user_id = identity.user_id
+       AND media.workspace_key = identity.workspace_key
+       AND media.client_id IS identity.client_id
+       AND media.owner_kind = identity.owner_kind
+       AND media.owner_id = identity.owner_id
+       AND media.post_id = identity.post_id
+       AND media.state = 'ready'
+       AND media.record_only = 1
+      LIMIT 1
+    `).bind(
+      post.user_id,
+      post.client_id === null ? '__owner__' : post.client_id,
+      post.client_id,
+      post.owner_kind,
+      post.owner_id,
+      post.id,
+    ).first<{
+      block_source:
+        | 'record_only_enrollment'
+        | 'generated_pilot_draft'
+        | 'generated_pilot_media';
+    }>();
+    if (recordOnlyPilot) {
+      return {
+        mode: 'approval',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: null,
+      };
+    }
+  }
+
+  const isVideo = /^(?:video|reel)$/i.test(post.post_type || '');
+  const expectsImage = !!post.image_prompt?.trim() && post.image_prompt.trim() !== 'N/A';
+  if (expectsImage && !isVideo && !post.image_url) {
+    return {
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    };
+  }
+  if (post.image_url && !isVideo) {
+    let score = post.image_critique_score;
+    if (score === undefined) {
+      const qa = await env.DB.prepare(
+        'SELECT image_critique_score FROM posts WHERE id = ? AND owner_kind = ? AND owner_id = ?',
+      ).bind(post.id, post.owner_kind, post.owner_id).first<{ image_critique_score: number | null }>();
+      score = qa?.image_critique_score ?? null;
+    }
+    if (score == null || score < CRITIQUE_ACCEPT_THRESHOLD) {
+      return {
+        mode: 'approval',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: null,
+      };
+    }
+  }
+
+  if (!isStaging && env.LEARNING_RELEASE_ENFORCEMENT !== 'true') return null;
+
+  const identity = normalizeWorkspaceIdentity(
+    post.user_id,
+    post.client_id,
+    post.owner_kind,
+    post.owner_id,
+  );
+  const row = await env.DB.prepare(`
+    SELECT d.id AS decision_id
+      FROM learning_decisions d
+      INNER JOIN learning_decision_disqualifications disq
+        ON disq.decision_id = d.id
+       AND disq.user_id = d.user_id
+       AND disq.workspace_key = d.workspace_key
+       AND disq.client_id IS d.client_id
+       AND disq.owner_kind = d.owner_kind
+       AND disq.owner_id = d.owner_id
+     WHERE d.user_id = ?
+       AND d.workspace_key = ?
+       AND d.client_id IS ?
+       AND d.owner_kind = ?
+       AND d.owner_id = ?
+       AND d.post_id = ?
+       AND disq.reason = 'synthetic_qa'
+     ORDER BY d.created_at DESC
+     LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    post.id,
+  ).first<{ decision_id: string }>();
+
+  if (!row) return null;
+  return {
+    mode: 'approval',
+    state: 'block_red',
+    mayPublish: false,
+    mustHold: true,
+    decisionId: row.decision_id,
+  };
 }
 
 async function persistHold(
@@ -451,6 +618,7 @@ async function beginDeliveryShadowAttempt(
 
 const defaultDeps: PublishOrchestratorDeps = {
   validateWorkspace,
+  evaluatePermanentBlock: evaluatePermanentPublishBlock,
   evaluatePreflight: evaluateReleasePreflight,
   persistHold,
   createPost,
@@ -471,6 +639,11 @@ export async function publishPersistedPost(
 ): Promise<PublishOrchestratorResult> {
   const deps = { ...defaultDeps, ...injectedDeps };
   await deps.validateWorkspace(env, post);
+  const permanentBlock = await deps.evaluatePermanentBlock(env, post);
+  if (permanentBlock) {
+    await deps.persistHold(env, post, permanentBlock);
+    throw new Error(`post ${post.id} is permanently disqualified from publication`);
+  }
   const preflight = await deps.evaluatePreflight(env, post);
   if (!preflight.mayPublish) {
     await deps.persistHold(env, post, preflight);
@@ -505,6 +678,33 @@ export async function publishPersistedPost(
         );
       }
       const base = 'https://graph.facebook.com/v21.0';
+      if ('videoId' in target) {
+        const finishUrl =
+          `${base}/${target.pageId}/video_reels`
+          + `?upload_phase=finish&video_id=${encodeURIComponent(target.videoId)}`
+          + `&video_state=PUBLISHED&description=${encodeURIComponent(target.description)}`
+          + `&access_token=${encodeURIComponent(target.pageAccessToken)}`;
+        const finishResponse = await deps.graphFetch(finishUrl, { method: 'POST' });
+        const finishData = await finishResponse.json() as {
+          success?: boolean;
+          error?: { message?: string };
+        };
+        if (!finishResponse.ok || finishData.error || finishData.success === false) {
+          throw new Error(
+            `FB reel publish: ${finishData.error?.message || finishResponse.status}`,
+          );
+        }
+        await recordDeliveryShadowEvent(env, deps, attempt, 'provider_accepted', {
+          remotePostId: target.videoId,
+          httpStatus: finishResponse.status,
+        });
+        return {
+          backend: 'graph_reel',
+          videoId: target.videoId,
+          preflight,
+        };
+      }
+
       const startResponse = await deps.graphFetch(
         `${base}/${target.pageId}/video_reels`,
         {

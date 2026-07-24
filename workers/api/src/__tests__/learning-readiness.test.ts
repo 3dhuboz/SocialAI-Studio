@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
+import { hasCompleteLearningReadinessChecksSchema } from '../../../../shared/learning-readiness-checks';
+import { learningReadinessChecks } from './helpers/learning-readiness';
 import { makeRecordingD1 } from './helpers/recording-d1';
 import {
   AUTOPILOT_POLICY_VERSION,
@@ -14,8 +16,17 @@ import {
   type ReleaseEvidenceRow,
   type WorkspaceCostTelemetry,
 } from '../lib/learning/readiness';
-import { cronEvaluateLearningReadiness } from '../cron/evaluate-learning-readiness';
-import { loadWorkspaceLearningMode } from '../lib/learning/workspace-mode';
+import {
+  cronEvaluateLearningReadiness,
+  loadLearningReadinessSchemaState,
+} from '../cron/evaluate-learning-readiness';
+import {
+  hasWorkspaceSevereFalsePass,
+  loadWorkspaceLearningMode,
+  quarantineSevereFalsePassWorkspaces,
+  saveWorkspaceLearningSettings,
+  SEVERE_FALSE_PASS_DISABLED_REASON,
+} from '../lib/learning/workspace-mode';
 import type { LearningMode, WorkspaceOwnerKind } from '../lib/learning/types';
 
 type ModeOptions = {
@@ -28,6 +39,8 @@ type ModeOptions = {
   spendUsdCents?: number;
   telemetryCount?: number;
   tenancyProofs?: Partial<Record<WorkspaceOwnerKind, boolean>>;
+  disabledReason?: string | null;
+  severeFalsePass?: boolean;
   brain?: string;
   enforcement?: string;
   autopilot?: string;
@@ -48,7 +61,7 @@ function modeEnv(options: ModeOptions = {}): Env {
     monthly_ai_budget_usd_cents: options.budgetUsdCents === undefined
       ? 1000
       : options.budgetUsdCents,
-    disabled_reason: null,
+    disabled_reason: options.disabledReason ?? null,
   }];
   const { db } = makeRecordingD1({
     'FROM clients': [{ status: options.onHold ? 'on_hold' : 'active' }],
@@ -57,13 +70,16 @@ function modeEnv(options: ModeOptions = {}): Env {
     'FROM learning_release_readiness': [{
       ready: options.readiness === false ? 0 : 1,
       policy_version: AUTOPILOT_POLICY_VERSION,
-      checks_json: JSON.stringify({ tenancyProofs }),
+      checks_json: JSON.stringify(learningReadinessChecks(tenancyProofs)),
       evaluated_at: '2026-07-14T00:00:00.000Z',
     }],
     'FROM ai_usage': [{
       spend_usd: (options.spendUsdCents ?? 100) / 100,
       telemetry_count: options.telemetryCount ?? 1,
     }],
+    'INNER JOIN learning_adjudications a': options.severeFalsePass
+      ? [{ severe_false_pass: 1 }]
+      : [],
   });
   return {
     DB: db,
@@ -82,7 +98,13 @@ const readyMetrics: ReadinessMetrics = {
   severeFalsePasses: 0,
   falseHoldRate: 0.033,
   requiredAvailability: 0.995,
+  releaseJudgeAvailability: 1,
+  releaseJudgeTelemetryCoverage: 1,
+  releaseJudgeInvocations: 30,
   decisionReceiptCoverage: 1,
+  predictionSampleCount: 20,
+  predictionWorkspaceCount: 2,
+  predictionMinWorkspaceSamples: 10,
   predictionLift: 0.15,
   rankCorrelation: 0.1,
   criticalBypasses: 0,
@@ -90,6 +112,34 @@ const readyMetrics: ReadinessMetrics = {
   costWithinBudget: true,
   killSwitchTested: true,
 };
+
+const deterministicKinds = ['brand', 'fact', 'repetition', 'platform'] as const;
+const independentKinds = [
+  'brand',
+  'fact',
+  'repetition',
+  'platform',
+  'business_harm',
+] as const;
+
+function completeTextVerdicts(decisionId: string): PilotVerdictRow[] {
+  return [
+    ...deterministicKinds.map((criticKind) => ({
+      decision_id: decisionId,
+      critic_kind: criticKind,
+      verdict: 'pass',
+      attempt: 0,
+      provider: 'deterministic',
+    } as const)),
+    ...independentKinds.map((criticKind) => ({
+      decision_id: decisionId,
+      critic_kind: criticKind,
+      verdict: 'pass',
+      attempt: 0,
+      provider: 'anthropic',
+    } as const)),
+  ];
+}
 
 describe('learning release readiness', () => {
   it('requires enough adjudicated pilot evidence and every safety threshold', () => {
@@ -104,7 +154,12 @@ describe('learning release readiness', () => {
       { severeFalsePasses: 1 },
       { falseHoldRate: 0.05 },
       { requiredAvailability: 0.994 },
+      { releaseJudgeAvailability: 0.994 },
+      { releaseJudgeTelemetryCoverage: 0.999 },
       { decisionReceiptCoverage: 0.999 },
+      { predictionSampleCount: 19 },
+      { predictionWorkspaceCount: 1 },
+      { predictionMinWorkspaceSamples: 7 },
       { predictionLift: 0.149 },
       { rankCorrelation: 0 },
       { criticalBypasses: 1 },
@@ -214,39 +269,53 @@ describe('learning release readiness', () => {
         owner_kind: clientPilot ? 'client' : 'user',
         owner_id: clientPilot ? 'client-1' : 'owner-1',
         mode: 'approval',
-        release_state: 'pass_green',
+        release_state: index % 15 < 10 ? 'pass_green' : 'block_red',
         summary_json: JSON.stringify({
           persistenceState: 'complete',
+          pipelineState: index % 15 < 10 ? 'pass_green' : 'block_red',
+          mediaKind: 'none',
+          judgeStatus: index % 15 < 10 ? 'available' : 'not_run',
           predictedOutcomeScore: (index % 15) + 1,
         }),
-        publication_event_id: `publication-${index}`,
-        normalized_score: (index % 15) + 1,
-        expected_state: 'pass_green',
+        publication_event_id: index % 15 < 10 ? `publication-${index}` : null,
+        normalized_score: index % 15 < 10 ? (index % 15) + 1 : null,
+        outcome_source_status: index % 15 < 10 ? 'complete' : null,
+        expected_state: index % 15 < 10 ? 'pass_green' : 'block_red',
         adjudication_severity: 'advisory',
       };
     });
-    const requiredKinds = ['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const;
-    const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
-      requiredKinds.map((criticKind) => ({
-        decision_id: decision.id,
-        critic_kind: criticKind,
-        verdict: 'pass',
-        attempt: 0,
-      })));
+    const verdicts: PilotVerdictRow[] = decisions.flatMap((decision, index) =>
+      completeTextVerdicts(decision.id).map((verdict) => (
+        index % 15 >= 10
+        && verdict.provider === 'deterministic'
+        && verdict.critic_kind === 'fact'
+          ? { ...verdict, verdict: 'block' as const }
+          : verdict
+      )));
     const costs: WorkspaceCostTelemetry[] = [
       {
         userId: 'owner-1',
         workspaceKey: '__owner__',
         budgetUsdCents: 1000,
         spendUsd: 1,
-        telemetryCount: 15,
+        telemetryCount: 30,
+        invalidTelemetryCount: 0,
+        pilotSpendUsd: 0.5,
+        pilotTelemetryCount: 30,
+        pilotInvalidTelemetryCount: 0,
+        meteredPilotDecisionCount: 15,
       },
       {
         userId: 'owner-1',
         workspaceKey: 'client-1',
         budgetUsdCents: 1000,
         spendUsd: 1,
-        telemetryCount: 15,
+        telemetryCount: 30,
+        invalidTelemetryCount: 0,
+        pilotSpendUsd: 0.5,
+        pilotTelemetryCount: 30,
+        pilotInvalidTelemetryCount: 0,
+        meteredPilotDecisionCount: 15,
       },
     ];
 
@@ -260,7 +329,13 @@ describe('learning release readiness', () => {
       severeFalsePasses: 0,
       falseHoldRate: 0,
       requiredAvailability: 1,
+      releaseJudgeAvailability: 1,
+      releaseJudgeTelemetryCoverage: 1,
+      releaseJudgeInvocations: 20,
       decisionReceiptCoverage: 1,
+      predictionSampleCount: 20,
+      predictionWorkspaceCount: 2,
+      predictionMinWorkspaceSamples: 10,
       rankCorrelation: 1,
       criticalBypasses: 0,
       costWithinBudget: true,
@@ -268,6 +343,79 @@ describe('learning release readiness', () => {
     expect(metrics.predictionLift).toBeGreaterThan(0.15);
     expect(evaluateReadiness({ ...metrics, publishingRegressions: 0, killSwitchTested: true }).ready)
       .toBe(true);
+  });
+
+  it('fails cost readiness when generic usage is not attributed to every pilot decision', () => {
+    const decisions: PilotDecisionRow[] = Array.from({ length: 2 }, (_, index) => ({
+      id: `decision-${index}`,
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    }));
+    const genericOnly: WorkspaceCostTelemetry[] = [{
+      userId: 'owner-1',
+      workspaceKey: '__owner__',
+      budgetUsdCents: 1000,
+      spendUsd: 2,
+      telemetryCount: 100,
+      invalidTelemetryCount: 0,
+      pilotSpendUsd: 0.1,
+      pilotTelemetryCount: 1,
+      pilotInvalidTelemetryCount: 0,
+      meteredPilotDecisionCount: 1,
+    }];
+
+    expect(buildReadinessMetrics(decisions, [], genericOnly).costWithinBudget).toBe(false);
+  });
+
+  it('fails cost readiness when any workspace or pilot estimate is missing or negative', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-1',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const completeCost: WorkspaceCostTelemetry = {
+      userId: 'owner-1',
+      workspaceKey: '__owner__',
+      budgetUsdCents: 1000,
+      spendUsd: 1,
+      telemetryCount: 3,
+      invalidTelemetryCount: 0,
+      pilotSpendUsd: 0.5,
+      pilotTelemetryCount: 3,
+      pilotInvalidTelemetryCount: 0,
+      meteredPilotDecisionCount: 1,
+    };
+
+    expect(buildReadinessMetrics(
+      [decision],
+      [],
+      [{ ...completeCost, invalidTelemetryCount: 1 }],
+    ).costWithinBudget).toBe(false);
+    expect(buildReadinessMetrics(
+      [decision],
+      [],
+      [{ ...completeCost, pilotInvalidTelemetryCount: 1 }],
+    ).costWithinBudget).toBe(false);
   });
 
   it('does not count shadow or protected decisions as approval pilot evidence', () => {
@@ -308,27 +456,219 @@ describe('learning release readiness', () => {
       owner_id: 'owner-1',
       mode: 'approval',
       release_state: 'pass_green',
-      summary_json: JSON.stringify({ persistenceState: 'complete' }),
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'pass_green',
+        mediaKind: 'none',
+        judgeStatus: 'available',
+      }),
       publication_event_id: null,
       normalized_score: null,
       expected_state: null,
       adjudication_severity: null,
     }];
     const verdicts: PilotVerdictRow[] = [
+      ...completeTextVerdicts('decision-fallback'),
       {
         decision_id: 'decision-fallback', critic_kind: 'brand',
-        verdict: 'unavailable', attempt: 0,
+        verdict: 'unavailable', attempt: 0, provider: 'unavailable',
       },
-      ...(['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const)
-        .map((criticKind) => ({
-          decision_id: 'decision-fallback', critic_kind: criticKind,
-          verdict: 'pass' as const, attempt: 0,
-        })),
     ];
 
     expect(buildReadinessMetrics(decisions, verdicts, []).requiredAvailability).toBe(1);
     expect(buildReadinessMetrics(decisions, [...verdicts].reverse(), []).requiredAvailability)
       .toBe(1);
+  });
+
+  it('does not let a deterministic pass mask an unavailable independent critic', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-independent-outage',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'hold_amber',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'hold_amber',
+        mediaKind: 'none',
+        judgeStatus: 'not_run',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const verdicts = completeTextVerdicts(decision.id).map((row) =>
+      row.critic_kind === 'brand' && row.provider !== 'deterministic'
+        ? { ...row, verdict: 'unavailable', provider: 'unavailable' }
+        : row);
+
+    const metrics = buildReadinessMetrics([decision], verdicts, []);
+    expect(metrics.requiredAvailability).toBeCloseTo(8 / 9);
+    expect(metrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(metrics.decisionReceiptCoverage).toBe(1);
+  });
+
+  it('does not count critics intentionally skipped after a deterministic hard block', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-deterministic-block',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'block_red',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'block_red',
+        mediaKind: 'image',
+        judgeStatus: 'not_run',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const verdicts: PilotVerdictRow[] = deterministicKinds.map((criticKind) => ({
+      decision_id: decision.id,
+      critic_kind: criticKind,
+      verdict: criticKind === 'brand' ? 'block' : 'pass',
+      attempt: 0,
+      provider: 'deterministic',
+    }));
+
+    const metrics = buildReadinessMetrics([decision], verdicts, []);
+    expect(metrics.requiredAvailability).toBe(1);
+    expect(metrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(metrics.releaseJudgeInvocations).toBe(0);
+    expect(metrics.decisionReceiptCoverage).toBe(1);
+  });
+
+  it('requires the selected media critic for availability and receipt coverage', () => {
+    const decisions: PilotDecisionRow[] = [{
+      id: 'decision-image',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'pass_green',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'pass_green',
+        mediaKind: 'image',
+        judgeStatus: 'available',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    }];
+    const baseVerdicts = completeTextVerdicts('decision-image');
+
+    const missingMedia = buildReadinessMetrics(decisions, baseVerdicts, []);
+    expect(missingMedia.requiredAvailability).toBeCloseTo(9 / 10);
+    expect(missingMedia.decisionReceiptCoverage).toBe(0);
+
+    const complete = buildReadinessMetrics(decisions, [
+      ...baseVerdicts,
+      {
+        decision_id: 'decision-image',
+        critic_kind: 'image',
+        verdict: 'pass',
+        attempt: 0,
+        provider: 'vision_critic',
+      },
+    ], []);
+    expect(complete.requiredAvailability).toBe(1);
+    expect(complete.decisionReceiptCoverage).toBe(1);
+  });
+
+  it('fails closed on unavailable or ambiguous Release Judge telemetry', () => {
+    const decision = (judgeStatus?: string): PilotDecisionRow => ({
+      id: `decision-${judgeStatus ?? 'legacy'}`,
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'hold_amber',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'hold_amber',
+        mediaKind: 'none',
+        ...(judgeStatus ? { judgeStatus } : {}),
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    });
+    const verdicts = (id: string): PilotVerdictRow[] => completeTextVerdicts(id);
+
+    const unavailable = decision('unavailable');
+    const unavailableMetrics = buildReadinessMetrics(
+      [unavailable],
+      verdicts(unavailable.id),
+      [],
+    );
+    expect(unavailableMetrics.releaseJudgeAvailability).toBe(0);
+    expect(unavailableMetrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(unavailableMetrics.decisionReceiptCoverage).toBe(1);
+
+    const ambiguous = decision();
+    const ambiguousMetrics = buildReadinessMetrics(
+      [ambiguous],
+      verdicts(ambiguous.id),
+      [],
+    );
+    expect(ambiguousMetrics.releaseJudgeAvailability).toBe(0);
+    expect(ambiguousMetrics.releaseJudgeTelemetryCoverage).toBe(0);
+    expect(ambiguousMetrics.decisionReceiptCoverage).toBe(0);
+  });
+
+  it('infers legacy judge not-run only when a stored critic verdict proves it', () => {
+    const decision: PilotDecisionRow = {
+      id: 'decision-legacy-block',
+      user_id: 'owner-1',
+      workspace_key: '__owner__',
+      client_id: null,
+      owner_kind: 'user',
+      owner_id: 'owner-1',
+      mode: 'approval',
+      release_state: 'block_red',
+      summary_json: JSON.stringify({
+        persistenceState: 'complete',
+        pipelineState: 'block_red',
+        mediaKind: 'image',
+      }),
+      publication_event_id: null,
+      normalized_score: null,
+      expected_state: null,
+      adjudication_severity: null,
+    };
+    const verdicts: PilotVerdictRow[] = [
+      ...completeTextVerdicts(decision.id),
+      {
+        decision_id: decision.id,
+        critic_kind: 'image',
+        verdict: 'block',
+        attempt: 0,
+        provider: 'vision_critic',
+      },
+    ];
+
+    const metrics = buildReadinessMetrics([decision], verdicts, []);
+    expect(metrics.releaseJudgeTelemetryCoverage).toBe(1);
+    expect(metrics.releaseJudgeInvocations).toBe(0);
+    expect(metrics.releaseJudgeAvailability).toBe(0);
+    expect(metrics.decisionReceiptCoverage).toBe(1);
   });
 
   it('treats latest unavailable critics, incomplete receipts, bypasses and missing cost as unsafe', () => {
@@ -348,15 +688,17 @@ describe('learning release readiness', () => {
       adjudication_severity: 'release_critical',
     }];
     const verdicts: PilotVerdictRow[] = [
-      ...(['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const)
-        .map((criticKind) => ({
-          decision_id: 'decision-1', critic_kind: criticKind,
-          verdict: 'pass' as const, attempt: 0,
-        })),
-      { decision_id: 'decision-1', critic_kind: 'brand', verdict: 'unavailable', attempt: 1 },
+      ...completeTextVerdicts('decision-1'),
+      {
+        decision_id: 'decision-1',
+        critic_kind: 'brand',
+        verdict: 'unavailable',
+        attempt: 1,
+        provider: 'unavailable',
+      },
     ];
     const metrics = buildReadinessMetrics(decisions, verdicts, []);
-    expect(metrics.requiredAvailability).toBe(0.8);
+    expect(metrics.requiredAvailability).toBeCloseTo(8 / 9);
     expect(metrics.decisionReceiptCoverage).toBe(0);
     expect(metrics.falseHoldRate).toBe(1);
     expect(metrics.criticalBypasses).toBe(1);
@@ -376,18 +718,21 @@ describe('learning release readiness', () => {
         mode: 'approval',
         release_state: 'pass_green',
         summary_json: JSON.stringify({
-          persistenceState: 'complete', predictedOutcomeScore: (index % 15) + 1,
+          persistenceState: 'complete',
+          pipelineState: 'pass_green',
+          mediaKind: 'none',
+          judgeStatus: 'available',
+          predictedOutcomeScore: (index % 15) + 1,
         }),
         publication_event_id: `publication-${index}`,
         normalized_score: (index % 15) + 1,
+        outcome_source_status: 'complete',
         expected_state: 'pass_green',
         adjudication_severity: 'advisory',
       };
     });
     const verdicts: PilotVerdictRow[] = decisions.flatMap((decision) =>
-      (['brand', 'fact', 'repetition', 'platform', 'business_harm'] as const).map((criticKind) => ({
-        decision_id: decision.id, critic_kind: criticKind, verdict: 'pass', attempt: 0,
-      })));
+      completeTextVerdicts(decision.id));
     const evidence: ReleaseEvidenceRow[] = [
       ['replay_red_team', null], ['kill_switch', null], ['publish_regression', null],
       ...(['user', 'client', 'shop'] as const).flatMap((kind) => [
@@ -405,7 +750,17 @@ describe('learning release readiness', () => {
       'FROM learning_critic_verdicts': verdicts,
       'FROM learning_release_evidence': evidence,
       'FROM workspace_learning_settings': [{ monthly_ai_budget_usd_cents: 1000 }],
-      'FROM ai_usage': [{ spend_usd: 1, telemetry_count: 30 }],
+      'INNER JOIN learning_decisions usage_decision': [{
+        pilot_spend_usd: 0.5,
+        pilot_telemetry_count: 30,
+        pilot_invalid_telemetry_count: 0,
+        metered_decision_count: 15,
+      }],
+      'FROM ai_usage': [{
+        spend_usd: 1,
+        telemetry_count: 30,
+        invalid_telemetry_count: 0,
+      }],
     });
 
     const snapshot = await collectLearningReadiness(
@@ -431,12 +786,37 @@ describe('learning release readiness', () => {
     expect(pilotCall.binds).toEqual([AUTOPILOT_POLICY_VERSION]);
     expect(pilotCall.sql).toContain("d.owner_kind IN ('user','client')");
     expect(pilotCall.sql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
+    expect(pilotCall.sql).toContain(
+      'LEFT JOIN learning_decision_disqualifications disq',
+    );
+    expect(pilotCall.sql).toContain('INNER JOIN learning_pilot_samples sample');
+    expect(pilotCall.sql).toContain('sample.content_hash = d.content_hash');
+    expect(pilotCall.sql).toContain(
+      'unixepoch(sample.attested_at) <= unixepoch(d.created_at)',
+    );
+    expect(pilotCall.sql).toContain('disq.id IS NULL');
     expect(pilotCall.sql).toContain('a.user_id = d.user_id');
     expect(pilotCall.sql).toContain('pe.owner_id = d.owner_id');
+    expect(pilotCall.sql).toContain('lo.source_status AS outcome_source_status');
+    const attributedCalls = calls.filter((call) =>
+      call.sql.includes('INNER JOIN learning_decisions usage_decision'));
+    expect(attributedCalls).toHaveLength(2);
+    for (const call of attributedCalls) {
+      expect(call.sql).toContain('u.learning_decision_id IN (');
+      expect(call.sql).toContain('usage_decision.user_id = u.user_id');
+      expect(call.sql).toContain('usage_decision.client_id IS u.client_id');
+      expect(call.sql).toContain('usage_decision.post_id = u.post_id');
+    }
   });
 });
 
 describe('readiness cron receipts', () => {
+  const completeSchema = async () => ({
+    decisionDisqualificationsReady: true,
+    aiUsageAttributionReady: true,
+    pilotSamplesReady: true,
+    calibrationAuditsReady: true,
+  });
   const redSnapshot = {
     ready: false,
     metrics: { ...readyMetrics, severeFalsePasses: 1 },
@@ -450,19 +830,92 @@ describe('readiness cron receipts', () => {
 
   it('persists every evaluation and alerts once when readiness turns green to red', async () => {
     const persist = vi.fn(async () => undefined);
+    const quarantine = vi.fn(async () => 2);
     const alert = vi.fn(async () => undefined);
-    const result = await cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
+    const env = { DB: {} as D1Database } as Env;
+    const result = await cronEvaluateLearningReadiness(env, {
       now: new Date('2026-07-14T01:00:00.000Z'),
       collect: async () => redSnapshot,
       loadPrevious: async () => ({ ready: 1 }),
+      loadSchemaState: completeSchema,
+      quarantine,
       persist,
       alert,
       randomId: () => 'readiness-1',
     });
 
-    expect(result).toMatchObject({ posts_processed: 30, ready: false, id: 'readiness-1' });
+    expect(result).toMatchObject({
+      posts_processed: 30,
+      ready: false,
+      id: 'readiness-1',
+      workspaces_disabled: 2,
+    });
+    expect(quarantine).toHaveBeenCalledWith(env.DB, '2026-07-14T01:00:00.000Z');
     expect(persist).toHaveBeenCalledOnce();
+    expect(quarantine.mock.invocationCallOrder[0]).toBeLessThan(
+      persist.mock.invocationCallOrder[0],
+    );
     expect(alert).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith(
+      env,
+      'learning_readiness_green_to_red',
+      'critical',
+      expect.stringMatching(/severeFalsePasses.*workspaces quarantined: 2/),
+    );
+  });
+
+  it('does not alert without an actual green-to-red transition', async () => {
+    const persist = vi.fn(async () => undefined);
+    const alert = vi.fn(async () => undefined);
+    const scenarios = [
+      { previous: null, snapshot: redSnapshot },
+      { previous: { ready: 0 }, snapshot: redSnapshot },
+      { previous: { ready: 1 }, snapshot: { ...redSnapshot, ready: true } },
+    ];
+    let sequence = 0;
+
+    for (const scenario of scenarios) {
+      await cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
+        now: new Date('2026-07-14T01:00:00.000Z'),
+        collect: async () => scenario.snapshot,
+        loadPrevious: async () => scenario.previous,
+        loadSchemaState: completeSchema,
+        quarantine: async () => 0,
+        persist,
+        alert,
+        randomId: () => `readiness-${++sequence}`,
+      });
+    }
+
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('alerts when a quarantine occurs while readiness is already red', async () => {
+    const alert = vi.fn(async () => undefined);
+
+    const result = await cronEvaluateLearningReadiness(
+      { DB: {} as D1Database } as Env,
+      {
+        now: new Date('2026-07-14T01:00:00.000Z'),
+        collect: async () => redSnapshot,
+        loadPrevious: async () => ({ ready: 0 }),
+        loadSchemaState: completeSchema,
+        quarantine: async () => 1,
+        persist: async () => undefined,
+        alert,
+        randomId: () => 'readiness-quarantine',
+      },
+    );
+
+    expect(result.workspaces_disabled).toBe(1);
+    expect(alert).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith(
+      expect.anything(),
+      'learning_severe_false_pass_quarantine',
+      'critical',
+      expect.stringMatching(/disabled for 1 workspace.*operator review required/),
+    );
   });
 
   it('writes no replacement receipt when evidence collection fails', async () => {
@@ -470,11 +923,206 @@ describe('readiness cron receipts', () => {
     await expect(cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
       collect: async () => { throw new Error('D1 unavailable'); },
       loadPrevious: async () => ({ ready: 1 }),
+      loadSchemaState: completeSchema,
       persist,
       alert: async () => undefined,
       randomId: () => 'never',
     })).rejects.toThrow('D1 unavailable');
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before persisting readiness when severe false-pass quarantine fails', async () => {
+    const persist = vi.fn(async () => undefined);
+    await expect(cronEvaluateLearningReadiness({ DB: {} as D1Database } as Env, {
+      collect: async () => redSnapshot,
+      loadPrevious: async () => ({ ready: 1 }),
+      loadSchemaState: completeSchema,
+      quarantine: async () => { throw new Error('quarantine unavailable'); },
+      persist,
+      alert: async () => undefined,
+      randomId: () => 'never',
+    })).rejects.toThrow('quarantine unavailable');
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('persists a complete red receipt without touching deferred pilot tables', async () => {
+    const collect = vi.fn(async () => redSnapshot);
+    const quarantine = vi.fn(async () => 1);
+    const persist = vi.fn(async () => undefined);
+    const alert = vi.fn(async () => undefined);
+
+    const result = await cronEvaluateLearningReadiness(
+      { DB: {} as D1Database } as Env,
+      {
+        now: new Date('2026-07-14T01:00:00.000Z'),
+        collect,
+        loadPrevious: async () => ({ ready: 0 }),
+        loadSchemaState: async () => ({
+          decisionDisqualificationsReady: false,
+          aiUsageAttributionReady: false,
+          pilotSamplesReady: false,
+          calibrationAuditsReady: false,
+        }),
+        quarantine,
+        persist,
+        alert,
+        randomId: () => 'readiness-deferred',
+      },
+    );
+
+    expect(result).toEqual({
+      posts_processed: 0,
+      ready: false,
+      id: 'readiness-deferred',
+      workspaces_disabled: 0,
+      decision_disqualifications_schema_ready: 0,
+      ai_usage_attribution_schema_ready: 0,
+      pilot_samples_schema_ready: 0,
+      calibration_audits_schema_ready: 0,
+    });
+    expect(collect).not.toHaveBeenCalled();
+    expect(quarantine).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+    expect(persist).toHaveBeenCalledOnce();
+    const persisted = persist.mock.calls[0][1];
+    expect(persisted.snapshot.ready).toBe(false);
+    expect(persisted.snapshot.metrics).toMatchObject({
+      pilotDecisions: 0,
+      falseHoldRate: 1,
+      publishingRegressions: 1,
+      costWithinBudget: false,
+      killSwitchTested: false,
+    });
+    expect(hasCompleteLearningReadinessChecksSchema(
+      persisted.snapshot.checks,
+    )).toBe(true);
+  });
+
+  it('alerts on a green-to-red transition when required schemas are deferred', async () => {
+    const alert = vi.fn(async () => undefined);
+
+    await cronEvaluateLearningReadiness(
+      { DB: {} as D1Database } as Env,
+      {
+        loadPrevious: async () => ({ ready: 1 }),
+        loadSchemaState: async () => ({
+          decisionDisqualificationsReady: true,
+          aiUsageAttributionReady: true,
+          pilotSamplesReady: false,
+          calibrationAuditsReady: true,
+        }),
+        persist: async () => undefined,
+        alert,
+        randomId: () => 'readiness-deferred-transition',
+      },
+    );
+
+    expect(alert).toHaveBeenCalledOnce();
+    expect(alert).toHaveBeenCalledWith(
+      expect.anything(),
+      'learning_readiness_green_to_red',
+      'critical',
+      expect.stringMatching(/Protected Autopilot readiness turned red/),
+    );
+  });
+});
+
+describe('readiness schema preflight', () => {
+  it('reports each deferred structure independently without querying any of them', async () => {
+    const { db, calls } = makeRecordingD1({
+      'FROM sqlite_master': [{
+        decision_disqualifications_count: 1,
+        ai_usage_attribution_count: 1,
+        pilot_samples_count: 1,
+        calibration_audits_count: 0,
+      }],
+    });
+
+    await expect(loadLearningReadinessSchemaState(db)).resolves.toEqual({
+      decisionDisqualificationsReady: true,
+      aiUsageAttributionReady: true,
+      pilotSamplesReady: true,
+      calibrationAuditsReady: false,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('first');
+    expect(calls[0].sql).toContain('FROM sqlite_master');
+    expect(calls[0].sql).not.toContain('FROM learning_pilot_samples');
+    expect(calls[0].sql).not.toContain('FROM learning_calibration_audits');
+  });
+
+  it('rejects ambiguous schema metadata instead of assuming readiness', async () => {
+    const { db } = makeRecordingD1({
+      'FROM sqlite_master': [{
+        decision_disqualifications_count: 1,
+        ai_usage_attribution_count: 1,
+        pilot_samples_count: 2,
+        calibration_audits_count: 1,
+      }],
+    });
+
+    await expect(loadLearningReadinessSchemaState(db))
+      .rejects.toThrow('invalid learning_pilot_samples count');
+  });
+});
+
+describe('severe false-pass quarantine repository', () => {
+  const identity = {
+    userId: 'owner-1', workspaceKey: 'client-1', clientId: 'client-1',
+    ownerKind: 'client' as const, ownerId: 'client-1',
+  };
+
+  it('binds a severe false-pass lookup to the complete canonical tenant identity', async () => {
+    const { db, calls } = makeRecordingD1({
+      'INNER JOIN learning_adjudications a': [{ severe_false_pass: 1 }],
+    });
+
+    await expect(hasWorkspaceSevereFalsePass(db, identity)).resolves.toBe(true);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('a.workspace_key = d.workspace_key');
+    expect(calls[0].sql).toContain('a.client_id IS d.client_id');
+    expect(calls[0].sql).toContain("d.stage = 'release'");
+    expect(calls[0].sql).toContain('FROM learning_calibration_audits audit');
+    expect(calls[0].sql).toContain("audit.audit_status = 'completed'");
+    expect(calls[0].sql).toContain("audit.source_status = 'verified'");
+    expect(calls[0].binds).toEqual([
+      'owner-1', 'client-1', 'client-1', 'client', 'client-1',
+      'owner-1', 'client-1', 'client-1', 'client', 'client-1',
+    ]);
+  });
+
+  it('downgrades only protected workspaces with a tenant-matched severe false pass', async () => {
+    const { db, calls } = makeRecordingD1();
+    const now = '2026-07-14T01:00:00.000Z';
+
+    await expect(quarantineSevereFalsePassWorkspaces(db, now)).resolves.toBe(0);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe('run');
+    expect(calls[0].sql).toContain("WHERE mode = 'protected_autopilot'");
+    expect(calls[0].sql).toContain('d.user_id = workspace_learning_settings.user_id');
+    expect(calls[0].sql).toContain('d.client_id IS workspace_learning_settings.client_id');
+    expect(calls[0].sql).toContain("d.stage = 'release'");
+    expect(calls[0].sql).toContain('FROM learning_calibration_audits audit');
+    expect(calls[0].sql).toContain("audit.audit_status = 'completed'");
+    expect(calls[0].sql).toContain("audit.source_status = 'verified'");
+    expect(calls[0].binds).toEqual([SEVERE_FALSE_PASS_DISABLED_REASON, now]);
+  });
+
+  it('returns a sanitized count of newly quarantined workspaces', async () => {
+    const statement = {
+      bind() { return statement; },
+      async run() { return { meta: { changes: 2 } }; },
+    };
+    const db = {
+      prepare() { return statement; },
+    } as unknown as D1Database;
+
+    await expect(quarantineSevereFalsePassWorkspaces(
+      db,
+      '2026-07-14T01:00:00.000Z',
+    )).resolves.toBe(2);
   });
 });
 
@@ -505,6 +1153,14 @@ describe('protected autopilot mode gates', () => {
     const scenarios: ModeOptions[] = [
       { requested: 'protected_autopilot', consent: false },
       { requested: 'protected_autopilot', consent: true, readiness: false },
+      {
+        requested: 'protected_autopilot', consent: true,
+        disabledReason: 'severe_false_pass_pending_operator_review',
+      },
+      {
+        requested: 'protected_autopilot', consent: true,
+        severeFalsePass: true,
+      },
       {
         requested: 'protected_autopilot', consent: true,
         tenancyProofs: { client: false },
@@ -563,5 +1219,29 @@ describe('protected autopilot mode gates', () => {
       modeEnv({ requested: 'protected_autopilot', consent: true, shop }),
       shop, null, 'shop', shop, now,
     )).resolves.toBe('protected_autopilot');
+  });
+
+  it('does not let routine settings updates clear an operator-review quarantine', async () => {
+    const { db, calls } = makeRecordingD1();
+    await saveWorkspaceLearningSettings(
+      db,
+      {
+        userId: 'u1', workspaceKey: 'c1', clientId: 'c1',
+        ownerKind: 'client', ownerId: 'c1',
+      },
+      {
+        mode: 'approval',
+        autopublishConsentAt: null,
+        autopublishPolicyVersion: null,
+        experimentRate: 0,
+        monthlyAiBudgetUsdCents: 1000,
+      },
+      '2026-07-14T00:10:00.000Z',
+    );
+
+    const write = calls.find((call) => call.method === 'run');
+    expect(write?.sql).not.toContain('disabled_reason = NULL');
+    expect(write?.sql).toContain("AND excluded.mode = 'protected_autopilot' THEN 'approval'");
+    expect(write?.sql).toContain('IS NOT NULL THEN 0');
   });
 });

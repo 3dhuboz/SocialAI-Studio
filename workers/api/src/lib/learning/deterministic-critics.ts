@@ -13,11 +13,12 @@ export interface TextCriticCandidate {
 export interface TextCriticContext {
   profile: Record<string, unknown>;
   verifiedFacts: string[];
+  currentVerifiedFacts?: string[];
   forbiddenSubjects: string[];
   recentPostDigests: string[];
 }
 
-const RULE_VERSION = '2026-07-14';
+const RULE_VERSION = '2026-07-24';
 const PLATFORM_LIMITS: Record<string, { maxCaption: number; maxHashtags: number }> = {
   facebook: { maxCaption: 63_206, maxHashtags: 10 },
   instagram: { maxCaption: 2_200, maxHashtags: 30 },
@@ -29,6 +30,29 @@ const PROMPT_INJECTION_PATTERNS = [
   /reveal\s+(?:your|the)\s+(?:prompt|instructions)/i,
   /bypass\s+(?:the\s+)?(?:guardrails|safety)/i,
 ];
+const VOLATILE_EVENT_PATTERN =
+  /\b(?:tickets?|admission|entry fee|family pass|festival|event|competition|live music|market stalls?|food vendors?|cooking (?:demos?|demonstrations?)|workshops?|doors open|all day|father'?s day|mother'?s day|this weekend|next weekend|today|tomorrow|limited time|bookings?|rsvp)\b/i;
+const MATERIAL_STOP_WORDS = new Set([
+  'a',
+  'all',
+  'an',
+  'and',
+  'at',
+  'bring',
+  'by',
+  'for',
+  'from',
+  'in',
+  'is',
+  'of',
+  'on',
+  'or',
+  'our',
+  'the',
+  'to',
+  'with',
+  'your',
+]);
 
 function result(
   kind: CriticKind,
@@ -65,15 +89,46 @@ function tokenSimilarity(left: string, right: string): number {
 }
 
 function concreteClaims(content: string): string[] {
+  const months =
+    '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
   const patterns = [
     /(?:A\$|\$|AUD\s*)\d+(?:\.\d{1,2})?/gi,
     /\b\d{1,3}(?:\.\d+)?\s?%(?!\w)/g,
     /\b(?:\+?61|0)[2-478](?:[\s-]?\d){8}\b/g,
     /\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/g,
+    new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${months}(?:\\s+\\d{4})?\\b`, 'gi'),
+    new RegExp(`\\b${months}\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?\\b`, 'gi'),
+    /\b\d{1,2}(?::\d{2})?\s?(?:am|pm)(?:\s*[-\u2013]\s*\d{1,2}(?::\d{2})?\s?(?:am|pm))?\b/gi,
+    /\b(?:father'?s|mother'?s)\s+day(?:\s+weekend)?\b/gi,
     /\b\d{1,5}\s+[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,3}\s+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Lane|Ln|Highway|Hwy)\b/gi,
     /\b(?:free|half[ -]price|buy one get one|limited offer|save\s+\d+(?:\.\d+)?\s?%)\b/gi,
   ];
   return [...new Set(patterns.flatMap((pattern) => content.match(pattern) ?? []))];
+}
+
+function materialTokens(value: string): string[] {
+  return normalizeText(value)
+    .split(' ')
+    .filter((token) => token.length >= 3 && !MATERIAL_STOP_WORDS.has(token));
+}
+
+function currentFactCoverage(claim: string, currentFactCorpus: string): number {
+  const tokens = [...new Set(materialTokens(claim))];
+  if (tokens.length === 0 || !currentFactCorpus) return 0;
+  const corpusTokens = new Set(materialTokens(currentFactCorpus));
+  return tokens.filter((token) => corpusTokens.has(token)).length / tokens.length;
+}
+
+function volatileEventClaims(content: string): string[] {
+  return content
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment && VOLATILE_EVENT_PATTERN.test(segment));
+}
+
+function conciseEvidence(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length <= 180 ? normalized : `${normalized.slice(0, 177)}...`;
 }
 
 export function runDeterministicCritics(
@@ -97,22 +152,35 @@ export function runDeterministicCritics(
       })
     : result('brand', { evidence: brandEvidence });
 
-  const trustedCorpus = normalizeText(
-    `${JSON.stringify(context.profile)} ${context.verifiedFacts.join(' ')}`,
+  // Profiles guide brand voice but are not proof for volatile commercial claims.
+  const currentFactCorpus = normalizeText(
+    (context.currentVerifiedFacts ?? context.verifiedFacts).join(' '),
   );
-  const unsupportedClaims = concreteClaims(input.content).filter(
-    (claim) => !trustedCorpus.includes(normalizeText(claim)),
+  const unsupportedConcreteClaims = concreteClaims(input.content).filter(
+    (claim) => !currentFactCorpus.includes(normalizeText(claim)),
   );
+  const unsupportedEventClaims = volatileEventClaims(input.content).filter(
+    (claim) => currentFactCoverage(claim, currentFactCorpus) < 0.6,
+  );
+  const unsupportedClaims = [
+    ...unsupportedConcreteClaims,
+    ...unsupportedEventClaims.map((claim) => `Event detail: ${conciseEvidence(claim)}`),
+  ];
   const fact = unsupportedClaims.length > 0
     ? result('fact', {
         verdict: 'warn_repairable',
         severity: 'release_critical',
-        evidence: ['fact.verified_claims', ...unsupportedClaims],
+        evidence: [
+          'fact.current_verified_claims',
+          ...unsupportedClaims.slice(0, 3),
+        ],
         repairs: [
-          `Remove or replace unsupported claims: ${unsupportedClaims.join(', ')}`,
+          'Remove or replace unsupported prices, dates, venues, offers, availability, and event details using current verified facts only.',
         ],
       })
-    : result('fact', { evidence: ['fact.verified_claims'] });
+    : result('fact', {
+        evidence: ['fact.verified_claims', 'fact.current_verified_claims'],
+      });
 
   const nearestDuplicate = context.recentPostDigests.find(
     (recent) =>

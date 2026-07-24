@@ -2,9 +2,8 @@
  * AI-cost regression tests — guards the 2026-05-16 cost-cuts PR.
  *
  * Three behaviours we never want to regress:
- *   (a) Score=5 ships (no regen). The audit raised the regen bar from
- *       "<=5 regen" to "<5 regen" because empirical retries on score=5
- *       rarely lift it but always cost ~$0.04 FLUX + $0.003 critique.
+ *   (a) A score at the shared acceptance threshold ships; lower scores
+ *       regenerate. The strict-less-than SQL contract prevents drift.
  *   (b) Draft posts are excluded from runBacklogRegen. Drafts may never
  *       publish, so paying to regen their images up front is waste.
  *   (c) logAiUsage writes a row to D1 with the canonical column set, so
@@ -15,7 +14,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runBacklogRegen, backfillImagesForUser } from '../backfill';
-import { logAiUsage } from '../ai-usage';
+import {
+  assertLearningDecisionUsageScopeComplete,
+  logAiUsage,
+  withLearningDecisionUsageScope,
+} from '../ai-usage';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../../shared/critique-thresholds';
 import type { Env } from '../../env';
 
 // ── D1 fake ────────────────────────────────────────────────────────────────
@@ -72,10 +76,9 @@ function makeEnv(db: ReturnType<typeof makeFakeDB>, overrides: Partial<Env> = {}
 describe('AI-cost regression — runBacklogRegen', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it('(a) score=5 does NOT trigger regen — only score < 5 is pulled', async () => {
-    // The threshold default is 5; the predicate is `score < ?` so a row
-    // with score=5 must not appear in the COUNT(*) result. We simulate
-    // this by having the fake D1 say "no pending work" (n=0) and asserting
+  it('(a) the acceptance score does NOT trigger regen', async () => {
+    // A row at the threshold must not appear in the COUNT(*) result. We
+    // simulate this by having the fake D1 say "no pending work" (n=0) and asserting
     // that the COUNT query body uses `<`, not `<=`.
     const db = makeFakeDB({ countResult: { n: 0 } });
     const env = makeEnv(db);
@@ -88,7 +91,7 @@ describe('AI-cost regression — runBacklogRegen', () => {
     expect(countCall!.sql).toMatch(/image_critique_score\s*<\s*\?/);
     expect(countCall!.sql).not.toMatch(/image_critique_score\s*<=\s*\?/);
     // Threshold binding is the first positional param.
-    expect(countCall!.bindings[0]).toBe(5);
+    expect(countCall!.bindings[0]).toBe(CRITIQUE_ACCEPT_THRESHOLD);
   });
 
   it('(b) Draft posts are excluded from runBacklogRegen — status=Scheduled only', async () => {
@@ -157,10 +160,13 @@ describe('AI-cost regression — logAiUsage', () => {
     expect(db.calls.length).toBe(1);
     const call = db.calls[0];
     expect(call.kind).toBe('run');
-    // SQL must target ai_usage and the 11 columns we agreed on.
+    // Normal production writes must target the deployed pre-v45 schema.
     expect(call.sql).toMatch(/INSERT INTO ai_usage/i);
     expect(call.sql).toMatch(/user_id, client_id, provider, model, operation/);
-    expect(call.sql).toMatch(/tokens_in, tokens_out, images_generated, est_cost_usd, post_id, ok/);
+    expect(call.sql).toMatch(
+      /tokens_in, tokens_out, images_generated, est_cost_usd, post_id, ok/,
+    );
+    expect(call.sql).not.toContain('learning_decision_id');
     // Positional bindings — column order from helper matches SQL.
     expect(call.bindings).toEqual([
       'user_123',
@@ -194,7 +200,7 @@ describe('AI-cost regression — logAiUsage', () => {
     expect(bindings[bindings.length - 1]).toBe(0);    // ok
   });
 
-  it('is a no-op when env.ENVIRONMENT is set to anything other than production', async () => {
+  it('is a no-op in local development', async () => {
     const db = makeFakeDB();
     const env = makeEnv(db, { ENVIRONMENT: 'dev' } as any);
     await logAiUsage(env, {
@@ -204,6 +210,46 @@ describe('AI-cost regression — logAiUsage', () => {
     });
     // Must not have issued any D1 writes.
     expect(db.calls.length).toBe(0);
+  });
+
+  it('writes in staging so release cost evidence can be proven', async () => {
+    const db = makeFakeDB();
+    const env = makeEnv(db, { ENVIRONMENT: 'staging' } as any);
+    await logAiUsage(env, {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      operation: 'learning_text_council',
+    });
+    expect(db.calls).toHaveLength(1);
+  });
+
+  it('attributes a scoped call without leaking the decision to the parent env', async () => {
+    const db = makeFakeDB();
+    const env = makeEnv(db, { ENVIRONMENT: 'staging' } as any);
+    const scoped = withLearningDecisionUsageScope(env, 'decision-pilot-1');
+    await logAiUsage(scoped, {
+      userId: 'owner-1',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      operation: 'learning_release_judge',
+      postId: 'post-1',
+      estCostUsd: 0.003,
+    });
+    await logAiUsage(env, {
+      userId: 'owner-1',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      operation: 'caption',
+      postId: 'post-2',
+      estCostUsd: 0.001,
+    });
+
+    expect(db.calls[0].sql).toContain('learning_decision_id');
+    expect(db.calls[0].bindings.at(-2)).toBe('decision-pilot-1');
+    expect(db.calls[1].sql).not.toContain('learning_decision_id');
+    expect(() =>
+      assertLearningDecisionUsageScopeComplete(scoped, 'decision-pilot-1'))
+      .not.toThrow();
   });
 
   it('writes when env.ENVIRONMENT is undefined (today\'s prod deploy)', async () => {
@@ -248,6 +294,35 @@ describe('AI-cost regression — logAiUsage', () => {
       model: 'flux-dev',
       operation: 'image-gen',
     })).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
+  it('fails a scoped pilot closed when its attribution row cannot persist', async () => {
+    const env: Env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({
+            run: async () => { throw new Error('D1 unavailable'); },
+          }),
+        }),
+      } as unknown as Env['DB'],
+      ENVIRONMENT: 'staging',
+      CLERK_SECRET_KEY: 'test',
+    } as Env;
+    const scoped = withLearningDecisionUsageScope(env, 'decision-pilot-1');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* swallow */ });
+
+    await expect(logAiUsage(scoped, {
+      userId: 'owner-1',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      operation: 'learning_release_judge',
+      postId: 'post-1',
+    })).rejects.toThrow('Learning AI usage attribution failed');
+    expect(() =>
+      assertLearningDecisionUsageScopeComplete(scoped, 'decision-pilot-1'))
+      .toThrow('Learning AI usage attribution is incomplete');
     expect(warnSpy).toHaveBeenCalledOnce();
     warnSpy.mockRestore();
   });

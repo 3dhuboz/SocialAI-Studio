@@ -5,6 +5,7 @@ import {
   listDecisionReceipts,
   replaceCriticVerdicts,
 } from '../lib/learning/decision-repository';
+import { RELEASE_CRITIC_POLICY_VERSION } from '../lib/learning/critic-types';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
 describe('learning decision repository', () => {
@@ -99,6 +100,7 @@ describe('learning decision repository', () => {
 
     expect(calls[0].sql).toContain("d.stage = 'release'");
     expect(calls[0].sql).toContain("datetime('now', '-24 hours')");
+    expect(calls[0].sql).toContain("$.criticPolicyVersion");
     expect(calls[0].sql).toContain('learning_critic_verdicts');
     expect(calls[0].sql).toContain('verdictCount');
     expect(calls[0].sql).toContain('d.client_id IS ?');
@@ -106,7 +108,7 @@ describe('learning decision repository', () => {
     expect(calls[0].sql).toContain('d.owner_id = ?');
     expect(calls[0].binds).toEqual([
       'owner_1', 'client_1', 'client_1', 'client', 'client_1',
-      'post_1', 'content-hash', 'shadow',
+      'post_1', 'content-hash', 'shadow', RELEASE_CRITIC_POLICY_VERSION,
     ]);
   });
 

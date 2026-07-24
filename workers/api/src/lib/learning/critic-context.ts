@@ -33,6 +33,18 @@ export interface CriticContext {
   forbiddenSubjects: string[];
 }
 
+export type CriticContextReadinessReason =
+  | 'business_profile'
+  | 'verified_facts'
+  | 'missing_business_context';
+
+export interface CriticContextReadiness {
+  ready: boolean;
+  reason: CriticContextReadinessReason;
+  meaningfulProfileFields: string[];
+  verifiedFactCount: number;
+}
+
 interface FactRow {
   client_id?: string | null;
   fact_type: string;
@@ -57,6 +69,85 @@ function parseProfile(profile: string | null | undefined): Record<string, unknow
   } catch {
     return {};
   }
+}
+
+const BUSINESS_CONTEXT_PROFILE_FIELDS = new Set([
+  'businesstype',
+  'contenttopics',
+  'customerstories',
+  'description',
+  'hottakes',
+  'industry',
+  'productsservices',
+  'tacticaltips',
+  'targetaudience',
+  'type',
+  'uniquevalue',
+  'weeklymaterial',
+]);
+
+const EMPTY_CONTEXT_VALUES = new Set([
+  '-',
+  'n/a',
+  'na',
+  'none',
+  'not applicable',
+  'not set',
+  'tbc',
+  'tbd',
+  'unknown',
+]);
+
+function normalizedProfileField(field: string): string {
+  return field.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function hasMeaningfulContextValue(value: unknown): boolean {
+  if (typeof value === 'string') {
+    const normalized = value.trim().replace(/\s+/g, ' ').toLowerCase();
+    return normalized.length >= 2 && !EMPTY_CONTEXT_VALUES.has(normalized);
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasMeaningfulContextValue(entry));
+  }
+  return false;
+}
+
+export function assessCriticContextReadiness(
+  context: Pick<CriticContext, 'profile' | 'verifiedFacts'>,
+): CriticContextReadiness {
+  const meaningfulProfileFields = Object.entries(context.profile)
+    .filter(([field, value]) =>
+      BUSINESS_CONTEXT_PROFILE_FIELDS.has(normalizedProfileField(field))
+      && hasMeaningfulContextValue(value))
+    .map(([field]) => field)
+    .sort();
+  const verifiedFactCount = context.verifiedFacts.filter(
+    (fact) => hasMeaningfulContextValue(fact.content),
+  ).length;
+
+  if (verifiedFactCount > 0) {
+    return {
+      ready: true,
+      reason: 'verified_facts',
+      meaningfulProfileFields,
+      verifiedFactCount,
+    };
+  }
+  if (meaningfulProfileFields.length > 0) {
+    return {
+      ready: true,
+      reason: 'business_profile',
+      meaningfulProfileFields,
+      verifiedFactCount,
+    };
+  }
+  return {
+    ready: false,
+    reason: 'missing_business_context',
+    meaningfulProfileFields,
+    verifiedFactCount,
+  };
 }
 
 export async function loadCriticContext(

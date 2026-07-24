@@ -14,14 +14,14 @@
  * shippable. Below this, the image is regenerated up to MAX_REGEN_ATTEMPTS
  * times before the publish-time guard kicks in.
  *
- * Tuned 2026-05: 5 was the sweet spot — 4 let visibly off-archetype images
- * through (food on a SaaS post passed the gate); 6 made the regen queue
- * thrash on legitimate prompts that just didn't render hero-quality.
+ * Tightened 2026-07: the critic rubric defines 4-6 as only a partial match.
+ * A business post must score 7+ (a clear, specific visual match) before any
+ * unattended publishing path can accept it.
  */
-export const CRITIQUE_ACCEPT_THRESHOLD = 5;
+export const CRITIQUE_ACCEPT_THRESHOLD = 7;
 
 /**
- * Max FLUX regen attempts per post. After this many tries, the post is
+ * Maximum image-generation attempts per post. After this many tries, the post is
  * excluded from the regen queue and (if its scheduled_for arrives without
  * the score recovering) gets marked Missed by the publish-time quality
  * guard in cron/publish-missed.ts. Without a cap, a post whose caption is

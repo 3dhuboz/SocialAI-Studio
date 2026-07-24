@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import {
+  evaluatePermanentPublishBlock,
   publishPersistedPost,
   recordPublishedPostBestEffort,
   type PersistedPublishPost,
@@ -10,6 +12,154 @@ import {
   type PublicationRecordDeps,
 } from '../lib/publishing/publish-orchestrator';
 import { makeRecordingD1 } from './helpers/recording-d1';
+
+interface ProductionSource {
+  path: string;
+  source: string;
+}
+
+function productionTypeScriptSources(root: string): ProductionSource[] {
+  const sources: ProductionSource[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') visit(resolve(directory, entry.name));
+        continue;
+      }
+      if (!entry.isFile() || !/\.(?:ts|tsx)$/.test(entry.name)) continue;
+      if (/\.(?:test|spec)\.(?:ts|tsx)$/.test(entry.name)) continue;
+      const path = resolve(directory, entry.name);
+      sources.push({ path, source: readFileSync(path, 'utf8') });
+    }
+  };
+  visit(root);
+  return sources;
+}
+
+function productionPublicationSources(roots: readonly string[]): ProductionSource[] {
+  return roots.flatMap((root) => productionTypeScriptSources(root));
+}
+
+function requestMethod(call: ts.CallExpression): string {
+  const init = call.arguments[1];
+  if (!init || !ts.isObjectLiteralExpression(init)) return init ? 'UNKNOWN' : 'GET';
+  if (init.properties.some((property) => ts.isSpreadAssignment(property))) {
+    return 'UNKNOWN';
+  }
+  const method = init.properties.find((property) => {
+    if (!('name' in property) || !property.name) return false;
+    return (ts.isIdentifier(property.name) && property.name.text === 'method')
+      || (ts.isStringLiteral(property.name) && property.name.text === 'method');
+  });
+  if (!method) return 'GET';
+  if (!ts.isPropertyAssignment(method) || !ts.isStringLiteralLike(method.initializer)) {
+    return 'UNKNOWN';
+  }
+  return method.initializer.text.toUpperCase();
+}
+
+function graphUrlBindings(sourceFile: ts.SourceFile): Set<string> {
+  const declarations = new Map<string, string>();
+  const collect = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.initializer
+    ) {
+      declarations.set(node.name.text, node.initializer.getText(sourceFile));
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(sourceFile);
+
+  const graphBindings = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, initializer] of declarations) {
+      if (graphBindings.has(name)) continue;
+      const directlyGraph = /graph\.facebook\.com/i.test(initializer);
+      const derivedFromGraph = [...graphBindings].some((binding) =>
+        new RegExp(`\\b${binding}\\b`).test(initializer),
+      );
+      if (directlyGraph || derivedFromGraph) {
+        graphBindings.add(name);
+        changed = true;
+      }
+    }
+  }
+  return graphBindings;
+}
+
+function providerPublicationBypasses(sources: ProductionSource[]): string[] {
+  const bypasses: string[] = [];
+  for (const item of sources) {
+    const normalizedPath = item.path.replace(/\\/g, '/');
+    const isOrchestrator = normalizedPath.endsWith(
+      '/lib/publishing/publish-orchestrator.ts',
+    );
+    const sourceFile = ts.createSourceFile(
+      item.path,
+      item.source,
+      ts.ScriptTarget.Latest,
+      true,
+      item.path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    for (const statement of sourceFile.statements) {
+      if (!ts.isImportDeclaration(statement) || isOrchestrator) continue;
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+      if (!/(?:^|\/)postproxy$/.test(statement.moduleSpecifier.text)) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        bypasses.push(`${normalizedPath}: namespace Postproxy import`);
+      }
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          if ((element.propertyName?.text ?? element.name.text) === 'createPost') {
+            bypasses.push(`${normalizedPath}: direct Postproxy createPost import`);
+          }
+        }
+      }
+    }
+
+    const graphBindings = graphUrlBindings(sourceFile);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const expression = node.expression;
+        const rawFetch = (ts.isIdentifier(expression) && expression.text === 'fetch')
+          || (ts.isPropertyAccessExpression(expression)
+            && expression.name.text === 'fetch'
+            && expression.expression.getText(sourceFile) === 'globalThis');
+        const urlText = node.arguments[0]?.getText(sourceFile) ?? '';
+        const graphTarget = /graph\.facebook\.com/i.test(urlText)
+          || [...graphBindings].some((binding) =>
+            new RegExp(`\\b${binding}\\b`).test(urlText),
+          );
+        const method = requestMethod(node);
+        if (
+          rawFetch
+          && graphTarget
+          && (method === 'POST' || method === 'UNKNOWN')
+          && !isOrchestrator
+        ) {
+          const callText = node.getText(sourceFile);
+          const diagnosticReelStart = normalizedPath.endsWith('/routes/facebook.ts')
+            && /\/video_reels\b/.test(callText)
+            && /upload_phase\s*:\s*['"]start['"]/.test(callText)
+            && !/video_state\s*=\s*PUBLISHED|upload_phase\s*:\s*['"](?:finish|transfer)['"]/.test(callText);
+          if (!diagnosticReelStart) {
+            const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+            bypasses.push(`${normalizedPath}:${position.line + 1}: raw Facebook POST`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return bypasses;
+}
 
 const fixturePost: PersistedPublishPost = {
   id: 'p1',
@@ -21,6 +171,8 @@ const fixturePost: PersistedPublishPost = {
   platform: 'facebook',
   hashtags: '[]',
   image_url: 'https://cdn.example/image.jpg',
+  image_critique_score: 8,
+  image_critique_reasoning: 'Relevant and safe.',
   post_type: 'image',
   video_url: null,
   video_status: null,
@@ -44,9 +196,18 @@ const graphTarget = {
   init: { method: 'POST' },
 };
 
+const graphReelFinishTarget = {
+  backend: 'graph_reel' as const,
+  pageId: 'page-1',
+  pageAccessToken: 'page-token',
+  description: 'Safe reel caption',
+  videoId: 'video-1',
+};
+
 function safeDeps(calls: { critic: number; postproxy: number; graph: number }): Partial<PublishOrchestratorDeps> {
   return {
     validateWorkspace: async () => undefined,
+    evaluatePermanentBlock: async () => null,
     evaluatePreflight: async () => {
       calls.critic += 1;
       return {
@@ -68,7 +229,335 @@ function safeDeps(calls: { critic: number; postproxy: number; graph: number }): 
   };
 }
 
+describe('evaluatePermanentPublishBlock', () => {
+  it('permanently blocks a low-scoring image even when learning enforcement is off', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('provided critique score should avoid a database read');
+    });
+
+    const result = await evaluatePermanentPublishBlock(
+      {
+        DB: { prepare } as unknown as D1Database,
+        ENVIRONMENT: 'production',
+        LEARNING_RELEASE_ENFORCEMENT: 'false',
+      } as Env,
+      { ...fixturePost, image_critique_score: 4 },
+    );
+
+    expect(result).toMatchObject({ state: 'block_red', mayPublish: false, mustHold: true });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('detects the never-publish marker without a database read', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('database must not be read for an explicit QA marker');
+    });
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: { prepare } as unknown as D1Database } as Env,
+      {
+        ...fixturePost,
+        content: '[STAGING QA FIXTURE - NEVER PUBLISH] Guaranteed revenue.',
+      },
+    );
+
+    expect(result).toEqual({
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('uses tenant-scoped staging disqualification receipts', async () => {
+    const { db, calls } = makeRecordingD1({
+      'INNER JOIN learning_decision_disqualifications disq': [
+        { decision_id: 'decision-qa-1' },
+      ],
+    });
+    const post: PersistedPublishPost = {
+      ...fixturePost,
+      id: 'client-post-1',
+      user_id: 'owner-1',
+      client_id: 'client-1',
+      owner_kind: 'client',
+      owner_id: 'client-1',
+    };
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      post,
+    );
+
+    expect(result).toMatchObject({
+      state: 'block_red',
+      mayPublish: false,
+      decisionId: 'decision-qa-1',
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0].sql).toContain('learning_pilot_enrollments enrollment');
+    expect(calls[0].sql).toContain('learning_pilot_generated_drafts generated');
+    expect(calls[0].sql).toContain('learning_pilot_media_jobs media');
+    expect(calls[1].sql).toContain('INNER JOIN learning_decision_disqualifications disq');
+    expect(calls[1].sql).toContain("disq.reason = 'synthetic_qa'");
+    expect(calls[1].binds).toEqual([
+      'owner-1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'client-post-1',
+    ]);
+  });
+
+  it('permanently blocks a receipt-bound staging pilot draft by exact tenant tuple', async () => {
+    const { db, calls } = makeRecordingD1({
+      'learning_pilot_generated_drafts generated': [
+        { block_source: 'generated_pilot_draft' },
+      ],
+    });
+    const post: PersistedPublishPost = {
+      ...fixturePost,
+      id: 'generated-post-1',
+      user_id: 'owner-1',
+      client_id: 'client-1',
+      owner_kind: 'client',
+      owner_id: 'client-1',
+    };
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      post,
+    );
+
+    expect(result).toEqual({
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].binds).toEqual([
+      'owner-1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'generated-post-1',
+    ]);
+  });
+
+  it.each(['image', 'video'] as const)(
+    'permanently blocks a copied record-only staging %s draft by exact tenant tuple',
+    async (postType) => {
+      const { db, calls } = makeRecordingD1({
+        'learning_pilot_enrollments enrollment': [
+          { block_source: 'record_only_enrollment' },
+        ],
+      });
+      const post: PersistedPublishPost = {
+        ...fixturePost,
+        id: `pilot-copy-${postType}`,
+        user_id: 'owner-1',
+        client_id: 'client-1',
+        owner_kind: 'client',
+        owner_id: 'client-1',
+        post_type: postType,
+        image_url: postType === 'image'
+          ? 'https://cdn.example/pilot-image.jpg'
+          : 'https://cdn.example/pilot-video-thumbnail.jpg',
+        image_critique_score: 100,
+      };
+
+      const result = await evaluatePermanentPublishBlock(
+        { DB: db, ENVIRONMENT: 'staging' } as Env,
+        post,
+      );
+
+      expect(result).toEqual({
+        mode: 'approval',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: null,
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].binds).toEqual([
+        'owner-1',
+        'client-1',
+        'client-1',
+        'client',
+        'client-1',
+        `pilot-copy-${postType}`,
+      ]);
+    },
+  );
+
+  it('permanently blocks a ready generated pilot media job by exact tenant tuple', async () => {
+    const { db, calls } = makeRecordingD1({
+      'learning_pilot_media_jobs media': [
+        { block_source: 'generated_pilot_media' },
+      ],
+    });
+    const post: PersistedPublishPost = {
+      ...fixturePost,
+      id: 'pilot-media-job-post-1',
+      user_id: 'owner-1',
+      client_id: 'client-1',
+      owner_kind: 'client',
+      owner_id: 'client-1',
+      post_type: 'image',
+      image_url: 'https://cdn.example/pilot-media-job.jpg',
+      image_critique_score: 100,
+    };
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      post,
+    );
+
+    expect(result).toEqual({
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain("media.state = 'ready'");
+    expect(calls[0].binds).toEqual([
+      'owner-1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'pilot-media-job-post-1',
+    ]);
+  });
+
+  it('skips the staging-only table in current production', async () => {
+    const prepare = vi.fn(() => {
+      throw new Error('production schema v42 must not query the staging-only table');
+    });
+
+    const result = await evaluatePermanentPublishBlock(
+      {
+        DB: { prepare } as unknown as D1Database,
+        ENVIRONMENT: 'production',
+        LEARNING_RELEASE_ENFORCEMENT: 'false',
+      } as Env,
+      fixturePost,
+    );
+
+    expect(result).toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+});
+
 describe('publishPersistedPost', () => {
+  it('permanently blocks synthetic QA before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+
+    await expect(publishPersistedPost(
+      { DB: {} as D1Database } as Env,
+      {
+        ...fixturePost,
+        content: '[STAGING QA FIXTURE - NEVER PUBLISH] Never send this.',
+      },
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
+  it('blocks generated pilot records before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+    const { db } = makeRecordingD1({
+      'learning_pilot_generated_drafts generated': [
+        { block_source: 'generated_pilot_draft' },
+      ],
+    });
+
+    await expect(publishPersistedPost(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      fixturePost,
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
+  it('blocks copied record-only pilot media before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+    const { db } = makeRecordingD1({
+      'learning_pilot_enrollments enrollment': [
+        { block_source: 'record_only_enrollment' },
+      ],
+    });
+
+    await expect(publishPersistedPost(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      {
+        ...fixturePost,
+        id: 'pilot-copy-media-1',
+        image_url: 'https://cdn.example/pilot-image.jpg',
+        image_critique_score: 100,
+      },
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
+  it('blocks ready pilot media jobs before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+    const { db } = makeRecordingD1({
+      'learning_pilot_media_jobs media': [
+        { block_source: 'generated_pilot_media' },
+      ],
+    });
+
+    await expect(publishPersistedPost(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      {
+        ...fixturePost,
+        id: 'pilot-media-job-post-1',
+        image_url: 'https://cdn.example/pilot-media-job.jpg',
+        image_critique_score: 100,
+      },
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
   it('does not rebind Cloudflare global fetch when using the default Graph transport', async () => {
     const calls = { critic: 0, postproxy: 0, graph: 0 };
     const deps = safeDeps(calls);
@@ -129,6 +618,75 @@ describe('publishPersistedPost', () => {
     ).rejects.toThrow('release preflight');
 
     expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 0 });
+  });
+
+  it('runs a fresh preflight before the final Facebook reel publish phase', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    let finishUrl = '';
+    deps.graphFetch = async (input) => {
+      calls.graph += 1;
+      finishUrl = String(input);
+      return new Response('{"success":true}', { status: 200 });
+    };
+
+    const outcome = await publishPersistedPost(
+      {} as Env,
+      { ...fixturePost, post_type: 'video', video_status: 'ready' },
+      graphReelFinishTarget,
+      deps,
+    );
+
+    expect(outcome).toMatchObject({ backend: 'graph_reel', videoId: 'video-1' });
+    expect(finishUrl).toContain('/page-1/video_reels');
+    expect(finishUrl).toContain('upload_phase=finish');
+    expect(finishUrl).toContain('video_state=PUBLISHED');
+    expect(finishUrl).toContain('video_id=video-1');
+    expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 1 });
+  });
+
+  it('makes zero final Facebook reel calls when the fresh preflight holds', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    const persistHold = vi.fn(async () => undefined);
+    deps.evaluatePreflight = async () => {
+      calls.critic += 1;
+      return {
+        mode: 'enforce',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: 'reel-hold-1',
+      };
+    };
+    deps.persistHold = persistHold;
+
+    await expect(publishPersistedPost(
+      {} as Env,
+      { ...fixturePost, post_type: 'video', video_status: 'ready' },
+      graphReelFinishTarget,
+      deps,
+    )).rejects.toThrow('release preflight');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 1, postproxy: 0, graph: 0 });
+  });
+
+  it('makes zero final Facebook reel calls for an inactive workspace', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    deps.validateWorkspace = async () => {
+      throw new Error('workspace inactive: client is on hold');
+    };
+
+    await expect(publishPersistedPost(
+      {} as Env,
+      { ...fixturePost, post_type: 'video', video_status: 'ready' },
+      graphReelFinishTarget,
+      deps,
+    )).rejects.toThrow('workspace inactive');
+
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
   });
 
   it('preserves Postproxy and Graph delivery when preflight allows it', async () => {
@@ -544,6 +1102,7 @@ describe('recordPublishedPostBestEffort', () => {
 describe('publish egress source contracts', () => {
   const workerRoot = resolve(process.cwd(), 'src');
   const repoRoot = resolve(process.cwd(), '../..');
+  const frontendRoot = resolve(repoRoot, 'src');
 
   it('defines additive, tenant-scoped, append-only v42 delivery shadow receipts', () => {
     const migration = readFileSync(
@@ -562,6 +1121,41 @@ describe('publish egress source contracts', () => {
     expect(migration).toContain('prevent_publish_delivery_receipt_update');
     expect(migration).not.toMatch(/ALTER TABLE posts|UPDATE posts|INSERT INTO posts/);
   });
+
+  it('detects new direct Facebook and Postproxy publication primitives', () => {
+    const bypasses = providerPublicationBypasses([
+      {
+        path: 'src/new-facebook-publisher.ts',
+        source: `const graph = 'https://graph.facebook.com/v21.0';
+          fetch(\`${'${graph}'}/page/feed\`, { method: 'POST' });`,
+      },
+      {
+        path: 'src/new-postproxy-publisher.ts',
+        source: `import { createPost as sendPost } from '../lib/postproxy';
+          void sendPost;`,
+      },
+      {
+        path: 'src/indirect-facebook-publisher.ts',
+        source: `const graph = 'https://graph.facebook.com/v21.0/page/feed';
+          const options = { method: 'POST' };
+          fetch(graph, options);`,
+      },
+    ]);
+
+    expect(bypasses).toEqual([
+      'src/new-facebook-publisher.ts:2: raw Facebook POST',
+      'src/new-postproxy-publisher.ts: direct Postproxy createPost import',
+      'src/indirect-facebook-publisher.ts:3: raw Facebook POST',
+    ]);
+  });
+
+  it('rejects provider publication calls outside the centralized orchestrator', () => {
+    expect(providerPublicationBypasses(productionPublicationSources([
+      workerRoot,
+      frontendRoot,
+    ])))
+      .toEqual([]);
+  }, 120_000);
 
   it('routes manual Postproxy publishing through the orchestrator', () => {
     const source = readFileSync(
@@ -584,6 +1178,26 @@ describe('publish egress source contracts', () => {
     expect(source).not.toContain('kickFacebookReelUpload(');
     expect(source).not.toContain('fbRes = await fetch(`${base}/${pageId}/photos');
     expect(source).not.toContain('fbRes = await fetch(`${base}/${pageId}/feed');
+  });
+
+  it('routes the delayed Facebook reel finish phase through a fresh orchestrator preflight', () => {
+    const source = readFileSync(
+      resolve(workerRoot, 'cron/poll-pending-reels.ts'),
+      'utf8',
+    );
+
+    expect(source).toContain('publishPersistedPost');
+    expect(source).toContain("status = 'Publishing'");
+    expect(source).toContain('content, platform, hashtags, image_url');
+    expect(source).toContain('video_script, video_shots');
+    expect(source).toContain("backend: 'graph_reel'");
+    expect(source).toContain('videoId: post.fb_video_id');
+    expect(source).toContain("if (/workspace inactive/i.test(finishMessage))");
+    expect(source).toContain("SET status = 'Draft', scheduled_for = NULL");
+    expect(source).toContain("WHERE id = ? AND status = 'Draft'");
+    expect(source).not.toContain('finishFacebookReel');
+    expect(source).not.toContain('fb-page-reel-pending:');
+    expect(source).not.toContain('video_state=PUBLISHED');
   });
 
   it('records only confirmed publication completion paths for later outcome collection', () => {

@@ -268,14 +268,60 @@ export interface ShopifyLearningSettingsResponse {
   effectiveMode: ShopifyLearningMode;
 }
 
+export interface ShopifyLearningReadinessChecks {
+  pilot: boolean;
+  pilotCohort: boolean;
+  adjudications: boolean;
+  severeFalsePasses: boolean;
+  falseHolds: boolean;
+  availability: boolean;
+  releaseJudgeAvailability: boolean;
+  releaseJudgeTelemetry: boolean;
+  receipts: boolean;
+  predictionLift: boolean;
+  rankCorrelation: boolean;
+  criticalBypasses: boolean;
+  publishingRegressions: boolean;
+  cost: boolean;
+  killSwitch: boolean;
+  replayRedTeam: boolean;
+  publishRegression: boolean;
+  tenancyProofs: {
+    user: boolean;
+    client: boolean;
+    shop: boolean;
+  };
+}
+
+export interface ShopifyLearningReadinessMetrics {
+  pilotDecisions: number;
+  pilotWorkspaceCount: number;
+  pilotUserDecisions: number;
+  pilotClientDecisions: number;
+  adjudicatedDecisions: number;
+  severeFalsePasses: number;
+  falseHoldRate: number;
+  requiredAvailability: number;
+  releaseJudgeAvailability: number;
+  releaseJudgeTelemetryCoverage: number;
+  releaseJudgeInvocations: number;
+  decisionReceiptCoverage: number;
+  predictionLift: number;
+  rankCorrelation: number;
+  criticalBypasses: number;
+  publishingRegressions: number;
+  costWithinBudget: boolean;
+  killSwitchTested: boolean;
+}
+
 export interface ShopifyLearningReadiness {
   policyVersion: string;
   ready: boolean;
   stale: boolean;
   effectiveMode: ShopifyLearningMode;
   evaluatedAt: string | null;
-  checks: Record<string, boolean | Record<string, boolean>>;
-  metrics: Record<string, number | boolean>;
+  checks: ShopifyLearningReadinessChecks;
+  metrics: ShopifyLearningReadinessMetrics;
   cost: {
     monthlyAiSpendUsdCents: number | null;
     telemetryCount: number;

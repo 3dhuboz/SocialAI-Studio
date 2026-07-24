@@ -3,7 +3,7 @@ import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
   RefreshCw, Search, Loader2, ExternalLink, Clock,
   ChevronDown, ChevronRight, ShieldCheck, X, MessageSquare,
-  BrainCircuit, ClipboardCheck,
+  BrainCircuit, ClipboardCheck, Sparkles, Image as ImageIcon, Video,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
@@ -11,6 +11,9 @@ import type {
   AdminPostFeedback,
   AdminLearningOperations, LearningAdjudicationEvidence, LearningAdjudicationInput,
   LearningPilotCustomerConsent,
+  LearningPilotCandidate,
+  LearningPilotMediaJob,
+  LearningPilotMediaKind,
   LearningPilotQueue,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
@@ -33,6 +36,44 @@ import { PaymentList } from './PaymentList';
  */
 
 type Filter = 'all' | 'trial' | 'paid' | 'cancelled';
+
+export function isReviewablePilotDraft(
+  candidate: Pick<LearningPilotCandidate, 'samplePostId' | 'sampleDraft'>,
+): boolean {
+  const draft = candidate.sampleDraft;
+  return draft != null
+    && draft.postId === candidate.samplePostId
+    && draft.content.trim().length > 0
+    && /^[a-f0-9]{64}$/.test(draft.contentHash);
+}
+
+export function isCurrentPilotDraftConfirmation(
+  candidate: Pick<LearningPilotCandidate, 'samplePostId' | 'sampleDraft'>,
+  confirmedContentHash: string | undefined,
+): boolean {
+  return isReviewablePilotDraft(candidate)
+    && confirmedContentHash === candidate.sampleDraft?.contentHash;
+}
+
+export function isReviewablePilotMediaJob(
+  job: LearningPilotMediaJob | null | undefined,
+): job is LearningPilotMediaJob & {
+  state: 'ready';
+  postId: string;
+  content: string;
+  contentHash: string;
+} {
+  return job?.state === 'ready'
+    && typeof job.postId === 'string'
+    && job.postId.trim().length > 0
+    && typeof job.content === 'string'
+    && job.content.trim().length > 0
+    && typeof job.contentHash === 'string'
+    && /^[a-f0-9]{64}$/.test(job.contentHash)
+    && job.sourceStatus === 'Draft'
+    && job.scheduledFor === null
+    && job.publishingAllowed === false;
+}
 
 const FILTERS: { id: Filter; label: string; tone: string }[] = [
   { id: 'all',       label: 'All',       tone: 'amber'   },
@@ -71,6 +112,7 @@ export const AdminCustomers: React.FC = () => {
   const [postFeedback, setPostFeedback] = useState<AdminPostFeedback[] | null>(null);
   const [learningOperations, setLearningOperations] = useState<AdminLearningOperations | null>(null);
   const [learningPilotQueue, setLearningPilotQueue] = useState<LearningPilotQueue | null>(null);
+  const [learningPilotMediaJobs, setLearningPilotMediaJobs] = useState<LearningPilotMediaJob[]>([]);
   const [learningSavingDecisionId, setLearningSavingDecisionId] = useState<string | null>(null);
   const [learningPilotActionKey, setLearningPilotActionKey] = useState<string | null>(null);
   const [learningError, setLearningError] = useState<string | null>(null);
@@ -105,6 +147,9 @@ export const AdminCustomers: React.FC = () => {
       db.getLearningPilotCandidates()
         .then(setLearningPilotQueue)
         .catch(() => setLearningPilotQueue(null));
+      db.listLearningPilotMediaJobs()
+        .then((queue) => setLearningPilotMediaJobs(queue.jobs))
+        .catch(() => setLearningPilotMediaJobs([]));
     } catch (e: any) {
       setError(e?.message || 'Failed to load customers');
     } finally {
@@ -151,6 +196,20 @@ export const AdminCustomers: React.FC = () => {
     ]);
     setLearningOperations(operations);
     setLearningPilotQueue(queue);
+    try {
+      const mediaQueue = await db.listLearningPilotMediaJobs();
+      setLearningPilotMediaJobs(mediaQueue.jobs);
+    } catch {
+      setLearningPilotMediaJobs([]);
+    }
+  };
+
+  const upsertLearningPilotMediaJob = (job: LearningPilotMediaJob) => {
+    setLearningPilotMediaJobs((current) => [
+      ...current.filter((candidate) => candidate.id !== job.id),
+      job,
+    ].sort((left, right) =>
+      left.enrollmentId.localeCompare(right.enrollmentId) || left.slot - right.slot));
   };
 
   const enrollLearningPilot = async (
@@ -171,15 +230,100 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
-  const validateLearningPilotDraft = async (postId: string) => {
+  const withdrawLearningPilot = async (
+    clientId: string | null,
+    withdrawalNote: string,
+  ) => {
+    const actionKey = `withdraw:${clientId ?? '__owner__'}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      await db.withdrawLearningPilotWorkspace(clientId, withdrawalNote);
+      await reloadLearningPanels();
+    } catch (reason) {
+      setLearningError(reason instanceof Error ? reason.message : 'Pilot withdrawal failed closed');
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
+  const generateLearningPilotDraft = async (clientId: string | null) => {
+    const actionKey = `generate:${clientId ?? '__owner__'}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      await db.generateLearningPilotDraft(clientId);
+      await reloadLearningPanels();
+    } catch (reason) {
+      setLearningError(
+        reason instanceof Error
+          ? reason.message
+          : 'Record-only pilot draft generation failed closed',
+      );
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
+  const validateLearningPilotDraft = async (
+    postId: string,
+    expectedContentHash: string,
+    attestationNote: string,
+  ) => {
     const actionKey = `validate:${postId}`;
     setLearningPilotActionKey(actionKey);
     setLearningError(null);
     try {
+      await db.attestLearningPilotDraft(postId, expectedContentHash, attestationNote);
       await db.validateLearningPilotDraft(postId);
       await reloadLearningPanels();
     } catch (reason) {
       setLearningError(reason instanceof Error ? reason.message : 'Draft validation failed closed');
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
+  const startLearningPilotMediaJob = async (
+    clientId: string | null,
+    slot: number,
+    mediaKind: LearningPilotMediaKind,
+  ) => {
+    const actionKey = `media:${clientId ?? '__owner__'}:${slot}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      upsertLearningPilotMediaJob(
+        await db.startLearningPilotMediaJob(clientId, slot, mediaKind),
+      );
+    } catch (reason) {
+      setLearningError(
+        reason instanceof Error
+          ? reason.message
+          : 'Record-only pilot media generation failed closed',
+      );
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
+  const pollLearningPilotMediaJob = async (
+    clientId: string | null,
+    slot: number,
+  ) => {
+    const actionKey = `media:${clientId ?? '__owner__'}:${slot}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      upsertLearningPilotMediaJob(
+        await db.pollLearningPilotMediaJob(clientId, slot),
+      );
+    } catch (reason) {
+      setLearningError(
+        reason instanceof Error
+          ? reason.message
+          : 'Record-only pilot video status could not be checked',
+      );
     } finally {
       setLearningPilotActionKey(null);
     }
@@ -218,13 +362,18 @@ export const AdminCustomers: React.FC = () => {
       <LearningOperationsCard
         operations={learningOperations}
         pilotQueue={learningPilotQueue}
+        pilotMediaJobs={learningPilotMediaJobs}
         pilotActionKey={learningPilotActionKey}
         loading={loading && !learningOperations}
         savingDecisionId={learningSavingDecisionId}
         error={learningError}
         onAdjudicate={adjudicateLearningDecision}
         onPilotEnroll={enrollLearningPilot}
+        onPilotWithdraw={withdrawLearningPilot}
+        onPilotGenerate={generateLearningPilotDraft}
         onPilotValidate={validateLearningPilotDraft}
+        onPilotMediaStart={startLearningPilotMediaJob}
+        onPilotMediaPoll={pollLearningPilotMediaJob}
       />
 
       <PrewarmReadinessCard readiness={prewarmReadiness} loading={loading && !prewarmReadiness} />
@@ -374,6 +523,30 @@ export const AdminCustomers: React.FC = () => {
 // ──────────────────────────────────────────────────────────────────────────────
 
 const fmtRate = (value: number | null) => value == null ? 'No sample' : `${(value * 100).toFixed(1)}%`;
+const PILOT_DECISION_TARGET = 30;
+const PILOT_WORKSPACE_TARGET = 2;
+const PREDICTION_SAMPLE_TARGET = 20;
+const PREDICTION_WORKSPACE_MINIMUM = 8;
+const RELEASE_EVIDENCE_TARGET = 9;
+
+const safeMetricCount = (value: number | undefined): number => (
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0
+);
+
+const releaseEvidenceExpiryLabel = (expiresAt: string | null): string => {
+  if (!expiresAt) return 'No valid receipt expiry available';
+  const expiryMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiryMs)) return 'Receipt expiry is invalid';
+  const remainingMs = expiryMs - Date.now();
+  if (remainingMs <= 0) return 'Release evidence has expired';
+  const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+  const remaining = remainingHours <= 48
+    ? `${remainingHours} hour${remainingHours === 1 ? '' : 's'}`
+    : `${Math.ceil(remainingHours / 24)} days`;
+  return `Next receipt expires in ${remaining}`;
+};
 
 const safeReviewMediaUrl = (value: string | null): string | null => {
   if (!value) return null;
@@ -536,9 +709,222 @@ const SampleAdjudicationForm: React.FC<{
   );
 };
 
+const PilotMediaSlotCard: React.FC<{
+  label: string;
+  clientId: string | null;
+  slot: number;
+  job: LearningPilotMediaJob | null;
+  actionKey: string | null;
+  onStart?: (
+    clientId: string | null,
+    slot: number,
+    mediaKind: LearningPilotMediaKind,
+  ) => Promise<void>;
+  onPoll?: (clientId: string | null, slot: number) => Promise<void>;
+  onValidate?: (
+    postId: string,
+    expectedContentHash: string,
+    attestationNote: string,
+  ) => Promise<void>;
+}> = ({
+  label,
+  clientId,
+  slot,
+  job,
+  actionKey,
+  onStart,
+  onPoll,
+  onValidate,
+}) => {
+  const [confirmedHash, setConfirmedHash] = useState('');
+  const mediaActionKey = `media:${clientId ?? '__owner__'}:${slot}`;
+  const mediaBusy = actionKey === mediaActionKey;
+  const reviewable = isReviewablePilotMediaJob(job);
+  const validationBusy = reviewable && actionKey === `validate:${job.postId}`;
+  const exactCandidateConfirmed = reviewable && confirmedHash === job.contentHash;
+
+  if (!job) {
+    return (
+      <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[9px] font-black uppercase tracking-wider text-white/45">
+            Slot {slot}
+          </p>
+          <span className="text-[8px] text-white/25">Empty</span>
+        </div>
+        <p className="mt-1.5 text-[9px] leading-relaxed text-white/30">
+          Generate one isolated candidate. It cannot be scheduled or published.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            disabled={actionKey !== null}
+            onClick={() => onStart?.(clientId, slot, 'image')}
+            aria-label={`Generate record-only image in slot ${slot} for ${label}`}
+            className="inline-flex items-center gap-1 rounded-md border border-cyan-400/20 bg-cyan-500/10 px-2 py-1.5 text-[8px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
+          >
+            {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <ImageIcon size={9} />}
+            Image
+          </button>
+          <button
+            type="button"
+            disabled={actionKey !== null}
+            onClick={() => onStart?.(clientId, slot, 'video')}
+            aria-label={`Generate record-only video in slot ${slot} for ${label}`}
+            className="inline-flex items-center gap-1 rounded-md border border-amber-400/20 bg-amber-500/10 px-2 py-1.5 text-[8px] font-bold text-amber-100 transition hover:bg-amber-500/15 disabled:opacity-40"
+          >
+            {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <Video size={9} />}
+            Video
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const statusTone = job.state === 'ready'
+    ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
+    : job.state === 'failed'
+      ? 'border-rose-400/20 bg-rose-500/10 text-rose-100'
+      : 'border-amber-400/20 bg-amber-500/10 text-amber-100';
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black/25">
+      <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-2.5 py-2">
+        <div className="flex items-center gap-1.5">
+          {job.mediaKind === 'video'
+            ? <Video size={10} className="text-amber-300" />
+            : <ImageIcon size={10} className="text-cyan-300" />}
+          <p className="text-[9px] font-black uppercase tracking-wider text-white/55">
+            Slot {slot} / {job.mediaKind}
+          </p>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-[7px] font-black uppercase tracking-wider ${statusTone}`}>
+          {job.state}
+        </span>
+      </div>
+
+      {job.thumbnailUrl && (
+        <div className="border-b border-white/[0.06] bg-black/30 p-2">
+          {job.mediaKind === 'video' && job.state === 'ready' && job.mediaUrl ? (
+            <video
+              src={job.mediaUrl}
+              poster={job.thumbnailUrl}
+              controls
+              preload="metadata"
+              className="max-h-44 w-full rounded-md"
+            />
+          ) : (
+            <img
+              src={job.thumbnailUrl}
+              alt={`${label} record-only ${job.mediaKind} candidate in slot ${slot}`}
+              loading="lazy"
+              className="max-h-44 w-full rounded-md object-contain"
+            />
+          )}
+        </div>
+      )}
+
+      <div className="p-2.5">
+        {job.content && (
+          <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-[9px] leading-relaxed text-white/60">
+            {job.content}
+          </p>
+        )}
+        {job.hashtags.length > 0 && (
+          <p className="mt-1.5 break-words text-[8px] text-cyan-200/45">
+            {job.hashtags.join(' ')}
+          </p>
+        )}
+        <p className="mt-2 text-[8px] leading-relaxed text-white/25">
+          Attempt {job.attemptCount}/2
+          {job.captionModel ? ` / copy ${job.captionProvider} ${job.captionModel}` : ''}
+          {job.mediaModel ? ` / media ${job.mediaProvider} ${job.mediaModel}` : ''}
+        </p>
+
+        {job.state === 'generating' && job.mediaKind === 'video' && (
+          <button
+            type="button"
+            disabled={actionKey !== null}
+            onClick={() => onPoll?.(clientId, slot)}
+            className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400/20 bg-amber-500/10 px-2 py-1.5 text-[8px] font-bold text-amber-100 transition hover:bg-amber-500/15 disabled:opacity-40"
+          >
+            {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
+            Check video status
+          </button>
+        )}
+
+        {job.state === 'claimed' && (
+          <p className="mt-2 text-[8px] font-bold leading-relaxed text-amber-100/65">
+            Generation is claimed. Refresh the panel before retrying.
+          </p>
+        )}
+
+        {job.state === 'failed' && (
+          <>
+            <p className="mt-2 text-[8px] font-bold leading-relaxed text-rose-100/65">
+              Failed closed: {(job.errorCode ?? 'provider failure').replace(/_/g, ' ')}.
+            </p>
+            {job.attemptCount < 2 && (
+              <button
+                type="button"
+                disabled={actionKey !== null}
+                onClick={() => onStart?.(clientId, slot, job.mediaKind)}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-rose-400/20 bg-rose-500/10 px-2 py-1.5 text-[8px] font-bold text-rose-100 transition hover:bg-rose-500/15 disabled:opacity-40"
+              >
+                {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
+                Use bounded retry
+              </button>
+            )}
+          </>
+        )}
+
+        {reviewable && (
+          <>
+            <p className="mt-2 font-mono text-[7px] text-white/25">
+              Draft {job.postId} / fingerprint {job.contentHash.slice(0, 16)}
+            </p>
+            <label className="mt-2 flex items-start gap-2 text-[8px] leading-relaxed text-white/45">
+              <input
+                type="checkbox"
+                checked={exactCandidateConfirmed}
+                onChange={(event) => setConfirmedHash(
+                  event.target.checked ? job.contentHash : '',
+                )}
+                className="mt-0.5 accent-cyan-400"
+                aria-label={`Confirm generated media candidate in slot ${slot} for ${label}`}
+              />
+              I reviewed this exact fingerprint and confirm it is a genuine SocialAI output for
+              {` ${label}`}. This confirms provenance only, not that it is safe to publish.
+            </label>
+            <button
+              type="button"
+              disabled={actionKey !== null || !exactCandidateConfirmed}
+              onClick={async () => {
+                await onValidate?.(
+                  job.postId,
+                  job.contentHash,
+                  `Admin explicitly confirmed ${label}'s record-only generated ${job.mediaKind} candidate in slot ${slot} is a genuine SocialAI output for independent safety evaluation. This does not approve, schedule, or publish it.`,
+                );
+                setConfirmedHash('');
+              }}
+              className="mt-2 inline-flex items-center gap-1 rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-[8px] font-bold text-emerald-100 transition hover:bg-emerald-500/15 disabled:opacity-40"
+            >
+              {validationBusy
+                ? <Loader2 size={9} className="animate-spin" />
+                : <ShieldCheck size={9} />}
+              Confirm provenance and run critics
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const LearningOperationsCard: React.FC<{
   operations: AdminLearningOperations | null;
   pilotQueue?: LearningPilotQueue | null;
+  pilotMediaJobs?: LearningPilotMediaJob[];
   pilotActionKey?: string | null;
   loading: boolean;
   savingDecisionId: string | null;
@@ -549,23 +935,72 @@ export const LearningOperationsCard: React.FC<{
     budgetCents: number,
     customerConsent?: LearningPilotCustomerConsent,
   ) => Promise<void>;
-  onPilotValidate?: (postId: string) => Promise<void>;
+  onPilotWithdraw?: (
+    clientId: string | null,
+    withdrawalNote: string,
+  ) => Promise<void>;
+  onPilotGenerate?: (clientId: string | null) => Promise<void>;
+  onPilotMediaStart?: (
+    clientId: string | null,
+    slot: number,
+    mediaKind: LearningPilotMediaKind,
+  ) => Promise<void>;
+  onPilotMediaPoll?: (clientId: string | null, slot: number) => Promise<void>;
+  onPilotValidate?: (
+    postId: string,
+    expectedContentHash: string,
+    attestationNote: string,
+  ) => Promise<void>;
 }> = ({
   operations,
   pilotQueue = null,
+  pilotMediaJobs = [],
   pilotActionKey = null,
   loading,
   savingDecisionId,
   error = null,
   onAdjudicate,
   onPilotEnroll,
+  onPilotWithdraw,
+  onPilotGenerate,
+  onPilotMediaStart,
+  onPilotMediaPoll,
   onPilotValidate,
 }) => {
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
   const killSwitchEngaged = operations?.globalSwitches.protectedAutopilot !== true;
+  const pilotDecisions = safeMetricCount(operations?.readiness.metrics.pilotDecisions);
+  const pilotWorkspaceCount = safeMetricCount(operations?.readiness.metrics.pilotWorkspaceCount);
+  const pilotUserDecisions = safeMetricCount(operations?.readiness.metrics.pilotUserDecisions);
+  const pilotClientDecisions = safeMetricCount(operations?.readiness.metrics.pilotClientDecisions);
+  const adjudicatedDecisions = safeMetricCount(operations?.readiness.metrics.adjudicatedDecisions);
+  const predictionSampleCount = safeMetricCount(operations?.readiness.metrics.predictionSampleCount);
+  const predictionWorkspaceCount = safeMetricCount(
+    operations?.readiness.metrics.predictionWorkspaceCount,
+  );
+  const predictionMinWorkspaceSamples = safeMetricCount(
+    operations?.readiness.metrics.predictionMinWorkspaceSamples,
+  );
+  const pilotRemaining = Math.max(0, PILOT_DECISION_TARGET - pilotDecisions);
+  const pilotProgress = Math.min(100, (pilotDecisions / PILOT_DECISION_TARGET) * 100);
+  const releaseEvidence = operations?.releaseEvidence ?? {
+    validCount: 0,
+    requiredCount: RELEASE_EVIDENCE_TARGET,
+    invalidOrMissingCount: RELEASE_EVIDENCE_TARGET,
+    expiredCount: 0,
+    complete: false,
+    nextExpiryAt: null,
+  };
   const [pilotBudgetDollars, setPilotBudgetDollars] = useState('5.00');
-  const [pilotCustomerConsentConfirmed, setPilotCustomerConsentConfirmed] = useState(false);
-  const [pilotCustomerConsentNote, setPilotCustomerConsentNote] = useState('');
+  const [pilotCustomerConsentByWorkspace, setPilotCustomerConsentByWorkspace] = useState<
+    Record<string, { confirmed: boolean; note: string }>
+  >({});
+  const [pilotDraftConfirmedByWorkspace, setPilotDraftConfirmedByWorkspace] = useState<
+    Record<string, string>
+  >({});
+  const [pilotWithdrawalByWorkspace, setPilotWithdrawalByWorkspace] = useState<
+    Record<string, { confirmed: boolean; note: string }>
+  >({});
   const budgetNumber = Number(pilotBudgetDollars);
   const pilotBudgetCents = Number.isFinite(budgetNumber)
     ? Math.round(budgetNumber * 100)
@@ -574,13 +1009,21 @@ export const LearningOperationsCard: React.FC<{
   const pilotBudgetLabel = validPilotBudget
     ? `$${(pilotBudgetCents / 100).toFixed(2)}`
     : 'invalid cap';
-  const trimmedPilotConsentNote = pilotCustomerConsentNote.trim();
-  const validPilotCustomerConsent = pilotCustomerConsentConfirmed
-    && trimmedPilotConsentNote.length >= 10
-    && trimmedPilotConsentNote.length <= 500;
-  const hasUnenrolledClientPilot = pilotQueue?.candidates.some(
-    (candidate) => candidate.clientId !== null && !candidate.enrolled,
-  ) === true;
+  const activePilotEnrollments = pilotQueue?.enrollments
+    ?? pilotQueue?.candidates
+      .filter((candidate) => candidate.enrolled)
+      .map((candidate) => ({
+        enrollmentId: '',
+        clientId: candidate.clientId,
+        ownerKind: candidate.ownerKind,
+        ownerId: candidate.ownerId,
+        workspaceKey: candidate.workspaceKey,
+        policyVersion: operations?.policyVersion ?? '',
+        enrolledAt: '',
+        label: candidate.label,
+        recordOnly: true as const,
+      }))
+    ?? [];
 
   return (
     <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${
@@ -621,11 +1064,94 @@ export const LearningOperationsCard: React.FC<{
       </div>
 
       {operations && (
-        <div className="mt-3 flex flex-wrap gap-2 text-[9px] text-white/40">
-          <span>Learning brain: {operations.globalSwitches.learningBrain ? 'on' : 'off'}</span>
-          <span>Release enforcement: {operations.globalSwitches.releaseEnforcement ? 'on' : 'off'}</span>
-          <span>Policy: {operations.policyVersion}</span>
-          <span>{operations.workspaces.length} workspace{operations.workspaces.length === 1 ? '' : 's'}</span>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1.35fr_1fr]">
+          <div className="rounded-xl border border-white/[0.07] bg-black/20 p-3.5">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wider text-cyan-200/60">
+                  Current-policy pilot
+                </p>
+                <p className="mt-1 text-lg font-black text-white/85">
+                  {pilotDecisions} / {PILOT_DECISION_TARGET} decisions
+                </p>
+              </div>
+              <p className="text-[10px] font-bold text-white/40">
+                {pilotRemaining === 0 ? 'Decision gate met' : `${pilotRemaining} remaining`}
+              </p>
+            </div>
+            <div
+              className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-white/[0.06]"
+              role="progressbar"
+              aria-label="Pilot decision progress"
+              aria-valuemin={0}
+              aria-valuemax={PILOT_DECISION_TARGET}
+              aria-valuenow={Math.min(pilotDecisions, PILOT_DECISION_TARGET)}
+            >
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400"
+                style={{ width: `${pilotProgress}%` }}
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+              {[
+                ['Workspaces', `${pilotWorkspaceCount} / ${PILOT_WORKSPACE_TARGET}`],
+                ['User decisions', String(pilotUserDecisions)],
+                ['Client decisions', String(pilotClientDecisions)],
+                ['Adjudicated', `${adjudicatedDecisions} / ${PILOT_DECISION_TARGET}`],
+                ['7-day outcomes', `${predictionSampleCount} / ${PREDICTION_SAMPLE_TARGET}`],
+                ['Outcome workspaces', `${predictionWorkspaceCount} / ${PILOT_WORKSPACE_TARGET}`],
+                [
+                  'Minimum per workspace',
+                  `${predictionMinWorkspaceSamples} / ${PREDICTION_WORKSPACE_MINIMUM}`,
+                ],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-white/[0.05] bg-black/15 p-2.5">
+                  <p className="text-[9px] leading-tight text-white/30">{label}</p>
+                  <p className="mt-1 text-xs font-black text-white/70">{value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={`rounded-xl border p-3.5 ${
+            releaseEvidence.complete
+              ? 'border-emerald-400/15 bg-emerald-500/[0.035]'
+              : 'border-amber-400/15 bg-amber-500/[0.035]'
+          }`}>
+            <div className="flex items-center gap-1.5">
+              <Clock size={12} className={
+                releaseEvidence.complete ? 'text-emerald-300' : 'text-amber-300'
+              } />
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/45">
+                Immutable release evidence
+              </p>
+            </div>
+            <p className="mt-2 text-lg font-black text-white/85">
+              {releaseEvidence.validCount} / {releaseEvidence.requiredCount} valid receipts
+            </p>
+            <p className="mt-1 text-[10px] text-white/40">
+              {releaseEvidenceExpiryLabel(releaseEvidence.nextExpiryAt)}
+            </p>
+            {!releaseEvidence.complete && (
+              <p className="mt-2 text-[10px] font-bold leading-relaxed text-amber-100/70">
+                {releaseEvidence.invalidOrMissingCount} current-policy receipt
+                {releaseEvidence.invalidOrMissingCount === 1 ? '' : 's'} missing or invalid.
+                {releaseEvidence.expiredCount > 0
+                  ? ` ${releaseEvidence.expiredCount} expired.`
+                  : ''}
+              </p>
+            )}
+          </div>
+
+          <div className="lg:col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-white/[0.05] bg-black/15 px-3 py-2 text-[9px] text-white/35">
+            <span>Learning brain: {operations.globalSwitches.learningBrain ? 'on' : 'off'}</span>
+            <span>Release enforcement: {operations.globalSwitches.releaseEnforcement ? 'on' : 'off'}</span>
+            <span>Policy: {operations.policyVersion}</span>
+            <span>{operations.workspaces.length} workspace{operations.workspaces.length === 1 ? '' : 's'}</span>
+            <span className="font-bold text-rose-100/55">
+              Read-only status: this panel cannot enable autopilot, schedule, or publish posts.
+            </span>
+          </div>
         </div>
       )}
 
@@ -665,34 +1191,185 @@ export const LearningOperationsCard: React.FC<{
             </label>
           </div>
 
-          {hasUnenrolledClientPilot && (
-            <div className="mt-3 rounded-lg border border-amber-400/15 bg-amber-500/[0.035] p-3">
-              <p className="text-[10px] font-black text-amber-100/80">
-                Customer pilot consent attestation
-              </p>
-              <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
-                <input
-                  type="checkbox"
-                  checked={pilotCustomerConsentConfirmed}
-                  onChange={(event) => setPilotCustomerConsentConfirmed(event.target.checked)}
-                  className="mt-0.5 accent-amber-400"
-                />
-                I have confirmed this customer agreed to record-only AI critique of their draft posts.
-                This is not consent to publish.
-              </label>
-              <label className="mt-2 block text-[9px] font-bold uppercase tracking-wider text-white/35">
-                Consent evidence note
-                <textarea
-                  maxLength={500}
-                  value={pilotCustomerConsentNote}
-                  onChange={(event) => setPilotCustomerConsentNote(event.target.value)}
-                  placeholder="When and how the customer confirmed participation"
-                  className="mt-1 min-h-16 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
-                />
-              </label>
-              <p className="mt-1 text-[9px] text-white/30">
-                Client enrollment stays disabled until both are complete.
-              </p>
+          {activePilotEnrollments.length > 0 && (
+            <div className="mt-3 rounded-xl border border-rose-400/15 bg-rose-500/[0.025] p-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wider text-rose-100/75">
+                  Active record-only pilot consent
+                </p>
+                <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                  Withdrawal stops future pilot critics and removes exact pilot samples and
+                  derived critic evidence. Original customer/source drafts, schedules, and
+                  publishing records are never deleted; a draft generated only for this staging
+                  pilot, including generated media and its scoped usage receipts, is derived data
+                  and is erased.
+                </p>
+              </div>
+              <div className="mt-2.5 grid gap-2">
+                {activePilotEnrollments.map((enrollment) => {
+                  const withdrawal = pilotWithdrawalByWorkspace[enrollment.workspaceKey]
+                    ?? { confirmed: false, note: '' };
+                  const trimmedNote = withdrawal.note.trim();
+                  const validWithdrawal = withdrawal.confirmed
+                    && trimmedNote.length >= 10
+                    && trimmedNote.length <= 500;
+                  const actionKey = `withdraw:${enrollment.clientId ?? '__owner__'}`;
+                  const busy = pilotActionKey === actionKey;
+                  const generationActionKey = `generate:${enrollment.clientId ?? '__owner__'}`;
+                  const generating = pilotActionKey === generationActionKey;
+                  const generatedDraft = enrollment.generatedDraft ?? null;
+                  const enrollmentMediaJobs = pilotMediaJobs.filter(
+                    (job) => job.enrollmentId === enrollment.enrollmentId,
+                  );
+                  return (
+                    <div
+                      key={enrollment.workspaceKey}
+                      className="rounded-lg border border-white/[0.07] bg-black/20 p-2.5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] font-black text-white/70">{enrollment.label}</p>
+                          <p className="mt-0.5 text-[8px] text-white/25">
+                            Policy {enrollment.policyVersion || 'current'} / record only
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-rose-400/15 bg-rose-500/[0.06] px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-rose-100/60">
+                          Consent active
+                        </span>
+                      </div>
+                      <div className="mt-2.5 rounded-lg border border-cyan-400/15 bg-cyan-500/[0.035] p-2.5">
+                        {generatedDraft ? (
+                          <>
+                            <p className="text-[10px] font-black text-cyan-100/80">
+                              Genuine SocialAI staging draft ready
+                            </p>
+                            <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                              Draft {generatedDraft.postId} has immutable generation provenance
+                              from {generatedDraft.provider} / {generatedDraft.model}. Review the
+                              exact content below before creating any positive pilot receipt.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-[10px] font-black text-cyan-100/80">
+                              Authentic pilot input required
+                            </p>
+                            <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                              Create one real SocialAI output from this workspace's private
+                              business context. It remains an unscheduled staging Draft and
+                              cannot enter any publishing or delivery path.
+                            </p>
+                            <button
+                              type="button"
+                              disabled={pilotActionKey !== null}
+                              onClick={() => onPilotGenerate?.(enrollment.clientId)}
+                              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[9px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
+                            >
+                              {generating
+                                ? <Loader2 size={10} className="animate-spin" />
+                                : <Sparkles size={10} />}
+                              Generate one record-only staging draft
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      <div className="mt-2.5 rounded-lg border border-amber-400/15 bg-amber-500/[0.025] p-2.5">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-[10px] font-black text-amber-100/80">
+                              Record-only media evidence lab
+                            </p>
+                            <p className="mt-1 max-w-2xl text-[8px] leading-relaxed text-white/35">
+                              Six immutable staging slots for independent image and video
+                              evaluation. Generation never attests, approves, schedules, or
+                              publishes a post.
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-amber-400/15 bg-black/20 px-2 py-1 text-[7px] font-black uppercase tracking-wider text-amber-100/55">
+                            {enrollmentMediaJobs.length} / 6 claimed
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                          {Array.from({ length: 6 }, (_, index) => index + 1).map((slot) => {
+                            const job = enrollmentMediaJobs.find(
+                              (candidate) => candidate.slot === slot,
+                            ) ?? null;
+                            return (
+                              <PilotMediaSlotCard
+                                key={`${enrollment.enrollmentId}:${slot}:${job?.id ?? 'empty'}`}
+                                label={enrollment.label}
+                                clientId={enrollment.clientId}
+                                slot={slot}
+                                job={job}
+                                actionKey={pilotActionKey}
+                                onStart={onPilotMediaStart}
+                                onPoll={onPilotMediaPoll}
+                                onValidate={onPilotValidate}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <label className="mt-2 flex items-start gap-2 text-[9px] leading-relaxed text-white/45">
+                        <input
+                          type="checkbox"
+                          checked={withdrawal.confirmed}
+                          onChange={(event) => setPilotWithdrawalByWorkspace((current) => ({
+                            ...current,
+                            [enrollment.workspaceKey]: {
+                              ...(current[enrollment.workspaceKey]
+                                ?? { confirmed: false, note: '' }),
+                              confirmed: event.target.checked,
+                            },
+                          }))}
+                          className="mt-0.5 accent-rose-400"
+                          aria-label={`Confirm pilot withdrawal for ${enrollment.label}`}
+                        />
+                        I confirm consent has been withdrawn for this record-only staging pilot.
+                      </label>
+                      <label className="mt-2 block text-[8px] font-bold uppercase tracking-wider text-white/30">
+                        Withdrawal confirmation note
+                        <textarea
+                          maxLength={500}
+                          value={withdrawal.note}
+                          onChange={(event) => setPilotWithdrawalByWorkspace((current) => ({
+                            ...current,
+                            [enrollment.workspaceKey]: {
+                              ...(current[enrollment.workspaceKey]
+                                ?? { confirmed: false, note: '' }),
+                              note: event.target.value,
+                            },
+                          }))}
+                          placeholder={`When and how ${enrollment.label} withdrew consent`}
+                          className="mt-1 min-h-14 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
+                          aria-label={`Pilot withdrawal note for ${enrollment.label}`}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={pilotActionKey !== null || !validWithdrawal}
+                        onClick={async () => {
+                          await onPilotWithdraw?.(enrollment.clientId, trimmedNote);
+                          setPilotWithdrawalByWorkspace((current) => ({
+                            ...current,
+                            [enrollment.workspaceKey]: { confirmed: false, note: '' },
+                          }));
+                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-1.5 text-[9px] font-bold text-rose-100 transition hover:bg-rose-500/15 disabled:opacity-40"
+                      >
+                        {busy ? <Loader2 size={10} className="animate-spin" /> : <ShieldCheck size={10} />}
+                        Withdraw pilot consent and erase derived evidence
+                      </button>
+                      <p className="mt-1.5 text-[8px] leading-relaxed text-white/25">
+                        If data was copied under a separate staging-copy consent receipt, use that
+                        receipt's scoped copy-erasure action to remove the imported draft or profile.
+                        A draft created by the button above is derived pilot data and is erased
+                        automatically by this withdrawal action.
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -705,6 +1382,27 @@ export const LearningOperationsCard: React.FC<{
                   ? `validate:${candidate.samplePostId}`
                   : `enroll:${candidate.clientId ?? '__owner__'}`;
                 const busy = pilotActionKey === actionKey;
+                const customerConsent = pilotCustomerConsentByWorkspace[candidate.workspaceKey]
+                  ?? { confirmed: false, note: '' };
+                const trimmedCustomerConsentNote = customerConsent.note.trim();
+                const validCustomerConsent = customerConsent.confirmed
+                  && trimmedCustomerConsentNote.length >= 10
+                  && trimmedCustomerConsentNote.length <= 500;
+                const needsCustomerConsent = !candidate.enrolled && candidate.clientId !== null;
+                const sampleDraft = candidate.sampleDraft ?? null;
+                const sampleDraftReady = isReviewablePilotDraft(candidate);
+                const draftConfirmed = isCurrentPilotDraftConfirmation(
+                  candidate,
+                  pilotDraftConfirmedByWorkspace[candidate.workspaceKey],
+                );
+                const contextReady = candidate.contextReady === true;
+                const contextLabel = candidate.contextReason === 'verified_facts'
+                  ? `${candidate.verifiedFactCount} verified fact${
+                    candidate.verifiedFactCount === 1 ? '' : 's'
+                  }`
+                  : `${candidate.meaningfulProfileFieldCount} business profile field${
+                    candidate.meaningfulProfileFieldCount === 1 ? '' : 's'
+                  }`;
                 return (
                   <div key={candidate.workspaceKey} className="rounded-lg border border-white/[0.07] bg-black/20 p-3">
                     <div className="flex items-start justify-between gap-2">
@@ -714,39 +1412,208 @@ export const LearningOperationsCard: React.FC<{
                           {candidate.eligibleDraftCount} eligible real draft{candidate.eligibleDraftCount === 1 ? '' : 's'}
                         </p>
                       </div>
-                      <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
-                        candidate.enrolled
-                          ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
-                          : 'border-white/10 bg-white/5 text-white/35'
-                      }`}>
-                        {candidate.enrolled ? 'Approval enrolled' : 'Not enrolled'}
-                      </span>
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
+                          candidate.enrolled
+                            ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-200'
+                            : 'border-white/10 bg-white/5 text-white/35'
+                        }`}>
+                          {candidate.enrolled ? 'Approval enrolled' : 'Not enrolled'}
+                        </span>
+                        <span className={`rounded-full border px-2 py-1 text-[8px] font-bold uppercase tracking-wider ${
+                          contextReady
+                            ? 'border-cyan-400/20 bg-cyan-500/10 text-cyan-100'
+                            : 'border-amber-400/20 bg-amber-500/10 text-amber-100'
+                        }`}>
+                          {contextReady ? 'Context ready' : 'Context required'}
+                        </span>
+                      </div>
                     </div>
+                    <div className={`mt-2.5 rounded-lg border p-2.5 ${
+                      contextReady
+                        ? 'border-cyan-400/15 bg-cyan-500/[0.03]'
+                        : 'border-amber-400/15 bg-amber-500/[0.035]'
+                    }`}>
+                      <p className={`text-[10px] font-black ${
+                        contextReady ? 'text-cyan-100/80' : 'text-amber-100/80'
+                      }`}>
+                        {contextReady ? `Critic context ready: ${contextLabel}` : 'Business context is incomplete'}
+                      </p>
+                      <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                        {contextReady
+                          ? 'Only aggregate readiness is shown here; profile contents and verified facts stay private.'
+                          : 'Complete this workspace business profile or add a verified fact. Critics and AI spend remain blocked.'}
+                      </p>
+                    </div>
+                    {needsCustomerConsent && (
+                      <div className="mt-2.5 rounded-lg border border-amber-400/15 bg-amber-500/[0.035] p-2.5">
+                        <p className="text-[10px] font-black text-amber-100/80">
+                          Customer pilot consent attestation: {candidate.label}
+                        </p>
+                        <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
+                          <input
+                            type="checkbox"
+                            checked={customerConsent.confirmed}
+                            onChange={(event) => setPilotCustomerConsentByWorkspace((current) => ({
+                              ...current,
+                              [candidate.workspaceKey]: {
+                                ...(current[candidate.workspaceKey]
+                                  ?? { confirmed: false, note: '' }),
+                                confirmed: event.target.checked,
+                              },
+                            }))}
+                            className="mt-0.5 accent-amber-400"
+                            aria-label={`Confirm record-only consent for ${candidate.label}`}
+                          />
+                          I have confirmed {candidate.label} agreed to record-only AI critique of
+                          their draft posts. This is not consent to publish.
+                        </label>
+                        <label className="mt-2 block text-[9px] font-bold uppercase tracking-wider text-white/35">
+                          Consent evidence note
+                          <textarea
+                            maxLength={500}
+                            value={customerConsent.note}
+                            onChange={(event) => setPilotCustomerConsentByWorkspace((current) => ({
+                              ...current,
+                              [candidate.workspaceKey]: {
+                                ...(current[candidate.workspaceKey]
+                                  ?? { confirmed: false, note: '' }),
+                                note: event.target.value,
+                              },
+                            }))}
+                            placeholder={`When and how ${candidate.label} confirmed participation`}
+                            className="mt-1 min-h-16 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
+                            aria-label={`Consent evidence note for ${candidate.label}`}
+                          />
+                        </label>
+                        <p className="mt-1 text-[9px] text-white/30">
+                          {candidate.label} enrollment stays disabled until both are complete.
+                        </p>
+                      </div>
+                    )}
+                    {candidate.enrolled && (
+                      <div className="mt-2.5 rounded-lg border border-cyan-400/15 bg-cyan-500/[0.035] p-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[10px] font-black text-cyan-100/80">
+                            Exact server-selected draft
+                          </p>
+                          {sampleDraftReady && sampleDraft && (
+                            <span className="rounded-full border border-cyan-400/15 bg-black/20 px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-cyan-100/55">
+                              {sampleDraft.platform} / {sampleDraft.postType ?? 'post'}
+                            </span>
+                          )}
+                        </div>
+                        {sampleDraftReady && sampleDraft ? (
+                          <div className="mt-2 overflow-hidden rounded-lg border border-white/[0.07] bg-black/25">
+                            {(sampleDraft.imageUrl || sampleDraft.videoUrl) && (
+                              <div className="space-y-2 border-b border-white/[0.06] bg-black/30 p-2">
+                                {sampleDraft.imageUrl && (
+                                  <img
+                                    src={sampleDraft.imageUrl}
+                                    alt={`${candidate.label} exact pilot draft preview`}
+                                    loading="lazy"
+                                    className="max-h-48 w-full rounded-md object-contain"
+                                  />
+                                )}
+                                {sampleDraft.videoUrl && (
+                                  <video
+                                    src={sampleDraft.videoUrl}
+                                    controls
+                                    preload="metadata"
+                                    className="max-h-48 w-full rounded-md"
+                                  />
+                                )}
+                              </div>
+                            )}
+                            <div className="p-2.5">
+                              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[10px] leading-relaxed text-white/65">
+                                {sampleDraft.content}
+                              </p>
+                              {sampleDraft.hashtags?.trim() && (
+                                <p className="mt-2 break-words text-[9px] text-cyan-200/45">
+                                  {sampleDraft.hashtags}
+                                </p>
+                              )}
+                              <p className="mt-2 font-mono text-[8px] text-white/25">
+                                Draft {sampleDraft.postId} / fingerprint {sampleDraft.contentHash.slice(0, 16)}
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-2 rounded-lg border border-rose-400/15 bg-rose-500/[0.04] p-2 text-[9px] font-bold leading-relaxed text-rose-100/70">
+                            Exact draft evidence is unavailable. Refresh the queue before attesting.
+                          </p>
+                        )}
+                        <label className="mt-2 flex items-start gap-2 text-[10px] leading-relaxed text-white/45">
+                          <input
+                            type="checkbox"
+                            disabled={!sampleDraftReady}
+                            checked={draftConfirmed}
+                            onChange={(event) => setPilotDraftConfirmedByWorkspace((current) => ({
+                              ...current,
+                              [candidate.workspaceKey]: event.target.checked && sampleDraft
+                                ? sampleDraft.contentHash
+                                : '',
+                            }))}
+                            className="mt-0.5 accent-cyan-400 disabled:opacity-40"
+                            aria-label={`Confirm exact real draft for ${candidate.label}`}
+                          />
+                          I reviewed the exact draft shown above and confirm it is real business
+                          content or a genuine SocialAI output for this business, not a test fixture
+                          or fabricated QA sample.
+                        </label>
+                        <p className="mt-1.5 text-[9px] leading-relaxed text-white/30">
+                          This creates an immutable pilot receipt for this exact draft version.
+                          It does not approve, schedule, or publish the post.
+                        </p>
+                      </div>
+                    )}
                     <button
                       type="button"
-                      disabled={busy || (
-                        !candidate.enrolled
-                        && (
-                          !validPilotBudget
-                          || (candidate.clientId !== null && !validPilotCustomerConsent)
+                      disabled={pilotActionKey !== null || (
+                        !contextReady
+                        || (candidate.enrolled && !draftConfirmed)
+                        || (
+                          !candidate.enrolled
+                          && (
+                            !validPilotBudget
+                            || (candidate.clientId !== null && !validCustomerConsent)
+                          )
                         )
                       )}
-                      onClick={() => candidate.enrolled
-                        ? onPilotValidate?.(candidate.samplePostId)
-                        : onPilotEnroll?.(
+                      onClick={async () => {
+                        if (candidate.enrolled) {
+                          if (!sampleDraftReady || !sampleDraft) return;
+                          await onPilotValidate?.(
+                            candidate.samplePostId,
+                            sampleDraft.contentHash,
+                            `Admin explicitly confirmed ${candidate.label}'s server-selected draft ${candidate.samplePostId} is real business content, not synthetic or QA data, for record-only pilot critique. This does not approve, schedule, or publish it.`,
+                          );
+                          setPilotDraftConfirmedByWorkspace((current) => ({
+                            ...current,
+                            [candidate.workspaceKey]: '',
+                          }));
+                          return;
+                        }
+                        await onPilotEnroll?.(
                           candidate.clientId,
                           pilotBudgetCents,
                           candidate.clientId === null ? undefined : {
                             confirmed: true,
-                            note: trimmedPilotConsentNote,
+                            note: trimmedCustomerConsentNote,
                           },
-                        )}
+                        );
+                      }}
                       className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
                     >
                       {busy ? <Loader2 size={10} className="animate-spin" /> : <ClipboardCheck size={10} />}
-                      {candidate.enrolled
-                        ? 'Validate next real draft'
-                        : `Enroll with ${pilotBudgetLabel} cap`}
+                      {!contextReady
+                        ? 'Business context required'
+                        : candidate.enrolled
+                          ? sampleDraftReady
+                            ? 'Confirm and validate exact draft'
+                            : 'Exact draft preview required'
+                          : `Enroll with ${pilotBudgetLabel} cap`}
                     </button>
                   </div>
                 );
@@ -795,12 +1662,13 @@ export const LearningOperationsCard: React.FC<{
                   </div>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
                   {[
                     ['Hold rate', fmtRate(workspace.holdRate)],
                     ['Sampled false holds', fmtRate(workspace.sampledFalseHoldRate)],
                     ['Critic availability', fmtRate(workspace.criticAvailability)],
-                    ['Judge receipt availability', fmtRate(workspace.judgeAvailability)],
+                    ['Judge availability', fmtRate(workspace.judgeAvailability)],
+                    ['Judge telemetry coverage', fmtRate(workspace.judgeTelemetryCoverage)],
                     ['Severe false passes', String(workspace.severeFalsePasses)],
                     ['Adjudication coverage', fmtRate(workspace.adjudicationCoverage)],
                   ].map(([label, value]) => (

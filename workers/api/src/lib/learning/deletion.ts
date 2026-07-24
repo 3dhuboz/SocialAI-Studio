@@ -6,6 +6,93 @@ function requireScope(value: string, label: string): string {
 
 type ArchetypeRow = { archetype_slug: string | null };
 
+const DEFERRED_LEARNING_TABLES = [
+  'learning_pilot_samples',
+  'learning_pilot_generated_drafts',
+  'learning_pilot_media_jobs',
+  'learning_decision_disqualifications',
+  'learning_calibration_audits',
+] as const;
+
+type DeferredLearningTable = typeof DEFERRED_LEARNING_TABLES[number];
+
+async function existingDeferredLearningTables(
+  db: D1Database,
+): Promise<Set<DeferredLearningTable>> {
+  const rows = await db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN (
+        'learning_pilot_samples',
+        'learning_pilot_generated_drafts',
+        'learning_pilot_media_jobs',
+        'learning_decision_disqualifications',
+        'learning_calibration_audits'
+      )
+    ORDER BY name
+  `).all<{ name: string }>();
+  const allowed = new Set<string>(DEFERRED_LEARNING_TABLES);
+  const names = rows.results ?? [];
+  if (names.some((row) => !allowed.has(row.name))) {
+    throw new Error('Learning deletion schema preflight returned an unexpected table');
+  }
+  return new Set(names.map((row) => row.name as DeferredLearningTable));
+}
+
+function outcomeDeletionTables(
+  deferredTables: Set<DeferredLearningTable>,
+): string[] {
+  return [
+    'publication_events',
+    'platform_metric_snapshots',
+    'conversion_feedback',
+    'tracking_links',
+    'learning_experiments',
+    'learning_profiles',
+    'learning_signals',
+    ...DEFERRED_LEARNING_TABLES.filter((table) => deferredTables.has(table)),
+    'learning_adjudications',
+    'learning_pilot_enrollments',
+  ];
+}
+
+async function deletePilotMediaPostsForWorkspace(
+  db: D1Database,
+  userId: string,
+  workspaceKey: string,
+): Promise<void> {
+  await db.prepare(`
+    DELETE FROM posts
+    WHERE user_id = ?
+      AND id IN (
+        SELECT post_id
+        FROM learning_pilot_media_jobs
+        WHERE user_id = ?
+          AND workspace_key = ?
+          AND state = 'ready'
+          AND post_id IS NOT NULL
+      )
+  `).bind(userId, userId, workspaceKey).run();
+}
+
+async function deletePilotMediaPostsForUser(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db.prepare(`
+    DELETE FROM posts
+    WHERE user_id = ?
+      AND id IN (
+        SELECT post_id
+        FROM learning_pilot_media_jobs
+        WHERE user_id = ?
+          AND state = 'ready'
+          AND post_id IS NOT NULL
+      )
+  `).bind(userId, userId).run();
+}
+
 function canonicalArchetypes(rows: ArchetypeRow[]): string[] {
   return [...new Set(rows.map((row) => row.archetype_slug?.trim() || '')
     .filter(Boolean))].sort();
@@ -65,6 +152,7 @@ async function deleteOutcomeWorkspaceData(
   userId: string,
   workspaceKey: string,
 ): Promise<void> {
+  const deferredTables = await existingDeferredLearningTables(db);
   await db.prepare(`
     DELETE FROM learning_outcomes
     WHERE publication_event_id IN (
@@ -79,17 +167,10 @@ async function deleteOutcomeWorkspaceData(
       WHERE user_id = ? AND workspace_key = ?
     )
   `).bind(userId, workspaceKey).run();
-  for (const table of [
-    'publication_events',
-    'platform_metric_snapshots',
-    'conversion_feedback',
-    'tracking_links',
-    'learning_experiments',
-    'learning_profiles',
-    'learning_signals',
-    'learning_adjudications',
-    'learning_pilot_enrollments',
-  ]) {
+  for (const table of outcomeDeletionTables(deferredTables)) {
+    if (table === 'learning_pilot_media_jobs') {
+      await deletePilotMediaPostsForWorkspace(db, userId, workspaceKey);
+    }
     await db.prepare(`
       DELETE FROM ${table}
       WHERE user_id = ? AND workspace_key = ?
@@ -101,6 +182,7 @@ async function deleteOutcomeUserData(
   db: D1Database,
   userId: string,
 ): Promise<void> {
+  const deferredTables = await existingDeferredLearningTables(db);
   await db.prepare(`
     DELETE FROM learning_outcomes
     WHERE publication_event_id IN (
@@ -113,17 +195,10 @@ async function deleteOutcomeUserData(
       SELECT id FROM publication_events WHERE user_id = ?
     )
   `).bind(userId).run();
-  for (const table of [
-    'publication_events',
-    'platform_metric_snapshots',
-    'conversion_feedback',
-    'tracking_links',
-    'learning_experiments',
-    'learning_profiles',
-    'learning_signals',
-    'learning_adjudications',
-    'learning_pilot_enrollments',
-  ]) {
+  for (const table of outcomeDeletionTables(deferredTables)) {
+    if (table === 'learning_pilot_media_jobs') {
+      await deletePilotMediaPostsForUser(db, userId);
+    }
     await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`)
       .bind(userId).run();
   }

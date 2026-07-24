@@ -29,8 +29,11 @@ import { checkBillingGate } from '../lib/billing-gate';
 import { notifyOwnerOnFailure } from '../lib/cron-notify';
 import { timingSafeEqualStr } from '../lib/timing-safe';
 import { buildSafeImagePrompt } from '../lib/image-safety';
-import { generateImageWithGuardrails } from '../lib/image-gen';
-import { resolveBusinessType } from '../lib/profile-guards';
+import { generateImageWithGuardrails, regenerateImageAfterCritique } from '../lib/image-gen';
+import { critiqueImageInternal } from '../lib/critique';
+import { buildCritiqueContextText } from '../lib/post-critique';
+import { resolveArchetypeSlug } from '../lib/archetypes';
+import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 import {
   ensureProfileGroup,
   initializeConnection,
@@ -58,6 +61,7 @@ import {
   loadSocialTokensForPosts,
   lookupSocialTokens,
 } from '../cron/_shared';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 const uuid = () => crypto.randomUUID();
 
@@ -637,6 +641,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       `SELECT p.id, p.user_id, p.client_id, p.content, p.hashtags, p.platform,
               p.image_url, p.video_url, p.audio_mixed_url, p.post_type,
               p.video_status, p.video_script, p.video_shots, p.image_prompt,
+              p.image_critique_score, p.image_critique_reasoning,
               p.postproxy_post_id, p.status,
               p.owner_kind, p.owner_id,
               COALESCE(client.use_postproxy, owner.use_postproxy, 0) AS use_postproxy
@@ -652,6 +657,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
       audio_mixed_url: string | null; post_type: string | null;
       video_status: string | null; video_script: string | null;
       video_shots: string | null; image_prompt: string | null;
+      image_critique_score: number | null; image_critique_reasoning: string | null;
       postproxy_post_id: string | null; status: string | null;
       owner_kind: 'user' | 'client' | 'shop' | null;
       owner_id: string | null;
@@ -708,6 +714,7 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
     const hashtags = post.hashtags ? (JSON.parse(post.hashtags) as string[]) : [];
     const cleanContent = post.content.replace(/(\s+#\w+)+\s*$/, '').trim();
     let imageUrl = post.image_url || null;
+    let generatedModelUsed = c.env.IMAGE_GEN_PROVIDER === 'gpt-image-2' ? 'gpt-image-2-medium' : 'flux-dev';
     if (imageUrl?.startsWith('data:')) {
       imageUrl = null;
     }
@@ -725,10 +732,79 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
         );
         if (gen.imageUrl) {
           imageUrl = gen.imageUrl;
-          await c.env.DB.prepare('UPDATE posts SET image_url = ? WHERE id = ?')
-            .bind(gen.imageUrl, post.id).run();
+          generatedModelUsed = gen.modelUsed;
         }
       }
+    }
+
+    // Always review the exact image that is about to leave the system. This
+    // avoids accepting a newly generated URL against a stale score belonging
+    // to an older image.
+    if (imageUrl && post.post_type !== 'video') {
+      const critiqueContext = buildCritiqueContextText({
+        caption: cleanContent,
+        imagePrompt: post.image_prompt,
+      });
+      if (!critiqueContext) {
+        return c.json({ error: 'Image review requires a caption or image brief.' }, 422);
+      }
+      const imageOwnerId = post.user_id ?? uid;
+      const [archetypeSlug, forbiddenSubjects] = await Promise.all([
+        resolveArchetypeSlug(c.env, imageOwnerId, post.client_id),
+        loadForbiddenSubjects(c.env, imageOwnerId, post.client_id),
+      ]);
+      let finalCritique = await critiqueImageInternal(c.env, {
+        imageUrl,
+        caption: critiqueContext,
+        archetypeSlug,
+        forbiddenSubjects,
+        userId: imageOwnerId,
+        clientId: post.client_id,
+        postId: post.id,
+      });
+
+      if (finalCritique && finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD && post.image_prompt && c.env.FAL_API_KEY) {
+        const promptForRetry = post.image_prompt.split('|claim:')[0].trim();
+        const businessType = await resolveBusinessType(c.env, imageOwnerId, post.client_id);
+        const safe = buildSafeImagePrompt(promptForRetry, cleanContent, businessType);
+        if (safe) {
+          const retry = await regenerateImageAfterCritique(c.env, imageOwnerId, post.client_id, safe, {
+            caption: cleanContent,
+            critiqueReasoning: finalCritique.reasoning,
+            archetypeSlug,
+            modelUsed: generatedModelUsed,
+            seedHint: post.id,
+          });
+          if (retry.imageUrl) {
+            const retryCritique = await critiqueImageInternal(c.env, {
+              imageUrl: retry.imageUrl,
+              caption: critiqueContext,
+              archetypeSlug: retry.archetypeSlug,
+              forbiddenSubjects,
+              userId: imageOwnerId,
+              clientId: post.client_id,
+              postId: post.id,
+            });
+            if (retryCritique && retryCritique.score >= CRITIQUE_ACCEPT_THRESHOLD) {
+              imageUrl = retry.imageUrl;
+              finalCritique = retryCritique;
+            }
+          }
+        }
+      }
+
+      if (!finalCritique || finalCritique.score < CRITIQUE_ACCEPT_THRESHOLD) {
+        return c.json({
+          error: 'Image did not pass the final relevance and safety review.',
+          critique_score: finalCritique?.score ?? null,
+          critique_reasoning: finalCritique?.reasoning ?? 'Critic unavailable',
+        }, 422);
+      }
+      await c.env.DB.prepare(
+        `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ? WHERE id = ?`,
+      ).bind(imageUrl, finalCritique.score, finalCritique.reasoning, new Date().toISOString(), post.id).run();
+      post.image_critique_score = finalCritique.score;
+      post.image_critique_reasoning = finalCritique.reasoning;
     }
     const media = [post.audio_mixed_url, post.video_url, imageUrl].find((u): u is string => !!u) ?? null;
 
@@ -783,11 +859,14 @@ export function registerPostproxyRoutes(app: Hono<{ Bindings: Env }>): void {
         platform: postPlatform,
         hashtags: post.hashtags,
         image_url: imageUrl,
+        image_prompt: post.image_prompt,
         post_type: post.post_type,
         video_url: post.audio_mixed_url ?? post.video_url,
         video_status: post.video_status,
         video_script: post.video_script,
         video_shots: post.video_shots,
+        image_critique_score: post.image_critique_score,
+        image_critique_reasoning: post.image_critique_reasoning,
       };
 
       if (usePostproxy) {

@@ -19,8 +19,8 @@ describe('critique-thresholds', () => {
     expect(CRITIQUE_ACCEPT_THRESHOLD).toBeLessThanOrEqual(10);
   });
 
-  it('CRITIQUE_ACCEPT_THRESHOLD is 5 (locked — change requires audit of all 3 call sites)', () => {
-    // Hard-pinned to 5 because the value is load-bearing across:
+  it('requires a clear, specific match before unattended publishing', () => {
+    // Hard-pinned because the value is load-bearing across:
     //   - cron/prewarm-images.ts gen-time regen
     //   - lib/backfill.ts backlog regen + manual backfill
     //   - cron/publish-missed.ts publish-time guard (separate threshold but
@@ -28,7 +28,7 @@ describe('critique-thresholds', () => {
     //     threshold too)
     // The intent of this assertion is to force a code review when this
     // number changes, not to bake in a guess.
-    expect(CRITIQUE_ACCEPT_THRESHOLD).toBe(5);
+    expect(CRITIQUE_ACCEPT_THRESHOLD).toBe(7);
   });
 
   it('MAX_REGEN_ATTEMPTS is a small positive integer', () => {

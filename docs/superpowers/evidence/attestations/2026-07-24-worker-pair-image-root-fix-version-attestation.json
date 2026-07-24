@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "worker-pair-image-root-fix-version-attestation-20260724",
+  "capturedAt": "2026-07-23T23:46:07.0218561Z",
+  "scope": {
+    "environments": [
+      "staging",
+      "production"
+    ],
+    "purpose": "learning_release_safety_and_worker_identity_pin",
+    "productionBehaviorChangeAllowed": false,
+    "releaseFlagChangeAllowed": false,
+    "schemaApplicationAllowed": false,
+    "automaticActivationAllowed": false
+  },
+  "observedVersions": {
+    "staging": {
+      "workerName": "socialai-api-staging",
+      "versionId": "70cd5ed3-3944-4e9a-ab3b-46eec832e510",
+      "versionNumber": 125,
+      "createdAt": "2026-07-23T23:16:05.633141Z",
+      "source": "wrangler",
+      "trigger": "version_upload",
+      "scriptEtag": "91c34a9314f5e8605b9e5b0db408d9d1495eae01d70a71f733319343422b5d3b",
+      "handlers": [
+        "fetch",
+        "scheduled"
+      ],
+      "environmentBinding": "staging",
+      "databaseBindingId": "0ce38359-c7d6-4d6e-b278-7ca1a719dbb4",
+      "cronTriggers": []
+    },
+    "production": {
+      "workerName": "socialai-api",
+      "versionId": "cea92e31-2f0b-4948-99e9-7e9904e27e86",
+      "versionNumber": 296,
+      "createdAt": "2026-07-23T23:16:18.126666Z",
+      "source": "wrangler",
+      "trigger": "version_upload",
+      "scriptEtag": "91c34a9314f5e8605b9e5b0db408d9d1495eae01d70a71f733319343422b5d3b",
+      "handlers": [
+        "fetch",
+        "scheduled"
+      ],
+      "environmentBinding": "production",
+      "databaseBindingId": "6295841e-e5f7-4355-b0e0-c5f22e58d99d"
+    },
+    "sameScriptEtag": true,
+    "compatibilityDate": "2024-09-01",
+    "compatibilityFlags": [
+      "nodejs_compat"
+    ]
+  },
+  "sourceCorrelation": {
+    "deployedSourceCommit": "7d1b1b3e262e1c5e5694aa3ca3aae7d67577394d",
+    "proofCommit": "a838ca607d3a76a08c6f0748acb7a8918ef5cf79",
+    "deployedWorkerTree": "3948d14e618786ccff32f45d7614f35deebc18bf",
+    "proofCommitWorkerTree": "3948d14e618786ccff32f45d7614f35deebc18bf",
+    "workerTreesMatch": true,
+    "proofCommitOnlyChangedOutsideWorker": [
+      "scripts/learning-rollout-state.ts",
+      "src/__tests__/learningRolloutState.test.ts"
+    ],
+    "limitation": "Cloudflare version metadata has no Git commit annotation. The pin is supported by the directly observed deployment, identical staging and production script etags, unchanged workers/api Git tree, binding inspection, and exact-source verification."
+  },
+  "verification": {
+    "workerFocusedTests": {
+      "testsPassed": 133,
+      "testsFailed": 0
+    },
+    "frontendGenerationTests": {
+      "testsPassed": 116,
+      "testsFailed": 0
+    },
+    "workerTypecheck": "passed",
+    "frontendProductionBuild": "passed",
+    "rolloutVerifierRegression": {
+      "testsPassed": 49,
+      "testsFailed": 0,
+      "typescript": "passed"
+    },
+    "offlineReleaseProof": {
+      "result": "offline_pass",
+      "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-release-proof-2026-07-23T23-44-53-325Z.json",
+      "payloadSha256": "3aed1cd342dc6039608bf182d6d80b6053a48610831f400a6572a412cd87f8eb",
+      "fileSha256": "ab5331c9735a455c6973c08d9dbdbf6ec0ccb91428d146cf1d41ac16535c2ac2",
+      "requiredChecks": 114,
+      "missingChecks": 0,
+      "failedChecks": 0
+    },
+    "liveRolloutState": {
+      "result": "safe_hold",
+      "promotionReady": false,
+      "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-rollout-state-2026-07-23T23-45-10-121Z.json",
+      "payloadSha256": "6f0f4ca6fa24205dea42737afbdac97861b3fdf58328d42bd097b3ebc302f13e",
+      "fileSha256": "fbb12c7a329242abd26df111ac64186482c3f156b5902a686d5d5541758604c9",
+      "productionMutationPerformed": false,
+      "releaseFlagsChanged": false,
+      "stagingD1ReadOnly": true,
+      "productionD1ReadOnly": true,
+      "failedSafetyChecks": []
+    }
+  },
+  "safetyInvariants": {
+    "LEARNING_BRAIN_ENABLED": true,
+    "LEARNING_RELEASE_ENFORCEMENT": false,
+    "LEARNING_AUTOPILOT_ENABLED": false,
+    "ORGANIC_REACH_ENABLED": true,
+    "ORGANIC_REACH_APPLY_ENABLED": false,
+    "protectedAutopilotWorkspaceCountStaging": 0,
+    "protectedAutopilotWorkspaceCountProduction": 0,
+    "hugheseysQueStatus": "on_hold",
+    "deferredProductionSchemaReady": true,
+    "deferredProductionSchemaApplied": false
+  },
+  "attestation": {
+    "decision": "accepted_for_read_only_rollout_version_pin",
+    "stagingVersionId": "70cd5ed3-3944-4e9a-ab3b-46eec832e510",
+    "productionVersionId": "cea92e31-2f0b-4948-99e9-7e9904e27e86",
+    "doesNotAuthorize": [
+      "Protected Autopilot activation",
+      "learning release enforcement",
+      "organic reach application",
+      "production schema changes",
+      "post scheduling or publishing"
+    ]
+  }
+}

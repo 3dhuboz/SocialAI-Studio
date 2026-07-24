@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -17,16 +19,21 @@ const readiness: LearningReadinessResponse = {
   policyVersion: '2026-07-14-v1', ready: false, stale: false,
   effectiveMode: 'approval', evaluatedAt: '2026-07-14T08:00:00.000Z',
   checks: {
-    pilot: false, adjudications: false, severeFalsePasses: true,
-    falseHolds: true, availability: true, receipts: true,
+    pilot: false, pilotCohort: false, adjudications: false, severeFalsePasses: true,
+    falseHolds: true, availability: true,
+    releaseJudgeAvailability: true, releaseJudgeTelemetry: true, receipts: true,
     predictionLift: false, rankCorrelation: false, criticalBypasses: true,
     publishingRegressions: true, cost: true, killSwitch: true,
     replayRedTeam: true, publishRegression: true,
     tenancyProofs: { user: true, client: true, shop: true },
   },
   metrics: {
-    pilotDecisions: 0, adjudicatedDecisions: 0, severeFalsePasses: 0,
-    falseHoldRate: 0, requiredAvailability: 1, decisionReceiptCoverage: 1,
+    pilotDecisions: 5, pilotWorkspaceCount: 1,
+    pilotUserDecisions: 5, pilotClientDecisions: 0,
+    adjudicatedDecisions: 0, severeFalsePasses: 0,
+    falseHoldRate: 0, requiredAvailability: 1,
+    releaseJudgeAvailability: 1, releaseJudgeTelemetryCoverage: 1,
+    releaseJudgeInvocations: 12, decisionReceiptCoverage: 1,
     predictionLift: 0, rankCorrelation: 0, criticalBypasses: 0,
     publishingRegressions: 0, costWithinBudget: true, killSwitchTested: true,
   },
@@ -49,6 +56,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -57,8 +65,14 @@ describe('ProtectedAutopilotControl', () => {
     expect(html).toContain('Protected Autopilot is globally disabled');
     expect(html).toContain('Release enforcement is not enabled');
     expect(html).toContain('Pilot decisions');
-    expect(html).toContain('0 of 30');
+    expect(html).toContain('5 of 30');
+    expect(html).toContain('Owner + client pilot cohort');
+    expect(html).toContain('1 of 2 workspaces; owner 5 / client 0');
     expect(html).toContain('Adjudicated decisions');
+    expect(html).toContain('Required critic and media availability');
+    expect(html).toContain('Release Judge availability');
+    expect(html).toContain('Release Judge telemetry coverage');
+    expect(html).toContain('12 calls');
     expect(html).toContain('Prediction lift');
     expect(html).toContain('Tenant isolation proofs');
     expect(html).toContain('$1.20');
@@ -66,6 +80,10 @@ describe('ProtectedAutopilotControl', () => {
     expect(html).toContain('Consent and request Protected Autopilot');
     expect((html.match(/Consent and request Protected Autopilot/g) ?? [])).toHaveLength(1);
     expect(html).toContain('will not activate until every release gate passes');
+    expect(html).toContain('Activation unlocks only after every gate is green');
+    const consentLabel = html.indexOf('Consent and request Protected Autopilot');
+    const consentButton = html.slice(html.lastIndexOf('<button', consentLabel), consentLabel);
+    expect(consentButton).toContain('disabled=""');
     expect(html).not.toContain('Approve post');
     expect(html).not.toContain('Review every post');
   });
@@ -96,14 +114,87 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
 
     expect(html).toContain('Protected Autopilot active');
     expect(html).toContain('Safe posts can publish unattended');
+    expect(html).toContain('Current experiment rate: 0%');
+    expect(html).toContain('Increase to 10%');
     expect(html).toContain('Switch to Approval mode');
     expect(html).not.toContain('Consent and request Protected Autopilot');
+  });
+
+  it('enables the consent action once every activation gate is green', () => {
+    const html = renderToStaticMarkup(
+      <ProtectedAutopilotControl
+        settings={{ ...settings, effectiveMode: 'approval' }}
+        readiness={{
+          ...readiness,
+          ready: true,
+          effectiveMode: 'approval',
+          globalSwitches: {
+            learningBrain: true, releaseEnforcement: true, protectedAutopilot: true,
+          },
+        }}
+        budgetDollars="20.00"
+        saving={false}
+        onBudgetChange={() => undefined}
+        onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
+        onUseApproval={() => undefined}
+      />,
+    );
+
+    const consentLabel = html.indexOf('Consent and request Protected Autopilot');
+    const consentButton = html.slice(html.lastIndexOf('<button', consentLabel), consentLabel);
+    expect(consentButton).not.toContain('disabled=""');
+    expect(html).not.toContain('Activation unlocks only after every gate is green');
+  });
+
+  it('shows only the next approved experiment step and stops at 15%', () => {
+    const activeReadiness: LearningReadinessResponse = {
+      ...readiness,
+      ready: true,
+      effectiveMode: 'protected_autopilot',
+      globalSwitches: {
+        learningBrain: true, releaseEnforcement: true, protectedAutopilot: true,
+      },
+    };
+    const activeSettings = (experimentRate: number): LearningSettingsResponse => ({
+      settings: {
+        ...settings.settings,
+        mode: 'protected_autopilot',
+        autopublishConsentAt: '2026-07-14T08:00:00.000Z',
+        autopublishPolicyVersion: '2026-07-14-v1',
+        experimentRate,
+      },
+      effectiveMode: 'protected_autopilot',
+    });
+    const render = (experimentRate: number) => renderToStaticMarkup(
+      <ProtectedAutopilotControl
+        settings={activeSettings(experimentRate)}
+        readiness={activeReadiness}
+        budgetDollars="20.00"
+        saving={false}
+        onBudgetChange={() => undefined}
+        onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
+        onUseApproval={() => undefined}
+      />,
+    );
+
+    const tenPercent = render(0.1);
+    expect(tenPercent).toContain('Current experiment rate: 10%');
+    expect(tenPercent).toContain('Increase to 15%');
+    expect(tenPercent).not.toContain('Increase to 20%');
+
+    const fifteenPercent = render(0.15);
+    expect(fifteenPercent).toContain('Current experiment rate: 15%');
+    expect(fifteenPercent).toContain('Maximum protected experiment rate reached');
+    expect(fifteenPercent).not.toContain('Increase to 20%');
   });
 
   it('fails closed when spend telemetry is unavailable', () => {
@@ -123,6 +214,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -140,6 +232,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -158,6 +251,7 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
@@ -183,11 +277,48 @@ describe('ProtectedAutopilotControl', () => {
         saving={false}
         onBudgetChange={() => undefined}
         onRequestProtected={() => undefined}
+        onSetExperimentRate={() => undefined}
         onUseApproval={() => undefined}
       />,
     );
 
     expect(html).toContain('Validated regression proof pending or failed');
     expect(html).not.toContain('1 recorded');
+  });
+});
+
+describe('Shopify Protected Autopilot parity', () => {
+  it('types and displays both independent Release Judge readiness gates', () => {
+    const api = readFileSync(resolve(
+      process.cwd(),
+      'shopify-app/src/api.ts',
+    ), 'utf8');
+    const settings = readFileSync(resolve(
+      process.cwd(),
+      'shopify-app/src/pages/Settings.tsx',
+    ), 'utf8');
+
+    for (const field of [
+      'pilotCohort',
+      'releaseJudgeAvailability',
+      'releaseJudgeTelemetry',
+    ]) {
+      expect(api).toContain(`${field}: boolean`);
+      expect(settings).toContain(`readiness.checks.${field} === true`);
+    }
+    for (const metric of [
+      'pilotWorkspaceCount',
+      'pilotUserDecisions',
+      'pilotClientDecisions',
+    ]) {
+      expect(api).toContain(`${metric}: number`);
+    }
+    expect(settings).toContain("['Owner + client pilot cohort'");
+    expect(settings).toContain("['Release Judge availability'");
+    expect(settings).toContain("['Release Judge telemetry coverage'");
+    expect(settings).toContain('Activation unlocks only after every gate is green');
+    expect(settings).toContain("experimentRate: mode === 'protected_autopilot'");
+    expect(settings).toContain('Increase to 10%');
+    expect(settings).toContain('Increase to 15%');
   });
 });

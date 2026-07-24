@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "pilot-evaluation-gladstone-market-stall-fc3caf869fe11d1de5260218",
+  "capturedAt": "2026-07-20T22:15:49.061Z",
+  "source": {
+    "kind": "user_provided_copy_consent",
+    "threadId": "019ed317-7f47-7b22-ae5e-0fab6b0218c6",
+    "consentReceiptId": "consent-gladstonebbq-001-20260720-record-only"
+  },
+  "statement": "I consent to SocialAI Studio copying Gladstone BBQ Festival's non-secret business profile and up to four unpublished drafts into isolated staging for record-only safety evaluation. Nothing may be scheduled or published, and consent may be withdrawn.",
+  "scope": {
+    "environment": "staging",
+    "recordOnly": true,
+    "maximumDrafts": 4,
+    "requiresUnpublished": true,
+    "scheduleAllowed": false,
+    "publishAllowed": false,
+    "learningApplyAllowed": false,
+    "withdrawalAllowed": true
+  },
+  "copyReceipt": {
+    "artifact": "D:\\GitHubBackup\\SocialAi\\release-evidence\\learning-pilot-staging-copy-2026-07-19T23-19-47-229Z.json",
+    "fileSha256": "791e181cdd9c25b66b8c0e657c2a5389f0ee50f6ca096483a049e3e8f36721c1",
+    "sourceSnapshotSha256": "b8fe9565b626ad365749b981245f60ae1b112dc96debc672b0cadd4868fe38df",
+    "productionRecheckSha256": "b8fe9565b626ad365749b981245f60ae1b112dc96debc672b0cadd4868fe38df",
+    "copiedPostId": "pilot-copy-fc3caf869fe11d1de5260218",
+    "copiedDraftCountWithinConsent": 3,
+    "maximumDraftsWithinConsent": 4
+  },
+  "candidate": {
+    "postId": "pilot-copy-fc3caf869fe11d1de5260218",
+    "clientId": "gladstonebbq-001",
+    "ownerKind": "client",
+    "ownerId": "gladstonebbq-001",
+    "contentHash": "7f3ec088ddcc200dd25b7c0250227884a39f7c03cd9167505c97e896be286b89",
+    "platform": "Facebook",
+    "postType": "image",
+    "content": "Alright legends, this is your final call. 🔥 Market stall applications for the Gladstone BBQ Festival are locking in what's shaping up to be our biggest year yet. If you've been sitting on the fence-this is your sign to jump in. Once spots are gone, they're gone. Get in touch.",
+    "hashtags": [
+      "#GladstoneEvents",
+      "#SupportLocal"
+    ],
+    "imageUrl": "https://v3b.fal.media/files/b/0a9a4935/Nq7KIozruXDQ1u5dETZml.jpg",
+    "imageEvidencePath": "D:\\GitHubBackup\\SocialAi\\release-evidence\\pilot-candidates\\pilot-copy-fc3caf869fe11d1de5260218.jpg",
+    "imageSha256": "c1606a92abbb589a9eeabc698ecc4843fb9f3cea81f24fb85cc999c19cc13303"
+  },
+  "attestationReceipt": {
+    "sampleId": "d46fbcc1-2f8c-4c3d-ac2d-6f6949b95c58",
+    "attestationBasis": "customer_real_post",
+    "attestedAt": "2026-07-20T22:09:03.834Z",
+    "provenanceBasis": "exact unchanged production Draft copied by the scoped deterministic copier under the up-to-four-Draft consent",
+    "postMutated": false
+  },
+  "criticDecision": {
+    "decisionId": "5a22fedf-0839-44b9-9409-04bd6852cad4",
+    "releaseState": "block_red",
+    "sourceStatus": "Draft",
+    "postMutated": false,
+    "candidateChanged": false,
+    "verdictCount": 10,
+    "verdicts": [
+      {
+        "criticKind": "brand",
+        "provider": "deterministic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 1
+      },
+      {
+        "criticKind": "brand",
+        "provider": "anthropic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 0.95
+      },
+      {
+        "criticKind": "business_harm",
+        "provider": "anthropic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 0.92
+      },
+      {
+        "criticKind": "fact",
+        "provider": "deterministic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 1
+      },
+      {
+        "criticKind": "fact",
+        "provider": "anthropic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 0.92
+      },
+      {
+        "criticKind": "image",
+        "provider": "vision_critic",
+        "verdict": "block",
+        "severity": "release_critical",
+        "confidence": 1
+      },
+      {
+        "criticKind": "platform",
+        "provider": "deterministic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 1
+      },
+      {
+        "criticKind": "platform",
+        "provider": "anthropic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 0.9
+      },
+      {
+        "criticKind": "repetition",
+        "provider": "deterministic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 1
+      },
+      {
+        "criticKind": "repetition",
+        "provider": "anthropic",
+        "verdict": "pass",
+        "severity": "advisory",
+        "confidence": 0.88
+      }
+    ],
+    "imageCritic": {
+      "verdict": "block",
+      "severity": "release_critical",
+      "confidence": 1,
+      "score": 1,
+      "reason": "The caption is a BBQ Festival market-stall application call, while the image is a generic office desk with a lamp, notebook, and pen. This is complete cross-domain bleed between food-event content and office workspace imagery.",
+      "repair": "Regenerate the image against the caption and brand exclusions."
+    }
+  },
+  "humanAdjudication": null,
+  "humanAdjudicationReason": "Consent authorized record-only safety evaluation and exact-copy provenance, not an independent human quality label.",
+  "independentDatabaseAudit": {
+    "postStatus": "Draft",
+    "scheduledFor": null,
+    "publishAttempts": 0,
+    "providerPublishFieldsPresent": false,
+    "publicationEventCount": 0,
+    "deliveryReceiptCount": 0,
+    "workspaceMode": "approval",
+    "autopublishConsentAt": null,
+    "experimentRate": 0,
+    "stagingProtectedAutopilotWorkspaceCount": 0,
+    "productionProtectedAutopilotWorkspaceCount": 0,
+    "productionPilotPostCount": 0,
+    "productionPublicationEventCount": 0,
+    "productionDeliveryReceiptCount": 0,
+    "productionHugheseysQueStatus": "on_hold",
+    "productionMutationPerformed": false,
+    "rowsWrittenByAudit": 0,
+    "changedDbByAudit": false
+  },
+  "deploymentBoundary": {
+    "stagingWorkerVersion": "17cca808-bf93-49b6-9fc9-4b270b236a92",
+    "expectedProductionWorkerVersion": "3b963ed1-c9e1-42d6-9bff-68da2efa9215",
+    "observedProductionWorkerVersion": "7fb945de-36a7-442e-8d45-8139d5a1a841",
+    "externalProductionDeploymentDetected": true,
+    "externalProductionDeploymentCreatedAt": "2026-07-20T21:40:57.821Z",
+    "productionVersionAttested": false,
+    "productionDeploymentPerformedByThisEvaluation": false,
+    "schemaApplied": false,
+    "releaseEnforcementEnabled": false,
+    "protectedAutopilotEnabled": false,
+    "organicReachApplyEnabled": false
+  }
+}

@@ -28,30 +28,147 @@ import { cronPollPendingReels } from './poll-pending-reels';
 import { cronPrewarmImages } from './prewarm-images';
 import { cronPrewarmVideos } from './prewarm-videos';
 import { cronEvaluateLearningShadow } from './evaluate-learning-shadow';
+import { cronEvaluateLearningPilot } from './evaluate-learning-pilot';
 import { cronCollectLearningOutcomes } from './collect-learning-outcomes';
 import { cronLearnStrategies } from './learn-strategies';
 import { cronEvaluateLearningReadiness } from './evaluate-learning-readiness';
+import { cronEvaluateLearningCalibration } from './evaluate-learning-calibration';
 import { runBacklogCritique, runBacklogRegen } from '../lib/backfill';
 import { fireAlert } from '../lib/alerts';
 import { cronHealthSweep } from './health-sweep';
 import { reconcileSubscriptions } from './reconcile-subscriptions';
 
+const LEARNING_PILOT_DETAIL_KEYS = [
+  'posts_processed',
+  'candidates_considered',
+  'evaluated',
+  'reused',
+  'claimed_elsewhere',
+  'budget_skipped',
+  'context_not_ready',
+  'invalid_skipped',
+  'errors',
+] as const;
+
+const LEARNING_READINESS_DETAIL_KEYS = [
+  'workspaces_disabled',
+  'decision_disqualifications_schema_ready',
+  'ai_usage_attribution_schema_ready',
+  'pilot_samples_schema_ready',
+  'calibration_audits_schema_ready',
+] as const;
+
+const LEARNING_CALIBRATION_DETAIL_KEYS = [
+  'posts_processed',
+  'candidates_considered',
+  'completed',
+  'unavailable',
+  'claimed_elsewhere',
+  'budget_skipped',
+  'severe_false_passes',
+  'workspaces_disabled',
+  'errors',
+] as const;
+
+type TrackedCronResult = {
+  posts_processed?: number;
+  workspaces_disabled?: number;
+  decision_disqualifications_schema_ready?: number;
+  ai_usage_attribution_schema_ready?: number;
+  pilot_samples_schema_ready?: number;
+  calibration_audits_schema_ready?: number;
+};
+
+export interface CronTriggerMetadata {
+  cronExpression: string;
+  scheduledTime: number;
+}
+
+function stagingEnvironment(env: Env): boolean {
+  return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+}
+
+export function shouldRunRecordOnlyPilot(env: Env): boolean {
+  return stagingEnvironment(env)
+    && env.LEARNING_BRAIN_ENABLED === 'true'
+    && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
+    && env.LEARNING_AUTOPILOT_ENABLED !== 'true';
+}
+
+export function shouldRunLearningCalibration(env: Env): boolean {
+  return stagingEnvironment(env) && env.LEARNING_BRAIN_ENABLED === 'true';
+}
+
+function requiredCounter(cronType: string, key: string, value: unknown): number {
+  if (
+    typeof value !== 'number'
+    || !Number.isSafeInteger(value)
+    || value < 0
+  ) {
+    throw new Error(`${cronType} returned invalid counter ${key}`);
+  }
+  return value;
+}
+
+export function buildCronDetails(
+  cronType: string,
+  result: TrackedCronResult | void,
+  trigger?: CronTriggerMetadata,
+): string | null {
+  if (!result) return null;
+  const detailKeys: readonly string[] = cronType === 'learning_pilot'
+    ? LEARNING_PILOT_DETAIL_KEYS
+    : cronType === 'learning_readiness'
+      ? LEARNING_READINESS_DETAIL_KEYS
+      : cronType === 'learning_calibration'
+        ? LEARNING_CALIBRATION_DETAIL_KEYS
+        : [];
+  if (detailKeys.length === 0) return null;
+  const counters = result as Record<string, unknown>;
+  const details: Record<string, unknown> = Object.fromEntries(
+    detailKeys.map((key) => [key, requiredCounter(cronType, key, counters[key])]),
+  );
+  if (cronType === 'learning_calibration') {
+    if (
+      !trigger
+      || !trigger.cronExpression.trim()
+      || trigger.cronExpression.length > 100
+      || !Number.isSafeInteger(trigger.scheduledTime)
+      || trigger.scheduledTime < 0
+    ) {
+      throw new Error('learning_calibration missing valid scheduled trigger metadata');
+    }
+    const scheduledFor = new Date(trigger.scheduledTime);
+    if (!Number.isFinite(scheduledFor.getTime())) {
+      throw new Error('learning_calibration has invalid scheduled trigger time');
+    }
+    details.cron_expression = trigger.cronExpression;
+    details.scheduled_for = scheduledFor.toISOString();
+  }
+  return JSON.stringify(details);
+}
+
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
 // Returns void; never throws (so a failure in one cron doesn't kill the worker).
-async function trackCron(
+export async function trackCron(
   env: Env,
   cronType: string,
-  fn: () => Promise<{ posts_processed?: number } | void>,
+  fn: () => Promise<TrackedCronResult | void>,
+  trigger?: CronTriggerMetadata,
 ): Promise<void> {
   const start = Date.now();
   let success = 1;
   let posts = 0;
   let error: string | null = null;
+  let detailsJson: string | null = null;
   try {
     const result = await fn();
     posts = result?.posts_processed ?? 0;
+    detailsJson = buildCronDetails(cronType, result, trigger);
   } catch (e: any) {
     success = 0;
+    posts = 0;
+    detailsJson = null;
     error = (e?.message || String(e)).slice(0, 1000);
     console.error(`[CRON ${cronType}] FAILED:`, error);
     // Fire a critical alert so Steve learns about cron crashes within an
@@ -63,9 +180,10 @@ async function trackCron(
   const duration = Date.now() - start;
   try {
     await env.DB.prepare(
-      `INSERT INTO cron_runs (cron_type, success, posts_processed, error, duration_ms)
-       VALUES (?,?,?,?,?)`
-    ).bind(cronType, success, posts, error, duration).run();
+      `INSERT INTO cron_runs (
+         cron_type, success, posts_processed, error, duration_ms, details_json
+       ) VALUES (?,?,?,?,?,?)`
+    ).bind(cronType, success, posts, error, duration, detailsJson).run();
   } catch (logErr: any) {
     console.error(`[CRON ${cronType}] Failed to log run:`, logErr?.message);
   }
@@ -73,6 +191,7 @@ async function trackCron(
 
 export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const cron = event.cron;
+  const recordOnlyStaging = stagingEnvironment(env);
   if (cron === '*/5 * * * *') {
     // Latency-sensitive lane: posts need images prewarmed before the publish
     // cron fires, and the publish cron needs to fire close to scheduled time.
@@ -133,7 +252,15 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // Reconcile Shopify subscriptions — catches missed app_subscriptions/update
     // webhooks. Cheap when no Shopify shops are out of sync; runs on the same
     // 15-min cadence as health sweep since both are observability-tier work.
-    await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    if (!recordOnlyStaging) {
+      await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    }
+    if (shouldRunRecordOnlyPilot(env)) {
+      // Record-only pilot work is isolated from the 5-minute publish lane.
+      // It evaluates at most one Draft per explicitly consented workspace
+      // and can never schedule, mutate, or publish the source post.
+      await trackCron(env, 'learning_pilot', () => cronEvaluateLearningPilot(env));
+    }
     if (env.LEARNING_BRAIN_ENABLED === 'true') {
       await trackCron(env, 'learning_readiness', () => cronEvaluateLearningReadiness(env));
     }
@@ -151,10 +278,20 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // and the fallback chain ran instead, double-firing prewarm + publish at
   // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
   if (cron === '0 21 * * SUN') {
-    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+    if (shouldRunLearningCalibration(env)) {
+      await trackCron(
+        env,
+        'learning_calibration',
+        () => cronEvaluateLearningCalibration(env),
+        { cronExpression: cron, scheduledTime: event.scheduledTime },
+      );
+    }
+    if (env.LEARNING_BRAIN_ENABLED === 'true' && !recordOnlyStaging) {
       await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
     }
-    await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
+    if (!recordOnlyStaging) {
+      await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
+    }
     return;
   }
   // Unknown cron expression — DO NOT trigger any expensive jobs as a

@@ -11,6 +11,8 @@ import { listDecisionReceipts } from '../lib/learning/decision-repository';
 import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
+  isProtectedAutopilotEligible,
+  isProtectedExperimentRateTransitionAllowed,
   loadWorkspaceLearningMode,
   saveWorkspaceLearningSettings,
   type StoredWorkspaceLearningSettings,
@@ -242,6 +244,7 @@ export function registerShopifyLearningRoutes(
         return c.json({ error: 'mode must be approval or protected_autopilot' }, 400);
       }
       const current = await getWorkspaceLearningSettings(c.env.DB, identity);
+      const disabledReason = current.disabledReason?.trim() ? current.disabledReason : null;
       const rate = body.experimentRate === undefined
         ? Number(current.experimentRate ?? 0)
         : Number(body.experimentRate);
@@ -259,7 +262,8 @@ export function registerShopifyLearningRoutes(
         return c.json({ error: 'monthlyAiBudgetUsdCents must be a non-negative integer or null' }, 400);
       }
 
-      const now = new Date().toISOString();
+      const requestedAt = new Date();
+      const now = requestedAt.toISOString();
       let mode: LearningMode;
       let consentAt: string | null;
       let policyVersion: string | null;
@@ -272,8 +276,28 @@ export function registerShopifyLearningRoutes(
         if (!Number.isSafeInteger(budget) || Number(budget) <= 0) {
           return c.json({ error: 'Protected Autopilot requires a positive monthly AI budget' }, 400);
         }
+        if (!isProtectedExperimentRateTransitionAllowed(current, rate)) {
+          return c.json({
+            error: 'Protected Autopilot experiments must start at 0 and advance only to 0.10 then 0.15',
+            code: 'protected_autopilot_experiment_ramp',
+          }, 409);
+        }
+        const requestedConsentAt = alreadyConsented ? current.autopublishConsentAt! : now;
+        if (!await isProtectedAutopilotEligible(c.env, identity, {
+          mode: 'protected_autopilot',
+          autopublishConsentAt: requestedConsentAt,
+          autopublishPolicyVersion: AUTOPILOT_POLICY_VERSION,
+          experimentRate: rate,
+          monthlyAiBudgetUsdCents: budget as number,
+          disabledReason,
+        }, requestedAt)) {
+          return c.json({
+            error: 'Protected Autopilot is unavailable until every activation gate passes',
+            code: 'protected_autopilot_not_ready',
+          }, 409);
+        }
         mode = 'protected_autopilot';
-        consentAt = alreadyConsented ? current.autopublishConsentAt! : now;
+        consentAt = requestedConsentAt;
         policyVersion = AUTOPILOT_POLICY_VERSION;
       } else {
         mode = c.env.LEARNING_RELEASE_ENFORCEMENT === 'true' ? 'approval' : 'shadow';
@@ -292,9 +316,9 @@ export function registerShopifyLearningRoutes(
         mode,
         autopublishConsentAt: consentAt,
         autopublishPolicyVersion: policyVersion,
-        experimentRate: rate,
+        experimentRate: disabledReason ? 0 : rate,
         monthlyAiBudgetUsdCents: budget as number | null,
-        disabledReason: null,
+        disabledReason,
       };
       const effectiveMode = await loadWorkspaceLearningMode(
         c.env,

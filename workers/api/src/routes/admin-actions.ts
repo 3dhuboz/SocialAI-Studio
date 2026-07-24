@@ -20,7 +20,7 @@ import { getAuthUserId, requireAdmin, isRateLimited } from '../auth';
 import { backfillImagesForUser, backfillImagesForPastDrafts } from '../lib/backfill';
 import { critiqueImageInternal } from '../lib/critique';
 import { resolveArchetypeSlug } from '../lib/archetypes';
-import { generateImageWithGuardrails } from '../lib/image-gen';
+import { regenerateImageAfterCritique } from '../lib/image-gen';
 import { buildSafeImagePrompt, sniffArchetypeFromCaption } from '../lib/image-safety';
 import {
   ensureWorkspaceLearningSettings,
@@ -30,6 +30,7 @@ import {
 import { refreshFactsForWorkspace } from '../lib/facebook-facts';
 import { loadForbiddenSubjects, resolveBusinessType } from '../lib/profile-guards';
 import { decryptSocialTokensJson } from '../lib/social-tokens';
+import { CRITIQUE_ACCEPT_THRESHOLD } from '../../../../shared/critique-thresholds';
 
 export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   // Backfill images for any Scheduled post that has an image_prompt but no image_url.
@@ -160,7 +161,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
              WHERE id = ?`
           ).bind(critique.score, critique.reasoning, new Date().toISOString(), post.id).run();
           scored++;
-          if (critique.score <= 4) lowScores++;
+          if (critique.score < CRITIQUE_ACCEPT_THRESHOLD) lowScores++;
         } else {
           failed++;
         }
@@ -184,7 +185,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
   /** POST /api/admin/bulk-regen-low-score-images
    *
    *  Regenerates images for posts where image_critique_score is ≤ the
-   *  provided threshold (default 5, matches the prewarm + backlog crons).
+   *  provided threshold (defaults to one below the shared acceptance score).
    *  Each regen uses the forced-archetype-fallback path so the new image
    *  is guaranteed on-archetype, then re-scores so the persisted critique
    *  reflects what now ships.
@@ -194,7 +195,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
    *  Kontext → FLUX-dev swap, call with `{"threshold": 6}` to also pick
    *  up borderline images that scored 6 under the old visual criteria.
    *
-   *  Body: { threshold?: number (1-7, default 5), limit?: number (default 20, max 50) }
+   *  Body: { threshold?: number (1-7), limit?: number (default 20, max 50) }
    */
   app.post('/api/admin/bulk-regen-low-score-images', async (c) => {
     const adminCheck = await requireAdmin(c);
@@ -202,17 +203,13 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     const { uid } = adminCheck;
 
     const body = await c.req.json().catch(() => ({})) as { threshold?: number; limit?: number };
-    // Default raised from 4 → 5 to align with the prewarm cron's hardened
-    // retry threshold. The 2026-05-12 hardening flagged that food-on-SaaS
-    // posts scored 4-5 from Haiku when archetype was NULL, not the expected
-    // 1-2. The new critique prompt forces 1-2 for cross-domain bleed, but
-    // already-scored posts won't be re-scored until backfill-critique-scores
-    // re-runs them.
-    const threshold = Math.min(Math.max(body.threshold ?? 5, 1), 7);
+    // Regenerate scores below the shared acceptance threshold. A score equal
+    // to the threshold is already shippable and should not burn another image.
+    const threshold = Math.min(Math.max(body.threshold ?? CRITIQUE_ACCEPT_THRESHOLD - 1, 1), 7);
     const limit = Math.min(Math.max(body.limit || 20, 1), 50);
 
     const rows = await c.env.DB.prepare(
-      `SELECT p.id, p.content, p.image_prompt, p.client_id, p.image_critique_score
+      `SELECT p.id, p.content, p.image_prompt, p.client_id, p.image_critique_score, p.image_critique_reasoning
        FROM posts p
        LEFT JOIN clients cl ON p.client_id = cl.id
        WHERE (p.user_id = ? OR cl.user_id = ?)
@@ -225,6 +222,7 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
     ).bind(uid, uid, threshold, limit).all<{
       id: string; content: string; image_prompt: string;
       client_id: string | null; image_critique_score: number;
+      image_critique_reasoning: string | null;
     }>();
 
     const posts = rows.results || [];
@@ -250,13 +248,17 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
         const safe = buildSafeImagePrompt(post.image_prompt, post.content, businessType);
         if (!safe) { failed++; continue; }
 
-        // Force fallback — these posts already scored badly, so trust the
-        // curated archetype scene over the suspect LLM-generated prompt.
-        // Pass the caption so image-gen can sniff the archetype if the
-        // workspace's archetype_slug is NULL.
-        const gen = await generateImageWithGuardrails(
-          c.env, uid, post.client_id, safe, { forceFallback: true, caption: post.content, seedHint: post.id },
-        );
+        // Use the shared critic-guided retry so the replacement corrects the
+        // recorded mismatch instead of swapping to an unrelated generic scene.
+        let archetypeSlug = await resolveArchetypeSlug(c.env, uid, post.client_id);
+        if (!archetypeSlug) archetypeSlug = sniffArchetypeFromCaption(post.content);
+        const gen = await regenerateImageAfterCritique(c.env, uid, post.client_id, safe, {
+          caption: post.content,
+          critiqueReasoning: post.image_critique_reasoning || `Previous image scored ${post.image_critique_score}/10`,
+          archetypeSlug,
+          modelUsed: c.env.IMAGE_GEN_PROVIDER === 'gpt-image-2' ? 'gpt-image-2-medium' : 'flux-dev',
+          seedHint: post.id,
+        });
         if (!gen.imageUrl) {
           failed++;
           errors.push(`${post.id}: regen returned no URL via ${gen.modelUsed}`);
@@ -267,8 +269,6 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
         // Same archetype-sniff fallback as prewarm: DB → caption → null.
         // Forbidden subjects threaded through so the regen verdict honours
         // intra-domain exclusions (Seamus brisket-only failure mode).
-        let archetypeSlug = await resolveArchetypeSlug(c.env, uid, post.client_id);
-        if (!archetypeSlug) archetypeSlug = sniffArchetypeFromCaption(post.content);
         const forbiddenSubjects = await loadForbiddenSubjects(c.env, uid, post.client_id);
         const critique = await critiqueImageInternal(c.env, {
           imageUrl: gen.imageUrl,
@@ -277,19 +277,16 @@ export function registerAdminActionsRoutes(app: Hono<{ Bindings: Env }>): void {
           forbiddenSubjects,
         });
 
-        if (critique) {
+        if (critique && critique.score >= CRITIQUE_ACCEPT_THRESHOLD) {
           await c.env.DB.prepare(
             `UPDATE posts SET image_url = ?, image_critique_score = ?, image_critique_reasoning = ?, image_critique_at = ?
              WHERE id = ?`
           ).bind(gen.imageUrl, critique.score, critique.reasoning, new Date().toISOString(), post.id).run();
+          regenerated++;
         } else {
-          // Critique unavailable but we still have a new image — ship it
-          await c.env.DB.prepare(
-            `UPDATE posts SET image_url = ?, image_critique_score = NULL, image_critique_reasoning = NULL, image_critique_at = NULL
-             WHERE id = ?`
-          ).bind(gen.imageUrl, post.id).run();
+          failed++;
+          errors.push(`${post.id}: replacement held by final critique gate`);
         }
-        regenerated++;
       } catch (e: any) {
         failed++;
         errors.push(`${post.id}: ${e?.message}`);

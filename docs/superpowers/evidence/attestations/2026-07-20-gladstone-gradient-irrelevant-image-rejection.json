@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "pilot-attestation-gladstonebbq-001-be692c0a252f57aa0bf77f89",
+  "capturedAt": "2026-07-20T01:47:33.413Z",
+  "source": {
+    "kind": "user_provided_attestation",
+    "threadId": "019ed317-7f47-7b22-ae5e-0fab6b0218c6"
+  },
+  "statement": "I attest pilot-copy-be692c0a252f57aa0bf77f89 is a genuine Gladstone SocialAI output for record-only evaluation. It is rejected for publishing because the image is irrelevant.",
+  "scope": {
+    "environment": "staging",
+    "recordOnly": true,
+    "genuineSocialAiOutput": true,
+    "publishDisposition": "rejected",
+    "rejectionReason": "irrelevant_image",
+    "scheduleAllowed": false,
+    "publishAllowed": false,
+    "learningApplyAllowed": false
+  },
+  "candidate": {
+    "postId": "pilot-copy-be692c0a252f57aa0bf77f89",
+    "clientId": "gladstonebbq-001",
+    "ownerKind": "client",
+    "ownerId": "gladstonebbq-001",
+    "contentHash": "f182b7851b6ecd2ba669b061a64ea3dab8f5a6dbffdc8e96ab3f33dd46be7818",
+    "platform": "Facebook",
+    "postType": "image",
+    "content": "You asked, we answered. \ud83c\udfa1 More stuff for kids to do on the day-we've locked in rides for the young and old. The Gladstone BBQ Festival is shaping up to be a full family day out, not just a food run. Bringing the family? Drop a \u270c\ufe0f below.",
+    "hashtags": [
+      "#FamilyFun",
+      "#GladstoneQLD"
+    ],
+    "imageUrl": "https://v3b.fal.media/files/b/0a9a6825/mSiQaDjRTOJmPJVpTio0N.jpg",
+    "imageSha256": "4cc526cf08072a0b166d7a1a8d75d073a4c7c21cb6c6ceada22127513c5240be"
+  },
+  "attestationReceipt": {
+    "sampleId": "f7877cda-9355-408c-81e5-2a99e2d2ec0d",
+    "attestationBasis": "customer_real_post",
+    "attestedAt": "2026-07-20T02:24:31.534Z",
+    "postMutated": false
+  },
+  "criticDecision": {
+    "decisionId": "5c4738be-e30a-4441-b82b-bc90e138aa21",
+    "releaseState": "block_red",
+    "sourceStatus": "Draft",
+    "postMutated": false,
+    "verdictCount": 10,
+    "imageCritic": {
+      "verdict": "block",
+      "severity": "release_critical",
+      "confidence": 1,
+      "score": 2,
+      "reason": "The caption promotes a BBQ festival family event with rides and activities, while the image is a generic blue-to-pink gradient with no people, food, venue, rides, or event subject matter."
+    }
+  },
+  "adjudicationReceipt": {
+    "adjudicationId": "be58ef44-0023-4010-bbbf-12ded497aabb",
+    "decisionId": "5c4738be-e30a-4441-b82b-bc90e138aa21",
+    "expectedState": "block_red",
+    "severity": "release_critical",
+    "sourceEvidenceVerified": true,
+    "createdAt": "2026-07-20T02:25:52.861Z",
+    "note": "Customer rejected this exact Gladstone SocialAI Draft for publishing because the generated image is irrelevant. Expected release state is block_red; record-only adjudication only, with no scheduling or publishing approval."
+  },
+  "independentDatabaseAudit": {
+    "postStatus": "Draft",
+    "scheduledFor": null,
+    "publishAttempts": 0,
+    "providerPublishFieldsPresent": false,
+    "publicationEventCount": 0,
+    "deliveryReceiptCount": 0,
+    "workspaceMode": "approval",
+    "autopublishConsentAt": null,
+    "experimentRate": 0,
+    "protectedAutopilotWorkspaceCount": 0,
+    "productionPilotRowCount": 0,
+    "productionMutationPerformed": false,
+    "rowsWrittenByAudit": 0,
+    "changedDbByAudit": false
+  },
+  "deploymentBoundary": {
+    "stagingWorkerVersion": "17cca808-bf93-49b6-9fc9-4b270b236a92",
+    "productionWorkerVersion": "3b963ed1-c9e1-42d6-9bff-68da2efa9215",
+    "productionDeploymentPerformed": false,
+    "schemaApplied": false,
+    "releaseEnforcementEnabled": false,
+    "protectedAutopilotEnabled": false,
+    "organicReachApplyEnabled": false
+  }
+}

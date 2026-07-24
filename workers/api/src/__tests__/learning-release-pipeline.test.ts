@@ -5,13 +5,17 @@ import {
   inspectFinalVideoUrl,
   runMediaCritic,
 } from '../lib/learning/media-critic';
-import { runReleaseJudge } from '../lib/learning/release-judge';
+import {
+  runReleaseJudge,
+  runReleaseJudgeWithTelemetry,
+} from '../lib/learning/release-judge';
 import {
   runReleasePipeline,
   type CandidateInput,
   type ReleaseContext,
   type ReleasePipelineDeps,
 } from '../lib/learning/release-pipeline';
+import { reviewVideoManifestIndependent } from '../lib/learning/release-preflight';
 
 const candidate: CandidateInput = {
   userId: 'u1',
@@ -60,7 +64,7 @@ const passingDeps = (): ReleasePipelineDeps => ({
   runMediaCritic: async (input) =>
     verdict(input.media.kind === 'video' ? 'video_manifest' : 'image'),
   repair: async (input) => input,
-  judge: async () => 'pass_green',
+  judge: async () => ({ state: 'pass_green', status: 'available' }),
 });
 
 describe('runReleasePipeline', () => {
@@ -88,6 +92,59 @@ describe('runReleasePipeline', () => {
     expect(result.candidate.content).toBe('Brisket available today');
     expect(repairs).toBe(1);
     expect(result.repairHistory).toEqual([['remove unsupported superlative']]);
+  });
+
+  it('holds when a repair mutates any publish-critical field', async () => {
+    const mutations: Array<[string, (input: CandidateInput) => CandidateInput]> = [
+      ['user identity', (input) => ({ ...input, userId: 'u2' })],
+      ['client ownership', (input) => ({
+        ...input, clientId: 'c2', ownerKind: 'client', ownerId: 'c2',
+      })],
+      ['post identity', (input) => ({ ...input, postId: 'p2' })],
+      ['learning mode', (input) => ({ ...input, mode: 'protected_autopilot' })],
+      ['platform', (input) => ({ ...input, platform: 'instagram' })],
+      ['selected media', (input) => ({
+        ...input,
+        media: {
+          kind: 'image',
+          url: 'https://cdn.example/unreviewed.jpg',
+          thumbnailUrl: null,
+        },
+      })],
+      ['requested media', (input) => ({ ...input, requestedMediaKind: 'video' })],
+      ['video script', (input) => ({ ...input, videoScript: 'Unreviewed script' })],
+      ['video shots', (input) => ({ ...input, videoShots: ['Unreviewed shot'] })],
+    ];
+
+    for (const [field, mutate] of mutations) {
+      let textAttempts = 0;
+      let judgeCalls = 0;
+      const deps = passingDeps();
+      deps.runTextCouncil = async () => {
+        textAttempts += 1;
+        return textAttempts === 1
+          ? [
+              verdict('brand', {
+                verdict: 'warn_repairable',
+                repairs: ['rewrite caption'],
+              }),
+              ...passingText().slice(1),
+            ]
+          : passingText();
+      };
+      deps.repair = async (input) => mutate(input);
+      deps.judge = async () => {
+        judgeCalls += 1;
+        return { state: 'pass_green', status: 'available' };
+      };
+
+      const result = await runReleasePipeline(candidate, context, deps);
+
+      expect(result.state, field).toBe('hold_amber');
+      expect(result.judgeStatus, field).toBe('not_run');
+      expect(result.candidate, field).toMatchObject(candidate);
+      expect(judgeCalls, field).toBe(0);
+    }
   });
 
   it('caps repairs at two and then holds', async () => {
@@ -128,10 +185,13 @@ describe('runReleasePipeline', () => {
     };
     deps.judge = async () => {
       calls.judge += 1;
-      return 'pass_green';
+      return { state: 'pass_green', status: 'available' };
     };
 
-    expect((await runReleasePipeline(candidate, context, deps)).state).toBe('block_red');
+    expect(await runReleasePipeline(candidate, context, deps)).toMatchObject({
+      state: 'block_red',
+      judgeStatus: 'not_run',
+    });
     expect(calls).toEqual({ text: 0, harm: 0, judge: 0 });
   });
 
@@ -146,7 +206,7 @@ describe('runReleasePipeline', () => {
     ];
     deps.judge = async () => {
       judgeCalls += 1;
-      return 'pass_green';
+      return { state: 'pass_green', status: 'available' };
     };
 
     expect((await runReleasePipeline(candidate, context, deps)).state).toBe('block_red');
@@ -155,9 +215,34 @@ describe('runReleasePipeline', () => {
 
   it('holds when the separate Release Judge cannot decide', async () => {
     const deps = passingDeps();
-    deps.judge = async () => 'hold_amber';
+    deps.judge = async () => ({ state: 'hold_amber', status: 'available' });
 
-    expect((await runReleasePipeline(candidate, context, deps)).state).toBe('hold_amber');
+    expect(await runReleasePipeline(candidate, context, deps)).toMatchObject({
+      state: 'hold_amber',
+      judgeStatus: 'available',
+    });
+  });
+
+  it('never accepts a green state with unavailable judge telemetry', async () => {
+    const deps = passingDeps();
+    deps.judge = async () => ({ state: 'pass_green', status: 'unavailable' });
+
+    await expect(runReleasePipeline(candidate, context, deps)).resolves.toMatchObject({
+      state: 'hold_amber',
+      judgeStatus: 'unavailable',
+    });
+  });
+
+  it('fails closed with unavailable telemetry when the Release Judge throws', async () => {
+    const deps = passingDeps();
+    deps.judge = async () => {
+      throw new Error('judge provider unavailable');
+    };
+
+    await expect(runReleasePipeline(candidate, context, deps)).resolves.toMatchObject({
+      state: 'hold_amber',
+      judgeStatus: 'unavailable',
+    });
   });
 
   it('never sends generator reasoning to the Release Judge', async () => {
@@ -165,7 +250,7 @@ describe('runReleasePipeline', () => {
     const deps = passingDeps();
     deps.judge = async (input) => {
       judgeInput = JSON.stringify(input);
-      return 'pass_green';
+      return { state: 'pass_green', status: 'available' };
     };
     const untrusted = {
       ...candidate,
@@ -422,6 +507,65 @@ describe('runMediaCritic', () => {
   });
 });
 
+describe('reviewVideoManifestIndependent', () => {
+  it('uses an independent strict script critic with scoped telemetry before video release', async () => {
+    let systemPrompt = '';
+    let prompt = '';
+    let operationContext: Record<string, unknown> | null = null;
+
+    const result = await reviewVideoManifestIndependent(
+      {} as Env,
+      {
+        ...candidate,
+        videoScript: 'Slice the brisket and show the verified smoke ring.',
+        videoShots: ['Whole brisket', 'Clean slice'],
+        media: {
+          kind: 'video',
+          url: 'https://cdn.example/final.mp4',
+          thumbnailUrl: 'https://cdn.example/thumb.jpg',
+          status: 'ready',
+        },
+      },
+      context,
+      async (system, userPrompt, callContext) => {
+        systemPrompt = system;
+        prompt = userPrompt;
+        operationContext = callContext;
+        return {
+          text: JSON.stringify({
+            video_manifest: {
+              verdict: 'pass',
+              severity: 'advisory',
+              confidence: 1,
+              evidence: ['Script and shots match the verified caption'],
+              repairs: [],
+            },
+          }),
+          provider: 'independent-provider',
+          model: 'independent-video-critic',
+        };
+      },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'video_manifest',
+      verdict: 'pass',
+      provider: 'independent-provider',
+      model: 'independent-video-critic',
+    });
+    expect(systemPrompt).toContain('independent video script and storyboard critic');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_VIDEO_SCRIPT>>');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_VIDEO_SHOTS>>');
+    expect(operationContext).toEqual({
+      operation: 'learning_video_manifest_critic',
+      userId: 'u1',
+      clientId: null,
+      postId: 'p1',
+    });
+  });
+});
+
 describe('runReleaseJudge', () => {
   const judgeInput = {
     candidate,
@@ -436,6 +580,21 @@ describe('runReleaseJudge', () => {
     });
 
     expect(state).toBe('hold_amber');
+  });
+
+  it('records unavailable telemetry when the independent judge call fails', async () => {
+    const result = await runReleaseJudgeWithTelemetry(
+      {} as Env,
+      judgeInput,
+      async () => {
+        throw new Error('providers unavailable');
+      },
+    );
+
+    expect(result).toEqual({
+      state: 'hold_amber',
+      status: 'unavailable',
+    });
   });
 
   it('rejects invalid judge states', async () => {
@@ -460,6 +619,21 @@ describe('runReleaseJudge', () => {
     );
 
     expect(state).toBe('hold_amber');
+  });
+
+  it('records not-run telemetry when critic evidence prevents a judge call', async () => {
+    const call = vi.fn();
+    const result = await runReleaseJudgeWithTelemetry(
+      {} as Env,
+      { ...judgeInput, results: [verdict('brand')] },
+      call,
+    );
+
+    expect(result).toEqual({
+      state: 'hold_amber',
+      status: 'not_run',
+    });
+    expect(call).not.toHaveBeenCalled();
   });
 
   it('cannot override a release-critical block', async () => {
@@ -510,5 +684,22 @@ describe('runReleaseJudge', () => {
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_CRITIC_RESULTS>>');
     expect(prompt).not.toContain('SECRET_CHAIN');
+  });
+
+  it('records available telemetry only for a valid independent judge result', async () => {
+    const result = await runReleaseJudgeWithTelemetry(
+      {} as Env,
+      judgeInput,
+      async () => ({
+        text: '{"state":"pass_green"}',
+        provider: 'test',
+        model: 'test',
+      }),
+    );
+
+    expect(result).toEqual({
+      state: 'pass_green',
+      status: 'available',
+    });
   });
 });
