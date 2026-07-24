@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../env';
-import { buildCronDetails, trackCron } from '../cron/dispatcher';
+import {
+  buildCronDetails,
+  shouldRunLearningCalibration,
+  shouldRunRecordOnlyPilot,
+  trackCron,
+} from '../cron/dispatcher';
 import { registerHealthRoutes } from '../routes/health';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
@@ -54,10 +59,14 @@ describe('learning pilot cron telemetry', () => {
     expect(JSON.parse(buildCronDetails('learning_readiness', {
       posts_processed: 30,
       workspaces_disabled: 2,
+      decision_disqualifications_schema_ready: 1,
+      ai_usage_attribution_schema_ready: 1,
       pilot_samples_schema_ready: 1,
       calibration_audits_schema_ready: 1,
     })!)).toEqual({
       workspaces_disabled: 2,
+      decision_disqualifications_schema_ready: 1,
+      ai_usage_attribution_schema_ready: 1,
       pilot_samples_schema_ready: 1,
       calibration_audits_schema_ready: 1,
     });
@@ -85,6 +94,8 @@ describe('learning pilot cron telemetry', () => {
     ['learning_readiness', {
       posts_processed: 0,
       workspaces_disabled: 0,
+      decision_disqualifications_schema_ready: 1,
+      ai_usage_attribution_schema_ready: 1,
       pilot_samples_schema_ready: 1,
     }],
     ['learning_calibration', { ...calibrationResult, errors: -1 }],
@@ -101,6 +112,8 @@ describe('learning pilot cron telemetry', () => {
     await trackCron({ DB: db } as Env, 'learning_readiness', async () => ({
       posts_processed: 30,
       workspaces_disabled: 2,
+      decision_disqualifications_schema_ready: 0,
+      ai_usage_attribution_schema_ready: 0,
       pilot_samples_schema_ready: 0,
       calibration_audits_schema_ready: 0,
     }));
@@ -108,9 +121,30 @@ describe('learning pilot cron telemetry', () => {
     const insert = calls.find((call) => call.sql.includes('INSERT INTO cron_runs'))!;
     expect(JSON.parse(String(insert.binds[5]))).toEqual({
       workspaces_disabled: 2,
+      decision_disqualifications_schema_ready: 0,
+      ai_usage_attribution_schema_ready: 0,
       pilot_samples_schema_ready: 0,
       calibration_audits_schema_ready: 0,
     });
+  });
+
+  it('restricts record-only pilot and calibration scheduling to staging', () => {
+    const staging = {
+      ENVIRONMENT: 'staging',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const production = { ...staging, ENVIRONMENT: 'production' } as Env;
+
+    expect(shouldRunRecordOnlyPilot(staging)).toBe(true);
+    expect(shouldRunLearningCalibration(staging)).toBe(true);
+    expect(shouldRunRecordOnlyPilot(production)).toBe(false);
+    expect(shouldRunLearningCalibration(production)).toBe(false);
+    expect(shouldRunRecordOnlyPilot({
+      ...staging,
+      LEARNING_RELEASE_ENFORCEMENT: 'true',
+    } as Env)).toBe(false);
   });
 
   it('persists the sanitized details alongside the normal cron receipt', async () => {

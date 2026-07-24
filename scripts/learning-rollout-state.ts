@@ -44,11 +44,40 @@ const workerRoot = resolve(repoRoot, 'workers', 'api');
 
 const PRODUCTION_SCHEMA_MIGRATIONS = [
   {
+    id: 'decision_disqualification',
+    file: 'workers/api/schema_v44_learning_decision_disqualifications.sql',
+    table: 'learning_decision_disqualifications',
+    dependency: 'learning_decisions',
+    expectedSha256: '0357eb4862ea20859f8a8b9d0eda8d7daf61888b5de8e757f8c2ea8c628adf46',
+    allowAddColumn: false,
+    requiredFragments: [
+      'CREATE TABLE IF NOT EXISTS learning_decision_disqualifications',
+      'FOREIGN KEY (decision_id) REFERENCES learning_decisions(id) ON DELETE CASCADE',
+      'CREATE TRIGGER IF NOT EXISTS prevent_learning_decision_disqualification_update',
+    ],
+  },
+  {
+    id: 'ai_usage_attribution',
+    file: 'workers/api/schema_v45_learning_ai_usage_attribution.sql',
+    table: 'ai_usage.learning_decision_id',
+    dependency: 'ai_usage + learning_decisions',
+    expectedSha256: '2173c7cbcff1916ed5d4ee868e36ee19d875469c49d2b470841def1fba1837b7',
+    allowAddColumn: true,
+    requiredFragments: [
+      'ALTER TABLE ai_usage',
+      'ADD COLUMN learning_decision_id TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_ai_usage_learning_decision',
+      'CREATE TRIGGER IF NOT EXISTS guard_ai_usage_learning_decision_insert',
+      'CREATE TRIGGER IF NOT EXISTS prevent_ai_usage_learning_attribution_update',
+    ],
+  },
+  {
     id: 'positive_sample',
     file: 'workers/api/schema_v46_learning_pilot_samples.sql',
     table: 'learning_pilot_samples',
     dependency: 'posts',
     expectedSha256: 'bfe1ff0113a076f44afecf300a7b32d28d469dece12dbd045489244ea49fc6df',
+    allowAddColumn: false,
     requiredFragments: [
       'CREATE TABLE IF NOT EXISTS learning_pilot_samples',
       'FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE',
@@ -61,6 +90,7 @@ const PRODUCTION_SCHEMA_MIGRATIONS = [
     table: 'learning_calibration_audits',
     dependency: 'learning_decisions',
     expectedSha256: '5c6a513a1205c678ba7ed1dfb6738e13b0a3576c3694d008c78729ef8f2bc343',
+    allowAddColumn: false,
     requiredFragments: [
       'CREATE TABLE IF NOT EXISTS learning_calibration_audits',
       'FOREIGN KEY (decision_id) REFERENCES learning_decisions(id) ON DELETE CASCADE',
@@ -436,6 +466,16 @@ SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END)
          AS pilot_sample_tables,
        COALESCE(SUM(CASE WHEN name = 'learning_calibration_audits' THEN 1 ELSE 0 END), 0)
          AS calibration_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'learning_decision_disqualifications'
+         THEN 1 ELSE 0
+       END), 0) AS decision_disqualification_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'ai_usage' THEN 1 ELSE 0
+       END), 0) AS ai_usage_tables,
+       (SELECT COUNT(*)
+          FROM pragma_table_info('ai_usage')
+         WHERE name = 'learning_decision_id') AS ai_usage_attribution_columns,
        COALESCE(SUM(CASE WHEN type = 'table' AND name = 'posts' THEN 1 ELSE 0 END), 0)
          AS posts_tables,
        COALESCE(SUM(CASE WHEN type = 'table' AND name = 'learning_decisions' THEN 1 ELSE 0 END), 0)
@@ -453,10 +493,11 @@ SELECT COALESCE(SUM(CASE WHEN name = 'learning_pilot_samples' THEN 1 ELSE 0 END)
          WHERE type = 'table' AND name = 'cron_runs') AS cron_runs_sql
  FROM sqlite_master
  WHERE (type = 'table'
-        AND name IN (
-          'learning_pilot_samples', 'learning_calibration_audits',
-          'posts', 'learning_decisions', 'cron_alerts'
-        ))
+         AND name IN (
+           'learning_decision_disqualifications', 'ai_usage',
+           'learning_pilot_samples', 'learning_calibration_audits',
+           'posts', 'learning_decisions', 'cron_alerts'
+         ))
     OR (type = 'index'
         AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
 SELECT policy_version, ready, checks_json, evaluated_at
@@ -580,7 +621,11 @@ export interface ReadinessObservation {
 }
 
 export interface ProductionSchemaMigrationPreflight {
-  id: 'positive_sample' | 'calibration';
+  id:
+    | 'decision_disqualification'
+    | 'ai_usage_attribution'
+    | 'positive_sample'
+    | 'calibration';
   file: string;
   filePresent: boolean;
   table: string;
@@ -652,6 +697,8 @@ export interface RolloutObservation {
     latestHealthSweepCron: CronObservation | null;
     latestReadinessCron: CronObservation | null;
     cronDetailsSchemaReady: boolean;
+    decisionDisqualificationTablePresent: boolean;
+    aiUsageAttributionColumnPresent: boolean;
     pilotSampleTablePresent: boolean;
     calibrationTablePresent: boolean;
     schemaPreflight: ProductionSchemaPreflight;
@@ -877,25 +924,33 @@ function sha256CanonicalTextFile(path: string): string {
 export function buildProductionSchemaPreflight(input: {
   postsTablePresent: boolean;
   decisionTablePresent: boolean;
+  aiUsageTablePresent: boolean;
+  decisionDisqualificationTablePresent: boolean;
+  aiUsageAttributionColumnPresent: boolean;
   pilotSampleTablePresent: boolean;
   calibrationTablePresent: boolean;
   root?: string;
 }): ProductionSchemaPreflight {
   const root = input.root ?? repoRoot;
   const tablePresence: Record<string, boolean> = {
+    learning_decision_disqualifications: input.decisionDisqualificationTablePresent,
+    'ai_usage.learning_decision_id': input.aiUsageAttributionColumnPresent,
     learning_pilot_samples: input.pilotSampleTablePresent,
     learning_calibration_audits: input.calibrationTablePresent,
   };
   const dependencyPresence: Record<string, boolean> = {
     posts: input.postsTablePresent,
     learning_decisions: input.decisionTablePresent,
+    'ai_usage + learning_decisions': input.aiUsageTablePresent
+      && input.decisionTablePresent,
   };
-  const forbiddenStatement = /^\s*(?:ALTER|DROP|INSERT|UPDATE|DELETE|REPLACE)\b/im;
+  const forbiddenStatement = /^\s*(?:DROP|INSERT|UPDATE|DELETE|REPLACE)\b/im;
   const migrations = PRODUCTION_SCHEMA_MIGRATIONS.map((migration) => {
     const path = resolve(root, migration.file);
     const filePresent = existsSync(path);
     const sql = filePresent ? readFileSync(path, 'utf8') : '';
     const sha256 = filePresent ? sha256CanonicalTextFile(path) : '';
+    const hasAlterStatement = /^\s*ALTER\b/im.test(sql);
     return {
       id: migration.id,
       file: migration.file,
@@ -908,6 +963,7 @@ export function buildProductionSchemaPreflight(input: {
       expectedSha256: migration.expectedSha256,
       hashMatches: filePresent && sha256 === migration.expectedSha256,
       additiveContractValid: filePresent && !forbiddenStatement.test(sql)
+        && (!hasAlterStatement || migration.allowAddColumn)
         && migration.requiredFragments.every((fragment) => sql.includes(fragment)),
     } satisfies ProductionSchemaMigrationPreflight;
   });
@@ -1201,6 +1257,16 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
     'promotion',
   );
   add(
+    'production_decision_disqualification_schema',
+    input.production.decisionDisqualificationTablePresent,
+    'promotion',
+  );
+  add(
+    'production_ai_usage_attribution_schema',
+    input.production.aiUsageAttributionColumnPresent,
+    'promotion',
+  );
+  add(
     'production_positive_sample_schema',
     input.production.pilotSampleTablePresent,
     'promotion',
@@ -1359,6 +1425,8 @@ export function buildRolloutActionPlan(
   }
 
   const productionSchemaBlockers = failed([
+    'production_decision_disqualification_schema',
+    'production_ai_usage_attribution_schema',
     'production_positive_sample_schema',
     'production_calibration_schema',
   ]);
@@ -1698,9 +1766,21 @@ async function main(): Promise<void> {
     productionSchema,
     'calibration_tables',
   ) === 1;
+  const productionDecisionDisqualificationTablePresent = numberField(
+    productionSchema,
+    'decision_disqualification_tables',
+  ) === 1;
+  const productionAiUsageAttributionColumnPresent = numberField(
+    productionSchema,
+    'ai_usage_attribution_columns',
+  ) === 1;
   const productionSchemaPreflight = buildProductionSchemaPreflight({
     postsTablePresent: numberField(productionSchema, 'posts_tables') === 1,
     decisionTablePresent: numberField(productionSchema, 'decision_tables') === 1,
+    aiUsageTablePresent: numberField(productionSchema, 'ai_usage_tables') === 1,
+    decisionDisqualificationTablePresent:
+      productionDecisionDisqualificationTablePresent,
+    aiUsageAttributionColumnPresent: productionAiUsageAttributionColumnPresent,
     pilotSampleTablePresent: productionPilotSampleTablePresent,
     calibrationTablePresent: productionCalibrationTablePresent,
   });
@@ -1776,6 +1856,9 @@ async function main(): Promise<void> {
       cronDetailsSchemaReady: (
         stringField(productionSchema, 'cron_runs_sql') ?? ''
       ).includes('details_json'),
+      decisionDisqualificationTablePresent:
+        productionDecisionDisqualificationTablePresent,
+      aiUsageAttributionColumnPresent: productionAiUsageAttributionColumnPresent,
       pilotSampleTablePresent: productionPilotSampleTablePresent,
       calibrationTablePresent: productionCalibrationTablePresent,
       schemaPreflight: productionSchemaPreflight,
@@ -1791,7 +1874,7 @@ async function main(): Promise<void> {
   );
   const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 9,
+    schemaVersion: 10,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,

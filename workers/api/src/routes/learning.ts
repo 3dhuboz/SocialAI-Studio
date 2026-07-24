@@ -2073,6 +2073,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adjudicator))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     try {
       const body = await jsonBody(c.req.raw);
       if (!['pass_green', 'hold_amber', 'block_red'].includes(String(body.expectedState))) {
@@ -2239,6 +2241,8 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     if (!(await learningAdmin(c.env.DB, adminId))) {
       return c.json({ error: 'Forbidden' }, 403);
     }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
     const rawLimit = c.req.query('limit');
     const limit = rawLimit == null || rawLimit === '' ? 100 : Number(rawLimit);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) {

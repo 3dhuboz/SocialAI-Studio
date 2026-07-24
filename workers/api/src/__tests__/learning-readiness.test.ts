@@ -812,6 +812,8 @@ describe('learning release readiness', () => {
 
 describe('readiness cron receipts', () => {
   const completeSchema = async () => ({
+    decisionDisqualificationsReady: true,
+    aiUsageAttributionReady: true,
     pilotSamplesReady: true,
     calibrationAuditsReady: true,
   });
@@ -956,6 +958,8 @@ describe('readiness cron receipts', () => {
         collect,
         loadPrevious: async () => ({ ready: 0 }),
         loadSchemaState: async () => ({
+          decisionDisqualificationsReady: false,
+          aiUsageAttributionReady: false,
           pilotSamplesReady: false,
           calibrationAuditsReady: false,
         }),
@@ -971,6 +975,8 @@ describe('readiness cron receipts', () => {
       ready: false,
       id: 'readiness-deferred',
       workspaces_disabled: 0,
+      decision_disqualifications_schema_ready: 0,
+      ai_usage_attribution_schema_ready: 0,
       pilot_samples_schema_ready: 0,
       calibration_audits_schema_ready: 0,
     });
@@ -1000,6 +1006,8 @@ describe('readiness cron receipts', () => {
       {
         loadPrevious: async () => ({ ready: 1 }),
         loadSchemaState: async () => ({
+          decisionDisqualificationsReady: true,
+          aiUsageAttributionReady: true,
           pilotSamplesReady: false,
           calibrationAuditsReady: true,
         }),
@@ -1020,15 +1028,19 @@ describe('readiness cron receipts', () => {
 });
 
 describe('readiness schema preflight', () => {
-  it('reports each deferred table independently without querying either table', async () => {
+  it('reports each deferred structure independently without querying any of them', async () => {
     const { db, calls } = makeRecordingD1({
       'FROM sqlite_master': [{
+        decision_disqualifications_count: 1,
+        ai_usage_attribution_count: 1,
         pilot_samples_count: 1,
         calibration_audits_count: 0,
       }],
     });
 
     await expect(loadLearningReadinessSchemaState(db)).resolves.toEqual({
+      decisionDisqualificationsReady: true,
+      aiUsageAttributionReady: true,
       pilotSamplesReady: true,
       calibrationAuditsReady: false,
     });
@@ -1042,6 +1054,8 @@ describe('readiness schema preflight', () => {
   it('rejects ambiguous schema metadata instead of assuming readiness', async () => {
     const { db } = makeRecordingD1({
       'FROM sqlite_master': [{
+        decision_disqualifications_count: 1,
+        ai_usage_attribution_count: 1,
         pilot_samples_count: 2,
         calibration_audits_count: 1,
       }],

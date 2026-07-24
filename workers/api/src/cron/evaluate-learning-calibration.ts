@@ -47,6 +47,20 @@ export interface LearningCalibrationResult {
   errors: number;
 }
 
+function emptyCalibrationResult(): LearningCalibrationResult {
+  return {
+    posts_processed: 0,
+    candidates_considered: 0,
+    completed: 0,
+    unavailable: 0,
+    claimed_elsewhere: 0,
+    budget_skipped: 0,
+    severe_false_passes: 0,
+    workspaces_disabled: 0,
+    errors: 0,
+  };
+}
+
 function hasUnavailableCritic(result: ReleasePipelineResult): boolean {
   return result.judgeStatus === 'unavailable'
     || result.attempts.flat().some((verdict) => verdict.verdict === 'unavailable');
@@ -77,6 +91,8 @@ export async function cronEvaluateLearningCalibration(
 ): Promise<LearningCalibrationResult> {
   const now = options.now ?? new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('Calibration timestamp is invalid');
+  const counters = emptyCalibrationResult();
+  if (env.ENVIRONMENT?.trim().toLowerCase() !== 'staging') return counters;
   const nowIso = now.toISOString();
   const leaseIso = new Date(now.getTime() + CALIBRATION_LEASE_MS).toISOString();
   const findCandidates = options.listCandidates ?? listCalibrationCandidates;
@@ -95,17 +111,7 @@ export async function cronEvaluateLearningCalibration(
     nowIso,
     WEEKLY_CALIBRATION_SAMPLE_LIMIT,
   );
-  const counters: LearningCalibrationResult = {
-    posts_processed: 0,
-    candidates_considered: candidates.length,
-    completed: 0,
-    unavailable: 0,
-    claimed_elsewhere: 0,
-    budget_skipped: 0,
-    severe_false_passes: 0,
-    workspaces_disabled: 0,
-    errors: 0,
-  };
+  counters.candidates_considered = candidates.length;
 
   for (const candidate of candidates) {
     let claimedAuditId: string | null = null;

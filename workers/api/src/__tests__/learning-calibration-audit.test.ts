@@ -23,6 +23,10 @@ import { makeRecordingD1 } from './helpers/recording-d1';
 
 const NOW = new Date('2026-07-19T13:00:00.000Z');
 
+function stagingEnv(db: D1Database = {} as D1Database): Env {
+  return { DB: db, ENVIRONMENT: 'staging' } as Env;
+}
+
 function candidate(id: string): CalibrationCandidate {
   return {
     decisionId: `decision-${id}`,
@@ -78,6 +82,28 @@ function pipelineResult(state: ReleasePipelineResult['state']): ReleasePipelineR
 }
 
 describe('weekly learning calibration audit', () => {
+  it('performs zero candidate or D1 work outside staging', async () => {
+    const listCandidates = vi.fn(async () => [candidate('a')]);
+
+    const result = await cronEvaluateLearningCalibration({
+      DB: {} as D1Database,
+      ENVIRONMENT: 'production',
+    } as Env, { listCandidates });
+
+    expect(result).toEqual({
+      posts_processed: 0,
+      candidates_considered: 0,
+      completed: 0,
+      unavailable: 0,
+      claimed_elsewhere: 0,
+      budget_skipped: 0,
+      severe_false_passes: 0,
+      workspaces_disabled: 0,
+      errors: 0,
+    });
+    expect(listCandidates).not.toHaveBeenCalled();
+  });
+
   it('ships a bounded tenant-scoped calibration ledger separate from human adjudication', () => {
     const sql = readFileSync(
       resolve(process.cwd(), 'schema_v47_learning_calibration_audits.sql'),
@@ -197,7 +223,7 @@ describe('weekly learning calibration audit', () => {
     const evaluateFresh = vi.fn(async () => pipelineResult('pass_green'));
     const unavailable = vi.fn(async () => undefined);
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => [item],
       claimAudit: async () => ({ id: 'audit-a', attempt: 1 }),
@@ -223,7 +249,7 @@ describe('weekly learning calibration audit', () => {
     const claimAudit = vi.fn(async () => ({ id: 'never', attempt: 1 }));
     const evaluateFresh = vi.fn(async () => pipelineResult('pass_green'));
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => [item],
       loadSpend: async () => ({ monthlyAiSpendUsdCents: 2451, telemetryCount: 1 }),
@@ -271,7 +297,7 @@ describe('weekly learning calibration audit', () => {
     const complete = vi.fn(async () => undefined);
     const alert = vi.fn(async () => undefined);
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => items,
       claimAudit: async (_db, item) => ({ id: `audit-${item.decisionId}`, attempt: 1 }),
@@ -312,7 +338,7 @@ describe('weekly learning calibration audit', () => {
     repaired.repairHistory = [['Remove the unsupported claim']];
     const complete = vi.fn(async () => undefined);
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => [item],
       claimAudit: async () => ({ id: 'audit-a', attempt: 1 }),
@@ -337,7 +363,7 @@ describe('weekly learning calibration audit', () => {
     const items = [candidate('a'), candidate('b')];
     const quarantine = vi.fn(async () => 1);
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => items,
       loadSpend: async (_db, item) => {
@@ -372,7 +398,7 @@ describe('weekly learning calibration audit', () => {
     const resultWithOutage = pipelineResult('hold_amber');
     resultWithOutage.judgeStatus = 'unavailable';
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => [item],
       claimAudit: async () => ({ id: 'audit-a', attempt: 1 }),
@@ -407,7 +433,7 @@ describe('weekly learning calibration audit', () => {
     const alert = vi.fn(async () => undefined);
     const resolve = vi.fn(async () => undefined);
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => [],
       quarantine: async () => 0,
@@ -434,7 +460,7 @@ describe('weekly learning calibration audit', () => {
       pipelineResult(post.id === 'post-b' ? 'hold_amber' : 'pass_green'));
     const complete = vi.fn(async () => undefined);
 
-    const result = await cronEvaluateLearningCalibration({ DB: {} as D1Database } as Env, {
+    const result = await cronEvaluateLearningCalibration(stagingEnv(), {
       now: NOW,
       listCandidates: async () => items,
       claimAudit: async (_db, item) => item.decisionId === 'decision-a'
@@ -509,7 +535,13 @@ describe('weekly learning calibration audit', () => {
       async (db: D1Database) => deleteLearningWorkspaceData(db, 'owner-1', 'client-a'),
       async (db: D1Database) => deleteLearningUserData(db, 'owner-1'),
     ]) {
-      const { db, calls } = makeRecordingD1();
+      const { db, calls } = makeRecordingD1({
+        'FROM sqlite_master': [
+          { name: 'learning_calibration_audits' },
+          { name: 'learning_decision_disqualifications' },
+          { name: 'learning_pilot_samples' },
+        ],
+      });
       await erase(db);
       const calibration = calls.findIndex((call) =>
         call.sql.includes('DELETE FROM learning_calibration_audits'));

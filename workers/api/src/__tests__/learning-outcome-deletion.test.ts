@@ -31,6 +31,12 @@ const EXPECTED_WORKSPACE_DELETE_ORDER = [
   'workspace_learning_settings',
 ];
 
+const DEFERRED_TABLE_ROWS = [
+  { name: 'learning_calibration_audits' },
+  { name: 'learning_decision_disqualifications' },
+  { name: 'learning_pilot_samples' },
+];
+
 function deletedTable(sql: string): string | null {
   return sql.match(/DELETE\s+FROM\s+([a-z_]+)/i)?.[1] ?? null;
 }
@@ -39,6 +45,7 @@ describe('learning outcome deletion', () => {
   it('invalidates the affected archetype then deletes one workspace in dependency order', async () => {
     const { db, calls } = makeRecordingD1({
       'FROM clients c': [{ archetype_slug: 'bbq-smokehouse' }],
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
     });
 
     await deleteLearningWorkspaceData(db, 'owner-1', 'client-1');
@@ -57,6 +64,7 @@ describe('learning outcome deletion', () => {
   it('cannot delete a sibling workspace and uses the canonical shop sentinel scope', async () => {
     const clientDb = makeRecordingD1({
       'FROM clients c': [{ archetype_slug: 'bbq-smokehouse' }],
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
     });
     await deleteLearningWorkspaceData(clientDb.db, 'owner-1', 'client-a');
     const tenantDeletes = clientDb.calls.filter((call) =>
@@ -66,6 +74,7 @@ describe('learning outcome deletion', () => {
 
     const shopDb = makeRecordingD1({
       'FROM users': [{ archetype_slug: 'shop-retail' }],
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
     });
     await deleteLearningWorkspaceData(
       shopDb.db,
@@ -85,6 +94,7 @@ describe('learning outcome deletion', () => {
         { archetype_slug: 'bbq-smokehouse' },
         { archetype_slug: 'professional-services' },
       ],
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
     });
 
     await deleteLearningUserData(db, 'owner-1');

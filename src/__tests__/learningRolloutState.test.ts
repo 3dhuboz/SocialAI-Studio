@@ -166,11 +166,16 @@ function observation(): RolloutObservation {
         details: null,
       },
       cronDetailsSchemaReady: true,
+      decisionDisqualificationTablePresent: true,
+      aiUsageAttributionColumnPresent: true,
       pilotSampleTablePresent: true,
       calibrationTablePresent: true,
       schemaPreflight: buildProductionSchemaPreflight({
         postsTablePresent: true,
         decisionTablePresent: true,
+        aiUsageTablePresent: true,
+        decisionDisqualificationTablePresent: true,
+        aiUsageAttributionColumnPresent: true,
         pilotSampleTablePresent: true,
         calibrationTablePresent: true,
       }),
@@ -227,6 +232,8 @@ describe('learning live rollout state', () => {
     input.staging.calibrationRows = 0;
     input.staging.verifiedCalibrations = 0;
     input.staging.readiness = { ...greenReadiness(), ready: false };
+    input.production.decisionDisqualificationTablePresent = false;
+    input.production.aiUsageAttributionColumnPresent = false;
     input.production.pilotSampleTablePresent = false;
     input.production.calibrationTablePresent = false;
     input.production.readiness = null;
@@ -313,6 +320,8 @@ describe('learning live rollout state', () => {
     const input = observation();
     input.staging.expectedVersionId = null;
     input.production.expectedVersionId = null;
+    input.production.decisionDisqualificationTablePresent = false;
+    input.production.aiUsageAttributionColumnPresent = false;
     input.production.pilotSampleTablePresent = false;
     input.production.calibrationTablePresent = false;
 
@@ -330,6 +339,8 @@ describe('learning live rollout state', () => {
 
   it('permits additive production schema work only after upstream gates pass', () => {
     const input = observation();
+    input.production.decisionDisqualificationTablePresent = false;
+    input.production.aiUsageAttributionColumnPresent = false;
     input.production.pilotSampleTablePresent = false;
     input.production.calibrationTablePresent = false;
     input.production.readiness = null;
@@ -338,6 +349,8 @@ describe('learning live rollout state', () => {
 
     expect(plan.phase).toBe('production_schema');
     expect(plan.phaseBlockers).toEqual([
+      'production_decision_disqualification_schema',
+      'production_ai_usage_attribution_schema',
       'production_positive_sample_schema',
       'production_calibration_schema',
     ]);
@@ -386,6 +399,8 @@ describe('learning live rollout state', () => {
       ready: false,
       checks: { pilot: false },
     };
+    input.production.decisionDisqualificationTablePresent = false;
+    input.production.aiUsageAttributionColumnPresent = false;
     input.production.pilotSampleTablePresent = false;
     input.production.calibrationTablePresent = false;
     input.production.readiness = null;
@@ -400,6 +415,8 @@ describe('learning live rollout state', () => {
       'production_version_attested',
       'positive_pilot_samples',
       'customer_pilot_consent',
+      'production_decision_disqualification_schema',
+      'production_ai_usage_attribution_schema',
       'production_positive_sample_schema',
       'staging_calibration_cron_fresh',
       'staging_calibration_evidence',
@@ -756,6 +773,11 @@ describe('learning live rollout state', () => {
       "WHERE type = 'table' AND name = 'cron_runs') AS cron_runs_sql",
     );
     expect(PRODUCTION_ROLLOUT_SQL).toContain(
+      "name = 'learning_decision_disqualifications'",
+    );
+    expect(PRODUCTION_ROLLOUT_SQL).toContain("FROM pragma_table_info('ai_usage')");
+    expect(PRODUCTION_ROLLOUT_SQL).toContain("WHERE name = 'learning_decision_id'");
+    expect(PRODUCTION_ROLLOUT_SQL).toContain(
       "WHERE cron_type IN ('health_sweep', 'learning_readiness')",
     );
     expect(PRODUCTION_ROLLOUT_SQL).toContain('NULL AS details_json');
@@ -830,6 +852,9 @@ describe('learning live rollout state', () => {
     const preflight = buildProductionSchemaPreflight({
       postsTablePresent: true,
       decisionTablePresent: true,
+      aiUsageTablePresent: true,
+      decisionDisqualificationTablePresent: false,
+      aiUsageAttributionColumnPresent: false,
       pilotSampleTablePresent: false,
       calibrationTablePresent: false,
     });
@@ -839,8 +864,26 @@ describe('learning live rollout state', () => {
       readyToApplyWhenPhaseReached: true,
       applicationPerformed: false,
     });
-    expect(preflight.migrations).toHaveLength(2);
+    expect(preflight.migrations).toHaveLength(4);
     expect(preflight.migrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'decision_disqualification',
+        filePresent: true,
+        currentTablePresent: false,
+        dependency: 'learning_decisions',
+        dependencyPresent: true,
+        hashMatches: true,
+        additiveContractValid: true,
+      }),
+      expect.objectContaining({
+        id: 'ai_usage_attribution',
+        filePresent: true,
+        currentTablePresent: false,
+        dependency: 'ai_usage + learning_decisions',
+        dependencyPresent: true,
+        hashMatches: true,
+        additiveContractValid: true,
+      }),
       expect.objectContaining({
         id: 'positive_sample',
         filePresent: true,
@@ -867,6 +910,8 @@ describe('learning live rollout state', () => {
     const targetDir = resolve(root, 'workers', 'api');
     mkdirSync(targetDir, { recursive: true });
     const files = [
+      'schema_v44_learning_decision_disqualifications.sql',
+      'schema_v45_learning_ai_usage_attribution.sql',
       'schema_v46_learning_pilot_samples.sql',
       'schema_v47_learning_calibration_audits.sql',
     ];
@@ -882,12 +927,18 @@ describe('learning live rollout state', () => {
       expect(buildProductionSchemaPreflight({
         postsTablePresent: true,
         decisionTablePresent: true,
+        aiUsageTablePresent: true,
+        decisionDisqualificationTablePresent: false,
+        aiUsageAttributionColumnPresent: false,
         pilotSampleTablePresent: false,
         calibrationTablePresent: false,
         root,
       }).readyToApplyWhenPhaseReached).toBe(true);
 
-      const changedPath = resolve(targetDir, files[0]);
+      const changedPath = resolve(
+        targetDir,
+        'schema_v46_learning_pilot_samples.sql',
+      );
       writeFileSync(
         changedPath,
         readFileSync(changedPath, 'utf8').replace(
@@ -899,6 +950,9 @@ describe('learning live rollout state', () => {
       const changed = buildProductionSchemaPreflight({
         postsTablePresent: true,
         decisionTablePresent: true,
+        aiUsageTablePresent: true,
+        decisionDisqualificationTablePresent: false,
+        aiUsageAttributionColumnPresent: false,
         pilotSampleTablePresent: false,
         calibrationTablePresent: false,
         root,
@@ -915,6 +969,9 @@ describe('learning live rollout state', () => {
     const preflight = buildProductionSchemaPreflight({
       postsTablePresent: false,
       decisionTablePresent: true,
+      aiUsageTablePresent: true,
+      decisionDisqualificationTablePresent: false,
+      aiUsageAttributionColumnPresent: false,
       pilotSampleTablePresent: false,
       calibrationTablePresent: false,
     });
@@ -922,12 +979,29 @@ describe('learning live rollout state', () => {
     expect(preflight.readyToApplyWhenPhaseReached).toBe(false);
     expect(preflight.migrations.find((migration) => migration.id === 'positive_sample'))
       .toMatchObject({ dependencyPresent: false });
+
+    const missingAiUsage = buildProductionSchemaPreflight({
+      postsTablePresent: true,
+      decisionTablePresent: true,
+      aiUsageTablePresent: false,
+      decisionDisqualificationTablePresent: false,
+      aiUsageAttributionColumnPresent: false,
+      pilotSampleTablePresent: false,
+      calibrationTablePresent: false,
+    });
+    expect(missingAiUsage.readyToApplyWhenPhaseReached).toBe(false);
+    expect(missingAiUsage.migrations.find(
+      (migration) => migration.id === 'ai_usage_attribution',
+    )).toMatchObject({ dependencyPresent: false });
   });
 
   it('fails closed with an artifact-ready result when migration files are missing', () => {
     const preflight = buildProductionSchemaPreflight({
       postsTablePresent: true,
       decisionTablePresent: true,
+      aiUsageTablePresent: true,
+      decisionDisqualificationTablePresent: false,
+      aiUsageAttributionColumnPresent: false,
       pilotSampleTablePresent: false,
       calibrationTablePresent: false,
       root: resolve(process.cwd(), 'missing-production-schema-root'),

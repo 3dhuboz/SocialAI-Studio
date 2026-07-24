@@ -161,6 +161,16 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning receipt routes keeps every approval-pilot operation isolated to staging',
   },
   {
+    id: 'pilot_cron_staging_isolation',
+    suite: 'src/__tests__/learning-pilot-cron-telemetry.test.ts',
+    assertion: 'learning pilot cron telemetry restricts record-only pilot and calibration scheduling to staging',
+  },
+  {
+    id: 'pilot_production_zero_d1',
+    suite: 'src/__tests__/learning-pilot-collector.test.ts',
+    assertion: 'record-only pilot collector performs zero D1 work in production even when dormant pilot flags are set',
+  },
+  {
     id: 'pilot_context_before_enrollment',
     suite: 'src/__tests__/learning-routes.test.ts',
     assertion: 'learning settings and release evidence routes refuses pilot enrollment before recording consent when business context is incomplete',
@@ -286,6 +296,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'readiness cron receipts persists every evaluation and alerts once when readiness turns green to red',
   },
   {
+    id: 'readiness_deferred_schema_receipt',
+    suite: 'src/__tests__/learning-readiness.test.ts',
+    assertion: 'readiness cron receipts persists a complete red receipt without touching deferred pilot tables',
+  },
+  {
     id: 'readiness_failure_stale',
     suite: 'src/__tests__/learning-readiness.test.ts',
     assertion: 'readiness cron receipts writes no replacement receipt when evidence collection fails',
@@ -309,6 +324,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     id: 'calibration_ledger_schema',
     suite: 'src/__tests__/learning-calibration-audit.test.ts',
     assertion: 'weekly learning calibration audit ships a bounded tenant-scoped calibration ledger separate from human adjudication',
+  },
+  {
+    id: 'calibration_production_zero_d1',
+    suite: 'src/__tests__/learning-calibration-audit.test.ts',
+    assertion: 'weekly learning calibration audit performs zero candidate or D1 work outside staging',
   },
   {
     id: 'calibration_bounded_selection',
@@ -424,6 +444,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     id: 'calibration_deletion',
     suite: 'src/__tests__/learning-calibration-audit.test.ts',
     assertion: 'weekly learning calibration audit deletes calibration receipts before parent decisions for every tenant erasure',
+  },
+  {
+    id: 'deferred_schema_deletion_compatibility',
+    suite: 'src/__tests__/learning-deletion.test.ts',
+    assertion: 'learning data deletion deletes every available production row when deferred tables are absent',
   },
   {
     id: 'protected_consent_gate',

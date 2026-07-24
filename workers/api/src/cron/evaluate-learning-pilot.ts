@@ -273,7 +273,8 @@ const defaultDeps: PilotCollectorDeps = {
 };
 
 function dormantPilotEnabled(env: Env): boolean {
-  return env.LEARNING_BRAIN_ENABLED === 'true'
+  return env.ENVIRONMENT?.trim().toLowerCase() === 'staging'
+    && env.LEARNING_BRAIN_ENABLED === 'true'
     && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
     && env.LEARNING_AUTOPILOT_ENABLED !== 'true';
 }

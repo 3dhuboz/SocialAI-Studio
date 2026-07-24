@@ -121,6 +121,18 @@ describe('learning receipt routes', () => {
           note: 'Synthetic staging evidence only.',
         }),
       }],
+      ['/api/learning/decisions/decision-1/adjudicate', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({
+          expectedState: 'pass_green',
+          severity: 'advisory',
+          note: 'Record-only staging adjudication.',
+        }),
+      }],
+      ['/api/learning/admin/operations', {
+        headers: adminRequestHeaders,
+      }],
     ];
 
     for (const [path, init] of requests) {

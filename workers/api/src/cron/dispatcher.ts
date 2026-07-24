@@ -52,6 +52,8 @@ const LEARNING_PILOT_DETAIL_KEYS = [
 
 const LEARNING_READINESS_DETAIL_KEYS = [
   'workspaces_disabled',
+  'decision_disqualifications_schema_ready',
+  'ai_usage_attribution_schema_ready',
   'pilot_samples_schema_ready',
   'calibration_audits_schema_ready',
 ] as const;
@@ -71,6 +73,8 @@ const LEARNING_CALIBRATION_DETAIL_KEYS = [
 type TrackedCronResult = {
   posts_processed?: number;
   workspaces_disabled?: number;
+  decision_disqualifications_schema_ready?: number;
+  ai_usage_attribution_schema_ready?: number;
   pilot_samples_schema_ready?: number;
   calibration_audits_schema_ready?: number;
 };
@@ -78,6 +82,21 @@ type TrackedCronResult = {
 export interface CronTriggerMetadata {
   cronExpression: string;
   scheduledTime: number;
+}
+
+function stagingEnvironment(env: Env): boolean {
+  return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
+}
+
+export function shouldRunRecordOnlyPilot(env: Env): boolean {
+  return stagingEnvironment(env)
+    && env.LEARNING_BRAIN_ENABLED === 'true'
+    && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
+    && env.LEARNING_AUTOPILOT_ENABLED !== 'true';
+}
+
+export function shouldRunLearningCalibration(env: Env): boolean {
+  return stagingEnvironment(env) && env.LEARNING_BRAIN_ENABLED === 'true';
 }
 
 function requiredCounter(cronType: string, key: string, value: unknown): number {
@@ -172,7 +191,7 @@ export async function trackCron(
 
 export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const cron = event.cron;
-  const recordOnlyStaging = env.ENVIRONMENT === 'staging';
+  const recordOnlyStaging = stagingEnvironment(env);
   if (cron === '*/5 * * * *') {
     // Latency-sensitive lane: posts need images prewarmed before the publish
     // cron fires, and the publish cron needs to fire close to scheduled time.
@@ -236,11 +255,7 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     if (!recordOnlyStaging) {
       await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
     }
-    if (
-      env.LEARNING_BRAIN_ENABLED === 'true'
-      && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
-      && env.LEARNING_AUTOPILOT_ENABLED !== 'true'
-    ) {
+    if (shouldRunRecordOnlyPilot(env)) {
       // Record-only pilot work is isolated from the 5-minute publish lane.
       // It evaluates at most one Draft per explicitly consented workspace
       // and can never schedule, mutate, or publish the source post.
@@ -263,16 +278,16 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // and the fallback chain ran instead, double-firing prewarm + publish at
   // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
   if (cron === '0 21 * * SUN') {
-    if (env.LEARNING_BRAIN_ENABLED === 'true') {
+    if (shouldRunLearningCalibration(env)) {
       await trackCron(
         env,
         'learning_calibration',
         () => cronEvaluateLearningCalibration(env),
         { cronExpression: cron, scheduledTime: event.scheduledTime },
       );
-      if (!recordOnlyStaging) {
-        await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
-      }
+    }
+    if (env.LEARNING_BRAIN_ENABLED === 'true' && !recordOnlyStaging) {
+      await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
     }
     if (!recordOnlyStaging) {
       await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));

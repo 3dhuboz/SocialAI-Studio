@@ -198,9 +198,9 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `prewarm-images.ts` | `*/5 * * * *` | Generate + critique images for upcoming posts |
 | `prewarm-videos.ts` | `*/5 * * * *` | Generate + cache reel videos to R2 |
 | `cron/evaluate-learning-shadow.ts` | `*/5 * * * *` | Read-only shadow snapshots and reach-plan receipts for up to 8 upcoming posts |
-| `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Lease-guarded record-only critique of at most one exact-version, positively attested Draft per explicitly consented pilot workspace |
-| `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions |
-| `cron/evaluate-learning-calibration.ts` | `0 21 * * SUN` | Recheck a bounded fair sample of unchanged green decisions before strategy learning and quarantine severe false passes |
+| `cron/evaluate-learning-pilot.ts` | `*/15 * * * *` | Staging-only, lease-guarded record-only critique of at most one exact-version, positively attested Draft per explicitly consented pilot workspace |
+| `cron/evaluate-learning-readiness.ts` | `*/15 * * * *` | Persist readiness receipts and alert on green-to-red safety regressions; preflight deferred v44-v47 structures before querying them |
+| `cron/evaluate-learning-calibration.ts` | `0 21 * * SUN` | Staging-only recheck of a bounded fair sample of unchanged green decisions before strategy learning, with severe-false-pass quarantine |
 | `collect-learning-outcomes.ts` | `0 */6 * * *` | Reconcile confirmed publications and collect immutable 24/72/168-hour outcome windows |
 | `learn-strategies.ts` | `0 21 * * SUN` | Build private confidence-weighted customer strategy profiles before weekly review |
 | `publish-missed.ts` | `*/5 * * * *` | Publish overdue scheduled posts to FB/IG |
@@ -221,6 +221,13 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 **Current production schema version:** v43. Schemas v44-v47 remain deferred.
 
 **Current staging schema version:** v47.
+
+The record-only pilot and independent calibration jobs are hard-gated to
+`ENVIRONMENT=staging` in both dispatcher and job entry points. Production
+readiness remains safe on v43: it checks v44, the v45 `ai_usage` attribution
+column, v46, and v47 first, then writes a complete red receipt without querying
+or mutating deferred tables. Privacy deletion similarly removes deferred rows
+only when their tables exist.
 
 Weekly calibration migration:
 `workers/api/schema_v47_learning_calibration_audits.sql`.

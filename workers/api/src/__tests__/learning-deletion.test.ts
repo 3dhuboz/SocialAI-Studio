@@ -7,6 +7,12 @@ import {
 } from '../lib/learning/deletion';
 import { makeRecordingD1 } from './helpers/recording-d1';
 
+const DEFERRED_TABLE_ROWS = [
+  { name: 'learning_calibration_audits' },
+  { name: 'learning_decision_disqualifications' },
+  { name: 'learning_pilot_samples' },
+];
+
 describe('learning data deletion', () => {
   it.each([
     ['owner', 'owner_1', '__owner__'],
@@ -17,7 +23,9 @@ describe('learning data deletion', () => {
     userId,
     workspaceKey,
   ) => {
-    const { db, calls } = makeRecordingD1();
+    const { db, calls } = makeRecordingD1({
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
+    });
 
     await deleteLearningWorkspaceData(db, userId, workspaceKey);
 
@@ -40,7 +48,9 @@ describe('learning data deletion', () => {
   });
 
   it('deletes every learning workspace before its user account', async () => {
-    const { db, calls } = makeRecordingD1();
+    const { db, calls } = makeRecordingD1({
+      'FROM sqlite_master': DEFERRED_TABLE_ROWS,
+    });
 
     await deleteLearningUserData(db, 'owner_1');
 
@@ -58,6 +68,21 @@ describe('learning data deletion', () => {
     expect(deletes.at(-2)?.sql).toContain('DELETE FROM learning_decisions');
     expect(deletes.at(-1)?.sql).toContain('DELETE FROM workspace_learning_settings');
     expect(deletes.every((call) => call.binds[0] === 'owner_1')).toBe(true);
+  });
+
+  it('deletes every available production row when deferred tables are absent', async () => {
+    const { db, calls } = makeRecordingD1({ 'FROM sqlite_master': [] });
+
+    await deleteLearningWorkspaceData(db, 'owner_1', 'client_1');
+
+    const sql = calls.map((call) => call.sql).join('\n');
+    expect(sql).not.toContain('DELETE FROM learning_pilot_samples');
+    expect(sql).not.toContain('DELETE FROM learning_decision_disqualifications');
+    expect(sql).not.toContain('DELETE FROM learning_calibration_audits');
+    expect(sql).toContain('DELETE FROM learning_adjudications');
+    expect(sql).toContain('DELETE FROM learning_pilot_enrollments');
+    expect(sql).toContain('DELETE FROM learning_decisions');
+    expect(sql).toContain('DELETE FROM workspace_learning_settings');
   });
 
   it('wires cleanup before every parent deletion', () => {

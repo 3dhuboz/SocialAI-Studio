@@ -328,10 +328,29 @@ describe('record-only pilot collector', () => {
 
     await expect(cronEvaluateLearningPilot({
       DB: db,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'true',
       LEARNING_AUTOPILOT_ENABLED: 'false',
     } as Env)).resolves.toMatchObject({ posts_processed: 0 });
+
+    expect(calls).toEqual([]);
+  });
+
+  it('performs zero D1 work in production even when dormant pilot flags are set', async () => {
+    const { db, calls } = makeRecordingD1();
+
+    await expect(cronEvaluateLearningPilot({
+      DB: db,
+      ENVIRONMENT: 'production',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env)).resolves.toMatchObject({
+      posts_processed: 0,
+      candidates_considered: 0,
+      errors: 0,
+    });
 
     expect(calls).toEqual([]);
   });
@@ -350,6 +369,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: db,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
@@ -400,6 +420,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: {} as D1Database,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
@@ -427,6 +448,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: {} as D1Database,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
@@ -455,6 +477,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: {} as D1Database,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
@@ -507,6 +530,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: db,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
@@ -579,6 +603,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: db,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',
@@ -618,6 +643,7 @@ describe('record-only pilot collector', () => {
 
     const result = await cronEvaluateLearningPilot({
       DB: db,
+      ENVIRONMENT: 'staging',
       LEARNING_BRAIN_ENABLED: 'true',
       LEARNING_RELEASE_ENFORCEMENT: 'false',
       LEARNING_AUTOPILOT_ENABLED: 'false',

@@ -12,6 +12,8 @@ import { quarantineSevereFalsePassWorkspaces } from '../lib/learning/workspace-m
 type PreviousReadiness = { ready: number } | null;
 
 export interface LearningReadinessSchemaState {
+  decisionDisqualificationsReady: boolean;
+  aiUsageAttributionReady: boolean;
   pilotSamplesReady: boolean;
   calibrationAuditsReady: boolean;
 }
@@ -60,6 +62,13 @@ export async function loadLearningReadinessSchemaState(
   const row = await db.prepare(`
     SELECT
       COALESCE(SUM(CASE
+        WHEN type = 'table' AND name = 'learning_decision_disqualifications'
+        THEN 1 ELSE 0
+      END), 0) AS decision_disqualifications_count,
+      (SELECT COUNT(*)
+         FROM pragma_table_info('ai_usage')
+        WHERE name = 'learning_decision_id') AS ai_usage_attribution_count,
+      COALESCE(SUM(CASE
         WHEN type = 'table' AND name = 'learning_pilot_samples' THEN 1 ELSE 0
       END), 0) AS pilot_samples_count,
       COALESCE(SUM(CASE
@@ -67,13 +76,27 @@ export async function loadLearningReadinessSchemaState(
       END), 0) AS calibration_audits_count
     FROM sqlite_master
     WHERE type = 'table'
-      AND name IN ('learning_pilot_samples', 'learning_calibration_audits')
+      AND name IN (
+        'learning_decision_disqualifications',
+        'learning_pilot_samples',
+        'learning_calibration_audits'
+      )
   `).first<{
+    decision_disqualifications_count: number;
+    ai_usage_attribution_count: number;
     pilot_samples_count: number;
     calibration_audits_count: number;
   }>();
 
   return {
+    decisionDisqualificationsReady: parseSchemaCount(
+      'learning_decision_disqualifications',
+      row?.decision_disqualifications_count,
+    ),
+    aiUsageAttributionReady: parseSchemaCount(
+      'ai_usage.learning_decision_id',
+      row?.ai_usage_attribution_count,
+    ),
     pilotSamplesReady: parseSchemaCount(
       'learning_pilot_samples',
       row?.pilot_samples_count,
@@ -158,6 +181,8 @@ export async function cronEvaluateLearningReadiness(
   ready: boolean;
   id: string;
   workspaces_disabled: number;
+  decision_disqualifications_schema_ready: 0 | 1;
+  ai_usage_attribution_schema_ready: 0 | 1;
   pilot_samples_schema_ready: 0 | 1;
   calibration_audits_schema_ready: 0 | 1;
 }> {
@@ -173,7 +198,9 @@ export async function cronEvaluateLearningReadiness(
 
   const previous = await readPrevious(env.DB);
   const schemaState = await loadSchemaState(env.DB);
-  const schemasReady = schemaState.pilotSamplesReady
+  const schemasReady = schemaState.decisionDisqualificationsReady
+    && schemaState.aiUsageAttributionReady
+    && schemaState.pilotSamplesReady
     && schemaState.calibrationAuditsReady;
   const snapshot = schemasReady
     ? await collect(env.DB, now)
@@ -207,6 +234,9 @@ export async function cronEvaluateLearningReadiness(
     ready: snapshot.ready,
     id,
     workspaces_disabled: workspacesDisabled,
+    decision_disqualifications_schema_ready:
+      schemaState.decisionDisqualificationsReady ? 1 : 0,
+    ai_usage_attribution_schema_ready: schemaState.aiUsageAttributionReady ? 1 : 0,
     pilot_samples_schema_ready: schemaState.pilotSamplesReady ? 1 : 0,
     calibration_audits_schema_ready: schemaState.calibrationAuditsReady ? 1 : 0,
   };
