@@ -88,6 +88,11 @@ function observation(): RolloutObservation {
       pilotSamples: 30,
       ownerSamples: 15,
       clientSamples: 15,
+      mediaSamples: 12,
+      imageSamples: 9,
+      videoSamples: 3,
+      ownerMediaSamples: 6,
+      clientMediaSamples: 6,
       ownerEnrollments: 1,
       customerEnrollments: 1,
       activeCustomerWorkspaces: 1,
@@ -186,6 +191,14 @@ function observation(): RolloutObservation {
   };
 }
 
+function clearMediaEvidence(staging: RolloutObservation['staging']): void {
+  staging.mediaSamples = 0;
+  staging.imageSamples = 0;
+  staging.videoSamples = 0;
+  staging.ownerMediaSamples = 0;
+  staging.clientMediaSamples = 0;
+}
+
 describe('learning live rollout state', () => {
   it('returns promotion_ready only when every safety and live evidence gate passes', () => {
     const result = evaluateRolloutState(observation());
@@ -194,6 +207,33 @@ describe('learning live rollout state', () => {
     expect(result.safeHold).toBe(true);
     expect(result.promotionReady).toBe(true);
     expect(result.blockers).toEqual([]);
+  });
+
+  it('requires balanced image and video evidence before promotion', () => {
+    const input = observation();
+    clearMediaEvidence(input.staging);
+
+    const result = evaluateRolloutState(input);
+    const plan = buildRolloutActionPlan(input, result);
+
+    expect(result.result).toBe('safe_hold');
+    expect(result.blockers).toContain('media_pilot_coverage');
+    expect(plan.phase).toBe('pilot_evidence');
+    expect(plan.nextSafeActions).toContainEqual(expect.objectContaining({
+      id: 'collect_balanced_image_and_video_pilot_samples',
+      executionMode: 'record_only',
+      productionMutation: false,
+    }));
+  });
+
+  it('treats contradictory media evidence counters as unsafe', () => {
+    const input = observation();
+    input.staging.mediaSamples = 11;
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('unsafe_or_unverified');
+    expect(result.failedSafetyChecks).toContain('staging_media_pilot_counters_observed');
   });
 
   it('keeps automatic activation prohibited even when every promotion gate passes', () => {
@@ -226,6 +266,7 @@ describe('learning live rollout state', () => {
     input.staging.pilotSamples = 1;
     input.staging.ownerSamples = 0;
     input.staging.clientSamples = 1;
+    clearMediaEvidence(input.staging);
     input.staging.ownerAttestedSamples = 0;
     input.staging.clientAttestedSamples = 1;
     input.staging.ownerCandidateDrafts = 1;
@@ -242,7 +283,10 @@ describe('learning live rollout state', () => {
     const plan = buildRolloutActionPlan(input);
 
     expect(plan.phase).toBe('pilot_evidence');
-    expect(plan.phaseBlockers).toEqual(['positive_pilot_samples']);
+    expect(plan.phaseBlockers).toEqual([
+      'positive_pilot_samples',
+      'media_pilot_coverage',
+    ]);
     expect(plan.nextSafeActions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'owner_review_exact_owner_draft',
@@ -265,6 +309,7 @@ describe('learning live rollout state', () => {
     input.staging.pilotSamples = 1;
     input.staging.ownerSamples = 0;
     input.staging.clientSamples = 1;
+    clearMediaEvidence(input.staging);
     input.staging.ownerAttestedSamples = 0;
     input.staging.clientAttestedSamples = 1;
     input.staging.ownerCandidateDrafts = 0;
@@ -302,6 +347,7 @@ describe('learning live rollout state', () => {
     input.staging.pilotSamples = 0;
     input.staging.ownerSamples = 0;
     input.staging.clientSamples = 0;
+    clearMediaEvidence(input.staging);
     input.staging.ownerAttestedSamples = 0;
     input.staging.clientAttestedSamples = 0;
     input.staging.ownerCandidateDrafts = 0;
@@ -391,6 +437,7 @@ describe('learning live rollout state', () => {
     input.staging.pilotSamples = 0;
     input.staging.ownerSamples = 0;
     input.staging.clientSamples = 0;
+    clearMediaEvidence(input.staging);
     input.staging.customerEnrollments = 0;
     input.staging.latestCalibrationCron = null;
     input.staging.calibrationRows = 0;
@@ -415,6 +462,7 @@ describe('learning live rollout state', () => {
       'staging_version_attested',
       'production_version_attested',
       'positive_pilot_samples',
+      'media_pilot_coverage',
       'customer_pilot_consent',
       'production_decision_disqualification_schema',
       'production_ai_usage_attribution_schema',
@@ -489,6 +537,7 @@ describe('learning live rollout state', () => {
     input.staging.pilotSamples = 0;
     input.staging.ownerSamples = 0;
     input.staging.clientSamples = 0;
+    clearMediaEvidence(input.staging);
     input.staging.ownerAttestedSamples = 0;
     input.staging.clientAttestedSamples = 0;
     const evaluation = evaluateRolloutState(input);
@@ -1038,10 +1087,22 @@ describe('learning live rollout state', () => {
     );
     expect(sampleEvidenceSql).toContain("sample.attestation_basis = 'customer_real_post'");
     expect(sampleEvidenceSql).toContain("COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'");
-    expect(sampleEvidenceSql).toContain('FROM learning_decisions d');
+    expect(sampleEvidenceSql).toContain('INNER JOIN learning_decisions d');
     expect(sampleEvidenceSql).toContain('d.content_hash = sample.content_hash');
     expect(sampleEvidenceSql).toContain("d.stage = 'release'");
     expect(sampleEvidenceSql).toContain("d.mode = 'approval'");
+    expect(sampleEvidenceSql).toContain(
+      "d.release_state IN ('pass_green','hold_amber','block_red')",
+    );
+    expect(sampleEvidenceSql).toContain("'$.verdictCount'");
+    expect(sampleEvidenceSql).toContain("'$.mediaKind'");
+    expect(sampleEvidenceSql).toContain("media_verdict.critic_kind = 'image'");
+    expect(sampleEvidenceSql).toContain(
+      "media_verdict.critic_kind = 'video_manifest'",
+    );
+    expect(sampleEvidenceSql).toContain(
+      "media_verdict.verdict <> 'unavailable'",
+    );
     expect(sampleEvidenceSql).toContain('FROM learning_decision_disqualifications disq');
   });
 

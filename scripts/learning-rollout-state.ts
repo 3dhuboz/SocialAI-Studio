@@ -24,6 +24,10 @@ const DEFAULT_MAX_AGE_MINUTES = 20;
 const WEEKLY_CALIBRATION_MAX_AGE_MINUTES = 8 * 24 * 60;
 const WEEKLY_CALIBRATION_CRON = '0 21 * * SUN';
 const WEEKLY_CALIBRATION_MAX_START_DELAY_MS = 30 * 60_000;
+const MIN_MEDIA_PILOT_SAMPLES = 12;
+const MIN_IMAGE_PILOT_SAMPLES = 8;
+const MIN_VIDEO_PILOT_SAMPLES = 2;
+const MIN_MEDIA_SAMPLES_PER_OWNER_KIND = 4;
 const OWNER_SOURCE_SECRET_KEY = /(?:api.?key|token|secret|password|credential|private.?key|auth)/i;
 
 const CALIBRATION_DETAIL_KEYS = [
@@ -147,11 +151,31 @@ const PROHIBITED_AUTOMATIC_ROLLOUT_ACTIONS = [
 ] as const;
 
 export const STAGING_ROLLOUT_SQL = `
-SELECT COUNT(*) AS pilot_samples,
-       COALESCE(SUM(CASE WHEN sample.owner_kind = 'user' THEN 1 ELSE 0 END), 0)
-         AS owner_samples,
-       COALESCE(SUM(CASE WHEN sample.owner_kind = 'client' THEN 1 ELSE 0 END), 0)
-         AS client_samples
+WITH eligible_sample_decisions AS (
+SELECT sample.id AS sample_id,
+       sample.owner_kind,
+       MAX(CASE
+         WHEN json_extract(d.summary_json, '$.mediaKind') = 'image'
+          AND EXISTS (
+            SELECT 1
+              FROM learning_critic_verdicts media_verdict
+             WHERE media_verdict.decision_id = d.id
+               AND media_verdict.critic_kind = 'image'
+               AND media_verdict.verdict <> 'unavailable'
+          )
+         THEN 1 ELSE 0
+       END) AS image_evidence,
+       MAX(CASE
+         WHEN json_extract(d.summary_json, '$.mediaKind') = 'video'
+          AND EXISTS (
+            SELECT 1
+              FROM learning_critic_verdicts media_verdict
+             WHERE media_verdict.decision_id = d.id
+               AND media_verdict.critic_kind = 'video_manifest'
+               AND media_verdict.verdict <> 'unavailable'
+          )
+         THEN 1 ELSE 0
+       END) AS video_evidence
   FROM learning_pilot_samples sample
   INNER JOIN learning_pilot_enrollments pen
     ON pen.user_id = sample.user_id
@@ -175,6 +199,26 @@ SELECT COUNT(*) AS pilot_samples,
   LEFT JOIN clients c
     ON c.id = pen.client_id
    AND c.user_id = pen.user_id
+  INNER JOIN learning_decisions d
+    ON d.user_id = sample.user_id
+   AND d.workspace_key = sample.workspace_key
+   AND d.client_id IS sample.client_id
+   AND d.owner_kind = sample.owner_kind
+   AND d.owner_id = sample.owner_id
+   AND d.post_id = sample.post_id
+   AND d.content_hash = sample.content_hash
+   AND d.stage = 'release'
+   AND d.mode = 'approval'
+   AND d.release_state IN ('pass_green','hold_amber','block_red')
+   AND unixepoch(d.created_at) >= unixepoch(sample.attested_at)
+   AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), -1)
+     AS INTEGER) = (
+     SELECT COUNT(*)
+       FROM learning_critic_verdicts verdict
+      WHERE verdict.decision_id = d.id
+   )
+   AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), 0)
+     AS INTEGER) > 0
  WHERE unixepoch(pen.enrolled_at) <= unixepoch(sample.attested_at)
    AND unixepoch(pen.consent_confirmed_at) <= unixepoch(sample.attested_at)
    AND unixepoch(sample.attested_at) <= unixepoch('now')
@@ -199,30 +243,37 @@ SELECT COUNT(*) AS pilot_samples,
        AND COALESCE(LOWER(TRIM(c.status)), 'active') <> 'on_hold'
      )
    )
-   AND EXISTS (
+   AND NOT EXISTS (
      SELECT 1
-       FROM learning_decisions d
-      WHERE d.user_id = sample.user_id
-        AND d.workspace_key = sample.workspace_key
-        AND d.client_id IS sample.client_id
-        AND d.owner_kind = sample.owner_kind
-        AND d.owner_id = sample.owner_id
-        AND d.post_id = sample.post_id
-        AND d.content_hash = sample.content_hash
-        AND d.stage = 'release'
-        AND d.mode = 'approval'
-        AND unixepoch(d.created_at) >= unixepoch(sample.attested_at)
-        AND NOT EXISTS (
-          SELECT 1
-            FROM learning_decision_disqualifications disq
-           WHERE disq.decision_id = d.id
-             AND disq.user_id = d.user_id
-             AND disq.workspace_key = d.workspace_key
-             AND disq.client_id IS d.client_id
-             AND disq.owner_kind = d.owner_kind
-             AND disq.owner_id = d.owner_id
-        )
-   );
+       FROM learning_decision_disqualifications disq
+      WHERE disq.decision_id = d.id
+        AND disq.user_id = d.user_id
+        AND disq.workspace_key = d.workspace_key
+        AND disq.client_id IS d.client_id
+        AND disq.owner_kind = d.owner_kind
+        AND disq.owner_id = d.owner_id
+   )
+ GROUP BY sample.id, sample.owner_kind
+)
+SELECT COUNT(*) AS pilot_samples,
+       COALESCE(SUM(CASE WHEN owner_kind = 'user' THEN 1 ELSE 0 END), 0)
+         AS owner_samples,
+       COALESCE(SUM(CASE WHEN owner_kind = 'client' THEN 1 ELSE 0 END), 0)
+         AS client_samples,
+       COALESCE(SUM(CASE
+         WHEN image_evidence = 1 OR video_evidence = 1 THEN 1 ELSE 0 END), 0)
+         AS media_samples,
+       COALESCE(SUM(image_evidence), 0) AS image_samples,
+       COALESCE(SUM(video_evidence), 0) AS video_samples,
+       COALESCE(SUM(CASE
+         WHEN owner_kind = 'user'
+          AND (image_evidence = 1 OR video_evidence = 1)
+         THEN 1 ELSE 0 END), 0) AS owner_media_samples,
+       COALESCE(SUM(CASE
+         WHEN owner_kind = 'client'
+          AND (image_evidence = 1 OR video_evidence = 1)
+         THEN 1 ELSE 0 END), 0) AS client_media_samples
+  FROM eligible_sample_decisions;
 SELECT COUNT(*) AS protected_workspaces
   FROM workspace_learning_settings
  WHERE mode = 'protected_autopilot';
@@ -674,6 +725,11 @@ export interface RolloutObservation {
     pilotSamples: number;
     ownerSamples: number;
     clientSamples: number;
+    mediaSamples: number;
+    imageSamples: number;
+    videoSamples: number;
+    ownerMediaSamples: number;
+    clientMediaSamples: number;
     ownerEnrollments: number;
     customerEnrollments: number;
     activeCustomerWorkspaces: number;
@@ -750,6 +806,22 @@ function pilotIntakeCountersAreValid(staging: RolloutObservation['staging']): bo
     && staging.clientAttestedSamples >= staging.clientSamples
     && staging.ownerEnrollments <= 1
     && staging.customerEnrollments <= 1;
+}
+
+function mediaPilotCountersAreValid(staging: RolloutObservation['staging']): boolean {
+  const counters = [
+    staging.mediaSamples,
+    staging.imageSamples,
+    staging.videoSamples,
+    staging.ownerMediaSamples,
+    staging.clientMediaSamples,
+  ];
+  return counters.every((value) => Number.isSafeInteger(value) && value >= 0)
+    && staging.mediaSamples === staging.imageSamples + staging.videoSamples
+    && staging.mediaSamples === staging.ownerMediaSamples + staging.clientMediaSamples
+    && staging.mediaSamples <= staging.pilotSamples
+    && staging.ownerMediaSamples <= staging.ownerSamples
+    && staging.clientMediaSamples <= staging.clientSamples;
 }
 
 export function summarizePilotIntake(
@@ -1163,6 +1235,11 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
     'safety',
   );
   add(
+    'staging_media_pilot_counters_observed',
+    mediaPilotCountersAreValid(input.staging),
+    'safety',
+  );
+  add(
     'staging_bindings',
     input.staging.environmentBinding === 'staging'
       && input.staging.databaseBindingId === input.staging.expectedDatabaseBindingId,
@@ -1249,6 +1326,15 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
     input.staging.pilotSamples >= 30
       && input.staging.ownerSamples >= 8
       && input.staging.clientSamples >= 8,
+    'promotion',
+  );
+  add(
+    'media_pilot_coverage',
+    input.staging.mediaSamples >= MIN_MEDIA_PILOT_SAMPLES
+      && input.staging.imageSamples >= MIN_IMAGE_PILOT_SAMPLES
+      && input.staging.videoSamples >= MIN_VIDEO_PILOT_SAMPLES
+      && input.staging.ownerMediaSamples >= MIN_MEDIA_SAMPLES_PER_OWNER_KIND
+      && input.staging.clientMediaSamples >= MIN_MEDIA_SAMPLES_PER_OWNER_KIND,
     'promotion',
   );
   add('customer_pilot_consent', input.staging.customerEnrollments >= 1, 'promotion');
@@ -1374,7 +1460,11 @@ export function buildRolloutActionPlan(
     return rolloutActionPlan('version_attestation', versionBlockers, nextSafeActions);
   }
 
-  const pilotBlockers = failed(['positive_pilot_samples', 'customer_pilot_consent']);
+  const pilotBlockers = failed([
+    'positive_pilot_samples',
+    'media_pilot_coverage',
+    'customer_pilot_consent',
+  ]);
   if (pilotBlockers.length > 0) {
     const pilotIntake = summarizePilotIntake(
       input.staging,
@@ -1398,6 +1488,13 @@ export function buildRolloutActionPlan(
     if (nextSafeActions.length === 0 && input.staging.pilotSamples < 30) {
       nextSafeActions.push(rolloutAction(
         'collect_additional_balanced_pilot_samples',
+        'rollout',
+        'record_only',
+      ));
+    }
+    if (!checkPassed('media_pilot_coverage')) {
+      nextSafeActions.push(rolloutAction(
+        'collect_balanced_image_and_video_pilot_samples',
         'rollout',
         'record_only',
       ));
@@ -1823,6 +1920,11 @@ async function main(): Promise<void> {
       pilotSamples: numberField(stagingSamples, 'pilot_samples'),
       ownerSamples: numberField(stagingSamples, 'owner_samples'),
       clientSamples: numberField(stagingSamples, 'client_samples'),
+      mediaSamples: numberField(stagingSamples, 'media_samples'),
+      imageSamples: numberField(stagingSamples, 'image_samples'),
+      videoSamples: numberField(stagingSamples, 'video_samples'),
+      ownerMediaSamples: numberField(stagingSamples, 'owner_media_samples'),
+      clientMediaSamples: numberField(stagingSamples, 'client_media_samples'),
       ownerEnrollments: numberField(stagingEnrollments, 'owner_enrollments'),
       customerEnrollments: numberField(stagingEnrollments, 'customer_enrollments'),
       activeCustomerWorkspaces: numberField(
@@ -1889,7 +1991,7 @@ async function main(): Promise<void> {
   );
   const actionPlan = buildRolloutActionPlan(observation, evaluation);
   const payload = {
-    schemaVersion: 11,
+    schemaVersion: 12,
     generatedAt,
     scope: 'live_read_only_rollout_state',
     result: evaluation.result,

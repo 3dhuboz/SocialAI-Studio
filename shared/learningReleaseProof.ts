@@ -161,6 +161,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning receipt routes keeps every approval-pilot operation isolated to staging',
   },
   {
+    id: 'pilot_generator_generalized_customer_claim',
+    suite: 'src/__tests__/learning-pilot-draft-generator.test.ts',
+    assertion: 'record-only pilot draft generator retries unsupported first-person customer evidence before creating a receipt',
+  },
+  {
     id: 'pilot_cron_staging_isolation',
     suite: 'src/__tests__/learning-pilot-cron-telemetry.test.ts',
     assertion: 'learning pilot cron telemetry restricts record-only pilot and calibration scheduling to staging',
