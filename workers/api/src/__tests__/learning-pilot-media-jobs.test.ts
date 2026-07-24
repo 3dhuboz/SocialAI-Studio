@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../env';
 import type { CriticContext } from '../lib/learning/critic-context';
 import {
-  buildPilotVideoQueueUrl,
   pollRecordOnlyPilotVideoJob,
   startRecordOnlyPilotMediaJob,
   type PilotMediaJobDeps,
+  validatePilotVideoQueueUrl,
 } from '../lib/learning/pilot-media-jobs';
 import type { WorkspaceIdentity } from '../lib/learning/types';
 
@@ -136,6 +136,10 @@ function database(): DatabaseSync {
     resolve(process.cwd(), 'schema_v50_learning_pilot_media_late_recovery.sql'),
     'utf8',
   ));
+  db.exec(readFileSync(
+    resolve(process.cwd(), 'schema_v51_learning_pilot_media_provider_receipts.sql'),
+    'utf8',
+  ));
   db.exec(`
     INSERT INTO learning_pilot_enrollments (
       id,user_id,workspace_key,client_id,owner_kind,owner_id,policy_version,
@@ -201,6 +205,8 @@ function dependencies(nowRef: { value: Date }): PilotMediaJobDeps {
     })),
     startVideo: vi.fn(async () => ({
       requestId: 'request-1',
+      statusUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/status',
+      responseUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/response',
       provider: 'fal' as const,
       model: 'kling-video/v1.6/standard/image-to-video' as const,
     })),
@@ -235,15 +241,42 @@ function environment(db: DatabaseSync): Env {
 }
 
 describe('record-only pilot media jobs', () => {
-  it('uses the full fal model path for video status and result polling', () => {
-    expect(buildPilotVideoQueueUrl('request/with spaces', 'status')).toBe(
-      'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/request%2Fwith%20spaces/status',
+  it('accepts only Fal-returned queue URLs bound to the exact request', () => {
+    expect(validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/status',
+      'request-1',
+      'status',
+    )).toBe(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/status',
     );
-    expect(buildPilotVideoQueueUrl('request-1', 'result')).toBe(
-      'https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video/requests/request-1/response',
+    expect(validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/response',
+      'request-1',
+      'response',
+    )).toBe(
+      'https://queue.fal.run/fal-ai/kling-video/canonical/requests/request-1/response',
     );
-    expect(() => buildPilotVideoQueueUrl('  ', 'status'))
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/model/requests/request-1/status',
+      '  ',
+      'status',
+    ))
       .toThrow('video_provider_request_id_invalid');
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run.evil.example/fal-ai/model/requests/request-1/status',
+      'request-1',
+      'status',
+    )).toThrow('video_provider_status_url_invalid');
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/model/requests/other-request/status',
+      'request-1',
+      'status',
+    )).toThrow('video_provider_status_url_invalid');
+    expect(() => validatePilotVideoQueueUrl(
+      'https://queue.fal.run/fal-ai/model/requests/request-1/status?token=secret',
+      'request-1',
+      'status',
+    )).toThrow();
   });
 
   it('creates one immutable image Draft and returns it idempotently', async () => {
@@ -330,9 +363,24 @@ describe('record-only pilot media jobs', () => {
     expect(pending.state).toBe('generating');
     expect(pending.providerState).toBe('pending');
     expect(pending.providerErrorCode).toBeNull();
+    expect(deps.pollVideo).toHaveBeenLastCalledWith(
+      env,
+      expect.objectContaining({
+        requestId: 'request-1',
+        statusUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/status',
+        responseUrl: 'https://queue.fal.run/fal-ai/kling-video/requests/request-1/response',
+      }),
+    );
     expect(db.prepare(
-      'SELECT archetype_slug FROM learning_pilot_media_jobs WHERE id = ?',
-    ).get(started.id)).toEqual({ archetype_slug: 'tech-saas-agency' });
+      `SELECT archetype_slug,provider_status_url,provider_response_url
+       FROM learning_pilot_media_jobs WHERE id = ?`,
+    ).get(started.id)).toEqual({
+      archetype_slug: 'tech-saas-agency',
+      provider_status_url:
+        'https://queue.fal.run/fal-ai/kling-video/requests/request-1/status',
+      provider_response_url:
+        'https://queue.fal.run/fal-ai/kling-video/requests/request-1/response',
+    });
 
     const ready = await pollRecordOnlyPilotVideoJob(env, {
       identity,

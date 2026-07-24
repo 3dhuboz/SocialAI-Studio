@@ -21,6 +21,7 @@ const KLING_STANDARD_VIDEO_COST_USD = 0.30;
 const KLING_STANDARD_VIDEO_MODEL =
   'fal-ai/kling-video/v1.6/standard/image-to-video' as const;
 const SECRET_QUERY_KEY = /(?:api.?key|token|secret|password|credential|private.?key|auth)/i;
+const FAL_REQUEST_ID = /^[a-zA-Z0-9_-]{3,500}$/;
 
 export type PilotMediaKind = 'image' | 'video';
 export type PilotMediaJobState = 'claimed' | 'generating' | 'ready' | 'failed';
@@ -59,6 +60,8 @@ export interface PilotMediaJobRow {
   media_provider: string | null;
   media_model: string | null;
   provider_request_id: string | null;
+  provider_status_url: string | null;
+  provider_response_url: string | null;
   video_script: string | null;
   video_shots: string | null;
   error_code: string | null;
@@ -106,6 +109,8 @@ interface ClaimedPilotMediaJob {
 
 interface VideoStartResult {
   requestId: string;
+  statusUrl: string;
+  responseUrl: string;
   provider: 'fal';
   model: typeof KLING_STANDARD_VIDEO_MODEL;
 }
@@ -136,6 +141,8 @@ export interface PilotMediaJobDeps {
       userId: string;
       clientId: string | null;
       requestId: string;
+      statusUrl: string;
+      responseUrl: string;
       model: string;
     },
   ): Promise<VideoPollResult>;
@@ -223,18 +230,42 @@ function isRecoverableTimedOutVideo(job: PilotMediaJobRow, now: Date): boolean {
     && completedAt + VIDEO_LATE_RECOVERY_MS > now.getTime();
 }
 
-export function buildPilotVideoQueueUrl(
+export function validatePilotVideoQueueUrl(
+  value: string,
   requestId: string,
-  target: 'status' | 'result',
+  target: 'status' | 'response',
 ): string {
   const scopedRequestId = requestId.trim();
-  if (!scopedRequestId || scopedRequestId.length > 500) {
+  if (!FAL_REQUEST_ID.test(scopedRequestId)) {
     throw new Error('video_provider_request_id_invalid');
   }
-  const suffix = target === 'status' ? '/status' : '/response';
-  return `https://queue.fal.run/${KLING_STANDARD_VIDEO_MODEL}/requests/${
-    encodeURIComponent(scopedRequestId)
-  }${suffix}`;
+  const safeUrl = assertSafeHttpsUrl(value, `Video provider ${target} URL`);
+  const url = new URL(safeUrl);
+  if (
+    url.hostname !== 'queue.fal.run'
+    || url.port
+    || url.hash
+    || url.search
+  ) {
+    throw new Error(`video_provider_${target}_url_invalid`);
+  }
+  const parts = url.pathname.split('/').filter(Boolean);
+  const requestsIndex = parts.lastIndexOf('requests');
+  let receiptRequestId = '';
+  try {
+    receiptRequestId = decodeURIComponent(parts[requestsIndex + 1] ?? '');
+  } catch {
+    throw new Error(`video_provider_${target}_url_invalid`);
+  }
+  if (
+    requestsIndex < 2
+    || parts.length !== requestsIndex + 3
+    || receiptRequestId !== scopedRequestId
+    || parts[requestsIndex + 2] !== target
+  ) {
+    throw new Error(`video_provider_${target}_url_invalid`);
+  }
+  return url.toString();
 }
 
 function videoManifest(draft: GeneratedPilotDraft): {
@@ -297,6 +328,25 @@ async function defaultStartVideo(
   );
   const data = await readJson(response);
   const requestId = typeof data.request_id === 'string' ? data.request_id.trim() : '';
+  let statusUrl = '';
+  let responseUrl = '';
+  if (response.ok && FAL_REQUEST_ID.test(requestId)) {
+    try {
+      statusUrl = validatePilotVideoQueueUrl(
+        typeof data.status_url === 'string' ? data.status_url : '',
+        requestId,
+        'status',
+      );
+      responseUrl = validatePilotVideoQueueUrl(
+        typeof data.response_url === 'string' ? data.response_url : '',
+        requestId,
+        'response',
+      );
+    } catch {
+      statusUrl = '';
+      responseUrl = '';
+    }
+  }
   await logAiUsage(env, {
     userId: input.userId,
     clientId: input.clientId,
@@ -306,13 +356,18 @@ async function defaultStartVideo(
     imagesGenerated: 0,
     estCostUsd: response.ok && requestId ? KLING_STANDARD_VIDEO_COST_USD : 0,
     postId: input.postId,
-    ok: response.ok && Boolean(requestId),
+    ok: response.ok && Boolean(requestId && statusUrl && responseUrl),
   });
   if (!response.ok || !requestId) {
     throw new Error('video_provider_start_failed');
   }
+  if (!statusUrl || !responseUrl) {
+    throw new Error('video_provider_start_receipt_invalid');
+  }
   return {
     requestId,
+    statusUrl,
+    responseUrl,
     provider: 'fal',
     model: KLING_STANDARD_VIDEO_MODEL,
   };
@@ -325,6 +380,8 @@ async function defaultPollVideo(
     userId: string;
     clientId: string | null;
     requestId: string;
+    statusUrl: string;
+    responseUrl: string;
     model: string;
   },
 ): Promise<VideoPollResult> {
@@ -333,8 +390,13 @@ async function defaultPollVideo(
     throw new Error('video_provider_model_mismatch');
   }
   const headers = { Authorization: `Key ${env.FAL_API_KEY}` };
+  const statusUrl = validatePilotVideoQueueUrl(
+    input.statusUrl,
+    input.requestId,
+    'status',
+  );
   const statusResponse = await fetch(
-    buildPilotVideoQueueUrl(input.requestId, 'status'),
+    statusUrl,
     { headers, signal: AbortSignal.timeout(15_000) },
   );
   const statusData = await readJson(statusResponse);
@@ -349,8 +411,13 @@ async function defaultPollVideo(
     return { state: 'pending' };
   }
 
+  const responseUrl = validatePilotVideoQueueUrl(
+    input.responseUrl,
+    input.requestId,
+    'response',
+  );
   const resultResponse = await fetch(
-    buildPilotVideoQueueUrl(input.requestId, 'result'),
+    responseUrl,
     { headers, signal: AbortSignal.timeout(15_000) },
   );
   const resultData = await readJson(resultResponse);
@@ -428,8 +495,8 @@ export function loadPilotMediaJob(
       lease_expires_at,post_id,content,hashtags,image_prompt,thumbnail_url,
       media_url,content_hash,caption_provider,caption_model,
       caption_attempt_count,archetype_slug,media_provider,media_model,provider_request_id,
-      video_script,video_shots,error_code,generated_by,claimed_at,updated_at,
-      completed_at,record_only
+      provider_status_url,provider_response_url,video_script,video_shots,error_code,
+      generated_by,claimed_at,updated_at,completed_at,record_only
     FROM learning_pilot_media_jobs
     WHERE enrollment_id = ?
       AND slot = ?
@@ -464,8 +531,9 @@ export async function listPilotMediaJobs(
       job.image_prompt,job.thumbnail_url,job.media_url,job.content_hash,
       job.caption_provider,job.caption_model,job.caption_attempt_count,
       job.archetype_slug,job.media_provider,job.media_model,job.provider_request_id,
-      job.video_script,job.video_shots,job.error_code,job.generated_by,
-      job.claimed_at,job.updated_at,job.completed_at,job.record_only
+      job.provider_status_url,job.provider_response_url,job.video_script,
+      job.video_shots,job.error_code,job.generated_by,job.claimed_at,
+      job.updated_at,job.completed_at,job.record_only
     FROM learning_pilot_media_jobs job
     INNER JOIN learning_pilot_enrollments enrollment
       ON enrollment.id = job.enrollment_id
@@ -680,6 +748,8 @@ async function claimPilotMediaJob(
         media_provider = NULL,
         media_model = NULL,
         provider_request_id = NULL,
+        provider_status_url = NULL,
+        provider_response_url = NULL,
         video_script = NULL,
         video_shots = NULL,
         error_code = NULL,
@@ -1088,6 +1158,8 @@ export async function startRecordOnlyPilotMediaJob(
         media_provider = ?,
         media_model = ?,
         provider_request_id = ?,
+        provider_status_url = ?,
+        provider_response_url = ?,
         video_script = ?,
         video_shots = ?,
         updated_at = ?
@@ -1108,6 +1180,8 @@ export async function startRecordOnlyPilotMediaJob(
       videoStart.provider,
       videoStart.model,
       videoStart.requestId,
+      videoStart.statusUrl,
+      videoStart.responseUrl,
       manifest.script,
       manifest.shots,
       nowIso,
@@ -1165,6 +1239,8 @@ export async function pollRecordOnlyPilotVideoJob(
   if (job.state !== 'generating' && !lateRecovery) return publicPilotMediaJob(job);
   if (
     !job.provider_request_id
+    || !job.provider_status_url
+    || !job.provider_response_url
     || !job.content
     || !job.hashtags
     || !job.image_prompt
@@ -1195,6 +1271,8 @@ export async function pollRecordOnlyPilotVideoJob(
       userId: input.identity.userId,
       clientId: input.identity.clientId,
       requestId: job.provider_request_id,
+      statusUrl: job.provider_status_url,
+      responseUrl: job.provider_response_url,
       model: job.media_model,
     });
   } catch (error) {
