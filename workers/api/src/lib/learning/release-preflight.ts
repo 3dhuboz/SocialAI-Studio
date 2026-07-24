@@ -7,6 +7,7 @@ import {
   wrapUntrusted,
 } from '../prompt-safety';
 import { runBusinessHarmCritic } from './business-harm-critic';
+import type { CriticResult } from './critic-types';
 import { loadCriticContext } from './critic-context';
 import {
   createDecisionReceipt,
@@ -277,11 +278,12 @@ function independentCaller(env: Env): CriticJsonCaller {
     callIndependentJson(env, systemPrompt, prompt, context);
 }
 
-async function reviewVideoText(
+export async function reviewVideoManifestIndependent(
   env: Env,
   input: CandidateInput,
   context: ReleaseContext,
-) {
+  call: CriticJsonCaller = independentCaller(env),
+): Promise<CriticResult> {
   if (!input.videoScript?.trim()) {
     return unavailableCritic('video_manifest', 'Video script missing');
   }
@@ -296,7 +298,7 @@ async function reviewVideoText(
     'Return exactly {"video_manifest":{"kind":"video_manifest","verdict":"pass|warn_repairable|block|unavailable","severity":"advisory|release_critical","confidence":0..1,"evidence":[],"repairs":[]}}.',
   ].join('\n\n');
   try {
-    const response = await callIndependentJson(env, systemPrompt, prompt, {
+    const response = await call(systemPrompt, prompt, {
       operation: 'learning_video_manifest_critic',
       userId: input.userId,
       clientId: input.clientId,
@@ -305,8 +307,8 @@ async function reviewVideoText(
     const parsed = parseExactCriticObject(response.text, ['video_manifest']);
     return {
       ...parseCriticResult(parsed.video_manifest, 'video_manifest'),
-      provider: response.provider,
-      model: response.model,
+      provider: response.provider ?? 'unknown',
+      model: response.model ?? 'unknown',
     };
   } catch (error) {
     return unavailableCritic(
@@ -394,7 +396,7 @@ async function executeReleasePipeline(
         critiqueImage: critiqueImageInternal,
         inspectVideo: inspectFinalVideoUrl,
         reviewVideoText: (videoInput, videoContext) =>
-          reviewVideoText(env, videoInput, videoContext),
+          reviewVideoManifestIndependent(env, videoInput, videoContext),
       }),
     repair: (input, repairs, releaseContext) =>
       repairTextCandidate(env, input, repairs, releaseContext),

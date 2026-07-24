@@ -96,6 +96,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'learning release readiness requires the selected media critic for availability and receipt coverage',
   },
   {
+    id: 'independent_video_manifest_critic',
+    suite: 'src/__tests__/learning-release-pipeline.test.ts',
+    assertion: 'reviewVideoManifestIndependent uses an independent strict script critic with scoped telemetry before video release',
+  },
+  {
     id: 'software_hardware_media_mismatch',
     suite: 'src/__tests__/critique.test.ts',
     assertion: 'buildCritiqueSystemPrompt hard-fails electronics hardware imagery for software and custom-app captions',

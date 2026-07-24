@@ -15,6 +15,7 @@ import {
   type ReleaseContext,
   type ReleasePipelineDeps,
 } from '../lib/learning/release-pipeline';
+import { reviewVideoManifestIndependent } from '../lib/learning/release-preflight';
 
 const candidate: CandidateInput = {
   userId: 'u1',
@@ -503,6 +504,65 @@ describe('runMediaCritic', () => {
     expect(result.evidence).toEqual(
       expect.arrayContaining(['video.final_url', 'video.thumbnail', 'video.script', 'video.mime', 'video.length']),
     );
+  });
+});
+
+describe('reviewVideoManifestIndependent', () => {
+  it('uses an independent strict script critic with scoped telemetry before video release', async () => {
+    let systemPrompt = '';
+    let prompt = '';
+    let operationContext: Record<string, unknown> | null = null;
+
+    const result = await reviewVideoManifestIndependent(
+      {} as Env,
+      {
+        ...candidate,
+        videoScript: 'Slice the brisket and show the verified smoke ring.',
+        videoShots: ['Whole brisket', 'Clean slice'],
+        media: {
+          kind: 'video',
+          url: 'https://cdn.example/final.mp4',
+          thumbnailUrl: 'https://cdn.example/thumb.jpg',
+          status: 'ready',
+        },
+      },
+      context,
+      async (system, userPrompt, callContext) => {
+        systemPrompt = system;
+        prompt = userPrompt;
+        operationContext = callContext;
+        return {
+          text: JSON.stringify({
+            video_manifest: {
+              verdict: 'pass',
+              severity: 'advisory',
+              confidence: 1,
+              evidence: ['Script and shots match the verified caption'],
+              repairs: [],
+            },
+          }),
+          provider: 'independent-provider',
+          model: 'independent-video-critic',
+        };
+      },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'video_manifest',
+      verdict: 'pass',
+      provider: 'independent-provider',
+      model: 'independent-video-critic',
+    });
+    expect(systemPrompt).toContain('independent video script and storyboard critic');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_VIDEO_SCRIPT>>');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_VIDEO_SHOTS>>');
+    expect(operationContext).toEqual({
+      operation: 'learning_video_manifest_critic',
+      userId: 'u1',
+      clientId: null,
+      postId: 'p1',
+    });
   });
 });
 
