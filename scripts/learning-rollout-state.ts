@@ -22,6 +22,8 @@ const STAGING_DATABASE_ID = '0ce38359-c7d6-4d6e-b278-7ca1a719dbb4';
 const PRODUCTION_DATABASE_ID = '6295841e-e5f7-4355-b0e0-c5f22e58d99d';
 const DEFAULT_MAX_AGE_MINUTES = 20;
 const WEEKLY_CALIBRATION_MAX_AGE_MINUTES = 8 * 24 * 60;
+const WEEKLY_CALIBRATION_CRON = '0 21 * * SUN';
+const WEEKLY_CALIBRATION_MAX_START_DELAY_MS = 30 * 60_000;
 const OWNER_SOURCE_SECRET_KEY = /(?:api.?key|token|secret|password|credential|private.?key|auth)/i;
 
 const CALIBRATION_DETAIL_KEYS = [
@@ -1017,6 +1019,32 @@ function calibrationCronIsHealthy(
     const value = details[key];
     return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
   })) {
+    return false;
+  }
+  if (
+    details.cron_expression !== WEEKLY_CALIBRATION_CRON
+    || typeof details.scheduled_for !== 'string'
+  ) {
+    return false;
+  }
+  const scheduledFor = new Date(details.scheduled_for);
+  const runAt = new Date(cron.runAt);
+  if (
+    !Number.isFinite(scheduledFor.getTime())
+    || !Number.isFinite(runAt.getTime())
+    || scheduledFor.getUTCDay() !== 0
+    || scheduledFor.getUTCHours() !== 21
+    || scheduledFor.getUTCMinutes() !== 0
+    || scheduledFor.getUTCSeconds() !== 0
+    || scheduledFor.getUTCMilliseconds() !== 0
+  ) {
+    return false;
+  }
+  const startDelayMs = runAt.getTime() - scheduledFor.getTime();
+  if (
+    startDelayMs < 0
+    || startDelayMs > WEEKLY_CALIBRATION_MAX_START_DELAY_MS
+  ) {
     return false;
   }
   return details.errors === 0

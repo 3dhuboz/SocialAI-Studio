@@ -32,6 +32,11 @@ const calibrationResult = {
   caption: 'must never enter telemetry',
 };
 
+const calibrationTrigger = {
+  cronExpression: '0 21 * * SUN',
+  scheduledTime: Date.parse('2026-07-19T21:00:00.000Z'),
+};
+
 describe('learning pilot cron telemetry', () => {
   it('serializes only allowlisted non-negative integer counters', () => {
     expect(JSON.parse(buildCronDetails('learning_pilot', pilotResult)!)).toEqual({
@@ -50,7 +55,11 @@ describe('learning pilot cron telemetry', () => {
       posts_processed: 30,
       workspaces_disabled: 2,
     })!)).toEqual({ workspaces_disabled: 2 });
-    expect(JSON.parse(buildCronDetails('learning_calibration', calibrationResult)!)).toEqual({
+    expect(JSON.parse(buildCronDetails(
+      'learning_calibration',
+      calibrationResult,
+      calibrationTrigger,
+    )!)).toEqual({
       posts_processed: 2,
       candidates_considered: 2,
       completed: 2,
@@ -60,6 +69,8 @@ describe('learning pilot cron telemetry', () => {
       severe_false_passes: 0,
       workspaces_disabled: 1,
       errors: 0,
+      cron_expression: '0 21 * * SUN',
+      scheduled_for: '2026-07-19T21:00:00.000Z',
     });
   });
 
@@ -117,6 +128,41 @@ describe('learning pilot cron telemetry', () => {
     expect(insert.binds[2]).toBe(0);
     expect(insert.binds[3]).toMatch(/invalid counter errors/);
     expect(insert.binds[5]).toBeNull();
+  });
+
+  it('fails a calibration receipt without scheduled trigger provenance', async () => {
+    const { db, calls } = makeRecordingD1();
+
+    await trackCron(
+      { DB: db } as Env,
+      'learning_calibration',
+      async () => calibrationResult,
+    );
+
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO cron_runs'))!;
+    expect(insert.binds[0]).toBe('learning_calibration');
+    expect(insert.binds[1]).toBe(0);
+    expect(insert.binds[3]).toMatch(/missing valid scheduled trigger metadata/);
+    expect(insert.binds[5]).toBeNull();
+  });
+
+  it('persists bounded calibration schedule provenance', async () => {
+    const { db, calls } = makeRecordingD1();
+
+    await trackCron(
+      { DB: db } as Env,
+      'learning_calibration',
+      async () => calibrationResult,
+      calibrationTrigger,
+    );
+
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO cron_runs'))!;
+    expect(insert.binds[1]).toBe(1);
+    expect(JSON.parse(String(insert.binds[5]))).toMatchObject({
+      cron_expression: '0 21 * * SUN',
+      scheduled_for: '2026-07-19T21:00:00.000Z',
+    });
+    expect(String(insert.binds[5])).not.toContain('caption');
   });
 
   it('ships a one-time bounded JSON migration for existing cron receipts', () => {

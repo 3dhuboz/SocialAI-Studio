@@ -71,6 +71,11 @@ type TrackedCronResult = {
   workspaces_disabled?: number;
 };
 
+export interface CronTriggerMetadata {
+  cronExpression: string;
+  scheduledTime: number;
+}
+
 function requiredCounter(cronType: string, key: string, value: unknown): number {
   if (
     typeof value !== 'number'
@@ -85,6 +90,7 @@ function requiredCounter(cronType: string, key: string, value: unknown): number 
 export function buildCronDetails(
   cronType: string,
   result: TrackedCronResult | void,
+  trigger?: CronTriggerMetadata,
 ): string | null {
   if (!result) return null;
   const detailKeys: readonly string[] = cronType === 'learning_pilot'
@@ -96,9 +102,27 @@ export function buildCronDetails(
         : [];
   if (detailKeys.length === 0) return null;
   const counters = result as Record<string, unknown>;
-  return JSON.stringify(Object.fromEntries(
+  const details: Record<string, unknown> = Object.fromEntries(
     detailKeys.map((key) => [key, requiredCounter(cronType, key, counters[key])]),
-  ));
+  );
+  if (cronType === 'learning_calibration') {
+    if (
+      !trigger
+      || !trigger.cronExpression.trim()
+      || trigger.cronExpression.length > 100
+      || !Number.isSafeInteger(trigger.scheduledTime)
+      || trigger.scheduledTime < 0
+    ) {
+      throw new Error('learning_calibration missing valid scheduled trigger metadata');
+    }
+    const scheduledFor = new Date(trigger.scheduledTime);
+    if (!Number.isFinite(scheduledFor.getTime())) {
+      throw new Error('learning_calibration has invalid scheduled trigger time');
+    }
+    details.cron_expression = trigger.cronExpression;
+    details.scheduled_for = scheduledFor.toISOString();
+  }
+  return JSON.stringify(details);
 }
 
 // Wrap a cron function with try/catch + duration tracking + cron_runs logging.
@@ -107,6 +131,7 @@ export async function trackCron(
   env: Env,
   cronType: string,
   fn: () => Promise<TrackedCronResult | void>,
+  trigger?: CronTriggerMetadata,
 ): Promise<void> {
   const start = Date.now();
   let success = 1;
@@ -116,7 +141,7 @@ export async function trackCron(
   try {
     const result = await fn();
     posts = result?.posts_processed ?? 0;
-    detailsJson = buildCronDetails(cronType, result);
+    detailsJson = buildCronDetails(cronType, result, trigger);
   } catch (e: any) {
     success = 0;
     posts = 0;
@@ -235,7 +260,12 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   // 21:00 UTC every Sunday without ever invoking cronWeeklyReview.
   if (cron === '0 21 * * SUN') {
     if (env.LEARNING_BRAIN_ENABLED === 'true') {
-      await trackCron(env, 'learning_calibration', () => cronEvaluateLearningCalibration(env));
+      await trackCron(
+        env,
+        'learning_calibration',
+        () => cronEvaluateLearningCalibration(env),
+        { cronExpression: cron, scheduledTime: event.scheduledTime },
+      );
       if (!recordOnlyStaging) {
         await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
       }

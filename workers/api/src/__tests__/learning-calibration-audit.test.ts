@@ -469,12 +469,15 @@ describe('weekly learning calibration audit', () => {
     expect(source).toContain(
       "import { cronEvaluateLearningCalibration } from './evaluate-learning-calibration'",
     );
-    const calibration = source.indexOf("trackCron(env, 'learning_calibration'");
+    const calibration = source.search(/trackCron\(\s+env,\s+'learning_calibration'/);
     const learning = source.indexOf("trackCron(env, 'learn_strategies'");
     const review = source.indexOf("trackCron(env, 'weekly_review'");
     expect(calibration).toBeGreaterThan(0);
     expect(calibration).toBeLessThan(learning);
     expect(learning).toBeLessThan(review);
+    expect(source.slice(calibration, learning)).toMatch(
+      /cronExpression: cron,\s+scheduledTime: event\.scheduledTime/,
+    );
   });
 
   it('reruns fresh preflight without mutating posts, decisions, or human adjudications', () => {

@@ -120,7 +120,7 @@ function observation(): RolloutObservation {
       latestCalibrationCron: {
         success: true,
         error: null,
-        runAt: '2026-07-13T21:00:00.000Z',
+        runAt: '2026-07-12T21:00:00.000Z',
         details: {
           posts_processed: 1,
           candidates_considered: 1,
@@ -131,6 +131,8 @@ function observation(): RolloutObservation {
           severe_false_passes: 0,
           workspaces_disabled: 0,
           errors: 0,
+          cron_expression: '0 21 * * SUN',
+          scheduled_for: '2026-07-12T21:00:00.000Z',
         },
       },
       calibrationRows: 1,
@@ -554,6 +556,35 @@ describe('learning live rollout state', () => {
   it('keeps a dormant rollout safe but blocks promotion when the weekly calibration is stale', () => {
     const input = observation();
     input.staging.latestCalibrationCron!.runAt = '2026-07-10T20:59:59.000Z';
+
+    const result = evaluateRolloutState(input);
+
+    expect(result.result).toBe('safe_hold');
+    expect(result.failedSafetyChecks).toEqual([]);
+    expect(result.blockers).toContain('staging_calibration_cron_fresh');
+  });
+
+  it.each([
+    ['missing schedule provenance', (input: RolloutObservation) => {
+      delete input.staging.latestCalibrationCron!.details!.scheduled_for;
+    }],
+    ['the wrong cron expression', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.details!.cron_expression = '0 20 * * SUN';
+    }],
+    ['a non-Sunday scheduled timestamp', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.details!.scheduled_for =
+        '2026-07-13T21:00:00.000Z';
+      input.staging.latestCalibrationCron!.runAt = '2026-07-13T21:00:01.000Z';
+    }],
+    ['a receipt before its scheduled timestamp', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.runAt = '2026-07-12T20:59:59.000Z';
+    }],
+    ['a start delayed beyond the bounded window', (input: RolloutObservation) => {
+      input.staging.latestCalibrationCron!.runAt = '2026-07-12T21:30:01.000Z';
+    }],
+  ])('blocks promotion when weekly calibration has %s', (_label, mutate) => {
+    const input = observation();
+    mutate(input);
 
     const result = evaluateRolloutState(input);
 

@@ -92,7 +92,9 @@ describe('learning shadow wiring', () => {
     expect(fifteenMinuteLane).toMatch(
       /if \(!recordOnlyStaging\) \{\s+await trackCron\(env, 'shopify_reconcile'/,
     );
-    expect(weeklyLane).toContain("trackCron(env, 'learning_calibration'");
+    expect(weeklyLane).toMatch(
+      /trackCron\(\s+env,\s+'learning_calibration',[\s\S]+cronExpression: cron,\s+scheduledTime: event\.scheduledTime/,
+    );
     expect(weeklyLane).toMatch(
       /if \(!recordOnlyStaging\) \{\s+await trackCron\(env, 'learn_strategies'/,
     );
