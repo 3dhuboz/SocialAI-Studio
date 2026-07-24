@@ -100,6 +100,14 @@ describe('learning receipt routes', () => {
         headers: adminRequestHeaders,
         body: JSON.stringify({ monthlyAiBudgetUsdCents: 500 }),
       }],
+      ['/api/learning/pilot/enrollment', {
+        method: 'DELETE',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({
+          withdrawalConfirmed: true,
+          withdrawalNote: 'Owner withdrew record-only staging consent.',
+        }),
+      }],
       ['/api/learning/pilot/candidates', { headers: adminRequestHeaders }],
       ['/api/learning/pilot/attest/post-1', {
         method: 'POST',
@@ -670,6 +678,7 @@ describe('learning settings and release evidence routes', () => {
         autopublish_policy_version: null, experiment_rate: 0,
         monthly_ai_budget_usd_cents: 500, disabled_reason: null,
       }],
+      'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
       'FROM learning_pilot_enrollments pen': [{
         id: 'pilot-enrollment-1', monthly_ai_budget_usd_cents: 500,
         pilot_sample_content_hash: sampleHash,
@@ -682,7 +691,7 @@ describe('learning settings and release evidence routes', () => {
       'FROM client_facts': [],
       'FROM posts': [],
       'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
-      'INSERT INTO learning_decisions': [{ id: 'decision-claim-1' }],
+      'SELECT 1 AS authorized': [{ authorized: 1 }],
     });
     runPilotPipeline.mockImplementation(async (scopedEnv) => {
       await logAiUsage(scopedEnv, {
@@ -713,19 +722,18 @@ describe('learning settings and release evidence routes', () => {
       decisionId: 'decision-claim-1', releaseState: 'pass_green',
       postId: 'draft-1', sourceStatus: 'Draft', postMutated: false,
     });
-    expect(runPilotPipeline).toHaveBeenCalledWith(
-      expect.objectContaining({
-        DB: db,
-        LEARNING_BRAIN_ENABLED: 'true',
-        LEARNING_RELEASE_ENFORCEMENT: 'false',
-        LEARNING_AUTOPILOT_ENABLED: 'false',
-      }),
-      expect.objectContaining({
-        id: 'draft-1', user_id: 'owner_1', client_id: 'client-1',
-        owner_kind: 'client', owner_id: 'client-1', content: 'Real customer draft',
-      }),
-      'approval',
-    );
+    const pipelineCall = runPilotPipeline.mock.calls[0];
+    expect(pipelineCall[0].DB).toBe(db);
+    expect(pipelineCall[0].LEARNING_BRAIN_ENABLED).toBe('true');
+    expect(pipelineCall[0].LEARNING_RELEASE_ENFORCEMENT).toBe('false');
+    expect(pipelineCall[0].LEARNING_AUTOPILOT_ENABLED).toBe('false');
+    expect(pipelineCall[1]).toEqual(expect.objectContaining({
+      id: 'draft-1', user_id: 'owner_1', client_id: 'client-1',
+      owner_kind: 'client', owner_id: 'client-1', content: 'Real customer draft',
+    }));
+    expect(pipelineCall[2]).toBe('approval');
+    expect(pipelineCall[3]).toBeUndefined();
+    expect(pipelineCall[4]).toBe('decision-claim-1');
     const postRead = calls.find((call) => call.sql.includes('FROM posts p'))!;
     expect(postRead.sql).not.toContain('p.archetype_slug');
     expect(postRead.sql).toContain(
@@ -745,7 +753,11 @@ describe('learning settings and release evidence routes', () => {
     expect(enrollmentRead.sql).toContain('unixepoch(sample.attested_at) <= unixepoch(?)');
     expect(enrollmentRead.sql).toContain("w.mode = 'approval'");
     expect(enrollmentRead.sql).toContain('w.monthly_ai_budget_usd_cents > 0');
-    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(true);
+    const claim = calls.find((call) => call.sql.includes('INSERT INTO learning_decisions'))!;
+    expect(claim.sql).toContain('SELECT');
+    expect(claim.sql).toContain('pen.id = ?');
+    expect(claim.sql).toContain('sample.content_hash = ?');
+    expect(claim.binds).toContain('pilot-enrollment-1');
   });
 
   it('appends a positive real-post attestation without mutating the draft', async () => {
@@ -1517,6 +1529,143 @@ describe('learning settings and release evidence routes', () => {
       call.sql.includes('INSERT INTO workspace_learning_settings'))).toBe(false);
   });
 
+  it('withdraws exact pilot consent and derived evidence without touching drafts or publishing records', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT id\n      FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-1' }],
+      'SELECT COUNT(*) AS decision_count': [{ decision_count: 2 }],
+      'SELECT COUNT(*) AS sample_count': [{ sample_count: 1 }],
+      'SELECT COUNT(*) AS publication_count': [{ publication_count: 0 }],
+      'SELECT COUNT(*) AS enrollment_count': [{ enrollment_count: 0 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enrollment', {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-1',
+        withdrawalConfirmed: true,
+        withdrawalNote: 'Customer withdrew record-only pilot consent in writing.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      withdrawn: true,
+      alreadyWithdrawn: false,
+      enrollmentId: 'pilot-enrollment-1',
+      policyVersion: AUTOPILOT_POLICY_VERSION,
+      workspaceKey: 'client-1',
+      ownerKind: 'client',
+      ownerId: 'client-1',
+      mode: 'shadow',
+      decisionsRemoved: 2,
+      samplesRemoved: 1,
+      sourcePostsDeleted: 0,
+      publishingRecordsDeleted: 0,
+      originalDraftsRetained: true,
+      copiedStagingDataRequiresArtifactWithdrawal: true,
+    });
+    const settingsReset = calls.find((call) =>
+      call.sql.includes("SET mode = 'shadow'"))!;
+    expect(settingsReset.binds).toEqual([
+      expect.any(String),
+      'owner_1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'pilot-enrollment-1',
+      AUTOPILOT_POLICY_VERSION,
+    ]);
+    for (const table of [
+      'learning_calibration_audits',
+      'learning_adjudications',
+      'learning_decision_disqualifications',
+      'learning_critic_verdicts',
+      'ai_usage',
+      'learning_decisions',
+      'learning_pilot_samples',
+      'learning_pilot_enrollments',
+    ]) {
+      expect(calls.some((call) =>
+        call.sql.includes(`DELETE FROM ${table}`))).toBe(true);
+    }
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
+    expect(calls.some((call) => /DELETE FROM\s+publication_events/i.test(call.sql))).toBe(false);
+    expect(calls.some((call) => /DELETE FROM\s+publish_delivery_receipts/i.test(call.sql)))
+      .toBe(false);
+  });
+
+  it('requires an explicit withdrawal confirmation before reading or deleting pilot evidence', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enrollment', {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-1',
+        withdrawalNote: 'Customer withdrew consent.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(400);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('SELECT email, is_admin');
+  });
+
+  it('stops a pilot withdrawal before deletion if an impossible publication link is present', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT id\n      FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-unsafe' }],
+      'SELECT COUNT(*) AS decision_count': [{ decision_count: 1 }],
+      'SELECT COUNT(*) AS sample_count': [{ sample_count: 1 }],
+      'SELECT COUNT(*) AS publication_count': [{ publication_count: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enrollment', {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-unsafe',
+        withdrawalConfirmed: true,
+        withdrawalNote: 'Customer withdrew consent and requested scoped erasure.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Record-only pilot withdrawal found a publication record and stopped',
+      code: 'pilot_withdrawal_publication_conflict',
+    });
+    expect(calls.some((call) => call.sql.includes('DELETE FROM'))).toBe(false);
+    expect(calls.some((call) => call.sql.includes("SET mode = 'shadow'"))).toBe(false);
+  });
+
   it('requires an explicit customer consent attestation before enrolling a client pilot', async () => {
     const { db, calls } = makeRecordingD1({
       'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
@@ -1679,6 +1828,16 @@ describe('learning settings and release evidence routes', () => {
         },
       ],
       '/* pilot_candidate_previews */': [ownerPreview, clientPreview],
+      'LEFT JOIN clients client': [{
+        id: 'pilot-enrollment-owner',
+        client_id: null,
+        owner_kind: 'user',
+        owner_id: 'owner_1',
+        workspace_key: '__owner__',
+        policy_version: AUTOPILOT_POLICY_VERSION,
+        enrolled_at: '2026-07-15T00:00:00.000Z',
+        label: 'My workspace',
+      }],
     });
     const env = {
       DB: db,
@@ -1695,6 +1854,17 @@ describe('learning settings and release evidence routes', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       recordOnly: true,
+      enrollments: [{
+        enrollmentId: 'pilot-enrollment-owner',
+        clientId: null,
+        ownerKind: 'user',
+        ownerId: 'owner_1',
+        workspaceKey: '__owner__',
+        policyVersion: AUTOPILOT_POLICY_VERSION,
+        enrolledAt: '2026-07-15T00:00:00.000Z',
+        label: 'My workspace',
+        recordOnly: true,
+      }],
       candidates: [
         {
           clientId: null, ownerKind: 'user', ownerId: 'owner_1',

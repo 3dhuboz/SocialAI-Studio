@@ -419,11 +419,72 @@ const defaultRunnerDeps: ReleasePipelineRunnerDeps = {
   replaceVerdicts: replaceCriticVerdicts,
 };
 
+async function updateClaimedDecisionReceipt(
+  db: D1Database,
+  claimedDecisionId: string,
+  input: DecisionReceiptInput,
+): Promise<string> {
+  const claimId = claimedDecisionId.trim();
+  if (!claimId) throw new Error('Claimed learning decision id is required');
+  const identity = normalizeWorkspaceIdentity(
+    input.userId,
+    input.clientId,
+    input.ownerKind ?? (input.clientId === null ? 'user' : 'client'),
+    input.ownerId ?? input.clientId ?? input.userId,
+  );
+  const row = await db.prepare(`
+    UPDATE learning_decisions
+       SET mode = ?,
+           release_state = ?,
+           strategy_version = ?,
+           reach_plan_id = ?,
+           summary_json = ?,
+           updated_at = datetime('now')
+     WHERE id = ?
+       AND user_id = ?
+       AND workspace_key = ?
+       AND client_id IS ?
+       AND owner_kind = ?
+       AND owner_id = ?
+       AND post_id = ?
+       AND mode = ?
+       AND stage = ?
+       AND content_hash = ?
+       AND COALESCE(
+         json_extract(summary_json, '$.persistenceState'),
+         ''
+       ) IN ('claim','writing')
+     RETURNING id
+  `).bind(
+    input.mode,
+    input.releaseState,
+    input.strategyVersion ?? null,
+    input.reachPlanId ?? null,
+    JSON.stringify(input.summary),
+    claimId,
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    input.postId,
+    input.mode,
+    input.stage,
+    input.contentHash,
+  ).first<{ id: string }>();
+
+  if (row?.id !== claimId) {
+    throw new Error('Claimed learning decision lease is no longer available');
+  }
+  return row.id;
+}
+
 export async function runAndPersistReleasePipeline(
   env: Env,
   post: PublishablePost,
   mode: LearningMode,
   deps: ReleasePipelineRunnerDeps = defaultRunnerDeps,
+  claimedDecisionId?: string,
 ): Promise<{ id: string; state: FinalReleaseState }> {
   const contentHash = await buildReleaseContentHash(post);
   const fresh = await deps.findFreshReceipt(
@@ -480,10 +541,14 @@ export async function runAndPersistReleasePipeline(
     contentHash,
     summary: { ...summary, verdictCount: -1, persistenceState: 'writing' },
   };
-  const decisionId = await deps.createReceipt(env.DB, receiptInput);
+  const persistReceipt = claimedDecisionId
+    ? (input: DecisionReceiptInput) =>
+        updateClaimedDecisionReceipt(env.DB, claimedDecisionId, input)
+    : (input: DecisionReceiptInput) => deps.createReceipt(env.DB, input);
+  const decisionId = await persistReceipt(receiptInput);
   await deps.replaceVerdicts(env.DB, decisionId, result.attempts);
   assertLearningDecisionUsageScopeComplete(env, decisionId);
-  const completedId = await deps.createReceipt(env.DB, {
+  const completedId = await persistReceipt({
     ...receiptInput,
     summary: { ...summary, persistenceState: 'complete' },
   });

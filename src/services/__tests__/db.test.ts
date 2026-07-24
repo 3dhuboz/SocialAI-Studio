@@ -293,7 +293,24 @@ describe('learning decision client', () => {
               },
             }],
           }
-        : url.includes('/pilot/enroll')
+        : url.endsWith('/pilot/enrollment')
+          ? {
+              withdrawn: true,
+              alreadyWithdrawn: false,
+              enrollmentId: 'pilot-enrollment-1',
+              policyVersion: '2026-07-14-v1',
+              workspaceKey: 'client_1',
+              ownerKind: 'client',
+              ownerId: 'client_1',
+              mode: 'shadow',
+              decisionsRemoved: 1,
+              samplesRemoved: 1,
+              sourcePostsDeleted: 0,
+              publishingRecordsDeleted: 0,
+              originalDraftsRetained: true,
+              copiedStagingDataRequiresArtifactWithdrawal: true,
+            }
+          : url.includes('/pilot/enroll')
           ? {
               workspaceKey: 'client_1', ownerKind: 'client', ownerId: 'client_1',
               mode: 'approval', monthlyAiBudgetUsdCents: 500,
@@ -328,8 +345,13 @@ describe('learning decision client', () => {
       'Admin confirmed this exact server-selected draft is a real business draft.',
     );
     const validated = await db.validateLearningPilotDraft('draft 1');
+    const withdrawn = await db.withdrawLearningPilotWorkspace(
+      'client_1',
+      'Customer withdrew record-only pilot participation in writing.',
+    );
 
     expect(queue.recordOnly).toBe(true);
+    expect(queue.enrollments).toEqual([]);
     expect(queue.candidates[0].samplePostId).toBe('draft_1');
     expect(queue.candidates[0].sampleDraft?.contentHash).toBe('a'.repeat(64));
     expect(enrolled).toMatchObject({ mode: 'approval', recordOnly: true });
@@ -338,6 +360,12 @@ describe('learning decision client', () => {
     });
     expect(validated).toMatchObject({
       decisionId: 'decision_1', postMutated: false, sourceStatus: 'Draft',
+    });
+    expect(withdrawn).toMatchObject({
+      withdrawn: true,
+      sourcePostsDeleted: 0,
+      publishingRecordsDeleted: 0,
+      originalDraftsRetained: true,
     });
     expect(calls).toEqual([
       {
@@ -366,6 +394,15 @@ describe('learning decision client', () => {
       {
         url: expect.stringContaining('/api/learning/pilot/validate/draft%201'),
         method: 'POST', body: {},
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/enrollment'),
+        method: 'DELETE',
+        body: {
+          clientId: 'client_1',
+          withdrawalConfirmed: true,
+          withdrawalNote: 'Customer withdrew record-only pilot participation in writing.',
+        },
       },
     ]);
   });

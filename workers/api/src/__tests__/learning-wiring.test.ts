@@ -46,21 +46,22 @@ describe('learning shadow wiring', () => {
     const importIndex = dispatcher.indexOf(
       "import { cronEvaluateLearningPilot } from './evaluate-learning-pilot';",
     );
-    const enforcementGuard = dispatcher.indexOf(
-      "env.LEARNING_RELEASE_ENFORCEMENT !== 'true'",
-      lane,
+    const helperStart = dispatcher.indexOf('export function shouldRunRecordOnlyPilot');
+    const helperEnd = dispatcher.indexOf(
+      'export function shouldRunLearningCalibration',
+      helperStart,
     );
-    const autopilotGuard = dispatcher.indexOf(
-      "env.LEARNING_AUTOPILOT_ENABLED !== 'true'",
-      lane,
-    );
+    const helper = dispatcher.slice(helperStart, helperEnd);
+    const pilotGuard = dispatcher.indexOf('if (shouldRunRecordOnlyPilot(env))', lane);
     const collector = dispatcher.indexOf("trackCron(env, 'learning_pilot'", lane);
     const readiness = dispatcher.indexOf("trackCron(env, 'learning_readiness'", lane);
 
     expect(importIndex).toBeGreaterThan(-1);
-    expect(enforcementGuard).toBeGreaterThan(lane);
-    expect(autopilotGuard).toBeGreaterThan(enforcementGuard);
-    expect(collector).toBeGreaterThan(autopilotGuard);
+    expect(helper).toContain('stagingEnvironment(env)');
+    expect(helper).toContain("env.LEARNING_RELEASE_ENFORCEMENT !== 'true'");
+    expect(helper).toContain("env.LEARNING_AUTOPILOT_ENABLED !== 'true'");
+    expect(pilotGuard).toBeGreaterThan(lane);
+    expect(collector).toBeGreaterThan(pilotGuard);
     expect(readiness).toBeGreaterThan(collector);
   });
 
@@ -85,7 +86,10 @@ describe('learning shadow wiring', () => {
     expect(stagingTriggers).toContain(
       'crons = ["*/15 * * * *", "0 21 * * SUN"]',
     );
-    expect(dispatcher).toContain("const recordOnlyStaging = env.ENVIRONMENT === 'staging';");
+    expect(dispatcher).toContain('const recordOnlyStaging = stagingEnvironment(env);');
+    expect(dispatcher).toContain(
+      "return env.ENVIRONMENT?.trim().toLowerCase() === 'staging';",
+    );
     expect(fifteenMinuteLane).toContain("trackCron(env, 'health_sweep'");
     expect(fifteenMinuteLane).toContain("trackCron(env, 'learning_pilot'");
     expect(fifteenMinuteLane).toContain("trackCron(env, 'learning_readiness'");
@@ -96,7 +100,7 @@ describe('learning shadow wiring', () => {
       /trackCron\(\s+env,\s+'learning_calibration',[\s\S]+cronExpression: cron,\s+scheduledTime: event\.scheduledTime/,
     );
     expect(weeklyLane).toMatch(
-      /if \(!recordOnlyStaging\) \{\s+await trackCron\(env, 'learn_strategies'/,
+      /if \(env\.LEARNING_BRAIN_ENABLED === 'true' && !recordOnlyStaging\) \{\s+await trackCron\(env, 'learn_strategies'/,
     );
     expect(weeklyLane).toMatch(
       /if \(!recordOnlyStaging\) \{\s+await trackCron\(env, 'weekly_review'/,

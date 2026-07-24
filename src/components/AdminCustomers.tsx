@@ -190,6 +190,23 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
+  const withdrawLearningPilot = async (
+    clientId: string | null,
+    withdrawalNote: string,
+  ) => {
+    const actionKey = `withdraw:${clientId ?? '__owner__'}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      await db.withdrawLearningPilotWorkspace(clientId, withdrawalNote);
+      await reloadLearningPanels();
+    } catch (reason) {
+      setLearningError(reason instanceof Error ? reason.message : 'Pilot withdrawal failed closed');
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
   const validateLearningPilotDraft = async (
     postId: string,
     expectedContentHash: string,
@@ -248,6 +265,7 @@ export const AdminCustomers: React.FC = () => {
         error={learningError}
         onAdjudicate={adjudicateLearningDecision}
         onPilotEnroll={enrollLearningPilot}
+        onPilotWithdraw={withdrawLearningPilot}
         onPilotValidate={validateLearningPilotDraft}
       />
 
@@ -597,6 +615,10 @@ export const LearningOperationsCard: React.FC<{
     budgetCents: number,
     customerConsent?: LearningPilotCustomerConsent,
   ) => Promise<void>;
+  onPilotWithdraw?: (
+    clientId: string | null,
+    withdrawalNote: string,
+  ) => Promise<void>;
   onPilotValidate?: (
     postId: string,
     expectedContentHash: string,
@@ -611,6 +633,7 @@ export const LearningOperationsCard: React.FC<{
   error = null,
   onAdjudicate,
   onPilotEnroll,
+  onPilotWithdraw,
   onPilotValidate,
 }) => {
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
@@ -644,6 +667,9 @@ export const LearningOperationsCard: React.FC<{
   const [pilotDraftConfirmedByWorkspace, setPilotDraftConfirmedByWorkspace] = useState<
     Record<string, string>
   >({});
+  const [pilotWithdrawalByWorkspace, setPilotWithdrawalByWorkspace] = useState<
+    Record<string, { confirmed: boolean; note: string }>
+  >({});
   const budgetNumber = Number(pilotBudgetDollars);
   const pilotBudgetCents = Number.isFinite(budgetNumber)
     ? Math.round(budgetNumber * 100)
@@ -652,6 +678,21 @@ export const LearningOperationsCard: React.FC<{
   const pilotBudgetLabel = validPilotBudget
     ? `$${(pilotBudgetCents / 100).toFixed(2)}`
     : 'invalid cap';
+  const activePilotEnrollments = pilotQueue?.enrollments
+    ?? pilotQueue?.candidates
+      .filter((candidate) => candidate.enrolled)
+      .map((candidate) => ({
+        enrollmentId: '',
+        clientId: candidate.clientId,
+        ownerKind: candidate.ownerKind,
+        ownerId: candidate.ownerId,
+        workspaceKey: candidate.workspaceKey,
+        policyVersion: operations?.policyVersion ?? '',
+        enrolledAt: '',
+        label: candidate.label,
+        recordOnly: true as const,
+      }))
+    ?? [];
 
   return (
     <div className={`glass-card rounded-2xl border p-4 sm:p-5 ${
@@ -818,6 +859,105 @@ export const LearningOperationsCard: React.FC<{
               </span>
             </label>
           </div>
+
+          {activePilotEnrollments.length > 0 && (
+            <div className="mt-3 rounded-xl border border-rose-400/15 bg-rose-500/[0.025] p-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wider text-rose-100/75">
+                  Active record-only pilot consent
+                </p>
+                <p className="mt-1 text-[9px] leading-relaxed text-white/35">
+                  Withdrawal stops future pilot critics and removes exact pilot samples and
+                  derived critic evidence. Original drafts, schedules, and publishing records
+                  are never deleted.
+                </p>
+              </div>
+              <div className="mt-2.5 grid gap-2">
+                {activePilotEnrollments.map((enrollment) => {
+                  const withdrawal = pilotWithdrawalByWorkspace[enrollment.workspaceKey]
+                    ?? { confirmed: false, note: '' };
+                  const trimmedNote = withdrawal.note.trim();
+                  const validWithdrawal = withdrawal.confirmed
+                    && trimmedNote.length >= 10
+                    && trimmedNote.length <= 500;
+                  const actionKey = `withdraw:${enrollment.clientId ?? '__owner__'}`;
+                  const busy = pilotActionKey === actionKey;
+                  return (
+                    <div
+                      key={enrollment.workspaceKey}
+                      className="rounded-lg border border-white/[0.07] bg-black/20 p-2.5"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] font-black text-white/70">{enrollment.label}</p>
+                          <p className="mt-0.5 text-[8px] text-white/25">
+                            Policy {enrollment.policyVersion || 'current'} / record only
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-rose-400/15 bg-rose-500/[0.06] px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-rose-100/60">
+                          Consent active
+                        </span>
+                      </div>
+                      <label className="mt-2 flex items-start gap-2 text-[9px] leading-relaxed text-white/45">
+                        <input
+                          type="checkbox"
+                          checked={withdrawal.confirmed}
+                          onChange={(event) => setPilotWithdrawalByWorkspace((current) => ({
+                            ...current,
+                            [enrollment.workspaceKey]: {
+                              ...(current[enrollment.workspaceKey]
+                                ?? { confirmed: false, note: '' }),
+                              confirmed: event.target.checked,
+                            },
+                          }))}
+                          className="mt-0.5 accent-rose-400"
+                          aria-label={`Confirm pilot withdrawal for ${enrollment.label}`}
+                        />
+                        I confirm consent has been withdrawn for this record-only staging pilot.
+                      </label>
+                      <label className="mt-2 block text-[8px] font-bold uppercase tracking-wider text-white/30">
+                        Withdrawal confirmation note
+                        <textarea
+                          maxLength={500}
+                          value={withdrawal.note}
+                          onChange={(event) => setPilotWithdrawalByWorkspace((current) => ({
+                            ...current,
+                            [enrollment.workspaceKey]: {
+                              ...(current[enrollment.workspaceKey]
+                                ?? { confirmed: false, note: '' }),
+                              note: event.target.value,
+                            },
+                          }))}
+                          placeholder={`When and how ${enrollment.label} withdrew consent`}
+                          className="mt-1 min-h-14 w-full resize-y rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-[10px] font-normal normal-case tracking-normal text-white/70 outline-none placeholder:text-white/20"
+                          aria-label={`Pilot withdrawal note for ${enrollment.label}`}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={pilotActionKey !== null || !validWithdrawal}
+                        onClick={async () => {
+                          await onPilotWithdraw?.(enrollment.clientId, trimmedNote);
+                          setPilotWithdrawalByWorkspace((current) => ({
+                            ...current,
+                            [enrollment.workspaceKey]: { confirmed: false, note: '' },
+                          }));
+                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-rose-400/20 bg-rose-500/10 px-3 py-1.5 text-[9px] font-bold text-rose-100 transition hover:bg-rose-500/15 disabled:opacity-40"
+                      >
+                        {busy ? <Loader2 size={10} className="animate-spin" /> : <ShieldCheck size={10} />}
+                        Withdraw pilot consent and erase derived evidence
+                      </button>
+                      <p className="mt-1.5 text-[8px] leading-relaxed text-white/25">
+                        If data was copied under a separate staging-copy consent receipt, use that
+                        receipt's scoped copy-erasure action to remove the imported draft or profile.
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {pilotQueue.candidates.length === 0 ? (
             <p className="mt-3 text-[10px] text-white/30">No eligible unvalidated drafts are available.</p>

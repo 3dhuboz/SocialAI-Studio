@@ -36,15 +36,439 @@ export interface ClaimedPilotEvaluationResult {
   releaseState: FreshReleaseReceipt['state'] | null;
 }
 
+export interface PilotEnrollmentAuthorization {
+  enrollmentId: string;
+  policyVersion: string;
+}
+
+export interface PilotWithdrawalResult {
+  withdrawn: boolean;
+  alreadyWithdrawn: boolean;
+  enrollmentId: string | null;
+  policyVersion: string;
+  decisionsRemoved: number;
+  samplesRemoved: number;
+  sourcePostsDeleted: 0;
+  publishingRecordsDeleted: 0;
+}
+
 interface PilotEvaluationDeps {
   findFreshReceipt: typeof findFreshReleaseReceipt;
-  runPipeline: typeof runAndPersistReleasePipeline;
+  runPipeline(
+    env: Env,
+    post: PublishablePost,
+    mode: 'approval',
+    claimedDecisionId: string,
+  ): ReturnType<typeof runAndPersistReleasePipeline>;
 }
 
 const defaultDeps: PilotEvaluationDeps = {
   findFreshReceipt: findFreshReleaseReceipt,
-  runPipeline: runAndPersistReleasePipeline,
+  runPipeline: (env, post, mode, claimedDecisionId) =>
+    runAndPersistReleasePipeline(env, post, mode, undefined, claimedDecisionId),
 };
+
+function validatedAuthorization(
+  authorization: PilotEnrollmentAuthorization,
+): PilotEnrollmentAuthorization {
+  const enrollmentId = authorization.enrollmentId.trim();
+  const policyVersion = authorization.policyVersion.trim();
+  if (!enrollmentId || !policyVersion) {
+    throw new Error('Pilot enrollment authorization is incomplete');
+  }
+  return { enrollmentId, policyVersion };
+}
+
+function countValue(value: number | string | null | undefined): number {
+  const count = Number(value ?? 0);
+  return Number.isSafeInteger(count) && count >= 0 ? count : 0;
+}
+
+function exactPilotDecisionIdsSql(): string {
+  return `
+    SELECT d.id
+      FROM learning_decisions d
+      INNER JOIN learning_pilot_enrollments pen
+        ON pen.id = ?
+       AND pen.policy_version = ?
+       AND pen.record_only = 1
+       AND pen.user_id = d.user_id
+       AND pen.workspace_key = d.workspace_key
+       AND pen.client_id IS d.client_id
+       AND pen.owner_kind = d.owner_kind
+       AND pen.owner_id = d.owner_id
+      INNER JOIN learning_pilot_samples sample
+        ON sample.user_id = d.user_id
+       AND sample.workspace_key = d.workspace_key
+       AND sample.client_id IS d.client_id
+       AND sample.owner_kind = d.owner_kind
+       AND sample.owner_id = d.owner_id
+       AND sample.post_id = d.post_id
+       AND sample.content_hash = d.content_hash
+       AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+     WHERE d.mode = 'approval'
+       AND d.stage = 'release'
+  `;
+}
+
+async function pilotAuthorizationIsCurrent(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  postId: string,
+  contentHash: string,
+  authorization: PilotEnrollmentAuthorization,
+  now: Date,
+): Promise<boolean> {
+  const scoped = validatedAuthorization(authorization);
+  const row = await db.prepare(`
+    SELECT 1 AS authorized
+      FROM learning_pilot_enrollments pen
+      INNER JOIN workspace_learning_settings w
+        ON w.user_id = pen.user_id
+       AND w.workspace_key = pen.workspace_key
+       AND w.client_id IS pen.client_id
+       AND w.owner_kind = pen.owner_kind
+       AND w.owner_id = pen.owner_id
+      INNER JOIN learning_pilot_samples sample
+        ON sample.user_id = pen.user_id
+       AND sample.workspace_key = pen.workspace_key
+       AND sample.client_id IS pen.client_id
+       AND sample.owner_kind = pen.owner_kind
+       AND sample.owner_id = pen.owner_id
+       AND sample.post_id = ?
+       AND sample.content_hash = ?
+       AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+       AND unixepoch(sample.attested_at) <= unixepoch(?)
+       AND sample.attestation_basis = CASE pen.owner_kind
+         WHEN 'user' THEN 'owner_real_post'
+         ELSE 'customer_real_post'
+       END
+      LEFT JOIN clients c
+        ON c.id = pen.client_id
+       AND c.user_id = pen.user_id
+     WHERE pen.id = ?
+       AND pen.user_id = ?
+       AND pen.workspace_key = ?
+       AND pen.client_id IS ?
+       AND pen.owner_kind = ?
+       AND pen.owner_id = ?
+       AND pen.policy_version = ?
+       AND pen.record_only = 1
+       AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+       AND w.mode = 'approval'
+       AND w.monthly_ai_budget_usd_cents > 0
+       AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+       AND (
+         (
+           pen.owner_kind = 'user'
+           AND pen.consent_basis = 'owner_self'
+           AND pen.client_id IS NULL
+         )
+         OR (
+           pen.owner_kind = 'client'
+           AND pen.consent_basis = 'customer_attested'
+           AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+           AND c.id IS NOT NULL
+           AND LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'
+         )
+       )
+     LIMIT 1
+  `).bind(
+    postId,
+    contentHash,
+    now.toISOString(),
+    scoped.enrollmentId,
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    scoped.policyVersion,
+    now.toISOString(),
+  ).first<{ authorized: number }>();
+  return row != null;
+}
+
+async function purgeClaimedPilotDecisionEvidence(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  decisionId: string,
+  postId: string,
+  contentHash: string,
+): Promise<void> {
+  const claimedDecisionId = decisionId.trim();
+  if (!claimedDecisionId) {
+    throw new Error('Pilot decision cleanup requires an exact decision id');
+  }
+  const publication = await db.prepare(`
+    SELECT COUNT(*) AS publication_count
+      FROM publication_events
+     WHERE decision_id = ?
+  `).bind(claimedDecisionId).first<{ publication_count: number | string | null }>();
+  if (countValue(publication?.publication_count) > 0) {
+    throw new Error('Record-only pilot evidence unexpectedly has a publication record');
+  }
+
+  await db.batch([
+    db.prepare(`
+      DELETE FROM learning_calibration_audits
+       WHERE decision_id = ?
+    `).bind(claimedDecisionId),
+    db.prepare(`
+      DELETE FROM learning_adjudications
+       WHERE decision_id = ?
+    `).bind(claimedDecisionId),
+    db.prepare(`
+      DELETE FROM learning_decision_disqualifications
+       WHERE decision_id = ?
+    `).bind(claimedDecisionId),
+    db.prepare(`
+      DELETE FROM learning_critic_verdicts
+       WHERE decision_id = ?
+    `).bind(claimedDecisionId),
+    db.prepare(`
+      DELETE FROM ai_usage
+       WHERE learning_decision_id = ?
+    `).bind(claimedDecisionId),
+    db.prepare(`
+      DELETE FROM learning_decisions
+       WHERE id = ?
+         AND user_id = ?
+         AND workspace_key = ?
+         AND client_id IS ?
+         AND owner_kind = ?
+         AND owner_id = ?
+         AND post_id = ?
+         AND content_hash = ?
+         AND mode = 'approval'
+         AND stage = 'release'
+    `).bind(
+      claimedDecisionId,
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      postId,
+      contentHash,
+    ),
+  ]);
+}
+
+export async function withdrawRecordOnlyPilot(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  policyVersion: string,
+  now: Date = new Date(),
+): Promise<PilotWithdrawalResult> {
+  const scopedPolicyVersion = policyVersion.trim();
+  if (!scopedPolicyVersion) throw new Error('Pilot policy version is required');
+
+  const enrollment = await db.prepare(`
+    SELECT id
+      FROM learning_pilot_enrollments
+     WHERE user_id = ?
+       AND workspace_key = ?
+       AND client_id IS ?
+       AND owner_kind = ?
+       AND owner_id = ?
+       AND policy_version = ?
+       AND record_only = 1
+     LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    scopedPolicyVersion,
+  ).first<{ id: string }>();
+  if (!enrollment?.id) {
+    return {
+      withdrawn: false,
+      alreadyWithdrawn: true,
+      enrollmentId: null,
+      policyVersion: scopedPolicyVersion,
+      decisionsRemoved: 0,
+      samplesRemoved: 0,
+      sourcePostsDeleted: 0,
+      publishingRecordsDeleted: 0,
+    };
+  }
+
+  const authorization = validatedAuthorization({
+    enrollmentId: enrollment.id,
+    policyVersion: scopedPolicyVersion,
+  });
+  const decisionIds = exactPilotDecisionIdsSql();
+  const decisionCount = await db.prepare(`
+    SELECT COUNT(*) AS decision_count
+      FROM (${decisionIds})
+  `).bind(
+    authorization.enrollmentId,
+    authorization.policyVersion,
+  ).first<{ decision_count: number | string | null }>();
+  const sampleCount = await db.prepare(`
+    SELECT COUNT(*) AS sample_count
+      FROM learning_pilot_samples sample
+      INNER JOIN learning_pilot_enrollments pen
+        ON pen.id = ?
+       AND pen.policy_version = ?
+       AND pen.record_only = 1
+       AND pen.user_id = sample.user_id
+       AND pen.workspace_key = sample.workspace_key
+       AND pen.client_id IS sample.client_id
+       AND pen.owner_kind = sample.owner_kind
+       AND pen.owner_id = sample.owner_id
+       AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+  `).bind(
+    authorization.enrollmentId,
+    authorization.policyVersion,
+  ).first<{ sample_count: number | string | null }>();
+  const published = await db.prepare(`
+    SELECT COUNT(*) AS publication_count
+      FROM publication_events pe
+     WHERE pe.decision_id IN (${decisionIds})
+  `).bind(
+    authorization.enrollmentId,
+    authorization.policyVersion,
+  ).first<{ publication_count: number | string | null }>();
+  if (countValue(published?.publication_count) > 0) {
+    throw new Error('Record-only pilot withdrawal found a publication record and stopped');
+  }
+
+  const decisionBindings = [
+    authorization.enrollmentId,
+    authorization.policyVersion,
+  ];
+  await db.batch([
+    db.prepare(`
+      UPDATE workspace_learning_settings
+         SET mode = 'shadow',
+             autopublish_consent_at = NULL,
+             autopublish_policy_version = NULL,
+             experiment_rate = 0,
+             monthly_ai_budget_usd_cents = 0,
+             updated_at = ?
+       WHERE user_id = ?
+         AND workspace_key = ?
+         AND client_id IS ?
+         AND owner_kind = ?
+         AND owner_id = ?
+         AND EXISTS (
+           SELECT 1
+             FROM learning_pilot_enrollments pen
+            WHERE pen.id = ?
+              AND pen.policy_version = ?
+              AND pen.user_id = workspace_learning_settings.user_id
+              AND pen.workspace_key = workspace_learning_settings.workspace_key
+              AND pen.client_id IS workspace_learning_settings.client_id
+              AND pen.owner_kind = workspace_learning_settings.owner_kind
+              AND pen.owner_id = workspace_learning_settings.owner_id
+         )
+    `).bind(
+      now.toISOString(),
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      authorization.enrollmentId,
+      authorization.policyVersion,
+    ),
+    db.prepare(`
+      DELETE FROM learning_calibration_audits
+       WHERE decision_id IN (${decisionIds})
+    `).bind(...decisionBindings),
+    db.prepare(`
+      DELETE FROM learning_adjudications
+       WHERE decision_id IN (${decisionIds})
+    `).bind(...decisionBindings),
+    db.prepare(`
+      DELETE FROM learning_decision_disqualifications
+       WHERE decision_id IN (${decisionIds})
+    `).bind(...decisionBindings),
+    db.prepare(`
+      DELETE FROM learning_critic_verdicts
+       WHERE decision_id IN (${decisionIds})
+    `).bind(...decisionBindings),
+    db.prepare(`
+      DELETE FROM ai_usage
+       WHERE learning_decision_id IN (${decisionIds})
+    `).bind(...decisionBindings),
+    db.prepare(`
+      DELETE FROM learning_decisions
+       WHERE id IN (${decisionIds})
+    `).bind(...decisionBindings),
+    db.prepare(`
+      DELETE FROM learning_pilot_samples
+       WHERE EXISTS (
+         SELECT 1
+           FROM learning_pilot_enrollments pen
+          WHERE pen.id = ?
+            AND pen.policy_version = ?
+            AND pen.record_only = 1
+            AND pen.user_id = learning_pilot_samples.user_id
+            AND pen.workspace_key = learning_pilot_samples.workspace_key
+            AND pen.client_id IS learning_pilot_samples.client_id
+            AND pen.owner_kind = learning_pilot_samples.owner_kind
+            AND pen.owner_id = learning_pilot_samples.owner_id
+            AND unixepoch(learning_pilot_samples.attested_at)
+                >= unixepoch(pen.consent_confirmed_at)
+       )
+    `).bind(
+      authorization.enrollmentId,
+      authorization.policyVersion,
+    ),
+    db.prepare(`
+      DELETE FROM learning_pilot_enrollments
+       WHERE id = ?
+         AND user_id = ?
+         AND workspace_key = ?
+         AND client_id IS ?
+         AND owner_kind = ?
+         AND owner_id = ?
+         AND policy_version = ?
+         AND record_only = 1
+    `).bind(
+      authorization.enrollmentId,
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      authorization.policyVersion,
+    ),
+  ]);
+
+  const remaining = await db.prepare(`
+    SELECT COUNT(*) AS enrollment_count
+      FROM learning_pilot_enrollments
+     WHERE id = ?
+       AND user_id = ?
+       AND workspace_key = ?
+       AND policy_version = ?
+  `).bind(
+    authorization.enrollmentId,
+    identity.userId,
+    identity.workspaceKey,
+    authorization.policyVersion,
+  ).first<{ enrollment_count: number | string | null }>();
+  if (countValue(remaining?.enrollment_count) !== 0) {
+    throw new Error('Pilot enrollment withdrawal did not complete');
+  }
+
+  return {
+    withdrawn: true,
+    alreadyWithdrawn: false,
+    enrollmentId: authorization.enrollmentId,
+    policyVersion: authorization.policyVersion,
+    decisionsRemoved: countValue(decisionCount?.decision_count),
+    samplesRemoved: countValue(sampleCount?.sample_count),
+    sourcePostsDeleted: 0,
+    publishingRecordsDeleted: 0,
+  };
+}
 
 export async function isSyntheticQaPilotPost(
   db: D1Database,
@@ -163,6 +587,7 @@ async function acquirePilotEvaluationLease(
   postId: string,
   contentHash: string,
   now: Date,
+  authorization?: PilotEnrollmentAuthorization,
 ): Promise<string | null> {
   const decisionId = crypto.randomUUID();
   const claimToken = crypto.randomUUID();
@@ -175,7 +600,102 @@ async function acquirePilotEvaluationLease(
     claimToken,
     leaseExpiresAt: new Date(now.getTime() + PILOT_EVALUATION_LEASE_MS).toISOString(),
   });
-  const row = await db.prepare(`
+  const row = authorization
+    ? await db.prepare(`
+    INSERT INTO learning_decisions (
+      id,user_id,workspace_key,client_id,owner_kind,owner_id,post_id,
+      mode,stage,release_state,content_hash,summary_json,updated_at
+    )
+    SELECT
+      ?,pen.user_id,pen.workspace_key,pen.client_id,pen.owner_kind,pen.owner_id,?,
+      ?,?,?,?,?,?
+      FROM learning_pilot_enrollments pen
+      INNER JOIN workspace_learning_settings w
+        ON w.user_id = pen.user_id
+       AND w.workspace_key = pen.workspace_key
+       AND w.client_id IS pen.client_id
+       AND w.owner_kind = pen.owner_kind
+       AND w.owner_id = pen.owner_id
+      INNER JOIN learning_pilot_samples sample
+        ON sample.user_id = pen.user_id
+       AND sample.workspace_key = pen.workspace_key
+       AND sample.client_id IS pen.client_id
+       AND sample.owner_kind = pen.owner_kind
+       AND sample.owner_id = pen.owner_id
+       AND sample.post_id = ?
+       AND sample.content_hash = ?
+       AND unixepoch(sample.attested_at) >= unixepoch(pen.consent_confirmed_at)
+       AND unixepoch(sample.attested_at) <= unixepoch(?)
+       AND sample.attestation_basis = CASE pen.owner_kind
+         WHEN 'user' THEN 'owner_real_post'
+         ELSE 'customer_real_post'
+       END
+      LEFT JOIN clients c
+        ON c.id = pen.client_id
+       AND c.user_id = pen.user_id
+     WHERE pen.id = ?
+       AND pen.user_id = ?
+       AND pen.workspace_key = ?
+       AND pen.client_id IS ?
+       AND pen.owner_kind = ?
+       AND pen.owner_id = ?
+       AND pen.policy_version = ?
+       AND pen.record_only = 1
+       AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+       AND w.mode = 'approval'
+       AND w.monthly_ai_budget_usd_cents > 0
+       AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+       AND (
+         (
+           pen.owner_kind = 'user'
+           AND pen.consent_basis = 'owner_self'
+           AND pen.client_id IS NULL
+         )
+         OR (
+           pen.owner_kind = 'client'
+           AND pen.consent_basis = 'customer_attested'
+           AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+           AND c.id IS NOT NULL
+           AND LOWER(TRIM(COALESCE(c.status, 'active'))) != 'on_hold'
+         )
+       )
+    ON CONFLICT(user_id,workspace_key,post_id,stage,content_hash) DO UPDATE SET
+      mode = excluded.mode,
+      release_state = excluded.release_state,
+      summary_json = excluded.summary_json,
+      updated_at = excluded.updated_at
+    WHERE julianday(learning_decisions.updated_at) < julianday(?)
+      AND (
+        learning_decisions.release_state = 'pending'
+        OR COALESCE(
+          json_extract(learning_decisions.summary_json, '$.persistenceState'),
+          ''
+        ) IN ('claim','writing')
+      )
+    RETURNING id
+  `).bind(
+      decisionId,
+      postId,
+      'approval',
+      'release',
+      'pending',
+      contentHash,
+      summary,
+      nowIso,
+      postId,
+      contentHash,
+      nowIso,
+      authorization.enrollmentId,
+      identity.userId,
+      identity.workspaceKey,
+      identity.clientId,
+      identity.ownerKind,
+      identity.ownerId,
+      authorization.policyVersion,
+      nowIso,
+      staleBefore,
+    ).first<{ id: string }>()
+    : await db.prepare(`
     INSERT INTO learning_decisions (
       id,user_id,workspace_key,client_id,owner_kind,owner_id,post_id,
       mode,stage,release_state,content_hash,summary_json,updated_at
@@ -257,6 +777,7 @@ export async function runClaimedPilotEvaluation(
   deps: PilotEvaluationDeps = defaultDeps,
   now: Date = new Date(),
   expectedContentHash?: string,
+  enrollmentAuthorization?: PilotEnrollmentAuthorization,
 ): Promise<ClaimedPilotEvaluationResult> {
   const identity = normalizeWorkspaceIdentity(
     post.user_id,
@@ -274,6 +795,25 @@ export async function runClaimedPilotEvaluation(
   ) {
     throw new Error('Known synthetic-QA posts cannot enter real pilot evidence');
   }
+  if (expectedContentHash !== undefined && enrollmentAuthorization === undefined) {
+    throw new Error('Exact pilot evaluation requires its enrollment authorization');
+  }
+  const authorization = enrollmentAuthorization
+    ? validatedAuthorization(enrollmentAuthorization)
+    : undefined;
+  if (
+    authorization
+    && !(await pilotAuthorizationIsCurrent(
+      env.DB,
+      identity,
+      post.id,
+      contentHash,
+      authorization,
+      now,
+    ))
+  ) {
+    throw new Error('Pilot enrollment authorization is no longer current');
+  }
   const fresh = await deps.findFreshReceipt(
     env.DB,
     identity.userId,
@@ -285,6 +825,26 @@ export async function runClaimedPilotEvaluation(
     'approval',
   );
   if (fresh) {
+    if (
+      authorization
+      && !(await pilotAuthorizationIsCurrent(
+        env.DB,
+        identity,
+        post.id,
+        contentHash,
+        authorization,
+        now,
+      ))
+    ) {
+      await purgeClaimedPilotDecisionEvidence(
+        env.DB,
+        identity,
+        fresh.id,
+        post.id,
+        contentHash,
+      );
+      throw new Error('Pilot enrollment authorization was withdrawn');
+    }
     return {
       status: 'existing',
       decisionId: fresh.id,
@@ -298,6 +858,7 @@ export async function runClaimedPilotEvaluation(
     post.id,
     contentHash,
     now,
+    authorization,
   );
   if (!claimId) {
     const complete = await findCompletePilotReceipt(
@@ -306,6 +867,27 @@ export async function runClaimedPilotEvaluation(
       post.id,
       contentHash,
     );
+    if (
+      complete
+      && authorization
+      && !(await pilotAuthorizationIsCurrent(
+        env.DB,
+        identity,
+        post.id,
+        contentHash,
+        authorization,
+        now,
+      ))
+    ) {
+      await purgeClaimedPilotDecisionEvidence(
+        env.DB,
+        identity,
+        complete.id,
+        post.id,
+        contentHash,
+      );
+      throw new Error('Pilot enrollment authorization was withdrawn');
+    }
     return complete
       ? {
           status: 'existing',
@@ -320,14 +902,61 @@ export async function runClaimedPilotEvaluation(
   }
 
   const meteredEnv = withLearningDecisionUsageScope(env, claimId);
-  const result = await deps.runPipeline(meteredEnv, post, 'approval');
-  if (result.id !== claimId) {
-    throw new Error('Pilot pipeline completed under a different decision id');
+  let withdrawalCleanupAttempted = false;
+  try {
+    const result = await deps.runPipeline(meteredEnv, post, 'approval', claimId);
+    if (
+      authorization
+      && !(await pilotAuthorizationIsCurrent(
+        env.DB,
+        identity,
+        post.id,
+        contentHash,
+        authorization,
+        new Date(),
+      ))
+    ) {
+      withdrawalCleanupAttempted = true;
+      await purgeClaimedPilotDecisionEvidence(
+        env.DB,
+        identity,
+        claimId,
+        post.id,
+        contentHash,
+      );
+      throw new Error('Pilot enrollment authorization was withdrawn during evaluation');
+    }
+    if (result.id !== claimId) {
+      throw new Error('Pilot pipeline completed under a different decision id');
+    }
+    assertLearningDecisionUsageScopeComplete(meteredEnv, claimId);
+    return {
+      status: 'evaluated',
+      decisionId: result.id,
+      releaseState: result.state,
+    };
+  } catch (error) {
+    if (
+      !withdrawalCleanupAttempted
+      && authorization
+      && !(await pilotAuthorizationIsCurrent(
+        env.DB,
+        identity,
+        post.id,
+        contentHash,
+        authorization,
+        new Date(),
+      ))
+    ) {
+      withdrawalCleanupAttempted = true;
+      await purgeClaimedPilotDecisionEvidence(
+        env.DB,
+        identity,
+        claimId,
+        post.id,
+        contentHash,
+      );
+    }
+    throw error;
   }
-  assertLearningDecisionUsageScopeComplete(meteredEnv, claimId);
-  return {
-    status: 'evaluated',
-    decisionId: result.id,
-    releaseState: result.state,
-  };
 }

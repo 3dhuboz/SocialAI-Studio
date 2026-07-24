@@ -49,6 +49,17 @@ const operations: AdminLearningOperations = {
 
 const pilotQueue: LearningPilotQueue = {
   recordOnly: true,
+  enrollments: [{
+    enrollmentId: 'pilot-enrollment-owner',
+    clientId: null,
+    ownerKind: 'user',
+    ownerId: 'owner_1',
+    workspaceKey: '__owner__',
+    policyVersion: '2026-07-14-v1',
+    enrolledAt: '2026-07-15T00:00:00.000Z',
+    label: 'My workspace',
+    recordOnly: true,
+  }],
   candidates: [
     {
       clientId: null, ownerKind: 'user', ownerId: 'owner_1',
@@ -225,6 +236,7 @@ describe('LearningOperationsCard', () => {
         savingDecisionId={null}
         onAdjudicate={async () => undefined}
         onPilotEnroll={async () => undefined}
+        onPilotWithdraw={async () => undefined}
         onPilotValidate={async () => undefined}
       />,
     );
@@ -253,6 +265,12 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain('aria-label="Confirm record-only consent for Active Client"');
     expect(html).toContain('aria-label="Consent evidence note for Active Client"');
     expect(html).toContain('Active Client enrollment stays disabled until both are complete');
+    expect(html).toContain('Active record-only pilot consent');
+    expect(html).toContain('Original drafts, schedules, and publishing records are never deleted');
+    expect(html).toContain('aria-label="Confirm pilot withdrawal for My workspace"');
+    expect(html).toContain('aria-label="Pilot withdrawal note for My workspace"');
+    expect(html).toContain('Withdraw pilot consent and erase derived evidence');
+    expect(html).toContain('separate staging-copy consent receipt');
   });
 
   it('fails closed when an enrolled workspace has no exact draft preview', () => {
@@ -269,6 +287,7 @@ describe('LearningOperationsCard', () => {
         savingDecisionId={null}
         onAdjudicate={async () => undefined}
         onPilotEnroll={async () => undefined}
+        onPilotWithdraw={async () => undefined}
         onPilotValidate={async () => undefined}
       />,
     );
@@ -305,6 +324,7 @@ describe('LearningOperationsCard', () => {
         savingDecisionId={null}
         onAdjudicate={async () => undefined}
         onPilotEnroll={async () => undefined}
+        onPilotWithdraw={async () => undefined}
         onPilotValidate={async () => undefined}
       />,
     );
@@ -337,6 +357,7 @@ describe('LearningOperationsCard', () => {
         savingDecisionId={null}
         onAdjudicate={async () => undefined}
         onPilotEnroll={async () => undefined}
+        onPilotWithdraw={async () => undefined}
         onPilotValidate={async () => undefined}
       />,
     );

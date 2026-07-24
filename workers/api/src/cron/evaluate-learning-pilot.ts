@@ -9,6 +9,7 @@ import {
   isSyntheticQaPilotPost,
   runClaimedPilotEvaluation,
   type ClaimedPilotEvaluationResult,
+  type PilotEnrollmentAuthorization,
   type PilotBudgetStatus,
 } from '../lib/learning/pilot-evaluation';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
@@ -24,6 +25,7 @@ import {
 
 interface PilotCandidateRow {
   id: string;
+  pilot_enrollment_id: string;
   user_id: string;
   workspace_key: string;
   client_id: string | null;
@@ -67,6 +69,7 @@ interface PilotCollectorDeps {
     env: Env,
     post: PublishablePost,
     expectedContentHash: string,
+    authorization: PilotEnrollmentAuthorization,
     now: Date,
   ): Promise<ClaimedPilotEvaluationResult>;
 }
@@ -92,6 +95,7 @@ async function loadPilotCandidates(env: Env, now: Date): Promise<PilotCandidateR
     WITH ranked AS (
       SELECT
         p.id,
+        pen.id AS pilot_enrollment_id,
         pen.user_id,
         pen.workspace_key,
         pen.client_id,
@@ -268,8 +272,15 @@ const defaultDeps: PilotCollectorDeps = {
     identity.ownerKind,
     identity.ownerId,
   ),
-  runEvaluation: (env, post, expectedContentHash, now) =>
-    runClaimedPilotEvaluation(env, post, undefined, now, expectedContentHash),
+  runEvaluation: (env, post, expectedContentHash, authorization, now) =>
+    runClaimedPilotEvaluation(
+      env,
+      post,
+      undefined,
+      now,
+      expectedContentHash,
+      authorization,
+    ),
 };
 
 function dormantPilotEnabled(env: Env): boolean {
@@ -287,12 +298,19 @@ function candidatePost(
   identity: WorkspaceIdentity;
   budgetUsdCents: number;
   expectedContentHash: string;
+  authorization: PilotEnrollmentAuthorization;
 } | null {
   const ownerKind: WorkspaceOwnerKind | null =
     row.owner_kind === 'user' || row.owner_kind === 'client'
       ? row.owner_kind
       : null;
-  if (!ownerKind || !row.id?.trim() || !row.user_id?.trim() || typeof row.content !== 'string') {
+  if (
+    !ownerKind
+    || !row.id?.trim()
+    || !row.pilot_enrollment_id?.trim()
+    || !row.user_id?.trim()
+    || typeof row.content !== 'string'
+  ) {
     return null;
   }
   const clientId = row.client_id?.trim() || null;
@@ -348,6 +366,10 @@ function candidatePost(
     identity,
     budgetUsdCents,
     expectedContentHash,
+    authorization: {
+      enrollmentId: row.pilot_enrollment_id,
+      policyVersion: AUTOPILOT_POLICY_VERSION,
+    },
     post: {
       id: row.id,
       user_id: identity.userId,
@@ -453,6 +475,7 @@ export async function cronEvaluateLearningPilot(
         env,
         candidate.post,
         candidate.expectedContentHash,
+        candidate.authorization,
         now,
       );
       if (evaluation.status === 'evaluated') {

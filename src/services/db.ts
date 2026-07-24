@@ -392,7 +392,20 @@ export interface LearningPilotCandidate {
 
 export interface LearningPilotQueue {
   recordOnly: true;
+  enrollments?: LearningPilotActiveEnrollment[];
   candidates: LearningPilotCandidate[];
+}
+
+export interface LearningPilotActiveEnrollment {
+  enrollmentId: string;
+  clientId: string | null;
+  ownerKind: 'user' | 'client';
+  ownerId: string;
+  workspaceKey: string;
+  policyVersion: string;
+  enrolledAt: string;
+  label: string;
+  recordOnly: true;
 }
 
 export interface LearningPilotCustomerConsent {
@@ -429,6 +442,23 @@ export interface LearningPilotValidation {
   postId: string;
   sourceStatus: 'Draft';
   postMutated: false;
+}
+
+export interface LearningPilotWithdrawal {
+  withdrawn: boolean;
+  alreadyWithdrawn: boolean;
+  enrollmentId: string | null;
+  policyVersion: string;
+  workspaceKey: string;
+  ownerKind: 'user' | 'client';
+  ownerId: string;
+  mode: 'shadow';
+  decisionsRemoved: number;
+  samplesRemoved: number;
+  sourcePostsDeleted: 0;
+  publishingRecordsDeleted: 0;
+  originalDraftsRetained: true;
+  copiedStagingDataRequiresArtifactWithdrawal: true;
 }
 
 export type OrganicReachPlatform = 'facebook' | 'instagram';
@@ -715,7 +745,12 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async getLearningPilotCandidates(): Promise<LearningPilotQueue> {
       const res = await f('/api/learning/pilot/candidates');
-      return res.json() as Promise<LearningPilotQueue>;
+      const data = await res.json() as LearningPilotQueue;
+      return {
+        recordOnly: true,
+        enrollments: data.enrollments ?? [],
+        candidates: data.candidates ?? [],
+      };
     },
 
     async enrollLearningPilotWorkspace(
@@ -730,6 +765,21 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
         customerConsentNote: customerConsent?.note,
       }));
       return res.json() as Promise<LearningPilotEnrollment>;
+    },
+
+    async withdrawLearningPilotWorkspace(
+      clientId: string | null,
+      withdrawalNote: string,
+    ): Promise<LearningPilotWithdrawal> {
+      const res = await f('/api/learning/pilot/enrollment', {
+        method: 'DELETE',
+        body: JSON.stringify({
+          clientId,
+          withdrawalConfirmed: true,
+          withdrawalNote,
+        }),
+      });
+      return res.json() as Promise<LearningPilotWithdrawal>;
     },
 
     async attestLearningPilotDraft(

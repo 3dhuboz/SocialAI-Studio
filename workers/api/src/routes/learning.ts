@@ -29,6 +29,7 @@ import {
   getRecordOnlyPilotBudgetStatus,
   isSyntheticQaPilotPost,
   runClaimedPilotEvaluation,
+  withdrawRecordOnlyPilot,
 } from '../lib/learning/pilot-evaluation';
 import {
   getWorkspaceLearningSettings,
@@ -89,6 +90,17 @@ type PilotCandidateRow = {
 type PilotEnrollmentRow = {
   id: string;
   enrolled_at: string;
+};
+
+type PilotActiveEnrollmentRow = {
+  id: string;
+  client_id: string | null;
+  owner_kind: 'user' | 'client';
+  owner_id: string;
+  workspace_key: string;
+  policy_version: string;
+  enrolled_at: string;
+  label: string;
 };
 
 type PilotValidationEnrollmentRow = {
@@ -1052,6 +1064,82 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     }
   });
 
+  app.delete('/api/learning/pilot/enrollment', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot withdrawal is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    try {
+      const body = await jsonBody(c.req.raw);
+      const withdrawalNote = typeof body.withdrawalNote === 'string'
+        ? body.withdrawalNote.trim()
+        : '';
+      if (
+        body.withdrawalConfirmed !== true
+        || withdrawalNote.length < 10
+        || withdrawalNote.length > 500
+      ) {
+        return c.json({
+          error: 'Pilot withdrawal requires explicit confirmation and a 10-500 character note',
+        }, 400);
+      }
+      const clientId = requestedClientId(body.clientId);
+      const identity = normalizeWorkspaceIdentity(
+        adminId,
+        clientId,
+        clientId === null ? 'user' : 'client',
+        clientId ?? adminId,
+      );
+      const result = await withdrawRecordOnlyPilot(
+        c.env.DB,
+        identity,
+        AUTOPILOT_POLICY_VERSION,
+      );
+      console.info('[learning-pilot] record-only consent withdrawal completed', {
+        workspaceKey: identity.workspaceKey,
+        ownerKind: identity.ownerKind,
+        withdrawn: result.withdrawn,
+        alreadyWithdrawn: result.alreadyWithdrawn,
+        decisionsRemoved: result.decisionsRemoved,
+        samplesRemoved: result.samplesRemoved,
+        withdrawalNoteLength: withdrawalNote.length,
+        sourcePostsDeleted: result.sourcePostsDeleted,
+        publishingRecordsDeleted: result.publishingRecordsDeleted,
+      });
+      return c.json({
+        ...result,
+        workspaceKey: identity.workspaceKey,
+        ownerKind: identity.ownerKind,
+        ownerId: identity.ownerId,
+        mode: 'shadow',
+        originalDraftsRetained: true,
+        copiedStagingDataRequiresArtifactWithdrawal: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Pilot withdrawal failed';
+      console.warn('[learning-pilot] consent withdrawal failed closed', {
+        reason: message,
+      });
+      if (message.includes('publication record')) {
+        return c.json({
+          error: message,
+          code: 'pilot_withdrawal_publication_conflict',
+        }, 409);
+      }
+      return c.json({
+        error: 'Pilot withdrawal failed closed; no source posts or publishing records were changed',
+      }, 503);
+    }
+  });
+
   app.get('/api/learning/pilot/candidates', async (c) => {
     const adminId = c.get('uid') as string;
     if (!(await learningAdmin(c.env.DB, adminId))) {
@@ -1169,6 +1257,30 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       LIMIT 50
     `).bind(AUTOPILOT_POLICY_VERSION, adminId).all<PilotCandidateRow>();
     const candidateRows = rows.results ?? [];
+    const enrollmentRows = await c.env.DB.prepare(`
+      SELECT
+        pen.id,
+        pen.client_id,
+        pen.owner_kind,
+        pen.owner_id,
+        pen.workspace_key,
+        pen.policy_version,
+        pen.enrolled_at,
+        CASE
+          WHEN pen.owner_kind = 'user' THEN 'My workspace'
+          ELSE COALESCE(NULLIF(TRIM(client.name), ''), 'Client workspace')
+        END AS label
+      FROM learning_pilot_enrollments pen
+      LEFT JOIN clients client
+        ON client.id = pen.client_id
+       AND client.user_id = pen.user_id
+      WHERE pen.user_id = ?
+        AND pen.policy_version = ?
+        AND pen.record_only = 1
+        AND pen.owner_kind IN ('user','client')
+      ORDER BY CASE pen.owner_kind WHEN 'user' THEN 0 ELSE 1 END, label
+      LIMIT 10
+    `).bind(adminId, AUTOPILOT_POLICY_VERSION).all<PilotActiveEnrollmentRow>();
     const previewRows = await loadPilotCandidatePreviews(
       c.env.DB,
       adminId,
@@ -1234,6 +1346,17 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
     })));
     return c.json({
       recordOnly: true,
+      enrollments: (enrollmentRows.results ?? []).map((row) => ({
+        enrollmentId: row.id,
+        clientId: row.client_id,
+        ownerKind: row.owner_kind,
+        ownerId: row.owner_id,
+        workspaceKey: row.workspace_key,
+        policyVersion: row.policy_version,
+        enrolledAt: row.enrolled_at,
+        label: row.label,
+        recordOnly: true,
+      })),
       candidates,
     });
   });
@@ -1723,6 +1846,10 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         undefined,
         validationNow,
         expectedContentHash,
+        {
+          enrollmentId: enrollment.id,
+          policyVersion: AUTOPILOT_POLICY_VERSION,
+        },
       );
       if (
         result.status === 'busy'

@@ -12,6 +12,7 @@ import {
 import type { CriticResult } from '../lib/learning/critic-types';
 import type { ReleasePipelineResult } from '../lib/learning/release-pipeline';
 import type { ReleaseState } from '../lib/learning/types';
+import { makeRecordingD1 } from './helpers/recording-d1';
 
 const post: PublishablePost = {
   id: 'p1',
@@ -279,6 +280,49 @@ describe('runAndPersistReleasePipeline', () => {
 
     expect(result).toEqual({ id: 'cached', state: 'hold_amber' });
     expect(expensiveCalls).toBe(0);
+  });
+
+  it('never recreates a claimed pilot receipt after its lease is deleted', async () => {
+    let updateCount = 0;
+    const { db, calls } = makeRecordingD1({
+      'UPDATE learning_decisions': () => {
+        updateCount += 1;
+        return updateCount === 1 ? [{ id: 'decision-claimed' }] : [];
+      },
+    });
+    const createReceipt = vi.fn(async () => 'decision-recreated');
+
+    await expect(runAndPersistReleasePipeline(
+      { DB: db } as Env,
+      post,
+      'approval',
+      {
+        findFreshReceipt: async () => null,
+        loadContext: async () => ({
+          profile: {}, verifiedFacts: [], forbiddenSubjects: [], recentPostDigests: [],
+        }),
+        executePipeline: async (_env, candidate) => ({
+          state: 'pass_green',
+          candidate,
+          attempts: [[verdict]],
+          repairHistory: [],
+          judgeStatus: 'available',
+        }),
+        createReceipt,
+        replaceVerdicts: async () => {},
+      },
+      'decision-claimed',
+    )).rejects.toThrow('Claimed learning decision lease is no longer available');
+
+    expect(createReceipt).not.toHaveBeenCalled();
+    const receiptWrites = calls.filter((call) =>
+      call.sql.includes('UPDATE learning_decisions'));
+    expect(receiptWrites).toHaveLength(2);
+    expect(receiptWrites.every((call) =>
+      call.sql.includes("IN ('claim','writing')")
+      && call.sql.includes('WHERE id = ?')
+      && call.binds.includes('decision-claimed'))).toBe(true);
+    expect(calls.some((call) => call.sql.includes('INSERT INTO learning_decisions'))).toBe(false);
   });
 
   it('refuses to mark a scoped decision complete after any metering write fails', async () => {

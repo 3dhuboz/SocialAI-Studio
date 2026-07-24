@@ -79,6 +79,7 @@ const emptyContext: CriticContext = {
 function ownerCandidate() {
   return {
     ...ownerPost,
+    pilot_enrollment_id: 'pilot-enrollment-owner',
     workspace_key: '__owner__',
     consent_basis: 'owner_self',
     consent_confirmed_at: '2026-07-17T00:00:00.000Z',
@@ -94,6 +95,7 @@ function ownerCandidate() {
 function clientCandidate() {
   return {
     ...clientPost,
+    pilot_enrollment_id: 'pilot-enrollment-client',
     workspace_key: 'client-1',
     consent_basis: 'customer_attested',
     consent_confirmed_at: '2026-07-17T00:00:00.000Z',
@@ -170,6 +172,7 @@ describe('record-only pilot evaluation lease', () => {
       expect.objectContaining({ DB: db }),
       ownerPost,
       'approval',
+      'decision-claim-1',
     );
     const claim = calls.find((call) => call.sql.includes('INSERT INTO learning_decisions'))!;
     expect(claim.sql).toContain('ON CONFLICT(user_id,workspace_key,post_id,stage,content_hash)');
@@ -192,6 +195,58 @@ describe('record-only pilot evaluation lease', () => {
       .toBe(false);
     const usage = calls.find((call) => call.sql.includes('INSERT INTO ai_usage'))!;
     expect(usage.binds.at(-2)).toBe('decision-claim-1');
+  });
+
+  it('self-purges an in-flight result when its exact enrollment is withdrawn', async () => {
+    let authorizationReads = 0;
+    const { db, calls } = makeRecordingD1({
+      'SELECT 1 AS authorized': () => {
+        authorizationReads += 1;
+        return authorizationReads === 1 ? [{ authorized: 1 }] : [];
+      },
+      'INSERT INTO learning_decisions': [{ id: 'decision-withdrawn-in-flight' }],
+      'SELECT COUNT(*) AS publication_count': [{ publication_count: 0 }],
+    });
+    const runPipeline = vi.fn(async () => ({
+      id: 'decision-withdrawn-in-flight',
+      state: 'pass_green' as const,
+    }));
+
+    await expect(runClaimedPilotEvaluation(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      ownerPost,
+      {
+        findFreshReceipt: vi.fn(async () => null),
+        runPipeline,
+      },
+      new Date('2026-07-17T01:00:00.000Z'),
+      OWNER_CONTENT_HASH,
+      {
+        enrollmentId: 'pilot-enrollment-owner',
+        policyVersion: '2026-07-14-v1',
+      },
+    )).rejects.toThrow('withdrawn during evaluation');
+
+    expect(runPipeline).toHaveBeenCalledTimes(1);
+    const cleanupCalls = calls.filter((call) =>
+      call.sql.includes('DELETE FROM learning_calibration_audits')
+      || call.sql.includes('DELETE FROM learning_critic_verdicts')
+      || call.sql.includes('DELETE FROM ai_usage'));
+    expect(cleanupCalls).toHaveLength(3);
+    expect(cleanupCalls.every((call) =>
+      call.binds[0] === 'decision-withdrawn-in-flight')).toBe(true);
+    const decisionCleanup = calls.find((call) =>
+      call.sql.includes('DELETE FROM learning_decisions'))!;
+    expect(decisionCleanup.sql).toContain('WHERE id = ?');
+    expect(decisionCleanup.binds[0]).toBe('decision-withdrawn-in-flight');
+    expect(decisionCleanup.binds).toEqual(expect.arrayContaining([
+      'owner-1',
+      '__owner__',
+      'draft-owner-1',
+      OWNER_CONTENT_HASH,
+    ]));
+    expect(calls.some((call) => /\b(?:UPDATE|INSERT INTO|DELETE FROM)\s+posts\b/i.test(call.sql)))
+      .toBe(false);
   });
 
   it('rejects a pilot evaluation when the positive sample hash no longer matches', async () => {
@@ -391,6 +446,7 @@ describe('record-only pilot collector', () => {
     const candidateQuery = calls.find((call) =>
       call.sql.includes('FROM learning_pilot_enrollments pen'))!;
     expect(candidateQuery.sql).toContain('ROW_NUMBER() OVER');
+    expect(candidateQuery.sql).toContain('pen.id AS pilot_enrollment_id');
     expect(candidateQuery.sql).toContain('pen.record_only = 1');
     expect(candidateQuery.sql).toContain("pen.consent_basis = 'owner_self'");
     expect(candidateQuery.sql).toContain("pen.consent_basis = 'customer_attested'");
@@ -629,6 +685,10 @@ describe('record-only pilot collector', () => {
       expect.anything(),
       expect.objectContaining({ id: 'draft-owner-budget-ready' }),
       OWNER_CONTENT_HASH,
+      {
+        enrollmentId: 'pilot-enrollment-owner',
+        policyVersion: expect.any(String),
+      },
       expect.any(Date),
     );
     expect(calls).toEqual([]);
