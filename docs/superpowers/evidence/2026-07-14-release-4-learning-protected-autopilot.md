@@ -4537,3 +4537,76 @@ evidence, green staging and production readiness, an unattended weekly staging
 calibration with verified evidence, and operator-gated production v44-v47
 schema work. The next safe phase remains `pilot_evidence`; automatic activation
 and automatic production mutation remain prohibited.
+
+### Fail-closed Pilot Withdrawal And Preview Diagnostics
+
+Commits `9de10a7feeed4290cb06107f37603ca9fc871a10` and
+`ed2a8a83c15a250722f1eb34afc19d58b99e1d8b` close the remaining
+record-only consent-withdrawal race without enabling production behaviour.
+Withdrawal now revalidates the exact current consent, policy, workspace, sample,
+and claimed decision before and after critic work. It deletes only the exact
+pilot sample and derived decision evidence, resets the workspace to dormant
+shadow settings, refuses any publication conflict, and cannot recreate a
+withdrawn lease after an immediate re-enrolment. Original drafts, schedules,
+publication records, and production data are never deleted. Separately
+consented staging copies retain their artifact-bound exact-ID erasure paths so
+the generic API never guesses copy provenance.
+
+The five pilot administration operations now use the dedicated staging Worker
+URL while normal post, customer, scheduling, publishing, and learning dashboard
+operations continue to use the production API. Staging Worker version
+`c78d5e31-b0d3-4342-8aa7-5ceaedaf97b1` contains the withdrawal route and
+retains the staging D1 binding, record-only schedules, and disabled release,
+autopilot, and organic-apply flags.
+
+An exact-source Pages preview exposed a separate diagnostic defect: the
+ten-second authentication timeout always claimed the Clerk key was missing,
+even when the public key was present and the actual cause was that the
+production Clerk instance did not initialize on the `pages.dev` preview
+origin. Commit `22440e683f6ca3024c114a58362908ee65b82632` replaces that false
+diagnosis with a non-destructive reload and support path. It does not change
+Clerk configuration, authentication rules, tokens, or production behaviour.
+The commit-attested preview is:
+
+- `https://f36732fc.socialai-studio.pages.dev`
+- branch `codex-learning-pilot-auth`
+- source `22440e683f6ca3024c114a58362908ee65b82632`
+
+The deployed bundle contains the new timeout message, reload and support
+actions, the public Clerk configuration, and the staging-only pilot Worker URL.
+It contains neither the old false diagnosis nor any production activation
+change. Authenticated preview interaction remains intentionally unclaimed
+because the Clerk production instance did not initialize on that preview
+origin; no origin or credential policy was weakened to force the test through.
+
+The focused authentication diagnostic regression passed 1 of 1 tests. Root
+TypeScript passed, and the production-mode Vite build transformed 1,932
+modules. Only the pre-existing mixed static/dynamic import and large-chunk
+warnings remained.
+
+The clean exact commit passed the complete offline release proof:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-release-proof-2026-07-24T03-22-23-764Z.json`
+- payload SHA-256 `23dc55e73d0996b5f2aa8dc2a8060e0f9428975628f981da4a92fa13bcd44077`
+- file SHA-256 `e78fc1c3c97176537073e05218fd2e543f32e49ec55d42fc371b5f3bf2ed75cb`
+
+The version-pinned live read-only judge then returned `safe_hold` with zero
+failed safety checks:
+
+- `D:\GitHubBackup\SocialAi\release-evidence\learning-rollout-state-2026-07-24T03-23-18-406Z.json`
+- payload SHA-256 `701f70dadbad523674f8aaefad81c0441c66d3059475a5becb450478afb271dd`
+- file SHA-256 `f5f35633426f87d1b52a00843d89d3bebd1d69832964829f998d402f22590516`
+
+Staging and production health, D1 read-only checks, bindings, exact Worker
+versions, fresh quarter-hour readiness receipts, alert schemas, deferred-schema
+preflight, and dormant flags all passed. Both Protected Autopilot workspace
+counts remain zero, production `hughesq-001` remains `on_hold`, and no
+production data, schema, flag, schedule, or publication changed.
+
+Promotion remains blocked, correctly, on genuine positive owner and customer
+pilot decisions, green statistical readiness, the next provenance-valid weekly
+staging calibration, and the operator-gated production v44-v47 schemas. The
+four existing attested samples were rejected safety examples and must not be
+relabeled as positive evidence. The next safe phase remains
+`pilot_evidence`; automatic activation and automatic production mutation remain
+prohibited.
