@@ -8,6 +8,9 @@ import { CRITIQUE_ACCEPT_THRESHOLD } from '../../shared/critique-thresholds';
 
 const BASE = (import.meta.env as Record<string, string>).VITE_AI_WORKER_URL
   || 'https://socialai-api.steve-700.workers.dev';
+const LEARNING_PILOT_BASE =
+  (import.meta.env as Record<string, string>).VITE_LEARNING_PILOT_WORKER_URL
+  || 'https://socialai-api-staging.steve-700.workers.dev';
 
 type GetToken = () => Promise<string | null>;
 type AuthMode = 'clerk' | 'portal' | 'embed';
@@ -43,13 +46,14 @@ async function apiFetch(
   path: string,
   options: RequestInit = {},
   authMode: AuthMode = 'clerk',
+  base: string = BASE,
 ): Promise<Response> {
   const token = await getToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) {
     headers['Authorization'] = authMode === 'portal' ? `Portal ${token}` : authMode === 'embed' ? `Embed ${token}` : `Bearer ${token}`;
   }
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${base.replace(/\/+$/, '')}${path}`, { ...options, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let body: ApiError['body'] = null;
@@ -643,6 +647,8 @@ export interface AdminUserAddonsPatch {
 
 export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
   const f = (path: string, opts: RequestInit = {}) => apiFetch(getToken, path, opts, authMode);
+  const pilotF = (path: string, opts: RequestInit = {}) =>
+    apiFetch(getToken, path, opts, authMode, LEARNING_PILOT_BASE);
   const j = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body) });
   const put = (body: unknown) => ({ method: 'PUT', body: JSON.stringify(body) });
   const del = () => ({ method: 'DELETE' });
@@ -744,7 +750,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     },
 
     async getLearningPilotCandidates(): Promise<LearningPilotQueue> {
-      const res = await f('/api/learning/pilot/candidates');
+      const res = await pilotF('/api/learning/pilot/candidates');
       const data = await res.json() as LearningPilotQueue;
       return {
         recordOnly: true,
@@ -758,7 +764,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       monthlyAiBudgetUsdCents: number,
       customerConsent?: LearningPilotCustomerConsent,
     ): Promise<LearningPilotEnrollment> {
-      const res = await f('/api/learning/pilot/enroll', j({
+      const res = await pilotF('/api/learning/pilot/enroll', j({
         clientId,
         monthlyAiBudgetUsdCents,
         customerConsentConfirmed: customerConsent?.confirmed,
@@ -771,7 +777,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       clientId: string | null,
       withdrawalNote: string,
     ): Promise<LearningPilotWithdrawal> {
-      const res = await f('/api/learning/pilot/enrollment', {
+      const res = await pilotF('/api/learning/pilot/enrollment', {
         method: 'DELETE',
         body: JSON.stringify({
           clientId,
@@ -787,7 +793,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
       expectedContentHash: string,
       note: string,
     ): Promise<LearningPilotSampleAttestation> {
-      const res = await f(
+      const res = await pilotF(
         `/api/learning/pilot/attest/${encodeURIComponent(postId)}`,
         j({ realPostConfirmed: true, expectedContentHash, note }),
       );
@@ -795,7 +801,7 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
     },
 
     async validateLearningPilotDraft(postId: string): Promise<LearningPilotValidation> {
-      const res = await f(
+      const res = await pilotF(
         `/api/learning/pilot/validate/${encodeURIComponent(postId)}`,
         j({}),
       );

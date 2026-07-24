@@ -256,6 +256,9 @@ describe('learning decision client', () => {
     });
 
     expect(operations.workspaces).toEqual([{ workspaceKey: 'client_1', mode: 'approval' }]);
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(
+      /^https:\/\/socialai-api\.steve-700\.workers\.dev\//,
+    );
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/learning/admin/operations?limit=75');
     const adjudicationCall = fetchMock.mock.calls[1];
     expect(String(adjudicationCall[0])).toContain(
@@ -367,6 +370,8 @@ describe('learning decision client', () => {
       publishingRecordsDeleted: 0,
       originalDraftsRetained: true,
     });
+    expect(calls.every(({ url }) =>
+      url.startsWith('https://socialai-api-staging.steve-700.workers.dev/'))).toBe(true);
     expect(calls).toEqual([
       {
         url: expect.stringContaining('/api/learning/pilot/candidates'),
