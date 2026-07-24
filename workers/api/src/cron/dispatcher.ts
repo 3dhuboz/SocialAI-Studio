@@ -143,6 +143,7 @@ export async function trackCron(
 
 export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const cron = event.cron;
+  const recordOnlyStaging = env.ENVIRONMENT === 'staging';
   if (cron === '*/5 * * * *') {
     // Latency-sensitive lane: posts need images prewarmed before the publish
     // cron fires, and the publish cron needs to fire close to scheduled time.
@@ -203,7 +204,9 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
     // Reconcile Shopify subscriptions — catches missed app_subscriptions/update
     // webhooks. Cheap when no Shopify shops are out of sync; runs on the same
     // 15-min cadence as health sweep since both are observability-tier work.
-    await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    if (!recordOnlyStaging) {
+      await trackCron(env, 'shopify_reconcile', () => reconcileSubscriptions(env));
+    }
     if (
       env.LEARNING_BRAIN_ENABLED === 'true'
       && env.LEARNING_RELEASE_ENFORCEMENT !== 'true'
@@ -233,9 +236,13 @@ export async function dispatchScheduled(event: ScheduledEvent, env: Env): Promis
   if (cron === '0 21 * * SUN') {
     if (env.LEARNING_BRAIN_ENABLED === 'true') {
       await trackCron(env, 'learning_calibration', () => cronEvaluateLearningCalibration(env));
-      await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
+      if (!recordOnlyStaging) {
+        await trackCron(env, 'learn_strategies', () => cronLearnStrategies(env));
+      }
     }
-    await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
+    if (!recordOnlyStaging) {
+      await trackCron(env, 'weekly_review', () => cronWeeklyReview(env));
+    }
     return;
   }
   // Unknown cron expression — DO NOT trigger any expensive jobs as a

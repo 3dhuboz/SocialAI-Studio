@@ -171,10 +171,11 @@ bucket_name = "socialai-reels"
 binding = "MEDIA"
 remote = true
 
-# Staging is record-only. It must never inherit production prewarm, refresh,
-# or publication schedules; pilots are invoked explicitly after consent.
+# Staging runs only record-only health, consent-gated pilot, readiness, and
+# calibration jobs. Production publishing, refresh, reconciliation, strategy,
+# and weekly email work is excluded by the dispatcher.
 [env.staging.triggers]
-crons = []
+crons = ["*/15 * * * *", "0 21 * * SUN"]
 
 [[env.staging.r2_buckets]]
 binding = "POSTER_ASSETS"
