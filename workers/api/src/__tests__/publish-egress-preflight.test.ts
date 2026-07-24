@@ -297,7 +297,8 @@ describe('evaluatePermanentPublishBlock', () => {
       decisionId: 'decision-qa-1',
     });
     expect(calls).toHaveLength(2);
-    expect(calls[0].sql).toContain('FROM learning_pilot_generated_drafts generated');
+    expect(calls[0].sql).toContain('learning_pilot_enrollments enrollment');
+    expect(calls[0].sql).toContain('learning_pilot_generated_drafts generated');
     expect(calls[1].sql).toContain('INNER JOIN learning_decision_disqualifications disq');
     expect(calls[1].sql).toContain("disq.reason = 'synthetic_qa'");
     expect(calls[1].binds).toEqual([
@@ -312,7 +313,9 @@ describe('evaluatePermanentPublishBlock', () => {
 
   it('permanently blocks a receipt-bound staging pilot draft by exact tenant tuple', async () => {
     const { db, calls } = makeRecordingD1({
-      'FROM learning_pilot_generated_drafts generated': [{ id: 'generated-receipt-1' }],
+      'learning_pilot_generated_drafts generated': [
+        { block_source: 'generated_pilot_draft' },
+      ],
     });
     const post: PersistedPublishPost = {
       ...fixturePost,
@@ -345,6 +348,52 @@ describe('evaluatePermanentPublishBlock', () => {
       'generated-post-1',
     ]);
   });
+
+  it.each(['image', 'video'] as const)(
+    'permanently blocks a copied record-only staging %s draft by exact tenant tuple',
+    async (postType) => {
+      const { db, calls } = makeRecordingD1({
+        'learning_pilot_enrollments enrollment': [
+          { block_source: 'record_only_enrollment' },
+        ],
+      });
+      const post: PersistedPublishPost = {
+        ...fixturePost,
+        id: `pilot-copy-${postType}`,
+        user_id: 'owner-1',
+        client_id: 'client-1',
+        owner_kind: 'client',
+        owner_id: 'client-1',
+        post_type: postType,
+        image_url: postType === 'image'
+          ? 'https://cdn.example/pilot-image.jpg'
+          : 'https://cdn.example/pilot-video-thumbnail.jpg',
+        image_critique_score: 100,
+      };
+
+      const result = await evaluatePermanentPublishBlock(
+        { DB: db, ENVIRONMENT: 'staging' } as Env,
+        post,
+      );
+
+      expect(result).toEqual({
+        mode: 'approval',
+        state: 'block_red',
+        mayPublish: false,
+        mustHold: true,
+        decisionId: null,
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].binds).toEqual([
+        'owner-1',
+        'client-1',
+        'client-1',
+        'client',
+        'client-1',
+        `pilot-copy-${postType}`,
+      ]);
+    },
+  );
 
   it('skips the staging-only table in current production', async () => {
     const prepare = vi.fn(() => {
@@ -394,12 +443,42 @@ describe('publishPersistedPost', () => {
     const persistHold = vi.fn(async () => undefined);
     deps.persistHold = persistHold;
     const { db } = makeRecordingD1({
-      'FROM learning_pilot_generated_drafts generated': [{ id: 'generated-receipt-1' }],
+      'learning_pilot_generated_drafts generated': [
+        { block_source: 'generated_pilot_draft' },
+      ],
     });
 
     await expect(publishPersistedPost(
       { DB: db, ENVIRONMENT: 'staging' } as Env,
       fixturePost,
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
+  it('blocks copied record-only pilot media before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+    const { db } = makeRecordingD1({
+      'learning_pilot_enrollments enrollment': [
+        { block_source: 'record_only_enrollment' },
+      ],
+    });
+
+    await expect(publishPersistedPost(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      {
+        ...fixturePost,
+        id: 'pilot-copy-media-1',
+        image_url: 'https://cdn.example/pilot-image.jpg',
+        image_critique_score: 100,
+      },
       postproxyTarget,
       deps,
     )).rejects.toThrow('permanently disqualified');

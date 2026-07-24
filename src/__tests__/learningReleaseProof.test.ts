@@ -115,6 +115,7 @@ describe('buildReleaseProofArtifact', () => {
         'protected_experiment_activation_main',
         'protected_experiment_activation_shopify',
         'on_hold_zero_processing',
+        'egress_record_only_pilot_permanent_block',
         'egress_manual_path',
         'egress_cron_path',
         'publish_reel_finish_preflight',

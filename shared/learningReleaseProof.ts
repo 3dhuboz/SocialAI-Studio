@@ -511,6 +511,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'publishPersistedPost permanently blocks synthetic QA before critics or provider egress',
   },
   {
+    id: 'egress_record_only_pilot_permanent_block',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publishPersistedPost blocks copied record-only pilot media before critics or provider egress',
+  },
+  {
     id: 'publish_pass_preserved',
     suite: 'src/__tests__/publish-egress-preflight.test.ts',
     assertion: 'publishPersistedPost preserves Postproxy and Graph delivery when preflight allows it',

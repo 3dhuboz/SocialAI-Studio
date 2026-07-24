@@ -270,16 +270,32 @@ export async function evaluatePermanentPublishBlock(
 
   const isStaging = env.ENVIRONMENT?.trim().toLowerCase() === 'staging';
   if (isStaging) {
-    const generatedPilotDraft = await env.DB.prepare(`
-      SELECT generated.id
-      FROM learning_pilot_generated_drafts generated
-      WHERE generated.user_id = ?
-        AND generated.workspace_key = ?
-        AND generated.client_id IS ?
-        AND generated.owner_kind = ?
-        AND generated.owner_id = ?
-        AND generated.post_id = ?
-        AND generated.record_only = 1
+    const recordOnlyPilot = await env.DB.prepare(`
+      WITH identity(
+        user_id, workspace_key, client_id, owner_kind, owner_id, post_id
+      ) AS (
+        SELECT ?, ?, ?, ?, ?, ?
+      )
+      SELECT 'record_only_enrollment' AS block_source
+      FROM identity
+      INNER JOIN learning_pilot_enrollments enrollment
+        ON enrollment.user_id = identity.user_id
+       AND enrollment.workspace_key = identity.workspace_key
+       AND enrollment.client_id IS identity.client_id
+       AND enrollment.owner_kind = identity.owner_kind
+       AND enrollment.owner_id = identity.owner_id
+       AND enrollment.record_only = 1
+      UNION ALL
+      SELECT 'generated_pilot_draft' AS block_source
+      FROM identity
+      INNER JOIN learning_pilot_generated_drafts generated
+        ON generated.user_id = identity.user_id
+       AND generated.workspace_key = identity.workspace_key
+       AND generated.client_id IS identity.client_id
+       AND generated.owner_kind = identity.owner_kind
+       AND generated.owner_id = identity.owner_id
+       AND generated.post_id = identity.post_id
+       AND generated.record_only = 1
       LIMIT 1
     `).bind(
       post.user_id,
@@ -288,8 +304,8 @@ export async function evaluatePermanentPublishBlock(
       post.owner_kind,
       post.owner_id,
       post.id,
-    ).first<{ id: string }>();
-    if (generatedPilotDraft) {
+    ).first<{ block_source: 'record_only_enrollment' | 'generated_pilot_draft' }>();
+    if (recordOnlyPilot) {
       return {
         mode: 'approval',
         state: 'block_red',
