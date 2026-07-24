@@ -8,6 +8,10 @@ describe('learning pilot media job schema', () => {
     resolve(process.cwd(), 'schema_v49_learning_pilot_media_jobs.sql'),
     'utf8',
   );
+  const recoverySql = readFileSync(
+    resolve(process.cwd(), 'schema_v50_learning_pilot_media_late_recovery.sql'),
+    'utf8',
+  );
 
   it('caps immutable tenant-scoped media slots without altering v48 receipts', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS learning_pilot_media_jobs');
@@ -29,6 +33,11 @@ describe('learning pilot media job schema', () => {
     expect(sql).toContain('prevent_learning_pilot_media_post_update');
     expect(sql).toContain('prevent_learning_pilot_media_publication_event');
     expect(sql).toContain('prevent_learning_pilot_media_delivery');
+    expect(recoverySql).toContain("OLD.error_code = 'pilot_media_video_timed_out'");
+    expect(recoverySql).toContain("NEW.state = 'ready'");
+    expect(recoverySql).toContain(
+      'unixepoch(NEW.updated_at) - unixepoch(OLD.completed_at) < 7200',
+    );
   });
 
   it('executes in SQLite and blocks a ready image candidate from every mutation path', () => {
@@ -77,6 +86,7 @@ describe('learning pilot media job schema', () => {
         );
       `);
       db.exec(sql);
+      db.exec(recoverySql);
       db.exec(`
         INSERT INTO learning_pilot_enrollments (
           id,user_id,workspace_key,client_id,owner_kind,owner_id,
@@ -166,6 +176,7 @@ describe('learning pilot media job schema', () => {
         CREATE TABLE publish_delivery_receipts (id TEXT PRIMARY KEY,post_id TEXT);
       `);
       db.exec(sql);
+      db.exec(recoverySql);
       db.exec(`
         INSERT INTO learning_pilot_enrollments VALUES (
           'enrollment-1','owner-1','__owner__',NULL,'user','owner-1',

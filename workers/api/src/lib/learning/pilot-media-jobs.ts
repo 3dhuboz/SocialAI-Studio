@@ -16,6 +16,7 @@ import type { WorkspaceIdentity } from './types';
 export const PILOT_MEDIA_MAX_SLOTS = 6;
 const IMAGE_LEASE_MS = 5 * 60 * 1000;
 const VIDEO_LEASE_MS = 15 * 60 * 1000;
+const VIDEO_LATE_RECOVERY_MS = 2 * 60 * 60 * 1000;
 const KLING_STANDARD_VIDEO_COST_USD = 0.30;
 const KLING_STANDARD_VIDEO_MODEL =
   'fal-ai/kling-video/v1.6/standard/image-to-video' as const;
@@ -208,6 +209,16 @@ async function sha256(value: string): Promise<string> {
 
 function isoAfter(now: Date, milliseconds: number): string {
   return new Date(now.getTime() + milliseconds).toISOString();
+}
+
+function isRecoverableTimedOutVideo(job: PilotMediaJobRow, now: Date): boolean {
+  const completedAt = Date.parse(job.completed_at ?? '');
+  return job.media_kind === 'video'
+    && job.state === 'failed'
+    && job.error_code === 'pilot_media_video_timed_out'
+    && Boolean(job.provider_request_id)
+    && Number.isFinite(completedAt)
+    && completedAt + VIDEO_LATE_RECOVERY_MS > now.getTime();
 }
 
 export function buildPilotVideoQueueUrl(
@@ -482,6 +493,9 @@ async function claimPilotMediaJob(
   const nowIso = now.toISOString();
   const leaseMs = input.mediaKind === 'video' ? VIDEO_LEASE_MS : IMAGE_LEASE_MS;
   const leaseExpiresAt = isoAfter(now, leaseMs);
+  const lateRecoveryCutoff = new Date(
+    now.getTime() - VIDEO_LATE_RECOVERY_MS,
+  ).toISOString();
   const claimTokenHash = await sha256(deps.randomUuid());
   const jobId = `pilot-media-job-${deps.randomUuid()}`;
 
@@ -546,6 +560,12 @@ async function claimPilotMediaJob(
               active.state = 'claimed'
               AND unixepoch(active.lease_expires_at) > unixepoch(?)
             )
+            OR (
+              active.media_kind = 'video'
+              AND active.state = 'failed'
+              AND active.error_code = 'pilot_media_video_timed_out'
+              AND unixepoch(active.completed_at) > unixepoch(?)
+            )
           )
       )
   `).bind(
@@ -566,6 +586,7 @@ async function claimPilotMediaJob(
     input.enrollment.policyVersion,
     nowIso,
     nowIso,
+    lateRecoveryCutoff,
   ).run();
 
   let job = await loadPilotMediaJob(
@@ -590,6 +611,12 @@ async function claimPilotMediaJob(
             state = 'claimed'
             AND unixepoch(lease_expires_at) > unixepoch(?)
           )
+          OR (
+            media_kind = 'video'
+            AND state = 'failed'
+            AND error_code = 'pilot_media_video_timed_out'
+            AND unixepoch(completed_at) > unixepoch(?)
+          )
         )
       LIMIT 1
     `).bind(
@@ -599,6 +626,7 @@ async function claimPilotMediaJob(
       input.identity.ownerKind,
       input.identity.ownerId,
       nowIso,
+      lateRecoveryCutoff,
     ).first<{ id: string }>();
     if (active) throw new Error('pilot_media_generation_in_progress');
     throw new Error('pilot_media_claim_not_authorized');
@@ -607,6 +635,9 @@ async function claimPilotMediaJob(
     throw new Error('pilot_media_slot_kind_conflict');
   }
   if (job.state === 'ready' || job.state === 'generating') {
+    return { job, claimed: false, claimTokenHash: null };
+  }
+  if (isRecoverableTimedOutVideo(job, now)) {
     return { job, claimed: false, claimTokenHash: null };
   }
   if (
@@ -778,12 +809,16 @@ async function finalizeReadyPilotMediaJob(
   };
   const contentHash = await buildReleaseContentHash(post);
   const nowIso = input.now.toISOString();
+  const recoveryCutoff = new Date(
+    input.now.getTime() - VIDEO_LATE_RECOVERY_MS,
+  ).toISOString();
   const reasoning = JSON.stringify({
     source: 'learning_pilot_media_job',
     jobId: input.job.id,
     slot: finiteCount(input.job.slot),
     policyVersion: input.job.policy_version,
     recordOnly: true,
+    recoveredAfterTimeout: input.job.state === 'failed',
   });
 
   await env.DB.batch([
@@ -816,7 +851,15 @@ async function finalizeReadyPilotMediaJob(
         AND job.owner_kind = ?
         AND job.owner_id = ?
         AND job.media_kind = ?
-        AND job.state IN ('claimed','generating')
+        AND (
+          job.state IN ('claimed','generating')
+          OR (
+            job.media_kind = 'video'
+            AND job.state = 'failed'
+            AND job.error_code = 'pilot_media_video_timed_out'
+            AND unixepoch(job.completed_at) > unixepoch(?)
+          )
+        )
         AND job.claim_token_hash = ?
         AND job.post_id IS NULL
         AND job.record_only = 1
@@ -850,6 +893,7 @@ async function finalizeReadyPilotMediaJob(
       input.identity.ownerKind,
       input.identity.ownerId,
       input.job.media_kind,
+      recoveryCutoff,
       input.claimTokenHash,
       input.postId,
       input.postId,
@@ -884,7 +928,15 @@ async function finalizeReadyPilotMediaJob(
         AND owner_kind = ?
         AND owner_id = ?
         AND media_kind = ?
-        AND state IN ('claimed','generating')
+        AND (
+          state IN ('claimed','generating')
+          OR (
+            media_kind = 'video'
+            AND state = 'failed'
+            AND error_code = 'pilot_media_video_timed_out'
+            AND unixepoch(completed_at) > unixepoch(?)
+          )
+        )
         AND claim_token_hash = ?
         AND post_id IS NULL
         AND record_only = 1
@@ -915,6 +967,7 @@ async function finalizeReadyPilotMediaJob(
       input.identity.ownerKind,
       input.identity.ownerId,
       input.job.media_kind,
+      recoveryCutoff,
       input.claimTokenHash,
     ),
   ]);
@@ -1101,7 +1154,9 @@ export async function pollRecordOnlyPilotVideoJob(
   );
   if (!job) throw new Error('pilot_media_job_not_found');
   if (job.media_kind !== 'video') throw new Error('pilot_media_job_not_video');
-  if (job.state !== 'generating') return publicPilotMediaJob(job);
+  const pollStartedAt = deps.now();
+  const lateRecovery = isRecoverableTimedOutVideo(job, pollStartedAt);
+  if (job.state !== 'generating' && !lateRecovery) return publicPilotMediaJob(job);
   if (
     !job.provider_request_id
     || !job.content
@@ -1125,7 +1180,7 @@ export async function pollRecordOnlyPilotVideoJob(
     );
     return publicPilotMediaJob(failed);
   }
-  const leaseExpired = Date.parse(job.lease_expires_at) <= deps.now().getTime();
+  const leaseExpired = Date.parse(job.lease_expires_at) <= pollStartedAt.getTime();
 
   let result: VideoPollResult;
   try {
@@ -1137,7 +1192,7 @@ export async function pollRecordOnlyPilotVideoJob(
       model: job.media_model,
     });
   } catch {
-    if (leaseExpired) {
+    if (leaseExpired && !lateRecovery) {
       const failed = await markPilotMediaJobFailed(
         env,
         job,
@@ -1150,7 +1205,7 @@ export async function pollRecordOnlyPilotVideoJob(
     return publicPilotMediaJob(job);
   }
   if (result.state === 'pending') {
-    if (leaseExpired) {
+    if (leaseExpired && !lateRecovery) {
       const failed = await markPilotMediaJobFailed(
         env,
         job,
@@ -1163,6 +1218,7 @@ export async function pollRecordOnlyPilotVideoJob(
     return publicPilotMediaJob(job);
   }
   if (result.state === 'failed' || !result.videoUrl) {
+    if (lateRecovery) return publicPilotMediaJob(job);
     const failed = await markPilotMediaJobFailed(
       env,
       job,

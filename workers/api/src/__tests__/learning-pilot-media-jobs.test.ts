@@ -132,6 +132,10 @@ function database(): DatabaseSync {
     resolve(process.cwd(), 'schema_v49_learning_pilot_media_jobs.sql'),
     'utf8',
   ));
+  db.exec(readFileSync(
+    resolve(process.cwd(), 'schema_v50_learning_pilot_media_late_recovery.sql'),
+    'utf8',
+  ));
   db.exec(`
     INSERT INTO learning_pilot_enrollments (
       id,user_id,workspace_key,client_id,owner_kind,owner_id,policy_version,
@@ -426,6 +430,142 @@ describe('record-only pilot media jobs', () => {
       publishingAllowed: false,
     });
     expect(db.prepare('SELECT COUNT(*) AS count FROM posts').get()).toEqual({ count: 0 });
+  });
+
+  it('recovers an already-paid timed-out video when Fal completes within the recovery window', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ state: 'pending' })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        videoUrl: 'https://fal.example/late-pilot-video.mp4',
+      });
+
+    const started = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(started.state).toBe('generating');
+
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const timedOut = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+    expect(timedOut).toMatchObject({
+      state: 'failed',
+      errorCode: 'pilot_media_video_timed_out',
+      postId: null,
+    });
+    expect(db.prepare(`
+      SELECT state,error_code,provider_request_id,completed_at
+      FROM learning_pilot_media_jobs
+      WHERE id = ?
+    `).get(started.id)).toMatchObject({
+      state: 'failed',
+      error_code: 'pilot_media_video_timed_out',
+      provider_request_id: 'request-1',
+      completed_at: '2026-07-24T01:16:00.000Z',
+    });
+
+    nowRef.value = new Date('2026-07-24T01:17:00.000Z');
+    const recovered = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+
+    expect(deps.pollVideo).toHaveBeenCalledTimes(2);
+    expect(recovered).toMatchObject({
+      state: 'ready',
+      attemptCount: 1,
+      sourceStatus: 'Draft',
+      mediaUrl: 'https://fal.example/late-pilot-video.mp4',
+      errorCode: null,
+      publishingAllowed: false,
+    });
+    expect(deps.startVideo).toHaveBeenCalledOnce();
+    expect(db.prepare(
+      'SELECT status,scheduled_for,post_type,video_status FROM posts WHERE id = ?',
+    ).get(recovered.postId!)).toMatchObject({
+      status: 'Draft',
+      scheduled_for: null,
+      post_type: 'video',
+      video_status: 'ready',
+    });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM publication_events').get())
+      .toEqual({ count: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM publish_delivery_receipts').get())
+      .toEqual({ count: 0 });
+  });
+
+  it('blocks duplicate media spend while timed-out video recovery remains possible', async () => {
+    const db = database();
+    const env = environment(db);
+    const nowRef = { value: new Date('2026-07-24T01:00:00.000Z') };
+    const deps = dependencies(nowRef);
+    (deps.pollVideo as ReturnType<typeof vi.fn>)
+      .mockResolvedValue({ state: 'pending' });
+
+    await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    nowRef.value = new Date('2026-07-24T01:16:00.000Z');
+    const timedOut = await pollRecordOnlyPilotVideoJob(env, {
+      identity,
+      enrollment,
+      slot: 2,
+    }, deps);
+    expect(timedOut.state).toBe('failed');
+
+    nowRef.value = new Date('2026-07-24T01:17:00.000Z');
+    const same = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(same).toEqual(timedOut);
+    await expect(startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 3,
+      mediaKind: 'image',
+    }, deps)).rejects.toThrow('pilot_media_generation_in_progress');
+    expect(deps.generateDraft).toHaveBeenCalledOnce();
+    expect(deps.generateImage).toHaveBeenCalledOnce();
+    expect(deps.startVideo).toHaveBeenCalledOnce();
+
+    nowRef.value = new Date('2026-07-24T03:17:00.000Z');
+    const retried = await startRecordOnlyPilotMediaJob(env, {
+      identity,
+      enrollment,
+      context,
+      adminId: 'admin-1',
+      slot: 2,
+      mediaKind: 'video',
+    }, deps);
+    expect(retried).toMatchObject({ state: 'generating', attemptCount: 2 });
+    expect(deps.generateDraft).toHaveBeenCalledTimes(2);
+    expect(deps.generateImage).toHaveBeenCalledTimes(2);
+    expect(deps.startVideo).toHaveBeenCalledTimes(2);
   });
 
   it('allows one lease-expired retry and never a third provider attempt', async () => {
