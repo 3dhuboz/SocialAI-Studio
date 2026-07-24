@@ -540,6 +540,7 @@ describe('weekly learning calibration audit', () => {
           { name: 'learning_calibration_audits' },
           { name: 'learning_decision_disqualifications' },
           { name: 'learning_pilot_generated_drafts' },
+          { name: 'learning_pilot_media_jobs' },
           { name: 'learning_pilot_samples' },
         ],
       });

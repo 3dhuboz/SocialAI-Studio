@@ -156,7 +156,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `admin-stats.ts` | Admin analytics |
 | `admin-actions.ts` | Admin: regen images, critique backlog, backfill |
 | `recommendations.ts` | `POST /api/recommendations/auto-fix-checklist` — classify checklist items + run safe auto-fixes (FB audit, schedule shift, description rewrite) |
-| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, staging-only provenance-bound pilot draft generation, exact-version real-post pilot attestation/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
+| `routes/learning.ts` | Authenticated decision receipts, settings/readiness controls, staging-only provenance-bound pilot text/media generation, exact-version real-post pilot attestation/validation, admin adjudication/evidence/backfill, anonymous links, and tenant-scoped owner outcome feedback |
 | `tracking.ts` | Public HTTPS-only short-link redirects with aggregate, bot-filtered click counts and no personal tracking |
 | `reach.ts` | Clerk/portal-authenticated reach profile, audience confirmation, and read-only plan APIs |
 | `shopify-reach.ts` | Signed Shopify-session mirror of reach profile, audience, and plan APIs |
@@ -188,6 +188,7 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 | `lib/learning/readiness.ts` | Protected Autopilot readiness thresholds, durable evidence evaluation, complete 168-hour outcome coverage and prediction quality, and strict tenant-scoped metric collection |
 | `lib/learning/calibration-audit.ts` | Bounded tenant-scoped weekly calibration claims and privacy-safe independent recheck receipts, kept separate from human adjudication |
 | `lib/learning/pilot-draft-generator.ts` | Staging-only high-assurance SocialAI draft generation with bounded retries, deterministic fabrication/denylist/repetition checks, and literal image-direction relevance gates |
+| `lib/learning/pilot-media-jobs.ts` | Staging-only six-slot image/video evidence jobs with exact consent/tenant binding, one active lease per workspace, two-attempt cap, immutable Draft provenance, and model-scoped fal queue polling |
 | `lib/publishing/publish-orchestrator.ts` | Single Postproxy/Meta publish egress after canonical ownership validation and release preflight |
 | `lib/reach/` | Confirmed geography, protected audience prediction, timing/hashtag models, media direction, immutable reach plans, HTTP mapping, and deletion helpers |
 | `lib/reach/timing-evidence.ts` | Tenant-scoped Facebook/Shopify engagement facts to local-time ranked posting windows with bounded archetype fallbacks |
@@ -217,11 +218,11 @@ jonesysgarage.ts / picklenick.ts / reloaded.ts / streetmeats.ts
 
 **Instance:** `socialai-db` (D1), id `6295841e-e5f7-4355-b0e0-c5f22e58d99d`
 
-**Current source schema version:** v48
+**Current source schema version:** v49
 
-**Current production schema version:** v43. Schemas v44-v48 remain absent.
+**Current production schema version:** v43. Schemas v44-v49 remain absent.
 
-**Current staging schema version:** v48 after the matching migration is applied.
+**Current staging schema version:** v49. The record-only pilot media job table and all nine immutable/egress-blocking triggers are present.
 
 The record-only pilot and independent calibration jobs are hard-gated to
 `ENVIRONMENT=staging` in both dispatcher and job entry points. Production
@@ -229,6 +230,16 @@ readiness remains safe on v43: it checks v44, the v45 `ai_usage` attribution
 column, v46, and v47 first, then writes a complete red receipt without querying
 or mutating deferred tables. Privacy deletion similarly removes deferred rows
 only when their tables exist.
+
+Pilot media evidence migration:
+`workers/api/schema_v49_learning_pilot_media_jobs.sql`.
+It adds six immutable image/video evidence slots per exact pilot enrollment,
+serializes active generation per workspace, caps provider attempts at two, and
+keeps video jobs out of `posts` until a result is ready. Database triggers block
+post mutation, publication, delivery, unsafe direct receipt deletion, and
+parent-enrollment deletion that could orphan a generated Draft. Consent
+withdrawal deletes only exact derived media posts, jobs, and scoped usage.
+This table is staging-only and must never be applied to production.
 
 Pilot-generated draft migration:
 `workers/api/schema_v48_learning_pilot_generated_drafts.sql`.
@@ -358,6 +369,8 @@ New migrations go in `workers/api/schema_vN.sql`. Use `IF NOT EXISTS` guards whe
 | `ai_usage` | Workspace-wide AI spend ledger with optional exact learning-decision attribution |
 | `learning_pilot_enrollments` | Policy-versioned record-only pilot cohort and consent receipts; update-blocked but privacy-deletable |
 | `learning_pilot_samples` | Immutable positive receipts for exact real owner/customer Draft versions admitted to the temporary record-only pilot |
+| `learning_pilot_generated_drafts` | Staging-only immutable provenance for derived record-only text Drafts |
+| `learning_pilot_media_jobs` | Staging-only six-slot image/video evidence ledger with bounded leases, exact derived Draft linkage, and permanent egress blocks |
 | `learning_release_evidence` | Expiring, hashed replay, tenancy, kill-switch, staging, and publish proofs |
 | `learning_release_readiness` | Durable release-gate snapshots evaluated by cron |
 

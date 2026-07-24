@@ -9,6 +9,7 @@ type ArchetypeRow = { archetype_slug: string | null };
 const DEFERRED_LEARNING_TABLES = [
   'learning_pilot_samples',
   'learning_pilot_generated_drafts',
+  'learning_pilot_media_jobs',
   'learning_decision_disqualifications',
   'learning_calibration_audits',
 ] as const;
@@ -25,6 +26,7 @@ async function existingDeferredLearningTables(
       AND name IN (
         'learning_pilot_samples',
         'learning_pilot_generated_drafts',
+        'learning_pilot_media_jobs',
         'learning_decision_disqualifications',
         'learning_calibration_audits'
       )
@@ -53,6 +55,42 @@ function outcomeDeletionTables(
     'learning_adjudications',
     'learning_pilot_enrollments',
   ];
+}
+
+async function deletePilotMediaPostsForWorkspace(
+  db: D1Database,
+  userId: string,
+  workspaceKey: string,
+): Promise<void> {
+  await db.prepare(`
+    DELETE FROM posts
+    WHERE user_id = ?
+      AND id IN (
+        SELECT post_id
+        FROM learning_pilot_media_jobs
+        WHERE user_id = ?
+          AND workspace_key = ?
+          AND state = 'ready'
+          AND post_id IS NOT NULL
+      )
+  `).bind(userId, userId, workspaceKey).run();
+}
+
+async function deletePilotMediaPostsForUser(
+  db: D1Database,
+  userId: string,
+): Promise<void> {
+  await db.prepare(`
+    DELETE FROM posts
+    WHERE user_id = ?
+      AND id IN (
+        SELECT post_id
+        FROM learning_pilot_media_jobs
+        WHERE user_id = ?
+          AND state = 'ready'
+          AND post_id IS NOT NULL
+      )
+  `).bind(userId, userId).run();
 }
 
 function canonicalArchetypes(rows: ArchetypeRow[]): string[] {
@@ -130,6 +168,9 @@ async function deleteOutcomeWorkspaceData(
     )
   `).bind(userId, workspaceKey).run();
   for (const table of outcomeDeletionTables(deferredTables)) {
+    if (table === 'learning_pilot_media_jobs') {
+      await deletePilotMediaPostsForWorkspace(db, userId, workspaceKey);
+    }
     await db.prepare(`
       DELETE FROM ${table}
       WHERE user_id = ? AND workspace_key = ?
@@ -155,6 +196,9 @@ async function deleteOutcomeUserData(
     )
   `).bind(userId).run();
   for (const table of outcomeDeletionTables(deferredTables)) {
+    if (table === 'learning_pilot_media_jobs') {
+      await deletePilotMediaPostsForUser(db, userId);
+    }
     await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`)
       .bind(userId).run();
   }

@@ -471,6 +471,42 @@ export interface LearningPilotGeneratedDraft {
   created: boolean;
 }
 
+export type LearningPilotMediaKind = 'image' | 'video';
+export type LearningPilotMediaState = 'claimed' | 'generating' | 'ready' | 'failed';
+
+export interface LearningPilotMediaJob {
+  id: string;
+  enrollmentId: string;
+  slot: number;
+  mediaKind: LearningPilotMediaKind;
+  state: LearningPilotMediaState;
+  attemptCount: number;
+  postId: string | null;
+  content: string | null;
+  hashtags: string[];
+  imagePrompt: string | null;
+  thumbnailUrl: string | null;
+  mediaUrl: string | null;
+  contentHash: string | null;
+  captionProvider: string | null;
+  captionModel: string | null;
+  mediaProvider: string | null;
+  mediaModel: string | null;
+  errorCode: string | null;
+  generatedAt: string;
+  completedAt: string | null;
+  recordOnly: true;
+  sourceStatus: 'Draft' | null;
+  scheduledFor: null;
+  publishingAllowed: false;
+}
+
+export interface LearningPilotMediaQueue {
+  recordOnly: true;
+  publishingAllowed: false;
+  jobs: LearningPilotMediaJob[];
+}
+
 export interface LearningPilotWithdrawal {
   withdrawn: boolean;
   alreadyWithdrawn: boolean;
@@ -483,6 +519,7 @@ export interface LearningPilotWithdrawal {
   decisionsRemoved: number;
   samplesRemoved: number;
   generatedPilotDraftsDeleted: number;
+  generatedPilotMediaDeleted: number;
   sourcePostsDeleted: 0;
   publishingRecordsDeleted: 0;
   originalDraftsRetained: true;
@@ -820,6 +857,52 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
         recordOnlyConfirmed: true,
       }));
       return res.json() as Promise<LearningPilotGeneratedDraft>;
+    },
+
+    async listLearningPilotMediaJobs(): Promise<LearningPilotMediaQueue> {
+      const res = await pilotF('/api/learning/pilot/media-jobs');
+      const data = await res.json() as LearningPilotMediaQueue;
+      return {
+        recordOnly: true,
+        publishingAllowed: false,
+        jobs: data.jobs ?? [],
+      };
+    },
+
+    async startLearningPilotMediaJob(
+      clientId: string | null,
+      slot: number,
+      mediaKind: LearningPilotMediaKind,
+    ): Promise<LearningPilotMediaJob> {
+      const res = await pilotF('/api/learning/pilot/media-jobs/start', j({
+        clientId,
+        slot,
+        mediaKind,
+        recordOnlyConfirmed: true,
+      }));
+      const data = await res.json() as {
+        recordOnly: true;
+        publishingAllowed: false;
+        job: LearningPilotMediaJob;
+      };
+      return data.job;
+    },
+
+    async pollLearningPilotMediaJob(
+      clientId: string | null,
+      slot: number,
+    ): Promise<LearningPilotMediaJob> {
+      const res = await pilotF('/api/learning/pilot/media-jobs/poll', j({
+        clientId,
+        slot,
+        recordOnlyConfirmed: true,
+      }));
+      const data = await res.json() as {
+        recordOnly: true;
+        publishingAllowed: false;
+        job: LearningPilotMediaJob;
+      };
+      return data.job;
     },
 
     async attestLearningPilotDraft(

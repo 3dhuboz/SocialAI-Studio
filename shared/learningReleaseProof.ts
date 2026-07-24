@@ -166,6 +166,56 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     assertion: 'record-only pilot draft generator retries unsupported first-person customer evidence before creating a receipt',
   },
   {
+    id: 'pilot_media_schema_and_egress',
+    suite: 'src/__tests__/learning-pilot-media-job-schema.test.ts',
+    assertion: 'learning pilot media job schema executes in SQLite and blocks a ready image candidate from every mutation path',
+  },
+  {
+    id: 'pilot_media_bounded_generation',
+    suite: 'src/__tests__/learning-pilot-media-jobs.test.ts',
+    assertion: 'record-only pilot media jobs allows one lease-expired retry and never a third provider attempt',
+  },
+  {
+    id: 'pilot_media_single_active_lease',
+    suite: 'src/__tests__/learning-pilot-media-jobs.test.ts',
+    assertion: 'record-only pilot media jobs permits only one active media generation lease per workspace',
+  },
+  {
+    id: 'pilot_media_provider_poll_contract',
+    suite: 'src/__tests__/learning-pilot-media-jobs.test.ts',
+    assertion: 'record-only pilot media jobs uses the full fal model path for video status and result polling',
+  },
+  {
+    id: 'pilot_media_image_usage_attribution',
+    suite: 'src/__tests__/image-gen.test.ts',
+    assertion: 'generateImageWithGuardrails — error handling attributes a pilot media image attempt to its immutable job operation and post id',
+  },
+  {
+    id: 'pilot_media_video_post_boundary',
+    suite: 'src/__tests__/learning-pilot-media-jobs.test.ts',
+    assertion: 'record-only pilot media jobs keeps a video out of posts until the provider result is ready',
+  },
+  {
+    id: 'pilot_media_route_gates',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes starts a bounded record-only pilot image job only after consent, context, and budget checks',
+  },
+  {
+    id: 'pilot_media_route_malformed_zero_spend',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes rejects malformed pilot media requests before reading consent or spending provider credit',
+  },
+  {
+    id: 'pilot_media_withdrawal_fail_closed',
+    suite: 'src/__tests__/learning-routes.test.ts',
+    assertion: 'learning settings and release evidence routes fails withdrawal closed when a generated media job or post state is unsafe',
+  },
+  {
+    id: 'pilot_media_account_deletion_post_first',
+    suite: 'src/__tests__/learning-outcome-deletion.test.ts',
+    assertion: 'learning outcome deletion invalidates the archetype and deletes the exact pilot media post before its immutable job',
+  },
+  {
     id: 'pilot_cron_staging_isolation',
     suite: 'src/__tests__/learning-pilot-cron-telemetry.test.ts',
     assertion: 'learning pilot cron telemetry restricts record-only pilot and calibration scheduling to staging',
@@ -514,6 +564,11 @@ export const REQUIRED_RELEASE_PROOF_CHECKS = [
     id: 'egress_record_only_pilot_permanent_block',
     suite: 'src/__tests__/publish-egress-preflight.test.ts',
     assertion: 'publishPersistedPost blocks copied record-only pilot media before critics or provider egress',
+  },
+  {
+    id: 'egress_record_only_media_job_permanent_block',
+    suite: 'src/__tests__/publish-egress-preflight.test.ts',
+    assertion: 'publishPersistedPost blocks ready pilot media jobs before critics or provider egress',
   },
   {
     id: 'publish_pass_preserved',

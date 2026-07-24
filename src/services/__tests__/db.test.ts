@@ -309,6 +309,7 @@ describe('learning decision client', () => {
               decisionsRemoved: 1,
               samplesRemoved: 1,
               generatedPilotDraftsDeleted: 1,
+              generatedPilotMediaDeleted: 1,
               sourcePostsDeleted: 0,
               publishingRecordsDeleted: 0,
               originalDraftsRetained: true,
@@ -395,6 +396,7 @@ describe('learning decision client', () => {
       publishingRecordsDeleted: 0,
       originalDraftsRetained: true,
       generatedPilotDraftsDeleted: 1,
+      generatedPilotMediaDeleted: 1,
     });
     expect(calls.every(({ url }) =>
       url.startsWith('https://socialai-api-staging.steve-700.workers.dev/'))).toBe(true);
@@ -444,6 +446,107 @@ describe('learning decision client', () => {
         },
       },
     ]);
+  });
+
+  it('lists, starts, and polls only record-only pilot media jobs', async () => {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const imageJob = {
+      id: 'media-job-1',
+      enrollmentId: 'pilot-enrollment-1',
+      slot: 1,
+      mediaKind: 'image',
+      state: 'ready',
+      attemptCount: 1,
+      postId: 'pilot-media-media-job-1',
+      content: 'A verified business post.',
+      hashtags: ['#Gladstone'],
+      imagePrompt: 'A relevant daylight business scene with accurate details.',
+      thumbnailUrl: 'https://cdn.example.test/image.jpg',
+      mediaUrl: 'https://cdn.example.test/image.jpg',
+      contentHash: 'b'.repeat(64),
+      captionProvider: 'anthropic',
+      captionModel: 'claude-haiku-4-5',
+      mediaProvider: 'fal',
+      mediaModel: 'fal-ai/flux-pro',
+      errorCode: null,
+      generatedAt: '2026-07-24T04:00:00.000Z',
+      completedAt: '2026-07-24T04:00:08.000Z',
+      recordOnly: true,
+      sourceStatus: 'Draft',
+      scheduledFor: null,
+      publishingAllowed: false,
+    } as const;
+    const videoJob = {
+      ...imageJob,
+      id: 'media-job-2',
+      slot: 2,
+      mediaKind: 'video',
+      state: 'generating',
+      postId: null,
+      mediaUrl: null,
+      contentHash: null,
+      completedAt: null,
+      sourceStatus: null,
+    } as const;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      calls.push({ url, method, body });
+      const payload = url.endsWith('/media-jobs/start')
+        ? { recordOnly: true, publishingAllowed: false, job: imageJob }
+        : url.endsWith('/media-jobs/poll')
+          ? { recordOnly: true, publishingAllowed: false, job: videoJob }
+          : { recordOnly: true, publishingAllowed: false, jobs: [imageJob] };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const db = createDb(async () => 'token');
+
+    const queue = await db.listLearningPilotMediaJobs();
+    const started = await db.startLearningPilotMediaJob('client_1', 1, 'image');
+    const polled = await db.pollLearningPilotMediaJob('client_1', 2);
+
+    expect(queue).toEqual({
+      recordOnly: true,
+      publishingAllowed: false,
+      jobs: [imageJob],
+    });
+    expect(started).toEqual(imageJob);
+    expect(polled).toEqual(videoJob);
+    expect(started).not.toHaveProperty('providerRequestId');
+    expect(started).not.toHaveProperty('claimTokenHash');
+    expect(calls).toEqual([
+      {
+        url: expect.stringContaining('/api/learning/pilot/media-jobs'),
+        method: 'GET',
+        body: null,
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/media-jobs/start'),
+        method: 'POST',
+        body: {
+          clientId: 'client_1',
+          slot: 1,
+          mediaKind: 'image',
+          recordOnlyConfirmed: true,
+        },
+      },
+      {
+        url: expect.stringContaining('/api/learning/pilot/media-jobs/poll'),
+        method: 'POST',
+        body: {
+          clientId: 'client_1',
+          slot: 2,
+          recordOnlyConfirmed: true,
+        },
+      },
+    ]);
+    expect(calls.every(({ url }) =>
+      url.startsWith('https://socialai-api-staging.steve-700.workers.dev/'))).toBe(true);
   });
 });
 

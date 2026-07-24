@@ -518,6 +518,47 @@ describe('generateImageWithGuardrails — error handling', () => {
     expect(calls[0].bindings[calls[0].bindings.length - 1]).toBe(0);
   });
 
+  it('attributes a pilot media image attempt to its immutable job operation and post id', async () => {
+    const calls: Array<{ sql: string; bindings: unknown[] }> = [];
+    const env: any = {
+      FAL_API_KEY: 'k',
+      ENVIRONMENT: 'staging',
+      DB: {
+        prepare: vi.fn().mockImplementation((sql: string) => ({
+          bind: (...bindings: unknown[]) => ({
+            first: () => Promise.resolve(
+              /from users/i.test(sql) ? { archetype_slug: 'tech-saas-agency' } : null,
+            ),
+            all: () => Promise.resolve({ results: [] }),
+            run: async () => {
+              calls.push({ sql, bindings });
+              return { success: true };
+            },
+          }),
+        })),
+      },
+    };
+    fetchMock.mockResolvedValueOnce(new Response('provider unavailable', {
+      status: 503,
+      headers: { 'content-type': 'text/plain' },
+    }));
+
+    const result = await generateImageWithGuardrails(env, 'owner-1', null, {
+      prompt: 'bright custom software planning workshop',
+      negativePrompt: 'dark server rack',
+    }, {
+      postId: 'pilot-media-job-1',
+      usageOperation: 'learning_pilot_media_image',
+    });
+
+    expect(result.imageUrl).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toMatch(/INSERT INTO ai_usage/i);
+    expect(calls[0].bindings[4]).toBe('learning_pilot_media_image');
+    expect(calls[0].bindings[9]).toBe('pilot-media-job-1');
+    expect(calls[0].bindings.at(-1)).toBe(0);
+  });
+
   it('brand-ref DB lookup failure does NOT throw — falls through to flux-dev', async () => {
     // Simulate the photo query crashing. Prepare returns an object whose
     // .all() rejects; the rest of the function should swallow and proceed.

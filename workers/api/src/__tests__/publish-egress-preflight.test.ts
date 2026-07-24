@@ -299,6 +299,7 @@ describe('evaluatePermanentPublishBlock', () => {
     expect(calls).toHaveLength(2);
     expect(calls[0].sql).toContain('learning_pilot_enrollments enrollment');
     expect(calls[0].sql).toContain('learning_pilot_generated_drafts generated');
+    expect(calls[0].sql).toContain('learning_pilot_media_jobs media');
     expect(calls[1].sql).toContain('INNER JOIN learning_decision_disqualifications disq');
     expect(calls[1].sql).toContain("disq.reason = 'synthetic_qa'");
     expect(calls[1].binds).toEqual([
@@ -395,6 +396,48 @@ describe('evaluatePermanentPublishBlock', () => {
     },
   );
 
+  it('permanently blocks a ready generated pilot media job by exact tenant tuple', async () => {
+    const { db, calls } = makeRecordingD1({
+      'learning_pilot_media_jobs media': [
+        { block_source: 'generated_pilot_media' },
+      ],
+    });
+    const post: PersistedPublishPost = {
+      ...fixturePost,
+      id: 'pilot-media-job-post-1',
+      user_id: 'owner-1',
+      client_id: 'client-1',
+      owner_kind: 'client',
+      owner_id: 'client-1',
+      post_type: 'image',
+      image_url: 'https://cdn.example/pilot-media-job.jpg',
+      image_critique_score: 100,
+    };
+
+    const result = await evaluatePermanentPublishBlock(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      post,
+    );
+
+    expect(result).toEqual({
+      mode: 'approval',
+      state: 'block_red',
+      mayPublish: false,
+      mustHold: true,
+      decisionId: null,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain("media.state = 'ready'");
+    expect(calls[0].binds).toEqual([
+      'owner-1',
+      'client-1',
+      'client-1',
+      'client',
+      'client-1',
+      'pilot-media-job-post-1',
+    ]);
+  });
+
   it('skips the staging-only table in current production', async () => {
     const prepare = vi.fn(() => {
       throw new Error('production schema v42 must not query the staging-only table');
@@ -477,6 +520,34 @@ describe('publishPersistedPost', () => {
         ...fixturePost,
         id: 'pilot-copy-media-1',
         image_url: 'https://cdn.example/pilot-image.jpg',
+        image_critique_score: 100,
+      },
+      postproxyTarget,
+      deps,
+    )).rejects.toThrow('permanently disqualified');
+
+    expect(persistHold).toHaveBeenCalledOnce();
+    expect(calls).toEqual({ critic: 0, postproxy: 0, graph: 0 });
+  });
+
+  it('blocks ready pilot media jobs before critics or provider egress', async () => {
+    const calls = { critic: 0, postproxy: 0, graph: 0 };
+    const deps = safeDeps(calls);
+    delete deps.evaluatePermanentBlock;
+    const persistHold = vi.fn(async () => undefined);
+    deps.persistHold = persistHold;
+    const { db } = makeRecordingD1({
+      'learning_pilot_media_jobs media': [
+        { block_source: 'generated_pilot_media' },
+      ],
+    });
+
+    await expect(publishPersistedPost(
+      { DB: db, ENVIRONMENT: 'staging' } as Env,
+      {
+        ...fixturePost,
+        id: 'pilot-media-job-post-1',
+        image_url: 'https://cdn.example/pilot-media-job.jpg',
         image_critique_score: 100,
       },
       postproxyTarget,

@@ -33,6 +33,12 @@ import {
 } from '../lib/learning/pilot-evaluation';
 import { generateRecordOnlyPilotDraft } from '../lib/learning/pilot-draft-generator';
 import {
+  listPilotMediaJobs,
+  pollRecordOnlyPilotVideoJob,
+  startRecordOnlyPilotMediaJob,
+  type PilotMediaKind,
+} from '../lib/learning/pilot-media-jobs';
+import {
   getWorkspaceLearningSettings,
   getWorkspaceMonthlyAiSpend,
   isProtectedAutopilotEligible,
@@ -914,6 +920,79 @@ async function publicGeneratedPilotDraft(
   };
 }
 
+function loadPilotGenerationEnrollment(
+  db: D1Database,
+  identity: WorkspaceIdentity,
+  nowIso: string,
+): Promise<PilotDraftGenerationEnrollmentRow | null> {
+  return db.prepare(`
+    /* pilot_draft_generation_enrollment */
+    SELECT
+      pen.id,pen.user_id,pen.workspace_key,pen.client_id,
+      pen.owner_kind,pen.owner_id,pen.policy_version,
+      pen.consent_basis,pen.consent_confirmed_at,pen.consent_note,
+      w.monthly_ai_budget_usd_cents,
+      COALESCE(client.archetype_slug, pilot_user.archetype_slug)
+        AS archetype_slug,
+      client.status AS client_status
+    FROM learning_pilot_enrollments pen
+    INNER JOIN workspace_learning_settings w
+      ON w.user_id = pen.user_id
+     AND w.workspace_key = pen.workspace_key
+     AND w.client_id IS pen.client_id
+     AND w.owner_kind = pen.owner_kind
+     AND w.owner_id = pen.owner_id
+     AND w.mode = 'approval'
+     AND w.autopublish_consent_at IS NULL
+     AND w.autopublish_policy_version IS NULL
+     AND w.experiment_rate = 0
+     AND w.monthly_ai_budget_usd_cents > 0
+     AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
+    LEFT JOIN clients client
+      ON client.id = pen.client_id
+     AND client.user_id = pen.user_id
+    LEFT JOIN users pilot_user
+      ON pilot_user.id = pen.user_id
+    WHERE pen.user_id = ?
+      AND pen.workspace_key = ?
+      AND pen.client_id IS ?
+      AND pen.owner_kind = ?
+      AND pen.owner_id = ?
+      AND pen.policy_version = ?
+      AND pen.record_only = 1
+      AND pen.consent_confirmed_at IS NOT NULL
+      AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
+      AND (
+        (
+          pen.owner_kind = 'user'
+          AND pen.consent_basis = 'owner_self'
+          AND pen.client_id IS NULL
+          AND pen.workspace_key = '__owner__'
+          AND pen.owner_id = pen.user_id
+        )
+        OR (
+          pen.owner_kind = 'client'
+          AND pen.consent_basis = 'customer_attested'
+          AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
+          AND pen.client_id IS NOT NULL
+          AND pen.workspace_key = pen.client_id
+          AND pen.owner_id = pen.client_id
+          AND client.id IS NOT NULL
+          AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
+        )
+      )
+    LIMIT 1
+  `).bind(
+    identity.userId,
+    identity.workspaceKey,
+    identity.clientId,
+    identity.ownerKind,
+    identity.ownerId,
+    AUTOPILOT_POLICY_VERSION,
+    nowIso,
+  ).first<PilotDraftGenerationEnrollmentRow>();
+}
+
 async function loadPilotCandidatePreviews(
   db: D1Database,
   userId: string,
@@ -1324,6 +1403,7 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
         decisionsRemoved: result.decisionsRemoved,
         samplesRemoved: result.samplesRemoved,
         generatedPilotDraftsDeleted: result.generatedPilotDraftsDeleted,
+        generatedPilotMediaDeleted: result.generatedPilotMediaDeleted,
         withdrawalNoteLength: withdrawalNote.length,
         sourcePostsDeleted: result.sourcePostsDeleted,
         publishingRecordsDeleted: result.publishingRecordsDeleted,
@@ -1354,8 +1434,293 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
           code: 'pilot_withdrawal_generated_draft_conflict',
         }, 409);
       }
+      if (message.includes('unsafe media job state')) {
+        return c.json({
+          error: message,
+          code: 'pilot_withdrawal_media_conflict',
+        }, 409);
+      }
       return c.json({
         error: 'Pilot withdrawal failed closed; no source posts or publishing records were changed',
+      }, 503);
+    }
+  });
+
+  app.get('/api/learning/pilot/media-jobs', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot media jobs are available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+    try {
+      return c.json({
+        recordOnly: true,
+        publishingAllowed: false,
+        jobs: await listPilotMediaJobs(c.env.DB, adminId),
+      });
+    } catch (error) {
+      console.warn('[learning-pilot] media job listing failed closed', {
+        reason: error instanceof Error ? error.message : 'unknown error',
+      });
+      return c.json({
+        error: 'Pilot media jobs are unavailable until the staging-only media schema is ready',
+        code: 'pilot_media_schema_unavailable',
+      }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/media-jobs/start', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot media generation is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['clientId', 'recordOnlyConfirmed', 'slot', 'mediaKind'].includes(key),
+    );
+    const mediaKind = body.mediaKind;
+    const slot = body.slot;
+    if (
+      unexpected.length > 0
+      || body.recordOnlyConfirmed !== true
+      || !Number.isInteger(slot)
+      || Number(slot) < 1
+      || Number(slot) > 6
+      || !['image', 'video'].includes(String(mediaKind))
+      || (
+        body.clientId !== undefined
+        && body.clientId !== null
+        && typeof body.clientId !== 'string'
+      )
+    ) {
+      return c.json({
+        error: 'Pilot media generation requires only clientId, slot 1-6, mediaKind image|video, and recordOnlyConfirmed=true',
+      }, 400);
+    }
+
+    const clientId = requestedClientId(body.clientId);
+    const identity = normalizeWorkspaceIdentity(
+      adminId,
+      clientId,
+      clientId === null ? 'user' : 'client',
+      clientId ?? adminId,
+    );
+    const now = new Date();
+    const enrollment = await loadPilotGenerationEnrollment(
+      c.env.DB,
+      identity,
+      now.toISOString(),
+    );
+    if (!enrollment) {
+      return c.json({
+        error: 'No current record-only pilot consent is available for this workspace',
+        code: 'pilot_media_not_authorized',
+      }, 409);
+    }
+
+    let criticContext;
+    try {
+      criticContext = await loadCriticContext(
+        c.env,
+        identity.userId,
+        identity.clientId,
+        identity.ownerKind,
+        identity.ownerId,
+      );
+    } catch {
+      return c.json({
+        error: 'Pilot business context could not be loaded; no media job was started',
+        code: 'pilot_context_unavailable',
+      }, 503);
+    }
+    if (!assessCriticContextReadiness(criticContext).ready) {
+      return c.json({
+        error: 'Pilot business context is incomplete; no media job was started',
+        code: 'pilot_context_not_ready',
+      }, 409);
+    }
+
+    const monthlyBudgetUsdCents = countValue(enrollment.monthly_ai_budget_usd_cents);
+    const budget = await getRecordOnlyPilotBudgetStatus(
+      c.env.DB,
+      identity,
+      monthlyBudgetUsdCents,
+      now,
+    );
+    if (!budget.allowed) {
+      return c.json({
+        error: 'Pilot AI budget reserve is unavailable; no media job was started',
+        code: 'pilot_budget_unavailable',
+      }, 409);
+    }
+
+    try {
+      const job = await startRecordOnlyPilotMediaJob(c.env, {
+        identity,
+        enrollment: {
+          id: enrollment.id,
+          policyVersion: enrollment.policy_version,
+        },
+        context: criticContext,
+        adminId,
+        slot: Number(slot),
+        mediaKind: mediaKind as PilotMediaKind,
+      });
+      return c.json({ recordOnly: true, publishingAllowed: false, job });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      console.warn('[learning-pilot] media generation failed closed', {
+        workspaceKey: identity.workspaceKey,
+        slot,
+        mediaKind,
+        reason,
+      });
+      if (reason.includes('staging_fal_secret_missing')) {
+        return c.json({
+          error: 'The staging media provider is not configured; no media job was started',
+          code: 'pilot_media_provider_unconfigured',
+        }, 503);
+      }
+      if (reason.includes('slot_kind_conflict')) {
+        return c.json({
+          error: 'That immutable pilot slot is already reserved for another media type',
+          code: 'pilot_media_slot_conflict',
+        }, 409);
+      }
+      if (reason.includes('generation_in_progress')) {
+        return c.json({
+          error: 'Another media candidate is still generating for this workspace',
+          code: 'pilot_media_generation_in_progress',
+        }, 409);
+      }
+      if (reason.includes('not_authorized')) {
+        return c.json({
+          error: 'Pilot consent changed before the media slot could be reserved',
+          code: 'pilot_media_not_authorized',
+        }, 409);
+      }
+      return c.json({
+        error: 'Pilot media generation failed closed; nothing was scheduled or published',
+        code: 'pilot_media_generation_failed_closed',
+      }, 503);
+    }
+  });
+
+  app.post('/api/learning/pilot/media-jobs/poll', async (c) => {
+    const adminId = c.get('uid') as string;
+    if (!(await learningAdmin(c.env.DB, adminId))) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+    const stagingError = pilotStagingError(c.env);
+    if (stagingError) return c.json(stagingError, 409);
+    if (!dormantPilotEnabled(c.env)) {
+      return c.json({
+        error: 'Pilot media polling is available only while learning enforcement and autopilot are disabled',
+      }, 409);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonBody(c.req.raw);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, 400);
+    }
+    const unexpected = Object.keys(body).filter(
+      (key) => !['clientId', 'recordOnlyConfirmed', 'slot'].includes(key),
+    );
+    if (
+      unexpected.length > 0
+      || body.recordOnlyConfirmed !== true
+      || !Number.isInteger(body.slot)
+      || Number(body.slot) < 1
+      || Number(body.slot) > 6
+      || (
+        body.clientId !== undefined
+        && body.clientId !== null
+        && typeof body.clientId !== 'string'
+      )
+    ) {
+      return c.json({
+        error: 'Pilot media polling requires only clientId, slot 1-6, and recordOnlyConfirmed=true',
+      }, 400);
+    }
+
+    const clientId = requestedClientId(body.clientId);
+    const identity = normalizeWorkspaceIdentity(
+      adminId,
+      clientId,
+      clientId === null ? 'user' : 'client',
+      clientId ?? adminId,
+    );
+    const enrollment = await loadPilotGenerationEnrollment(
+      c.env.DB,
+      identity,
+      new Date().toISOString(),
+    );
+    if (!enrollment) {
+      return c.json({
+        error: 'No current record-only pilot consent is available for this workspace',
+        code: 'pilot_media_not_authorized',
+      }, 409);
+    }
+
+    try {
+      const job = await pollRecordOnlyPilotVideoJob(c.env, {
+        identity,
+        enrollment: {
+          id: enrollment.id,
+          policyVersion: enrollment.policy_version,
+        },
+        slot: Number(body.slot),
+      });
+      return c.json({ recordOnly: true, publishingAllowed: false, job });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'unknown error';
+      if (reason.includes('staging_fal_secret_missing')) {
+        return c.json({
+          error: 'The staging media provider is not configured',
+          code: 'pilot_media_provider_unconfigured',
+        }, 503);
+      }
+      if (reason.includes('not_found')) {
+        return c.json({
+          error: 'The requested record-only pilot video job was not found',
+          code: 'pilot_media_job_not_found',
+        }, 404);
+      }
+      if (reason.includes('not_video')) {
+        return c.json({
+          error: 'Only pilot video jobs can be polled',
+          code: 'pilot_media_job_not_video',
+        }, 409);
+      }
+      console.warn('[learning-pilot] media polling failed closed', {
+        workspaceKey: identity.workspaceKey,
+        slot: body.slot,
+        reason,
+      });
+      return c.json({
+        error: 'Pilot media polling failed closed; nothing was scheduled or published',
+        code: 'pilot_media_poll_failed_closed',
       }, 503);
     }
   });
@@ -1404,72 +1769,11 @@ export function registerLearningRoutes(app: Hono<{ Bindings: Env }>): void {
       clientId ?? adminId,
     );
     const now = new Date();
-    const enrollment = await c.env.DB.prepare(`
-      /* pilot_draft_generation_enrollment */
-      SELECT
-        pen.id,pen.user_id,pen.workspace_key,pen.client_id,
-        pen.owner_kind,pen.owner_id,pen.policy_version,
-        pen.consent_basis,pen.consent_confirmed_at,pen.consent_note,
-        w.monthly_ai_budget_usd_cents,
-        COALESCE(client.archetype_slug, pilot_user.archetype_slug)
-          AS archetype_slug,
-        client.status AS client_status
-      FROM learning_pilot_enrollments pen
-      INNER JOIN workspace_learning_settings w
-        ON w.user_id = pen.user_id
-       AND w.workspace_key = pen.workspace_key
-       AND w.client_id IS pen.client_id
-       AND w.owner_kind = pen.owner_kind
-       AND w.owner_id = pen.owner_id
-       AND w.mode = 'approval'
-       AND w.autopublish_consent_at IS NULL
-       AND w.autopublish_policy_version IS NULL
-       AND w.experiment_rate = 0
-       AND w.monthly_ai_budget_usd_cents > 0
-       AND NULLIF(TRIM(COALESCE(w.disabled_reason, '')), '') IS NULL
-      LEFT JOIN clients client
-        ON client.id = pen.client_id
-       AND client.user_id = pen.user_id
-      LEFT JOIN users pilot_user
-        ON pilot_user.id = pen.user_id
-      WHERE pen.user_id = ?
-        AND pen.workspace_key = ?
-        AND pen.client_id IS ?
-        AND pen.owner_kind = ?
-        AND pen.owner_id = ?
-        AND pen.policy_version = ?
-        AND pen.record_only = 1
-        AND pen.consent_confirmed_at IS NOT NULL
-        AND unixepoch(pen.consent_confirmed_at) <= unixepoch(?)
-        AND (
-          (
-            pen.owner_kind = 'user'
-            AND pen.consent_basis = 'owner_self'
-            AND pen.client_id IS NULL
-            AND pen.workspace_key = '__owner__'
-            AND pen.owner_id = pen.user_id
-          )
-          OR (
-            pen.owner_kind = 'client'
-            AND pen.consent_basis = 'customer_attested'
-            AND NULLIF(TRIM(COALESCE(pen.consent_note, '')), '') IS NOT NULL
-            AND pen.client_id IS NOT NULL
-            AND pen.workspace_key = pen.client_id
-            AND pen.owner_id = pen.client_id
-            AND client.id IS NOT NULL
-            AND COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'
-          )
-        )
-      LIMIT 1
-    `).bind(
-      identity.userId,
-      identity.workspaceKey,
-      identity.clientId,
-      identity.ownerKind,
-      identity.ownerId,
-      AUTOPILOT_POLICY_VERSION,
+    const enrollment = await loadPilotGenerationEnrollment(
+      c.env.DB,
+      identity,
       now.toISOString(),
-    ).first<PilotDraftGenerationEnrollmentRow>();
+    );
     if (!enrollment) {
       return c.json({
         error: 'No current record-only pilot consent is available for this workspace',

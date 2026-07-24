@@ -1,8 +1,15 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { AdminLearningOperations, LearningPilotQueue } from '../services/db';
-import { LearningOperationsCard } from './AdminCustomers';
+import type {
+  AdminLearningOperations,
+  LearningPilotMediaJob,
+  LearningPilotQueue,
+} from '../services/db';
+import {
+  isReviewablePilotMediaJob,
+  LearningOperationsCard,
+} from './AdminCustomers';
 
 const operations: AdminLearningOperations = {
   policyVersion: '2026-07-14-v1',
@@ -83,6 +90,33 @@ const pilotQueue: LearningPilotQueue = {
       meaningfulProfileFieldCount: 0, verifiedFactCount: 3,
     },
   ],
+};
+
+const readyPilotImage: LearningPilotMediaJob = {
+  id: 'media-job-1',
+  enrollmentId: 'pilot-enrollment-owner',
+  slot: 1,
+  mediaKind: 'image',
+  state: 'ready',
+  attemptCount: 1,
+  postId: 'pilot-media-media-job-1',
+  content: 'A genuine record-only SocialAI image candidate.',
+  hashtags: ['#WorkflowAutomation'],
+  imagePrompt: 'Bright overhead photograph of a verified paper workflow map.',
+  thumbnailUrl: 'https://cdn.example.test/workflow.jpg',
+  mediaUrl: 'https://cdn.example.test/workflow.jpg',
+  contentHash: 'b'.repeat(64),
+  captionProvider: 'anthropic',
+  captionModel: 'claude-haiku-4-5',
+  mediaProvider: 'fal',
+  mediaModel: 'gpt-image-2-medium',
+  errorCode: null,
+  generatedAt: '2026-07-24T04:00:00.000Z',
+  completedAt: '2026-07-24T04:00:08.000Z',
+  recordOnly: true,
+  sourceStatus: 'Draft',
+  scheduledFor: null,
+  publishingAllowed: false,
 };
 
 describe('LearningOperationsCard', () => {
@@ -269,13 +303,111 @@ describe('LearningOperationsCard', () => {
     expect(html).toContain(
       'Original customer/source drafts, schedules, and publishing records are never deleted',
     );
-    expect(html).toContain('a draft generated only for this staging pilot is derived data');
+    expect(html).toContain(
+      'a draft generated only for this staging pilot, including generated media and its scoped usage receipts',
+    );
     expect(html).toContain('Generate one record-only staging draft');
     expect(html).toContain('cannot enter any publishing or delivery path');
     expect(html).toContain('aria-label="Confirm pilot withdrawal for My workspace"');
     expect(html).toContain('aria-label="Pilot withdrawal note for My workspace"');
     expect(html).toContain('Withdraw pilot consent and erase derived evidence');
     expect(html).toContain('separate staging-copy consent receipt');
+  });
+
+  it('shows six immutable media slots without any publish or approval action', () => {
+    const generatingVideo: LearningPilotMediaJob = {
+      ...readyPilotImage,
+      id: 'media-job-2',
+      slot: 2,
+      mediaKind: 'video',
+      state: 'generating',
+      postId: null,
+      mediaUrl: null,
+      contentHash: null,
+      completedAt: null,
+      sourceStatus: null,
+    };
+    const failedImage: LearningPilotMediaJob = {
+      ...readyPilotImage,
+      id: 'media-job-3',
+      slot: 3,
+      state: 'failed',
+      attemptCount: 1,
+      postId: null,
+      content: null,
+      hashtags: [],
+      imagePrompt: null,
+      thumbnailUrl: null,
+      mediaUrl: null,
+      contentHash: null,
+      captionProvider: null,
+      captionModel: null,
+      mediaProvider: null,
+      mediaModel: null,
+      errorCode: 'provider_unavailable',
+      completedAt: '2026-07-24T04:00:08.000Z',
+      sourceStatus: null,
+    };
+    const html = renderToStaticMarkup(
+      <LearningOperationsCard
+        operations={operations}
+        pilotQueue={pilotQueue}
+        pilotMediaJobs={[readyPilotImage, generatingVideo, failedImage]}
+        pilotActionKey={null}
+        loading={false}
+        savingDecisionId={null}
+        onAdjudicate={async () => undefined}
+        onPilotEnroll={async () => undefined}
+        onPilotWithdraw={async () => undefined}
+        onPilotValidate={async () => undefined}
+        onPilotMediaStart={async () => undefined}
+        onPilotMediaPoll={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('Record-only media evidence lab');
+    expect(html).toContain('3 / 6 claimed');
+    expect(html).toContain('Slot 1 / image');
+    expect(html).toContain('Slot 2 / video');
+    expect(html).toContain('Slot 3 / image');
+    expect(html).toContain('Slot 4');
+    expect(html).toContain('Slot 5');
+    expect(html).toContain('Slot 6');
+    expect(html).toContain('Check video status');
+    expect(html).toContain('Failed closed: provider unavailable');
+    expect(html).toContain('Use bounded retry');
+    expect(html).toContain('A genuine record-only SocialAI image candidate.');
+    expect(html).toContain('fingerprint bbbbbbbbbbbbbbbb');
+    expect(html).toContain(
+      'aria-label="Confirm generated media candidate in slot 1 for My workspace"',
+    );
+    expect(html).toContain('This confirms provenance only, not that it is safe to publish');
+    expect(html).toContain('Confirm provenance and run critics');
+    expect(html).toContain(
+      'aria-label="Generate record-only image in slot 4 for My workspace"',
+    );
+    expect(html).toContain(
+      'aria-label="Generate record-only video in slot 4 for My workspace"',
+    );
+    expect(html).not.toContain('Approve media');
+    expect(html).not.toContain('Schedule media');
+    expect(html).not.toContain('Publish media');
+  });
+
+  it('reviews only an exact unscheduled record-only media Draft', () => {
+    expect(isReviewablePilotMediaJob(readyPilotImage)).toBe(true);
+    expect(isReviewablePilotMediaJob({
+      ...readyPilotImage,
+      scheduledFor: '2026-07-25T08:00:00.000Z' as never,
+    })).toBe(false);
+    expect(isReviewablePilotMediaJob({
+      ...readyPilotImage,
+      publishingAllowed: true as never,
+    })).toBe(false);
+    expect(isReviewablePilotMediaJob({
+      ...readyPilotImage,
+      contentHash: 'not-a-fingerprint',
+    })).toBe(false);
   });
 
   it('fails closed when an enrolled workspace has no exact draft preview', () => {

@@ -19,9 +19,24 @@ vi.mock('../lib/learning/pilot-draft-generator', async (importOriginal) => {
   return { ...actual, generateRecordOnlyPilotDraft: vi.fn() };
 });
 
+vi.mock('../lib/learning/pilot-media-jobs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/learning/pilot-media-jobs')>();
+  return {
+    ...actual,
+    listPilotMediaJobs: vi.fn(),
+    startRecordOnlyPilotMediaJob: vi.fn(),
+    pollRecordOnlyPilotVideoJob: vi.fn(),
+  };
+});
+
 import { registerLearningRoutes } from '../routes/learning';
 import { AUTOPILOT_POLICY_VERSION } from '../lib/learning/readiness';
 import { generateRecordOnlyPilotDraft } from '../lib/learning/pilot-draft-generator';
+import {
+  listPilotMediaJobs,
+  pollRecordOnlyPilotVideoJob,
+  startRecordOnlyPilotMediaJob,
+} from '../lib/learning/pilot-media-jobs';
 import {
   buildReleaseContentHash,
   runAndPersistReleasePipeline,
@@ -30,6 +45,9 @@ import {
 
 const runPilotPipeline = vi.mocked(runAndPersistReleasePipeline);
 const generatePilotDraft = vi.mocked(generateRecordOnlyPilotDraft);
+const listMediaJobs = vi.mocked(listPilotMediaJobs);
+const startMediaJob = vi.mocked(startRecordOnlyPilotMediaJob);
+const pollMediaJob = vi.mocked(pollRecordOnlyPilotVideoJob);
 
 const adjudicationPost: PublishablePost = {
   id: 'post-sample-1',
@@ -120,6 +138,21 @@ describe('learning receipt routes', () => {
         method: 'POST',
         headers: adminRequestHeaders,
         body: JSON.stringify({ recordOnlyConfirmed: true }),
+      }],
+      ['/api/learning/pilot/media-jobs', { headers: adminRequestHeaders }],
+      ['/api/learning/pilot/media-jobs/start', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({
+          slot: 1,
+          mediaKind: 'image',
+          recordOnlyConfirmed: true,
+        }),
+      }],
+      ['/api/learning/pilot/media-jobs/poll', {
+        method: 'POST',
+        headers: adminRequestHeaders,
+        body: JSON.stringify({ slot: 1, recordOnlyConfirmed: true }),
       }],
       ['/api/learning/pilot/attest/post-1', {
         method: 'POST',
@@ -315,6 +348,9 @@ describe('learning settings and release evidence routes', () => {
   beforeEach(() => {
     runPilotPipeline.mockReset();
     generatePilotDraft.mockReset();
+    listMediaJobs.mockReset();
+    startMediaJob.mockReset();
+    pollMediaJob.mockReset();
   });
 
   it('returns the authenticated client learning summary under its canonical tuple', async () => {
@@ -1055,6 +1091,237 @@ describe('learning settings and release evidence routes', () => {
       JSON.stringify(generated.hashtags),
       generated.imagePrompt,
     ]);
+  });
+
+  it('starts a bounded record-only pilot image job only after consent, context, and budget checks', async () => {
+    const mediaJob = {
+      id: 'pilot-media-job-1',
+      enrollmentId: 'pilot-enrollment-owner',
+      slot: 1,
+      mediaKind: 'image' as const,
+      state: 'ready' as const,
+      attemptCount: 1,
+      postId: 'pilot-media-post-1',
+      content: 'Map one repeated handoff before automating it.',
+      hashtags: ['#WorkflowAutomation'],
+      imagePrompt: 'Bright overhead photograph of a paper workflow map with arrows',
+      thumbnailUrl: 'https://cdn.example.test/workflow.webp',
+      mediaUrl: 'https://cdn.example.test/workflow.webp',
+      contentHash: 'a'.repeat(64),
+      captionProvider: 'anthropic',
+      captionModel: 'claude-haiku-4-5',
+      mediaProvider: 'fal',
+      mediaModel: 'gpt-image-2-medium',
+      errorCode: null,
+      generatedAt: '2026-07-24T05:00:00.000Z',
+      completedAt: '2026-07-24T05:00:30.000Z',
+      recordOnly: true as const,
+      sourceStatus: 'Draft' as const,
+      scheduledFor: null,
+      publishingAllowed: false as const,
+    };
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      '/* pilot_draft_generation_enrollment */': [{
+        id: 'pilot-enrollment-owner',
+        user_id: 'owner_1',
+        workspace_key: '__owner__',
+        client_id: null,
+        owner_kind: 'user',
+        owner_id: 'owner_1',
+        policy_version: AUTOPILOT_POLICY_VERSION,
+        consent_basis: 'owner_self',
+        consent_confirmed_at: '2026-07-20T00:00:00.000Z',
+        consent_note: 'Authenticated owner enrolled their own workspace.',
+        monthly_ai_budget_usd_cents: 500,
+        archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+      'SELECT profile FROM users': [{
+        profile: JSON.stringify({
+          type: 'Technology consultancy',
+          description: 'Custom software and workflow automation.',
+        }),
+      }],
+      'FROM client_facts': [{
+        client_id: null,
+        fact_type: 'service',
+        content: 'Custom workflow software development.',
+        verified_at: '2026-07-20T00:00:00.000Z',
+      }],
+      'FROM posts': [],
+      'FROM ai_usage': [{ spend_usd: 0, telemetry_count: 0 }],
+    });
+    startMediaJob.mockResolvedValueOnce(mediaJob);
+    const env = {
+      DB: db,
+      FAL_API_KEY: 'test-key',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/media-jobs/start', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: null,
+        slot: 1,
+        mediaKind: 'image',
+        recordOnlyConfirmed: true,
+      }),
+    }, env);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      recordOnly: true,
+      publishingAllowed: false,
+      job: mediaJob,
+    });
+    expect(startMediaJob).toHaveBeenCalledOnce();
+    expect(startMediaJob.mock.calls[0][1]).toMatchObject({
+      adminId: 'owner_1',
+      slot: 1,
+      mediaKind: 'image',
+      enrollment: {
+        id: 'pilot-enrollment-owner',
+        policyVersion: AUTOPILOT_POLICY_VERSION,
+      },
+      identity: {
+        userId: 'owner_1',
+        workspaceKey: '__owner__',
+        clientId: null,
+        ownerKind: 'user',
+        ownerId: 'owner_1',
+      },
+    });
+    expect(calls.some((call) =>
+      call.sql.includes("COALESCE(LOWER(TRIM(client.status)), 'active') <> 'on_hold'")))
+      .toBe(true);
+    expect(calls.some((call) => call.sql.includes('FROM ai_usage'))).toBe(true);
+    expect(calls.some((call) => /INSERT\s+INTO\s+posts/i.test(call.sql))).toBe(false);
+  });
+
+  it('rejects malformed pilot media requests before reading consent or spending provider credit', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/media-jobs/start', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        slot: 7,
+        mediaKind: 'image',
+        recordOnlyConfirmed: true,
+      }),
+    }, env);
+
+    expect(response.status).toBe(400);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('SELECT email, is_admin');
+    expect(startMediaJob).not.toHaveBeenCalled();
+  });
+
+  it('lists only record-only media jobs and polls an exact consented video slot', async () => {
+    const videoJob = {
+      id: 'pilot-media-video-1',
+      enrollmentId: 'pilot-enrollment-owner',
+      slot: 6,
+      mediaKind: 'video' as const,
+      state: 'generating' as const,
+      attemptCount: 1,
+      postId: null,
+      content: 'A real workflow planning scene.',
+      hashtags: [],
+      imagePrompt: 'Bright workflow planning scene on paper',
+      thumbnailUrl: 'https://cdn.example.test/thumb.webp',
+      mediaUrl: null,
+      contentHash: null,
+      captionProvider: 'anthropic',
+      captionModel: 'claude-haiku-4-5',
+      mediaProvider: 'fal',
+      mediaModel: 'kling-video/v1.6/standard/image-to-video',
+      errorCode: null,
+      generatedAt: '2026-07-24T05:00:00.000Z',
+      completedAt: null,
+      recordOnly: true as const,
+      sourceStatus: null,
+      scheduledFor: null,
+      publishingAllowed: false as const,
+    };
+    const { db } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      '/* pilot_draft_generation_enrollment */': [{
+        id: 'pilot-enrollment-owner',
+        user_id: 'owner_1',
+        workspace_key: '__owner__',
+        client_id: null,
+        owner_kind: 'user',
+        owner_id: 'owner_1',
+        policy_version: AUTOPILOT_POLICY_VERSION,
+        consent_basis: 'owner_self',
+        consent_confirmed_at: '2026-07-20T00:00:00.000Z',
+        consent_note: 'Authenticated owner enrolled their own workspace.',
+        monthly_ai_budget_usd_cents: 500,
+        archetype_slug: 'tech-saas-agency',
+        client_status: null,
+      }],
+    });
+    listMediaJobs.mockResolvedValueOnce([videoJob]);
+    pollMediaJob.mockResolvedValueOnce(videoJob);
+    const env = {
+      DB: db,
+      FAL_API_KEY: 'test-key',
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const listResponse = await app.request('/api/learning/pilot/media-jobs', {
+      headers: adminHeaders,
+    }, env);
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toEqual({
+      recordOnly: true,
+      publishingAllowed: false,
+      jobs: [videoJob],
+    });
+
+    const pollResponse = await app.request('/api/learning/pilot/media-jobs/poll', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: null,
+        slot: 6,
+        recordOnlyConfirmed: true,
+      }),
+    }, env);
+    expect(pollResponse.status).toBe(200);
+    await expect(pollResponse.json()).resolves.toEqual({
+      recordOnly: true,
+      publishingAllowed: false,
+      job: videoJob,
+    });
+    expect(pollMediaJob).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        slot: 6,
+        enrollment: {
+          id: 'pilot-enrollment-owner',
+          policyVersion: AUTOPILOT_POLICY_VERSION,
+        },
+      }),
+    );
   });
 
   it('appends a positive real-post attestation without mutating the draft', async () => {
@@ -1836,6 +2103,10 @@ describe('learning settings and release evidence routes', () => {
         generated_draft_count: 1,
         unsafe_generated_draft_count: 0,
       }],
+      'COUNT(*) AS media_job_count': [{
+        media_job_count: 1,
+        unsafe_media_job_count: 0,
+      }],
       'SELECT COUNT(*) AS publication_count': [{ publication_count: 0 }],
       'SELECT COUNT(*) AS enrollment_count': [{ enrollment_count: 0 }],
     });
@@ -1870,6 +2141,7 @@ describe('learning settings and release evidence routes', () => {
       decisionsRemoved: 2,
       samplesRemoved: 1,
       generatedPilotDraftsDeleted: 1,
+      generatedPilotMediaDeleted: 1,
       sourcePostsDeleted: 0,
       publishingRecordsDeleted: 0,
       originalDraftsRetained: true,
@@ -1896,13 +2168,15 @@ describe('learning settings and release evidence routes', () => {
       'learning_decisions',
       'learning_pilot_samples',
       'learning_pilot_generated_drafts',
+      'learning_pilot_media_jobs',
       'learning_pilot_enrollments',
     ]) {
       expect(calls.some((call) =>
         call.sql.includes(`DELETE FROM ${table}`))).toBe(true);
     }
     const generatedPostDelete = calls.find((call) =>
-      /DELETE FROM\s+posts\b/i.test(call.sql))!;
+      /DELETE FROM\s+posts\b/i.test(call.sql)
+      && call.sql.includes('FROM learning_pilot_generated_drafts generated'))!;
     expect(generatedPostDelete.sql).toContain('FROM learning_pilot_generated_drafts generated');
     expect(generatedPostDelete.sql).toContain(
       "LOWER(TRIM(COALESCE(status, ''))) = 'draft'",
@@ -1912,6 +2186,15 @@ describe('learning settings and release evidence routes', () => {
     );
     expect(generatedPostDelete.sql).toContain('FROM publication_events pe');
     expect(generatedPostDelete.sql).toContain('FROM publish_delivery_receipts delivery');
+    const generatedMediaPostDelete = calls.find((call) =>
+      /DELETE FROM\s+posts\b/i.test(call.sql)
+      && call.sql.includes('FROM learning_pilot_media_jobs job'))!;
+    expect(generatedMediaPostDelete.sql).toContain("job.state = 'ready'");
+    expect(generatedMediaPostDelete.sql).toContain('FROM publication_events pe');
+    expect(generatedMediaPostDelete.sql).toContain('FROM publish_delivery_receipts delivery');
+    const generatedMediaUsageDelete = calls.find((call) =>
+      call.sql.includes("operation LIKE 'learning_pilot_media_%'"))!;
+    expect(generatedMediaUsageDelete.sql).toContain("SELECT 'pilot-media-' || job.id");
     expect(calls.some((call) => /UPDATE\s+posts\b|INSERT INTO\s+posts\b/i.test(call.sql)))
       .toBe(false);
     expect(calls.some((call) => /DELETE FROM\s+publication_events/i.test(call.sql))).toBe(false);
@@ -1957,6 +2240,52 @@ describe('learning settings and release evidence routes', () => {
       call.sql.includes('COUNT(*) AS generated_draft_count'))!;
     expect(generatedRead.sql).toContain('generated.user_id IS NOT ?');
     expect(generatedRead.sql).toContain('generated.workspace_key IS NOT ?');
+    expect(calls.some((call) => /\bDELETE FROM\b|\bUPDATE\b/i.test(call.sql))).toBe(false);
+  });
+
+  it('fails withdrawal closed when a generated media job or post state is unsafe', async () => {
+    const { db, calls } = makeRecordingD1({
+      'SELECT email, is_admin': [{ email: 'admin@example.com', is_admin: 1 }],
+      'SELECT id\n      FROM learning_pilot_enrollments': [{ id: 'pilot-enrollment-unsafe' }],
+      'SELECT COUNT(*) AS decision_count': [{ decision_count: 0 }],
+      'SELECT COUNT(*) AS sample_count': [{ sample_count: 0 }],
+      'COUNT(*) AS generated_draft_count': [{
+        generated_draft_count: 0,
+        unsafe_generated_draft_count: 0,
+      }],
+      'COUNT(*) AS media_job_count': [{
+        media_job_count: 1,
+        unsafe_media_job_count: 1,
+      }],
+    });
+    const env = {
+      DB: db,
+      LEARNING_BRAIN_ENABLED: 'true',
+      LEARNING_RELEASE_ENFORCEMENT: 'false',
+      LEARNING_AUTOPILOT_ENABLED: 'false',
+    } as Env;
+    const { app } = makeApp(env);
+
+    const response = await app.request('/api/learning/pilot/enrollment', {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        clientId: 'client-unsafe',
+        withdrawalConfirmed: true,
+        withdrawalNote: 'Customer withdrew record-only pilot consent in writing.',
+      }),
+    }, env);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Record-only pilot withdrawal found an unsafe media job state and stopped',
+      code: 'pilot_withdrawal_media_conflict',
+    });
+    const mediaRead = calls.find((call) =>
+      call.sql.includes('COUNT(*) AS media_job_count'))!;
+    expect(mediaRead.sql).toContain('job.user_id IS NOT ?');
+    expect(mediaRead.sql).toContain("job.state = 'ready'");
+    expect(mediaRead.sql).toContain("job.state <> 'ready' AND job.post_id IS NOT NULL");
     expect(calls.some((call) => /\bDELETE FROM\b|\bUPDATE\b/i.test(call.sql))).toBe(false);
   });
 

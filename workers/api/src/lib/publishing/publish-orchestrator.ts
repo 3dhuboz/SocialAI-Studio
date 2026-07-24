@@ -296,6 +296,18 @@ export async function evaluatePermanentPublishBlock(
        AND generated.owner_id = identity.owner_id
        AND generated.post_id = identity.post_id
        AND generated.record_only = 1
+      UNION ALL
+      SELECT 'generated_pilot_media' AS block_source
+      FROM identity
+      INNER JOIN learning_pilot_media_jobs media
+        ON media.user_id = identity.user_id
+       AND media.workspace_key = identity.workspace_key
+       AND media.client_id IS identity.client_id
+       AND media.owner_kind = identity.owner_kind
+       AND media.owner_id = identity.owner_id
+       AND media.post_id = identity.post_id
+       AND media.state = 'ready'
+       AND media.record_only = 1
       LIMIT 1
     `).bind(
       post.user_id,
@@ -304,7 +316,12 @@ export async function evaluatePermanentPublishBlock(
       post.owner_kind,
       post.owner_id,
       post.id,
-    ).first<{ block_source: 'record_only_enrollment' | 'generated_pilot_draft' }>();
+    ).first<{
+      block_source:
+        | 'record_only_enrollment'
+        | 'generated_pilot_draft'
+        | 'generated_pilot_media';
+    }>();
     if (recordOnlyPilot) {
       return {
         mode: 'approval',

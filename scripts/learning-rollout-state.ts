@@ -465,6 +465,24 @@ SELECT COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_pilot_generated_drafts' THEN 1 ELSE 0
        END), 0) AS generated_draft_tables,
        COALESCE(SUM(CASE
+         WHEN type = 'table' AND name = 'learning_pilot_media_jobs' THEN 1 ELSE 0
+       END), 0) AS media_job_tables,
+       COALESCE(SUM(CASE
+         WHEN type = 'trigger'
+          AND name IN (
+            'validate_learning_pilot_media_job_insert',
+            'validate_learning_pilot_media_job_transition',
+            'validate_learning_pilot_media_job_ready',
+            'prevent_learning_pilot_media_job_ready_update',
+            'prevent_learning_pilot_media_job_ready_delete',
+            'prevent_learning_pilot_media_enrollment_delete',
+            'prevent_learning_pilot_media_post_update',
+            'prevent_learning_pilot_media_publication_event',
+            'prevent_learning_pilot_media_delivery'
+          )
+         THEN 1 ELSE 0
+       END), 0) AS media_job_triggers,
+       COALESCE(SUM(CASE
          WHEN type = 'table' AND name = 'learning_pilot_authorization_uses' THEN 1 ELSE 0
        END), 0) AS owner_authorization_tables,
        COALESCE(SUM(CASE
@@ -478,7 +496,19 @@ SELECT COALESCE(SUM(CASE
  FROM sqlite_master
  WHERE (type = 'table' AND name IN (
           'learning_calibration_audits', 'learning_pilot_generated_drafts',
+          'learning_pilot_media_jobs',
           'learning_pilot_authorization_uses', 'cron_alerts'
+       ))
+    OR (type = 'trigger' AND name IN (
+          'validate_learning_pilot_media_job_insert',
+          'validate_learning_pilot_media_job_transition',
+          'validate_learning_pilot_media_job_ready',
+          'prevent_learning_pilot_media_job_ready_update',
+          'prevent_learning_pilot_media_job_ready_delete',
+          'prevent_learning_pilot_media_enrollment_delete',
+          'prevent_learning_pilot_media_post_update',
+          'prevent_learning_pilot_media_publication_event',
+          'prevent_learning_pilot_media_delivery'
        ))
     OR (type = 'index'
         AND name IN ('idx_cron_alerts_last_fired', 'idx_cron_alerts_unresolved'));
@@ -744,6 +774,7 @@ export interface RolloutObservation {
     latestReadinessCron: CronObservation | null;
     calibrationTablePresent: boolean;
     generatedDraftTablePresent: boolean;
+    mediaJobSchemaReady: boolean;
     alertSchemaReady: boolean;
     latestCalibrationCron: CronObservation | null;
     calibrationRows: number;
@@ -1280,6 +1311,7 @@ export function evaluateRolloutState(input: RolloutObservation): RolloutEvaluati
     input.staging.generatedDraftTablePresent,
     'safety',
   );
+  add('staging_media_job_schema', input.staging.mediaJobSchemaReady, 'safety');
   add('staging_alert_schema', input.staging.alertSchemaReady, 'safety');
   add('production_alert_schema', input.production.alertSchemaReady, 'safety');
   add(
@@ -1834,6 +1866,8 @@ async function main(): Promise<void> {
     stagingSchema,
     'generated_draft_tables',
   ) === 1;
+  const stagingMediaJobSchemaReady = numberField(stagingSchema, 'media_job_tables') === 1
+    && numberField(stagingSchema, 'media_job_triggers') === 9;
   const stagingAuthorizationTableCount = numberField(
     stagingSchema,
     'owner_authorization_tables',
@@ -1948,6 +1982,7 @@ async function main(): Promise<void> {
       latestReadinessCron: parseCron(stagingCrons, 'learning_readiness'),
       calibrationTablePresent: stagingCalibrationTablePresent,
       generatedDraftTablePresent: stagingGeneratedDraftTablePresent,
+      mediaJobSchemaReady: stagingMediaJobSchemaReady,
       alertSchemaReady: stagingAlertSchemaReady,
       latestCalibrationCron: parseCron(stagingCrons, 'learning_calibration'),
       calibrationRows: numberField(stagingCalibration, 'calibration_rows'),

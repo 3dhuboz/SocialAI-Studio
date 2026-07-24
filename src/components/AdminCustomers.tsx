@@ -3,7 +3,7 @@ import {
   Users, TrendingUp, DollarSign, AlertCircle, CheckCircle,
   RefreshCw, Search, Loader2, ExternalLink, Clock,
   ChevronDown, ChevronRight, ShieldCheck, X, MessageSquare,
-  BrainCircuit, ClipboardCheck, Sparkles,
+  BrainCircuit, ClipboardCheck, Sparkles, Image as ImageIcon, Video,
 } from 'lucide-react';
 import { useDb } from '../hooks/useDb';
 import type {
@@ -12,6 +12,8 @@ import type {
   AdminLearningOperations, LearningAdjudicationEvidence, LearningAdjudicationInput,
   LearningPilotCustomerConsent,
   LearningPilotCandidate,
+  LearningPilotMediaJob,
+  LearningPilotMediaKind,
   LearningPilotQueue,
 } from '../services/db';
 import { AdminQualityScan } from './AdminQualityScan';
@@ -53,6 +55,26 @@ export function isCurrentPilotDraftConfirmation(
     && confirmedContentHash === candidate.sampleDraft?.contentHash;
 }
 
+export function isReviewablePilotMediaJob(
+  job: LearningPilotMediaJob | null | undefined,
+): job is LearningPilotMediaJob & {
+  state: 'ready';
+  postId: string;
+  content: string;
+  contentHash: string;
+} {
+  return job?.state === 'ready'
+    && typeof job.postId === 'string'
+    && job.postId.trim().length > 0
+    && typeof job.content === 'string'
+    && job.content.trim().length > 0
+    && typeof job.contentHash === 'string'
+    && /^[a-f0-9]{64}$/.test(job.contentHash)
+    && job.sourceStatus === 'Draft'
+    && job.scheduledFor === null
+    && job.publishingAllowed === false;
+}
+
 const FILTERS: { id: Filter; label: string; tone: string }[] = [
   { id: 'all',       label: 'All',       tone: 'amber'   },
   { id: 'trial',     label: 'Trial',     tone: 'sky'     },
@@ -90,6 +112,7 @@ export const AdminCustomers: React.FC = () => {
   const [postFeedback, setPostFeedback] = useState<AdminPostFeedback[] | null>(null);
   const [learningOperations, setLearningOperations] = useState<AdminLearningOperations | null>(null);
   const [learningPilotQueue, setLearningPilotQueue] = useState<LearningPilotQueue | null>(null);
+  const [learningPilotMediaJobs, setLearningPilotMediaJobs] = useState<LearningPilotMediaJob[]>([]);
   const [learningSavingDecisionId, setLearningSavingDecisionId] = useState<string | null>(null);
   const [learningPilotActionKey, setLearningPilotActionKey] = useState<string | null>(null);
   const [learningError, setLearningError] = useState<string | null>(null);
@@ -124,6 +147,9 @@ export const AdminCustomers: React.FC = () => {
       db.getLearningPilotCandidates()
         .then(setLearningPilotQueue)
         .catch(() => setLearningPilotQueue(null));
+      db.listLearningPilotMediaJobs()
+        .then((queue) => setLearningPilotMediaJobs(queue.jobs))
+        .catch(() => setLearningPilotMediaJobs([]));
     } catch (e: any) {
       setError(e?.message || 'Failed to load customers');
     } finally {
@@ -170,6 +196,20 @@ export const AdminCustomers: React.FC = () => {
     ]);
     setLearningOperations(operations);
     setLearningPilotQueue(queue);
+    try {
+      const mediaQueue = await db.listLearningPilotMediaJobs();
+      setLearningPilotMediaJobs(mediaQueue.jobs);
+    } catch {
+      setLearningPilotMediaJobs([]);
+    }
+  };
+
+  const upsertLearningPilotMediaJob = (job: LearningPilotMediaJob) => {
+    setLearningPilotMediaJobs((current) => [
+      ...current.filter((candidate) => candidate.id !== job.id),
+      job,
+    ].sort((left, right) =>
+      left.enrollmentId.localeCompare(right.enrollmentId) || left.slot - right.slot));
   };
 
   const enrollLearningPilot = async (
@@ -244,6 +284,51 @@ export const AdminCustomers: React.FC = () => {
     }
   };
 
+  const startLearningPilotMediaJob = async (
+    clientId: string | null,
+    slot: number,
+    mediaKind: LearningPilotMediaKind,
+  ) => {
+    const actionKey = `media:${clientId ?? '__owner__'}:${slot}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      upsertLearningPilotMediaJob(
+        await db.startLearningPilotMediaJob(clientId, slot, mediaKind),
+      );
+    } catch (reason) {
+      setLearningError(
+        reason instanceof Error
+          ? reason.message
+          : 'Record-only pilot media generation failed closed',
+      );
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
+  const pollLearningPilotMediaJob = async (
+    clientId: string | null,
+    slot: number,
+  ) => {
+    const actionKey = `media:${clientId ?? '__owner__'}:${slot}`;
+    setLearningPilotActionKey(actionKey);
+    setLearningError(null);
+    try {
+      upsertLearningPilotMediaJob(
+        await db.pollLearningPilotMediaJob(clientId, slot),
+      );
+    } catch (reason) {
+      setLearningError(
+        reason instanceof Error
+          ? reason.message
+          : 'Record-only pilot video status could not be checked',
+      );
+    } finally {
+      setLearningPilotActionKey(null);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
       {/* Section header */}
@@ -277,6 +362,7 @@ export const AdminCustomers: React.FC = () => {
       <LearningOperationsCard
         operations={learningOperations}
         pilotQueue={learningPilotQueue}
+        pilotMediaJobs={learningPilotMediaJobs}
         pilotActionKey={learningPilotActionKey}
         loading={loading && !learningOperations}
         savingDecisionId={learningSavingDecisionId}
@@ -286,6 +372,8 @@ export const AdminCustomers: React.FC = () => {
         onPilotWithdraw={withdrawLearningPilot}
         onPilotGenerate={generateLearningPilotDraft}
         onPilotValidate={validateLearningPilotDraft}
+        onPilotMediaStart={startLearningPilotMediaJob}
+        onPilotMediaPoll={pollLearningPilotMediaJob}
       />
 
       <PrewarmReadinessCard readiness={prewarmReadiness} loading={loading && !prewarmReadiness} />
@@ -621,9 +709,222 @@ const SampleAdjudicationForm: React.FC<{
   );
 };
 
+const PilotMediaSlotCard: React.FC<{
+  label: string;
+  clientId: string | null;
+  slot: number;
+  job: LearningPilotMediaJob | null;
+  actionKey: string | null;
+  onStart?: (
+    clientId: string | null,
+    slot: number,
+    mediaKind: LearningPilotMediaKind,
+  ) => Promise<void>;
+  onPoll?: (clientId: string | null, slot: number) => Promise<void>;
+  onValidate?: (
+    postId: string,
+    expectedContentHash: string,
+    attestationNote: string,
+  ) => Promise<void>;
+}> = ({
+  label,
+  clientId,
+  slot,
+  job,
+  actionKey,
+  onStart,
+  onPoll,
+  onValidate,
+}) => {
+  const [confirmedHash, setConfirmedHash] = useState('');
+  const mediaActionKey = `media:${clientId ?? '__owner__'}:${slot}`;
+  const mediaBusy = actionKey === mediaActionKey;
+  const reviewable = isReviewablePilotMediaJob(job);
+  const validationBusy = reviewable && actionKey === `validate:${job.postId}`;
+  const exactCandidateConfirmed = reviewable && confirmedHash === job.contentHash;
+
+  if (!job) {
+    return (
+      <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[9px] font-black uppercase tracking-wider text-white/45">
+            Slot {slot}
+          </p>
+          <span className="text-[8px] text-white/25">Empty</span>
+        </div>
+        <p className="mt-1.5 text-[9px] leading-relaxed text-white/30">
+          Generate one isolated candidate. It cannot be scheduled or published.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            disabled={actionKey !== null}
+            onClick={() => onStart?.(clientId, slot, 'image')}
+            aria-label={`Generate record-only image in slot ${slot} for ${label}`}
+            className="inline-flex items-center gap-1 rounded-md border border-cyan-400/20 bg-cyan-500/10 px-2 py-1.5 text-[8px] font-bold text-cyan-100 transition hover:bg-cyan-500/15 disabled:opacity-40"
+          >
+            {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <ImageIcon size={9} />}
+            Image
+          </button>
+          <button
+            type="button"
+            disabled={actionKey !== null}
+            onClick={() => onStart?.(clientId, slot, 'video')}
+            aria-label={`Generate record-only video in slot ${slot} for ${label}`}
+            className="inline-flex items-center gap-1 rounded-md border border-amber-400/20 bg-amber-500/10 px-2 py-1.5 text-[8px] font-bold text-amber-100 transition hover:bg-amber-500/15 disabled:opacity-40"
+          >
+            {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <Video size={9} />}
+            Video
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const statusTone = job.state === 'ready'
+    ? 'border-emerald-400/20 bg-emerald-500/10 text-emerald-100'
+    : job.state === 'failed'
+      ? 'border-rose-400/20 bg-rose-500/10 text-rose-100'
+      : 'border-amber-400/20 bg-amber-500/10 text-amber-100';
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black/25">
+      <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-2.5 py-2">
+        <div className="flex items-center gap-1.5">
+          {job.mediaKind === 'video'
+            ? <Video size={10} className="text-amber-300" />
+            : <ImageIcon size={10} className="text-cyan-300" />}
+          <p className="text-[9px] font-black uppercase tracking-wider text-white/55">
+            Slot {slot} / {job.mediaKind}
+          </p>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-[7px] font-black uppercase tracking-wider ${statusTone}`}>
+          {job.state}
+        </span>
+      </div>
+
+      {job.thumbnailUrl && (
+        <div className="border-b border-white/[0.06] bg-black/30 p-2">
+          {job.mediaKind === 'video' && job.state === 'ready' && job.mediaUrl ? (
+            <video
+              src={job.mediaUrl}
+              poster={job.thumbnailUrl}
+              controls
+              preload="metadata"
+              className="max-h-44 w-full rounded-md"
+            />
+          ) : (
+            <img
+              src={job.thumbnailUrl}
+              alt={`${label} record-only ${job.mediaKind} candidate in slot ${slot}`}
+              loading="lazy"
+              className="max-h-44 w-full rounded-md object-contain"
+            />
+          )}
+        </div>
+      )}
+
+      <div className="p-2.5">
+        {job.content && (
+          <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-[9px] leading-relaxed text-white/60">
+            {job.content}
+          </p>
+        )}
+        {job.hashtags.length > 0 && (
+          <p className="mt-1.5 break-words text-[8px] text-cyan-200/45">
+            {job.hashtags.join(' ')}
+          </p>
+        )}
+        <p className="mt-2 text-[8px] leading-relaxed text-white/25">
+          Attempt {job.attemptCount}/2
+          {job.captionModel ? ` / copy ${job.captionProvider} ${job.captionModel}` : ''}
+          {job.mediaModel ? ` / media ${job.mediaProvider} ${job.mediaModel}` : ''}
+        </p>
+
+        {job.state === 'generating' && job.mediaKind === 'video' && (
+          <button
+            type="button"
+            disabled={actionKey !== null}
+            onClick={() => onPoll?.(clientId, slot)}
+            className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400/20 bg-amber-500/10 px-2 py-1.5 text-[8px] font-bold text-amber-100 transition hover:bg-amber-500/15 disabled:opacity-40"
+          >
+            {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
+            Check video status
+          </button>
+        )}
+
+        {job.state === 'claimed' && (
+          <p className="mt-2 text-[8px] font-bold leading-relaxed text-amber-100/65">
+            Generation is claimed. Refresh the panel before retrying.
+          </p>
+        )}
+
+        {job.state === 'failed' && (
+          <>
+            <p className="mt-2 text-[8px] font-bold leading-relaxed text-rose-100/65">
+              Failed closed: {(job.errorCode ?? 'provider failure').replace(/_/g, ' ')}.
+            </p>
+            {job.attemptCount < 2 && (
+              <button
+                type="button"
+                disabled={actionKey !== null}
+                onClick={() => onStart?.(clientId, slot, job.mediaKind)}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-rose-400/20 bg-rose-500/10 px-2 py-1.5 text-[8px] font-bold text-rose-100 transition hover:bg-rose-500/15 disabled:opacity-40"
+              >
+                {mediaBusy ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
+                Use bounded retry
+              </button>
+            )}
+          </>
+        )}
+
+        {reviewable && (
+          <>
+            <p className="mt-2 font-mono text-[7px] text-white/25">
+              Draft {job.postId} / fingerprint {job.contentHash.slice(0, 16)}
+            </p>
+            <label className="mt-2 flex items-start gap-2 text-[8px] leading-relaxed text-white/45">
+              <input
+                type="checkbox"
+                checked={exactCandidateConfirmed}
+                onChange={(event) => setConfirmedHash(
+                  event.target.checked ? job.contentHash : '',
+                )}
+                className="mt-0.5 accent-cyan-400"
+                aria-label={`Confirm generated media candidate in slot ${slot} for ${label}`}
+              />
+              I reviewed this exact fingerprint and confirm it is a genuine SocialAI output for
+              {` ${label}`}. This confirms provenance only, not that it is safe to publish.
+            </label>
+            <button
+              type="button"
+              disabled={actionKey !== null || !exactCandidateConfirmed}
+              onClick={async () => {
+                await onValidate?.(
+                  job.postId,
+                  job.contentHash,
+                  `Admin explicitly confirmed ${label}'s record-only generated ${job.mediaKind} candidate in slot ${slot} is a genuine SocialAI output for independent safety evaluation. This does not approve, schedule, or publish it.`,
+                );
+                setConfirmedHash('');
+              }}
+              className="mt-2 inline-flex items-center gap-1 rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-[8px] font-bold text-emerald-100 transition hover:bg-emerald-500/15 disabled:opacity-40"
+            >
+              {validationBusy
+                ? <Loader2 size={9} className="animate-spin" />
+                : <ShieldCheck size={9} />}
+              Confirm provenance and run critics
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const LearningOperationsCard: React.FC<{
   operations: AdminLearningOperations | null;
   pilotQueue?: LearningPilotQueue | null;
+  pilotMediaJobs?: LearningPilotMediaJob[];
   pilotActionKey?: string | null;
   loading: boolean;
   savingDecisionId: string | null;
@@ -639,6 +940,12 @@ export const LearningOperationsCard: React.FC<{
     withdrawalNote: string,
   ) => Promise<void>;
   onPilotGenerate?: (clientId: string | null) => Promise<void>;
+  onPilotMediaStart?: (
+    clientId: string | null,
+    slot: number,
+    mediaKind: LearningPilotMediaKind,
+  ) => Promise<void>;
+  onPilotMediaPoll?: (clientId: string | null, slot: number) => Promise<void>;
   onPilotValidate?: (
     postId: string,
     expectedContentHash: string,
@@ -647,6 +954,7 @@ export const LearningOperationsCard: React.FC<{
 }> = ({
   operations,
   pilotQueue = null,
+  pilotMediaJobs = [],
   pilotActionKey = null,
   loading,
   savingDecisionId,
@@ -655,6 +963,8 @@ export const LearningOperationsCard: React.FC<{
   onPilotEnroll,
   onPilotWithdraw,
   onPilotGenerate,
+  onPilotMediaStart,
+  onPilotMediaPoll,
   onPilotValidate,
 }) => {
   const ready = operations?.readiness.ready === true && operations.readiness.stale !== true;
@@ -891,7 +1201,8 @@ export const LearningOperationsCard: React.FC<{
                   Withdrawal stops future pilot critics and removes exact pilot samples and
                   derived critic evidence. Original customer/source drafts, schedules, and
                   publishing records are never deleted; a draft generated only for this staging
-                  pilot is derived data and is erased.
+                  pilot, including generated media and its scoped usage receipts, is derived data
+                  and is erased.
                 </p>
               </div>
               <div className="mt-2.5 grid gap-2">
@@ -907,6 +1218,9 @@ export const LearningOperationsCard: React.FC<{
                   const generationActionKey = `generate:${enrollment.clientId ?? '__owner__'}`;
                   const generating = pilotActionKey === generationActionKey;
                   const generatedDraft = enrollment.generatedDraft ?? null;
+                  const enrollmentMediaJobs = pilotMediaJobs.filter(
+                    (job) => job.enrollmentId === enrollment.enrollmentId,
+                  );
                   return (
                     <div
                       key={enrollment.workspaceKey}
@@ -958,6 +1272,43 @@ export const LearningOperationsCard: React.FC<{
                             </button>
                           </>
                         )}
+                      </div>
+                      <div className="mt-2.5 rounded-lg border border-amber-400/15 bg-amber-500/[0.025] p-2.5">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-[10px] font-black text-amber-100/80">
+                              Record-only media evidence lab
+                            </p>
+                            <p className="mt-1 max-w-2xl text-[8px] leading-relaxed text-white/35">
+                              Six immutable staging slots for independent image and video
+                              evaluation. Generation never attests, approves, schedules, or
+                              publishes a post.
+                            </p>
+                          </div>
+                          <span className="rounded-full border border-amber-400/15 bg-black/20 px-2 py-1 text-[7px] font-black uppercase tracking-wider text-amber-100/55">
+                            {enrollmentMediaJobs.length} / 6 claimed
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                          {Array.from({ length: 6 }, (_, index) => index + 1).map((slot) => {
+                            const job = enrollmentMediaJobs.find(
+                              (candidate) => candidate.slot === slot,
+                            ) ?? null;
+                            return (
+                              <PilotMediaSlotCard
+                                key={`${enrollment.enrollmentId}:${slot}:${job?.id ?? 'empty'}`}
+                                label={enrollment.label}
+                                clientId={enrollment.clientId}
+                                slot={slot}
+                                job={job}
+                                actionKey={pilotActionKey}
+                                onStart={onPilotMediaStart}
+                                onPoll={onPilotMediaPoll}
+                                onValidate={onPilotValidate}
+                              />
+                            );
+                          })}
+                        </div>
                       </div>
                       <label className="mt-2 flex items-start gap-2 text-[9px] leading-relaxed text-white/45">
                         <input

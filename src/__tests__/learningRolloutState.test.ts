@@ -122,6 +122,7 @@ function observation(): RolloutObservation {
       },
       calibrationTablePresent: true,
       generatedDraftTablePresent: true,
+      mediaJobSchemaReady: true,
       alertSchemaReady: true,
       latestCalibrationCron: {
         success: true,
@@ -578,6 +579,9 @@ describe('learning live rollout state', () => {
     }],
     ['the staging generated-draft schema is missing', (input: RolloutObservation) => {
       input.staging.generatedDraftTablePresent = false;
+    }],
+    ['the staging media-job schema or trigger set is incomplete', (input: RolloutObservation) => {
+      input.staging.mediaJobSchemaReady = false;
     }],
     ['the staging alert persistence schema is incomplete', (input: RolloutObservation) => {
       input.staging.alertSchemaReady = false;

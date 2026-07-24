@@ -23,6 +23,8 @@ const EXPECTED_WORKSPACE_DELETE_ORDER = [
   'learning_signals',
   'learning_pilot_samples',
   'learning_pilot_generated_drafts',
+  'posts',
+  'learning_pilot_media_jobs',
   'learning_decision_disqualifications',
   'learning_calibration_audits',
   'learning_adjudications',
@@ -36,6 +38,7 @@ const DEFERRED_TABLE_ROWS = [
   { name: 'learning_calibration_audits' },
   { name: 'learning_decision_disqualifications' },
   { name: 'learning_pilot_generated_drafts' },
+  { name: 'learning_pilot_media_jobs' },
   { name: 'learning_pilot_samples' },
 ];
 
@@ -44,7 +47,7 @@ function deletedTable(sql: string): string | null {
 }
 
 describe('learning outcome deletion', () => {
-  it('invalidates the affected archetype then deletes one workspace in dependency order', async () => {
+  it('invalidates the archetype and deletes the exact pilot media post before its immutable job', async () => {
     const { db, calls } = makeRecordingD1({
       'FROM clients c': [{ archetype_slug: 'bbq-smokehouse' }],
       'FROM sqlite_master': DEFERRED_TABLE_ROWS,
@@ -57,7 +60,11 @@ describe('learning outcome deletion', () => {
     expect(deletes[0].binds).toEqual(['bbq-smokehouse']);
     expect(deletes[1].sql).toContain('SELECT id FROM publication_events');
     expect(deletes[1].binds).toEqual(['owner-1', 'client-1']);
-    for (const call of deletes.slice(2)) {
+    const pilotPostDelete = deletes.find((call) => deletedTable(call.sql) === 'posts');
+    expect(pilotPostDelete?.binds).toEqual(['owner-1', 'owner-1', 'client-1']);
+    expect(pilotPostDelete?.sql).toContain('FROM learning_pilot_media_jobs');
+    expect(pilotPostDelete?.sql).toContain("state = 'ready'");
+    for (const call of deletes.slice(2).filter((candidate) => candidate !== pilotPostDelete)) {
       expect(call.binds).toEqual(['owner-1', 'client-1']);
       expect(call.sql).toContain('workspace_key');
     }
@@ -72,7 +79,8 @@ describe('learning outcome deletion', () => {
     const tenantDeletes = clientDb.calls.filter((call) =>
       /^\s*DELETE\s+FROM/i.test(call.sql) && deletedTable(call.sql) !== 'archetype_aggregates');
     expect(tenantDeletes.every((call) =>
-      call.binds.includes('client-a') && !call.binds.includes('client-b'))).toBe(true);
+      call.binds.includes('client-a') || deletedTable(call.sql) === 'posts')).toBe(true);
+    expect(tenantDeletes.every((call) => !call.binds.includes('client-b'))).toBe(true);
 
     const shopDb = makeRecordingD1({
       'FROM users': [{ archetype_slug: 'shop-retail' }],
@@ -86,8 +94,9 @@ describe('learning outcome deletion', () => {
     const shopDeletes = shopDb.calls.filter((call) =>
       /^\s*DELETE\s+FROM/i.test(call.sql) && deletedTable(call.sql) !== 'archetype_aggregates');
     expect(shopDeletes.every((call) =>
-      call.binds.includes('store.myshopify.com')
-        && call.binds.includes('shop:store.myshopify.com'))).toBe(true);
+      call.binds.includes('store.myshopify.com'))).toBe(true);
+    expect(shopDeletes.filter((call) => deletedTable(call.sql) !== 'posts').every((call) =>
+      call.binds.includes('shop:store.myshopify.com'))).toBe(true);
   });
 
   it('invalidates every account archetype and scopes all raw deletes by user id', async () => {
@@ -108,7 +117,8 @@ describe('learning outcome deletion', () => {
     ]);
     const tenantDeletes = calls.filter((call) =>
       /^\s*DELETE\s+FROM/i.test(call.sql) && deletedTable(call.sql) !== 'archetype_aggregates');
-    expect(tenantDeletes.every((call) => call.binds.length === 1 && call.binds[0] === 'owner-1'))
+    expect(tenantDeletes.every((call) =>
+      call.binds.length >= 1 && call.binds.every((bind) => bind === 'owner-1')))
       .toBe(true);
   });
 

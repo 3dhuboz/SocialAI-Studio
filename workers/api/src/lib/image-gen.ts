@@ -177,10 +177,17 @@ export async function generateImageWithGuardrails(
   userId: string,
   clientId: string | null,
   safePrompt: { prompt: string; negativePrompt: string },
-  options: { forceFallback?: boolean; caption?: string | null; seedHint?: string | null } = {},
+  options: {
+    forceFallback?: boolean;
+    caption?: string | null;
+    seedHint?: string | null;
+    postId?: string | null;
+    usageOperation?: string;
+  } = {},
 ): Promise<{ imageUrl: string | null; modelUsed: string; archetypeSlug: string | null }> {
   const authHeader = { Authorization: `Key ${env.FAL_API_KEY}`, 'Content-Type': 'application/json' };
   const useGptImage2 = env.IMAGE_GEN_PROVIDER === 'gpt-image-2';
+  const usageOperation = options.usageOperation?.trim() || 'image-gen';
 
   const archetypeSlugRaw = await resolveArchetypeSlug(env, userId, clientId);
 
@@ -316,9 +323,10 @@ export async function generateImageWithGuardrails(
         clientId,
         provider: 'fal',
         model: 'nano-banana-pro-bbq-cut',
-        operation: 'image-gen',
+        operation: usageOperation,
         imagesGenerated: imageUrl ? 1 : 0,
         estCostUsd: imageUrl ? NANO_BANANA_PRO_COST_USD : 0,
+        postId: options.postId ?? null,
         ok: !!imageUrl,
       });
       if (imageUrl) return { imageUrl, modelUsed: 'nano-banana-pro-bbq-cut', archetypeSlug };
@@ -329,9 +337,10 @@ export async function generateImageWithGuardrails(
         clientId,
         provider: 'fal',
         model: 'nano-banana-pro-bbq-cut',
-        operation: 'image-gen',
+        operation: usageOperation,
         imagesGenerated: 0,
         estCostUsd: 0,
+        postId: options.postId ?? null,
         ok: false,
       });
     }
@@ -357,9 +366,10 @@ export async function generateImageWithGuardrails(
       clientId,
       provider: 'fal',
       model: 'gpt-image-2-medium',
-      operation: 'image-gen',
+      operation: usageOperation,
       imagesGenerated: imageUrl ? 1 : 0,
       estCostUsd: imageUrl ? GPT_IMAGE_2_MEDIUM_COST_USD : 0,
+      postId: options.postId ?? null,
       ok: !!imageUrl,
     });
     if (imageUrl) {
@@ -403,9 +413,10 @@ export async function generateImageWithGuardrails(
       clientId,
       provider: 'fal',
       model: fluxModelName,
-      operation: 'image-gen',
+      operation: usageOperation,
       imagesGenerated: 0,
       estCostUsd: 0,
+      postId: options.postId ?? null,
       ok: false,
     });
     return { imageUrl: null, modelUsed: modelName, archetypeSlug };
@@ -416,9 +427,10 @@ export async function generateImageWithGuardrails(
     clientId,
     provider: 'fal',
     model: fluxModelName,
-    operation: 'image-gen',
+    operation: usageOperation,
     imagesGenerated: imageUrl ? 1 : 0,
     estCostUsd: imageUrl ? costUsd : 0,
+    postId: options.postId ?? null,
     ok: !!imageUrl,
   });
   return { imageUrl, modelUsed: modelName, archetypeSlug };
