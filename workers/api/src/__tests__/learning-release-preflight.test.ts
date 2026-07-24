@@ -4,12 +4,15 @@ import { logAiUsage, withLearningDecisionUsageScope } from '../lib/ai-usage';
 import {
   assertSafeIndependentRepair,
   buildReleaseContentHash,
+  CURRENT_VERIFIED_FACT_MAX_AGE_MS,
   evaluateReleasePreflight,
+  isCurrentVerifiedFact,
   runAndPersistReleasePipeline,
   TEXT_REPAIR_SAFETY_RULES,
   type PublishablePost,
 } from '../lib/learning/release-preflight';
 import type { CriticResult } from '../lib/learning/critic-types';
+import { RELEASE_CRITIC_POLICY_VERSION } from '../lib/learning/critic-types';
 import type { ReleasePipelineResult } from '../lib/learning/release-pipeline';
 import type { ReleaseState } from '../lib/learning/types';
 import { makeRecordingD1 } from './helpers/recording-d1';
@@ -32,6 +35,23 @@ const post: PublishablePost = {
 const pipelineResult = (state: ReleaseState) => ({
   id: `decision-${state}`,
   state,
+});
+
+describe('current verified fact boundary', () => {
+  const nowMs = Date.parse('2026-07-24T00:00:00.000Z');
+
+  it('accepts only timestamped facts inside the current evidence window', () => {
+    expect(isCurrentVerifiedFact('2026-07-23T00:00:00.000Z', nowMs)).toBe(true);
+    expect(
+      isCurrentVerifiedFact(
+        new Date(nowMs - CURRENT_VERIFIED_FACT_MAX_AGE_MS - 1).toISOString(),
+        nowMs,
+      ),
+    ).toBe(false);
+    expect(isCurrentVerifiedFact(null, nowMs)).toBe(false);
+    expect(isCurrentVerifiedFact('not-a-date', nowMs)).toBe(false);
+    expect(isCurrentVerifiedFact('2026-07-24T00:06:00.000Z', nowMs)).toBe(false);
+  });
 });
 
 describe('evaluateReleasePreflight', () => {
@@ -255,6 +275,7 @@ describe('runAndPersistReleasePipeline', () => {
         verdictCount: 1,
         attemptCount: 1,
         predictedOutcomeScore: 77,
+        criticPolicyVersion: RELEASE_CRITIC_POLICY_VERSION,
         judgeStatus: 'available',
         judgeTelemetryVersion: 1,
       },

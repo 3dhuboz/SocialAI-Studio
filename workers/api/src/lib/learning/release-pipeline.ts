@@ -33,6 +33,7 @@ export interface CandidateInput {
 export interface ReleaseContext {
   profile: Record<string, unknown>;
   verifiedFacts: string[];
+  currentVerifiedFacts?: string[];
   forbiddenSubjects: string[];
   recentPostDigests: string[];
 }

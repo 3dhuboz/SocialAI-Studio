@@ -178,6 +178,7 @@ describe('record-only pilot evaluation lease', () => {
     expect(claim.sql).toContain('ON CONFLICT(user_id,workspace_key,post_id,stage,content_hash)');
     expect(claim.sql).toContain("learning_decisions.release_state = 'pending'");
     expect(claim.sql).toContain("$.persistenceState");
+    expect(claim.sql).toContain("$.criticPolicyVersion");
     expect(claim.sql).toContain(
       'julianday(learning_decisions.updated_at) < julianday(?)',
     );

@@ -12,6 +12,7 @@ import {
   findFreshReleaseReceipt,
   type FreshReleaseReceipt,
 } from './decision-repository';
+import { RELEASE_CRITIC_POLICY_VERSION } from './critic-types';
 import {
   normalizeWorkspaceIdentity,
   type WorkspaceIdentity,
@@ -865,6 +866,7 @@ async function acquirePilotEvaluationLease(
     persistenceState: 'claim',
     verdictCount: -1,
     recordOnlyPilot: true,
+    criticPolicyVersion: RELEASE_CRITIC_POLICY_VERSION,
     claimToken,
     leaseExpiresAt: new Date(now.getTime() + PILOT_EVALUATION_LEASE_MS).toISOString(),
   });
@@ -932,14 +934,20 @@ async function acquirePilotEvaluationLease(
       release_state = excluded.release_state,
       summary_json = excluded.summary_json,
       updated_at = excluded.updated_at
-    WHERE julianday(learning_decisions.updated_at) < julianday(?)
-      AND (
-        learning_decisions.release_state = 'pending'
-        OR COALESCE(
-          json_extract(learning_decisions.summary_json, '$.persistenceState'),
-          ''
-        ) IN ('claim','writing')
+    WHERE (
+        julianday(learning_decisions.updated_at) < julianday(?)
+        AND (
+          learning_decisions.release_state = 'pending'
+          OR COALESCE(
+            json_extract(learning_decisions.summary_json, '$.persistenceState'),
+            ''
+          ) IN ('claim','writing')
+        )
       )
+      OR COALESCE(
+          json_extract(learning_decisions.summary_json, '$.criticPolicyVersion'),
+          ''
+        ) <> ?
     RETURNING id
   `).bind(
       decisionId,
@@ -962,6 +970,7 @@ async function acquirePilotEvaluationLease(
       authorization.policyVersion,
       nowIso,
       staleBefore,
+      RELEASE_CRITIC_POLICY_VERSION,
     ).first<{ id: string }>()
     : await db.prepare(`
     INSERT INTO learning_decisions (
@@ -973,14 +982,20 @@ async function acquirePilotEvaluationLease(
       release_state = excluded.release_state,
       summary_json = excluded.summary_json,
       updated_at = excluded.updated_at
-    WHERE julianday(learning_decisions.updated_at) < julianday(?)
-      AND (
-        learning_decisions.release_state = 'pending'
-        OR COALESCE(
-          json_extract(learning_decisions.summary_json, '$.persistenceState'),
-          ''
-        ) IN ('claim','writing')
+    WHERE (
+        julianday(learning_decisions.updated_at) < julianday(?)
+        AND (
+          learning_decisions.release_state = 'pending'
+          OR COALESCE(
+            json_extract(learning_decisions.summary_json, '$.persistenceState'),
+            ''
+          ) IN ('claim','writing')
+        )
       )
+      OR COALESCE(
+          json_extract(learning_decisions.summary_json, '$.criticPolicyVersion'),
+          ''
+        ) <> ?
     RETURNING id
   `).bind(
     decisionId,
@@ -997,6 +1012,7 @@ async function acquirePilotEvaluationLease(
     summary,
     nowIso,
     staleBefore,
+    RELEASE_CRITIC_POLICY_VERSION,
   ).first<{ id: string }>();
   return row?.id ?? null;
 }
@@ -1020,6 +1036,7 @@ async function findCompletePilotReceipt(
        AND d.mode = 'approval'
        AND d.stage = 'release'
        AND d.release_state IN ('pass_green','hold_amber','block_red')
+       AND json_extract(d.summary_json, '$.criticPolicyVersion') = ?
        AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), -1) AS INTEGER) =
            (SELECT COUNT(*) FROM learning_critic_verdicts v WHERE v.decision_id = d.id)
        AND CAST(COALESCE(json_extract(d.summary_json, '$.verdictCount'), 0) AS INTEGER) > 0
@@ -1033,6 +1050,7 @@ async function findCompletePilotReceipt(
     identity.ownerId,
     postId,
     contentHash,
+    RELEASE_CRITIC_POLICY_VERSION,
   ).first<{ id: string; release_state: FreshReleaseReceipt['state'] }>();
   return row
     ? { id: row.id, state: row.release_state }

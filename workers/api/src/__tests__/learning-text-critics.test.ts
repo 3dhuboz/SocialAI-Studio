@@ -116,6 +116,86 @@ describe('runDeterministicCritics', () => {
     });
   });
 
+  it('does not treat stale profile event details as current factual evidence', () => {
+    const results = runDeterministicCritics(
+      {
+        ...input,
+        content: "Father's Day weekend at Tannum Seagulls with BBQ competition and live music.",
+      },
+      {
+        ...context,
+        profile: {
+          businessName: 'Gladstone BBQ Festival',
+          eventDetails:
+            "Father's Day weekend at Tannum Seagulls with BBQ competition and live music.",
+        },
+        verifiedFacts: [],
+        currentVerifiedFacts: [],
+      },
+    );
+
+    expect(results.find((result) => result.kind === 'fact')).toMatchObject({
+      verdict: 'warn_repairable',
+      severity: 'release_critical',
+      evidence: expect.arrayContaining(['fact.current_verified_claims']),
+    });
+  });
+
+  it('rejects the exact stale Gladstone prices even when the profile contains them', () => {
+    const results = runDeterministicCritics(
+      {
+        ...input,
+        content:
+          "Father's Day weekend at Tannum Seagulls—bring the crew for smoke, "
+          + 'competition, and live music. Adult tickets $30, Family Pass $80 '
+          + '(2 adults + 2 kids). Kids 5-12 $5, under 5s free. High School $15. '
+          + 'BBQ competition, cooking demos, market stalls, and food vendors all day.',
+      },
+      {
+        ...context,
+        profile: {
+          businessName: 'Gladstone BBQ Festival',
+          adultTicket: '$30',
+          familyPass: '$80',
+          highSchool: '$15',
+          childTicket: '$5',
+        },
+        verifiedFacts: [
+          'Current Council listing: VIP $40, presale adult $20, high-school $10, below-primary-school free.',
+          "Current Council listing: Father's Day weekend at Tannum Seagulls with BBQ competition, live music, cooking demonstrations, market stalls, and food vendors.",
+        ],
+        currentVerifiedFacts: [
+          'Current Council listing: VIP $40, presale adult $20, high-school $10, below-primary-school free.',
+          "Current Council listing: Father's Day weekend at Tannum Seagulls with BBQ competition, live music, cooking demonstrations, market stalls, and food vendors.",
+        ],
+      },
+    );
+    const fact = results.find((result) => result.kind === 'fact');
+
+    expect(fact).toMatchObject({
+      verdict: 'warn_repairable',
+      severity: 'release_critical',
+    });
+    expect(fact?.evidence.join(' ')).toMatch(/\$30|\$80|\$5|\$15/);
+  });
+
+  it('accepts current event details that are directly supported by current facts', () => {
+    const currentEvent =
+      "Father's Day weekend at Tannum Seagulls with BBQ competition and live music.";
+    const results = runDeterministicCritics(
+      { ...input, content: currentEvent },
+      {
+        ...context,
+        verifiedFacts: [currentEvent],
+        currentVerifiedFacts: [currentEvent],
+      },
+    );
+
+    expect(results.find((result) => result.kind === 'fact')).toMatchObject({
+      verdict: 'pass',
+    });
+  });
+
   it('requests repair for near-duplicate recent copy', () => {
     const results = runDeterministicCritics(
       { ...input, content: 'Weekend brisket is ready now' },
@@ -144,7 +224,10 @@ describe('runDeterministicCritics', () => {
   });
 
   it('records deterministic rule IDs when checks pass', () => {
-    const results = runDeterministicCritics(input, context);
+    const results = runDeterministicCritics(
+      { ...input, content: 'Brisket only, located in Gladstone' },
+      context,
+    );
 
     expect(results.map((result) => result.kind)).toEqual([
       'brand',
@@ -157,8 +240,9 @@ describe('runDeterministicCritics', () => {
         'brand.denylist',
         'brand.prompt_injection',
         'fact.verified_claims',
+        'fact.current_verified_claims',
         'repetition.near_duplicate',
-        'platform.2026-07-14',
+        'platform.2026-07-24',
       ]),
     );
   });
@@ -328,6 +412,7 @@ describe('independent model critics', () => {
     expect(result.every((row) => row.provider === 'test-provider')).toBe(true);
     expect(prompt).toContain('<<UNTRUSTED_FROM_CANDIDATE_CAPTION>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_VERIFIED_FACTS>>');
+    expect(prompt).toContain('<<UNTRUSTED_FROM_CURRENT_VERIFIED_FACTS>>');
     expect(prompt).toContain('<<UNTRUSTED_FROM_RECENT_POSTS>>');
     expect(prompt).toContain('Verdict must be exactly one of "pass", "warn_repairable", "block", or "unavailable"');
     expect(prompt).toContain('Severity must be exactly one of "advisory" or "release_critical"');
@@ -340,6 +425,8 @@ describe('independent model critics', () => {
     expect(prompt).toContain('Use recent_posts only to judge repetition');
     expect(systemPrompt).toContain('Never suggest inventing evidence');
     expect(systemPrompt).toContain('Rhetorical questions and requests for audience input are not factual claims');
+    expect(systemPrompt).toContain('business profile is brand and service context, not current proof');
+    expect(systemPrompt).toContain('only current_verified_facts is evidence');
   });
 
   it('retries one schema-invalid council response before returning verdicts', async () => {

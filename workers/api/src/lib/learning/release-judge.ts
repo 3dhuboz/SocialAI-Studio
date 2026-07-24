@@ -72,11 +72,16 @@ export async function runReleaseJudgeWithTelemetry(
     (systemPrompt, prompt, context) =>
       callIndependentJson(env, systemPrompt, prompt, context)
   );
-  const systemPrompt = `${UNTRUSTED_CONTENT_DIRECTIVE}\n\nYou are the independent final Release Judge. You did not generate or repair this post. Return pass_green only when all supplied critic evidence supports unattended release. Return hold_amber for uncertainty and block_red for persistent business harm.`;
+  const systemPrompt = `${UNTRUSTED_CONTENT_DIRECTIVE}\n\nYou are the independent final Release Judge. You did not generate or repair this post. Return pass_green only when all supplied critic evidence supports unattended release. Return hold_amber for uncertainty and block_red for persistent business harm. The business profile is context, not current proof for volatile claims. Prices, dates, schedules, tickets, venues, offers, availability, and event activities require direct support in current_verified_facts.`;
   const prompt = [
     wrapUntrusted(JSON.stringify(safeCandidate(input.candidate)), 'candidate', { maxLen: 8_000 }),
     wrapUntrusted(JSON.stringify(input.context.profile), 'business_profile', { maxLen: 4_000 }),
     wrapUntrusted(input.context.verifiedFacts.join('\n'), 'verified_facts', { maxLen: 8_000 }),
+    wrapUntrusted(
+      (input.context.currentVerifiedFacts ?? input.context.verifiedFacts).join('\n'),
+      'current_verified_facts',
+      { maxLen: 8_000 },
+    ),
     wrapUntrusted(input.context.forbiddenSubjects.join('\n'), 'forbidden_subjects'),
     wrapUntrusted(JSON.stringify(input.results), 'critic_results', { maxLen: 12_000 }),
     wrapUntrusted(JSON.stringify(input.repairHistory), 'repair_history', { maxLen: 4_000 }),

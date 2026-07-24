@@ -1,5 +1,7 @@
 import type { CriticSeverity, CriticVerdict } from './types';
 
+export const RELEASE_CRITIC_POLICY_VERSION = '2026-07-24-current-facts-v1';
+
 export type CriticKind =
   | 'brand'
   | 'fact'
