@@ -769,10 +769,12 @@ const Dashboard: React.FC = () => {
   // hits the post-cap. Replaces the generic toast + pricing modal because
   // this is the highest-intent moment in the funnel.
   const [showTrialPaywall, setShowTrialPaywall] = useState(false);
-  const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string; imageUrl?: string; imagePrompt?: string } | null>(null);
+  const [videoScriptModal, setVideoScriptModal] = useState<{ hookText: string; script?: string; shots?: string; mood?: string; imageUrl?: string; imagePrompt?: string; postIndex?: number } | null>(null);
   const [videoModalGenerating, setVideoModalGenerating] = useState(false);
   const [videoModalProgress, setVideoModalProgress] = useState(0);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
+  const [videoModalSourceUrl, setVideoModalSourceUrl] = useState<string | null>(null);
+  const [videoModalStage, setVideoModalStage] = useState<'idle' | 'thumbnail' | 'generating' | 'saving' | 'ready'>('idle');
   const [videoModalError, setVideoModalError] = useState<string | null>(null);
   const [isAccepting, setIsAccepting] = useState(false);
   // Synchronous mutex for handleAcceptSmartPosts (audit P0-3, 2026-05-22).
@@ -1610,12 +1612,14 @@ const Dashboard: React.FC = () => {
       setDraftRestoredAt(null);
     }
     setSmartPostImages({});
+    setSmartPostImageErrors({});
     setAutoGenSet(new Set());
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClientId]);
 
   // Smart post image generation
   const [smartPostImages, setSmartPostImages] = useState<Record<number, string>>({});
+  const [smartPostImageErrors, setSmartPostImageErrors] = useState<Record<number, string>>({});
   const [autoGenSet, setAutoGenSet] = useState<Set<number>>(new Set());
   const [imgGenDone, setImgGenDone] = useState(0);
   const uploadFileRef = useRef<HTMLInputElement>(null);
@@ -2144,13 +2148,17 @@ const Dashboard: React.FC = () => {
     const candidates = posts
       .map((post, index) => ({ post, index }))
       .filter(({ post }) => isSmartPostSafetyCleared(post));
+    setSmartPostImageErrors({});
     setAutoGenSet(new Set(candidates.map(({ index }) => index)));
     setImgGenDone(0);
     await runWithConcurrency(candidates, REVIEWED_IMAGE_CONCURRENCY, async ({ post, index }) => {
       const rawPrompt = post.imagePrompt || post.topic;
       const prompt = guardSmartImagePrompt({ ...post, imagePrompt: rawPrompt });
       try {
-        if (!prompt) return;
+        if (!prompt) {
+          setSmartPostImageErrors(prev => ({ ...prev, [index]: 'No safe image prompt was available. Upload an image or retry after editing the draft.' }));
+          return;
+        }
         if (prompt !== rawPrompt) {
           setSmartPosts(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, imagePrompt: prompt } : item));
           setSmartPostImages(prev => {
@@ -2161,8 +2169,15 @@ const Dashboard: React.FC = () => {
         }
         const seedHint = `smart-auto:${index}:${post.scheduledFor}:${post.pillar || ''}:${post.topic || ''}`;
         const img = await generateImage(prompt, post.content, seedHint);
-        if (img) setSmartPostImages(prev => ({ ...prev, [index]: img }));
-      } catch { /* the publish prewarmer remains the automatic fallback */ }
+        if (img) {
+          setSmartPostImages(prev => ({ ...prev, [index]: img }));
+        } else {
+          setSmartPostImageErrors(prev => ({ ...prev, [index]: 'No image passed the relevance review. Retry or upload a suitable image.' }));
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Image generation failed.';
+        setSmartPostImageErrors(prev => ({ ...prev, [index]: message }));
+      }
       finally {
         setAutoGenSet(prev => { const next = new Set(prev); next.delete(index); return next; });
         setImgGenDone(done => done + 1);
@@ -2208,7 +2223,15 @@ const Dashboard: React.FC = () => {
     const reader = new FileReader();
     reader.onload = ev => {
       const dataUrl = ev.target?.result as string;
-      if (dataUrl) setSmartPostImages(prev => ({ ...prev, [uploadTargetIdx]: dataUrl }));
+      if (dataUrl) {
+        const targetIndex = uploadTargetIdx;
+        setSmartPostImages(prev => ({ ...prev, [targetIndex]: dataUrl }));
+        setSmartPostImageErrors(prev => {
+          const next = { ...prev };
+          delete next[targetIndex];
+          return next;
+        });
+      }
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -2339,9 +2362,16 @@ const Dashboard: React.FC = () => {
   };
 
   const handleRegenImage = async (idx: number) => {
+    if (!smartPosts[idx] || !isSmartPostSafetyCleared(smartPosts[idx])) {
+      toast('This draft is safety-held. Repair the caption before generating media.', 'warning');
+      return;
+    }
     const rawPrompt = smartPosts[idx]?.imagePrompt || smartPosts[idx]?.topic;
     const prompt = smartPosts[idx] ? guardSmartImagePrompt({ ...smartPosts[idx], imagePrompt: rawPrompt }) : rawPrompt;
-    if (!prompt) return;
+    if (!prompt) {
+      setSmartPostImageErrors(prev => ({ ...prev, [idx]: 'No safe image prompt was available. Edit the draft or upload an image.' }));
+      return;
+    }
     if (prompt !== rawPrompt) {
       setSmartPosts(prev => prev.map((p, i) => i === idx ? { ...p, imagePrompt: prompt } : p));
       setSmartPostImages(prev => {
@@ -2350,14 +2380,27 @@ const Dashboard: React.FC = () => {
         return next;
       });
     }
+    setSmartPostImageErrors(prev => {
+      const next = { ...prev };
+      delete next[idx];
+      return next;
+    });
     setAutoGenSet(prev => new Set(prev).add(idx));
     try {
       const seedHint = `smart-regen:${idx}:${smartPosts[idx]?.scheduledFor || ''}:${smartPosts[idx]?.pillar || ''}:${smartPosts[idx]?.topic || ''}:${Date.now()}`;
       const img = await generateImage(prompt, smartPosts[idx]?.content, seedHint);
-      if (img) setSmartPostImages(prev => ({ ...prev, [idx]: img }));
-      else toast('Image generation failed — try uploading instead.', 'warning');
-    } catch (e: any) { toast(`Image error: ${e?.message?.substring(0, 80) || 'Unknown'}`, 'error'); }
-    setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
+      if (img) {
+        setSmartPostImages(prev => ({ ...prev, [idx]: img }));
+      } else {
+        setSmartPostImageErrors(prev => ({ ...prev, [idx]: 'No image passed the relevance review. Retry or upload a suitable image.' }));
+      }
+    } catch (e: any) {
+      const message = e?.message || 'Image generation failed.';
+      setSmartPostImageErrors(prev => ({ ...prev, [idx]: message }));
+      toast(`Image error: ${message.substring(0, 80)}`, 'error');
+    } finally {
+      setAutoGenSet(prev => { const s = new Set(prev); s.delete(idx); return s; });
+    }
   };
 
   // ── Image generation: routes through the validated pipeline in
@@ -2545,6 +2588,7 @@ const Dashboard: React.FC = () => {
           const promptWasRepaired = Boolean(guardedImagePrompt && guardedImagePrompt !== rawImagePrompt);
           let postImage = promptWasRepaired ? undefined : (smartPostImages[i] || undefined);
           const wantsImage = guardedImagePrompt && guardedImagePrompt !== 'N/A';
+          const previewImageFailed = Boolean(smartPostImageErrors[i]);
           if (postImage && postImage.startsWith('data:')) {
             // Browser has base64 from preview — regenerate as public URL with smart prompts
             try {
@@ -2553,7 +2597,7 @@ const Dashboard: React.FC = () => {
               if (url) postImage = url;
               else if (wantsImage) imageGenFailures++;
             } catch { if (wantsImage) imageGenFailures++; /* keep base64 as fallback */ }
-          } else if (!postImage && wantsImage) {
+          } else if (!postImage && wantsImage && !previewImageFailed) {
             // No image — generate with full smart logic (returns public URL)
             try {
               const seedHint = `smart-accept:${i}:${sp.scheduledFor}:${sp.pillar || ''}:${sp.topic || ''}`;
@@ -2561,6 +2605,11 @@ const Dashboard: React.FC = () => {
               if (url) postImage = url;
               else imageGenFailures++;
             } catch { imageGenFailures++; /* post goes without image */ }
+          } else if (!postImage && wantsImage && previewImageFailed) {
+            // Do not issue a second paid provider request after the preview already
+            // timed out or failed review. Persist the guarded prompt so the bounded
+            // prewarmer can recover it later.
+            imageGenFailures++;
           }
 
           const postData = {
@@ -2578,10 +2627,14 @@ const Dashboard: React.FC = () => {
             videoScript: sp.videoScript || undefined,
             videoShots: sp.videoShots || undefined,
             videoMood: sp.videoMood || undefined,
+            videoUrl: sp.postType === 'video' ? sp.videoUrl || undefined : undefined,
             // v5 — videoStatus='pending' tells the prewarm cron to claim this
-            // post and kick off Kling i2v in its 45-min lookahead window.
+            // post and kick off Kling i2v in its 45-min lookahead window. A reel
+            // reviewed in this modal is already durable and must not be replaced.
             // Non-video posts leave this NULL and are ignored by the cron.
-            videoStatus: sp.postType === 'video' ? 'pending' : undefined,
+            videoStatus: sp.postType === 'video'
+              ? (sp.videoUrl ? 'ready' as const : 'pending' as const)
+              : undefined,
           };
           const batchPostId = await db.createPost({ ...postData, clientId: activeClientId, image_url: postData.image, scheduled_for: postData.scheduledFor });
           completedCount++;
@@ -2640,13 +2693,14 @@ const Dashboard: React.FC = () => {
       if (imageGenFailures > 0) {
         const word = imageGenFailures === 1 ? 'image' : 'images';
         toast(
-          `${imageGenFailures} ${word} couldn't be generated (likely fal.ai rate limit on a big batch). The publish cron will retry automatically — or open Calendar and click any post to regenerate manually.`,
+          `${imageGenFailures} ${word} timed out, failed review, or were unavailable. The publish prewarmer will retry automatically — or open Calendar to regenerate manually.`,
           'warning',
         );
       }
       setSmartPosts([]);
       setSmartStrategy('');
       setSmartPostImages({});
+      setSmartPostImageErrors({});
       setAutoGenSet(new Set());
       setActiveTab('calendar');
     } catch (e: any) {
@@ -2867,6 +2921,42 @@ const Dashboard: React.FC = () => {
     toast('Post deleted.');
   };
 
+  const saveModalVideoForPosting = async (sourceUrl: string): Promise<string> => {
+    const postIndex = videoScriptModal?.postIndex;
+    if (postIndex === undefined) {
+      throw new Error('The reel is not linked to a draft. Close this preview and reopen the reel card.');
+    }
+
+    setVideoModalStage('saving');
+    setVideoModalProgress(0.98);
+    const durableUrl = await FalService.persistGeneratedVideo(sourceUrl, activeClientId);
+    const updatedPosts = smartPosts.map((post, index) => (
+      index === postIndex ? { ...post, videoUrl: durableUrl } : post
+    ));
+    setSmartPosts(updatedPosts);
+    saveDraft(updatedPosts, smartStrategy, autopilotMode, autopilotPlatform, activeClientId);
+    setVideoModalUrl(durableUrl);
+    setVideoModalSourceUrl(null);
+    setVideoModalStage('ready');
+    setVideoModalProgress(1);
+    return durableUrl;
+  };
+
+  const retrySavingModalVideo = async () => {
+    if (!videoModalSourceUrl || videoModalGenerating) return;
+    setVideoModalError(null);
+    setVideoModalGenerating(true);
+    try {
+      await saveModalVideoForPosting(videoModalSourceUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The reel could not be saved.';
+      setVideoModalStage('idle');
+      setVideoModalError(`The reel is playable, but is not attached for posting yet. ${message}`);
+    } finally {
+      setVideoModalGenerating(false);
+    }
+  };
+
   // ── Tab Rendering ──
   const tabs = [
     { id: 'home' as const, label: 'Home', icon: Home },
@@ -2983,30 +3073,29 @@ const Dashboard: React.FC = () => {
           onClick={() => { if (!videoModalGenerating) setVideoScriptModal(null); }}
         >
           <div
-            className="relative w-full max-w-2xl bg-[#0f0f1a] border border-purple-500/25 rounded-3xl overflow-hidden shadow-2xl shadow-purple-900/30"
+            className="relative w-full max-w-4xl bg-[#0f0f1a] border border-purple-500/25 rounded-3xl overflow-hidden shadow-2xl shadow-purple-900/30"
             onClick={e => e.stopPropagation()}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-purple-500/15 bg-purple-950/30">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black bg-purple-500/70 text-white px-2 py-0.5 rounded-full">REEL</span>
-                <span className="text-sm font-bold text-white">Video Script &amp; Brief</span>
+                <span className="text-sm font-bold text-white">Reel Preview &amp; Brief</span>
               </div>
               <button onClick={() => { if (!videoModalGenerating) setVideoScriptModal(null); }} className="text-white/30 hover:text-white transition p-1 rounded-lg hover:bg-white/8">
                 <X size={16} />
               </button>
             </div>
 
-            <div className="flex gap-5 p-6">
+            <div className="flex flex-col sm:flex-row gap-5 p-4 sm:p-6">
               {/* Left: preview pane */}
-              <div className="flex-shrink-0 flex flex-col items-center gap-3">
+              <div className="w-full sm:w-56 flex-shrink-0 flex flex-col items-center gap-3">
                 {videoModalUrl ? (
-                  <div className="w-28 rounded-2xl overflow-hidden border border-purple-500/30 shadow-lg shadow-purple-900/40" style={{ aspectRatio: '9/16' }}>
+                  <div className="w-48 sm:w-56 rounded-2xl overflow-hidden border border-purple-500/30 shadow-lg shadow-purple-900/40 bg-black" style={{ aspectRatio: '9/16' }}>
                     <video
                       src={videoModalUrl}
                       controls
-                      autoPlay
-                      loop
+                      preload="metadata"
                       playsInline
                       className="w-full h-full object-cover"
                     />
@@ -3016,105 +3105,117 @@ const Dashboard: React.FC = () => {
                     hookText={videoScriptModal.hookText}
                     mood={videoScriptModal.mood}
                     size="md"
-                    className="!w-28 !h-48"
+                    className="!w-40 !h-[284px] sm:!w-48 sm:!h-[341px]"
                   />
                 )}
 
                 {/* Generate button / progress */}
-                {!videoModalUrl && (
-                  <div className="w-28 space-y-2">
-                    {videoModalGenerating ? (
-                      <>
-                        <div className="w-full bg-purple-900/30 rounded-full h-1.5 overflow-hidden">
-                          <div
-                            className="h-full bg-purple-400 rounded-full transition-all duration-500"
-                            style={{ width: `${Math.round(videoModalProgress * 100)}%` }}
-                          />
-                        </div>
-                        <p className="text-[10px] text-purple-300 text-center">
-                          Generating… {Math.round(videoModalProgress * 100)}%
-                        </p>
-                      </>
-                    ) : (
-                      <button
-                        onClick={async () => {
-                          setVideoModalError(null);
-                          setVideoModalGenerating(true);
-                          setVideoModalProgress(0);
-                          try {
-                            // Coerce script/shots to string (AI may return arrays)
-                            const scriptStr = Array.isArray(videoScriptModal.script)
-                              ? (videoScriptModal.script as string[]).join(' ')
-                              : String(videoScriptModal.script || '');
-                            const shotsStr = Array.isArray(videoScriptModal.shots)
-                              ? (videoScriptModal.shots as string[]).join('. ')
-                              : String(videoScriptModal.shots || '');
-                            // Build a motion prompt from the script + shots
-                            const motionPrompt = [
-                              scriptStr.split(/\.|,|\n/).slice(0, 2).join('. '),
-                              shotsStr.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
-                            ].filter(Boolean).join(' — ').slice(0, 300) || videoScriptModal.hookText;
-
-                            // Kling i2v REQUIRES a starting frame — without one
-                            // the proxy returns "promptImage is required" and
-                            // the user is dead-ended. If the post hasn't been
-                            // image-generated yet (imageUrl missing) we run a
-                            // FLUX call here on the post's imagePrompt (or the
-                            // hook text as a last-resort) so the reel button
-                            // self-heals instead of erroring.
-                            let inputImage = videoScriptModal.imageUrl || '';
-                            if (!inputImage) {
-                              const seedPrompt = (videoScriptModal.imagePrompt || videoScriptModal.hookText || '').trim();
-                              if (!seedPrompt) {
-                                throw new Error('No image and no prompt to seed one — open the post and add an image first.');
-                              }
-                              // Reserve 0–25% of the progress bar for the
-                              // starting-frame step so the user sees motion
-                              // immediately rather than a stalled bar.
-                              setVideoModalProgress(0.05);
-                              // Pass profile.type so the safety pipeline picks
-                              // an industry-matched fallback if the seed prompt
-                              // turns out vague/abstract (post-audit 2026-05).
-                              const genResult = await FalService.generateImage(seedPrompt, profile.type, activeClientId);
-                              inputImage = genResult.url;
-                              setVideoModalProgress(0.25);
-                            }
-
-                            const url = await FalService.generateVideo(
-                              motionPrompt,
-                              inputImage,
-                              5,
-                              // Remap Kling's 0–1 progress into 0.25–1.0 if we
-                              // already burned the first quarter on FLUX, else
-                              // pass through unchanged.
-                              videoScriptModal.imageUrl
-                                ? (p) => setVideoModalProgress(p)
-                                : (p) => setVideoModalProgress(0.25 + p * 0.75),
-                            );
-                            setVideoModalUrl(url);
-                          } catch (e: any) {
-                            setVideoModalError(e?.message || 'Video generation failed');
-                          } finally {
-                            setVideoModalGenerating(false);
-                          }
-                        }}
-                        className="w-full flex items-center justify-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-bold py-2 rounded-xl transition-all"
-                      >
-                        <Play size={11} />
-                        Generate Video
-                      </button>
-                    )}
-                    {videoModalError && (
-                      <p className="text-[10px] text-red-400 text-center leading-tight">{videoModalError}</p>
-                    )}
+                {videoModalGenerating && (
+                  <div className="w-full space-y-2">
+                    <div className="w-full bg-purple-900/30 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="h-full bg-purple-400 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.round(videoModalProgress * 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-purple-300 text-center">
+                      {videoModalStage === 'thumbnail'
+                        ? 'Preparing a reviewed start frame'
+                        : videoModalStage === 'saving'
+                          ? 'Saving this exact reel for posting'
+                          : 'Generating your reel'}… {Math.round(videoModalProgress * 100)}%
+                    </p>
                   </div>
                 )}
 
+                {!videoModalUrl && !videoModalGenerating && (
+                  <button
+                    onClick={async () => {
+                      let generatedSourceUrl: string | null = null;
+                      setVideoModalError(null);
+                      setVideoModalSourceUrl(null);
+                      setVideoModalGenerating(true);
+                      setVideoModalProgress(0);
+                      try {
+                        const scriptStr = Array.isArray(videoScriptModal.script)
+                          ? (videoScriptModal.script as string[]).join(' ')
+                          : String(videoScriptModal.script || '');
+                        const shotsStr = Array.isArray(videoScriptModal.shots)
+                          ? (videoScriptModal.shots as string[]).join('. ')
+                          : String(videoScriptModal.shots || '');
+                        const motionPrompt = [
+                          scriptStr.split(/\.|,|\n/).slice(0, 2).join('. '),
+                          shotsStr.split(/\n|;|\d+\./).filter(Boolean).slice(0, 2).join('. '),
+                        ].filter(Boolean).join(' — ').slice(0, 300) || videoScriptModal.hookText;
+
+                        let inputImage = videoScriptModal.imageUrl || '';
+                        if (!inputImage) {
+                          const seedPrompt = (videoScriptModal.imagePrompt || videoScriptModal.hookText || '').trim();
+                          if (!seedPrompt) {
+                            throw new Error('No image and no prompt to seed one — open the post and add an image first.');
+                          }
+                          setVideoModalStage('thumbnail');
+                          setVideoModalProgress(0.05);
+                          const genResult = await FalService.generateImage(seedPrompt, profile.type, activeClientId);
+                          inputImage = genResult.url;
+                          if (videoScriptModal.postIndex !== undefined) {
+                            setSmartPostImages(prev => ({ ...prev, [videoScriptModal.postIndex!]: inputImage }));
+                          }
+                          setVideoModalProgress(0.25);
+                        }
+
+                        setVideoModalStage('generating');
+                        const url = await FalService.generateVideo(
+                          motionPrompt,
+                          inputImage,
+                          5,
+                          videoScriptModal.imageUrl
+                            ? (progress) => setVideoModalProgress(Math.min(0.95, progress * 0.95))
+                            : (progress) => setVideoModalProgress(Math.min(0.95, 0.25 + progress * 0.7)),
+                        );
+                        generatedSourceUrl = url;
+                        setVideoModalUrl(url);
+                        setVideoModalSourceUrl(url);
+                        setVideoModalProgress(0.96);
+                        await saveModalVideoForPosting(url);
+                      } catch (e: any) {
+                        setVideoModalStage('idle');
+                        setVideoModalError(generatedSourceUrl
+                          ? `The reel is playable, but is not attached for posting yet. ${e?.message || 'Saving failed.'}`
+                          : e?.message || 'Video generation failed');
+                      } finally {
+                        setVideoModalGenerating(false);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold py-2.5 rounded-xl transition-all"
+                  >
+                    <Play size={12} />
+                    Generate Reel
+                  </button>
+                )}
+
+                {videoModalUrl && videoModalStage === 'ready' && (
+                  <p className="text-[11px] text-emerald-300 text-center leading-relaxed">
+                    Preview ready. This exact reel is attached to the scheduled post.
+                  </p>
+                )}
+                {videoModalSourceUrl && !videoModalGenerating && (
+                  <button
+                    onClick={retrySavingModalVideo}
+                    className="w-full flex items-center justify-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/30 text-amber-200 text-[11px] font-bold py-2 rounded-xl transition-all"
+                  >
+                    <RefreshCw size={11} />
+                    Save for posting
+                  </button>
+                )}
+                {videoModalError && (
+                  <p className="text-[10px] text-red-400 text-center leading-tight">{videoModalError}</p>
+                )}
                 {videoModalUrl && (
                   <a
                     href={videoModalUrl}
                     download="reel.mp4"
-                    className="w-28 flex items-center justify-center gap-1.5 bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-300 text-[11px] font-bold py-2 rounded-xl transition-all"
+                    className="w-full flex items-center justify-center gap-1.5 bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-300 text-[11px] font-bold py-2 rounded-xl transition-all"
                   >
                     ↓ Download
                   </a>
@@ -3162,7 +3263,11 @@ const Dashboard: React.FC = () => {
 
             <div className="px-6 pb-5">
               <p className="text-[10px] text-white/20 text-center">
-                {videoModalGenerating ? 'Generating your video — please wait…' : 'Click anywhere outside to close'}
+                {videoModalGenerating
+                  ? 'You can keep this window open while the reel is generated and saved.'
+                  : videoModalStage === 'ready'
+                    ? 'Play the full reel above before adding these posts to the calendar.'
+                    : 'Click anywhere outside to close'}
               </p>
             </div>
           </div>
@@ -4901,9 +5006,10 @@ const Dashboard: React.FC = () => {
 
                 {/* Post cards */}
                 {smartPosts.map((sp, i) => {
-                  const isVideo = (sp as any).postType === 'video';
+                  const isVideo = sp.postType === 'video';
+                  const safetyCleared = isSmartPostSafetyCleared(sp);
                   const hasImage = !!smartPostImages[i];
-                  const isGenning = autoGenSet.has(i);
+                  const isGenning = safetyCleared && autoGenSet.has(i);
                   return (
                   <div key={i} className={`border rounded-2xl overflow-hidden transition-all card-hover ${
                     isVideo ? 'bg-purple-950/20 border-purple-500/20' : 'glass-card border-white/[0.08] hover:border-white/15'
@@ -4911,35 +5017,59 @@ const Dashboard: React.FC = () => {
                     <div className="p-4 flex gap-4">
                       {/* Image / Video area */}
                       {isVideo ? (
-                        <AnimatedReelPreview
-                          imageUrl={smartPostImages[i] || (sp as any).image}
-                          hookText={
-                            (sp as any).videoScript
-                              ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim()
-                              : sp.content
-                          }
-                          mood={(sp as any).videoMood}
-                          size="md"
-                          onClick={() => {
-                            setVideoModalUrl(null);
-                            setVideoModalError(null);
-                            setVideoModalProgress(0);
-                            setVideoModalGenerating(false);
-                            setVideoScriptModal({
-                              hookText: (sp as any).videoScript
-                                ? (sp as any).videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() ?? sp.content
-                                : sp.content,
-                              script: (sp as any).videoScript,
-                              shots: (sp as any).videoShots,
-                              mood: (sp as any).videoMood,
-                              imageUrl: (sp as any).imageUrl || undefined,
-                              imagePrompt: (sp as any).imagePrompt || undefined,
-                            });
-                          }}
-                        />
+                        <div className="relative flex-shrink-0">
+                          <AnimatedReelPreview
+                            imageUrl={smartPostImages[i] || (sp as any).image}
+                            hookText={
+                              sp.videoScript
+                                ? sp.videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim()
+                                : sp.content
+                            }
+                            mood={sp.videoMood}
+                            size="md"
+                            onClick={() => {
+                              if (!safetyCleared) {
+                                toast('This draft is safety-held. Repair the caption before generating media.', 'warning');
+                                return;
+                              }
+                              setVideoModalUrl(sp.videoUrl || null);
+                              setVideoModalSourceUrl(null);
+                              setVideoModalStage(sp.videoUrl ? 'ready' : 'idle');
+                              setVideoModalError(null);
+                              setVideoModalProgress(sp.videoUrl ? 1 : 0);
+                              setVideoModalGenerating(false);
+                              setVideoScriptModal({
+                                hookText: sp.videoScript
+                                  ? sp.videoScript.split(/Hook:|Body:|CTA:/).find((s: string) => s.trim())?.replace(/^['"]/, '').trim() ?? sp.content
+                                  : sp.content,
+                                script: sp.videoScript,
+                                shots: sp.videoShots,
+                                mood: sp.videoMood,
+                                imageUrl: smartPostImages[i] || undefined,
+                                imagePrompt: sp.imagePrompt || undefined,
+                                postIndex: i,
+                              });
+                            }}
+                          />
+                          {!safetyCleared ? (
+                            <span className="absolute inset-x-1 bottom-1 rounded-md bg-red-950/90 px-1.5 py-1 text-center text-[8px] font-bold text-red-200">
+                              MEDIA LOCKED
+                            </span>
+                          ) : sp.videoUrl && (
+                            <span className="absolute -top-2 -right-2 rounded-full bg-emerald-500 px-2 py-1 text-[8px] font-black text-white shadow-lg">
+                              READY
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <div className="w-24 h-24 rounded-xl flex-shrink-0 overflow-hidden bg-black/40 border border-white/[0.08] relative group">
-                          {hasImage ? (
+                          {!safetyCleared ? (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 px-2 text-center">
+                              <Lock size={17} className="text-red-300/70" />
+                              <span className="text-[9px] leading-tight text-red-200/70">Caption held</span>
+                              <span className="text-[8px] leading-tight text-white/30">Media generation locked</span>
+                            </div>
+                          ) : hasImage ? (
                             <>
                               <img src={smartPostImages[i]} alt="" loading="lazy" className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1">
@@ -4955,8 +5085,18 @@ const Dashboard: React.FC = () => {
                           ) : (
                             <div className="w-full h-full flex flex-col items-center justify-center gap-1.5">
                               <ImageIcon size={18} className="text-white/20" />
+                              {smartPostImageErrors[i] && (
+                                <span
+                                  title={smartPostImageErrors[i]}
+                                  className="max-w-[84px] truncate text-[8px] text-red-300/80"
+                                >
+                                  Generation failed
+                                </span>
+                              )}
                               <div className="flex flex-col gap-1 items-center">
-                                <button onClick={() => handleRegenImage(i)} className="text-[9px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full hover:bg-amber-500/30 transition font-semibold">Generate</button>
+                                <button onClick={() => handleRegenImage(i)} className="text-[9px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full hover:bg-amber-500/30 transition font-semibold">
+                                  {smartPostImageErrors[i] ? 'Retry' : 'Generate'}
+                                </button>
                                 <button onClick={() => handleUploadImage(i)} className="text-[9px] text-white/25 hover:text-white/50 transition">Upload</button>
                               </div>
                             </div>
@@ -4991,6 +5131,11 @@ const Dashboard: React.FC = () => {
                         {sp._needsReview && (
                           <div className="text-[11px] text-red-300 bg-red-950/30 border border-red-500/20 rounded-lg px-3 py-2">
                             <strong>Not scheduled:</strong> {sp._reviewReason}. The safety gate has excluded this draft automatically.
+                          </div>
+                        )}
+                        {safetyCleared && smartPostImageErrors[i] && (
+                          <div className="text-[11px] text-amber-200 bg-amber-950/25 border border-amber-500/20 rounded-lg px-3 py-2">
+                            <strong>Image not ready:</strong> {smartPostImageErrors[i]} The draft is no longer waiting; retry or upload an image.
                           </div>
                         )}
                         <p className="text-sm text-white/80 leading-relaxed">{sp.content}</p>

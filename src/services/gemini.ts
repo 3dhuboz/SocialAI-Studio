@@ -1,5 +1,8 @@
 import { getIndustryBenchmarks, formatBenchmarksForPrompt, HASHTAG_LIMITS } from '../data/socialMediaResearch';
 import { sanitizeKnownEventTicketFacts } from '../../shared/event-ticket-facts';
+import { fetchJsonWithTimeout } from '../utils/fetchWithTimeout';
+
+const REVIEWED_IMAGE_REQUEST_TIMEOUT_MS = 120_000;
 
 // Sanitise raw AI JSON output — fixes common issues that cause JSON.parse to fail
 // IMPORTANT: Do NOT replace smart double quotes with straight quotes here — that breaks
@@ -1570,12 +1573,16 @@ export const generateMarketingImage = async (prompt: string, businessType: strin
   // second paid generation when the calendar is accepted.
   try {
     console.log('Reviewed image generation →', guardedPrompt.substring(0, 80));
-    const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
-      method: 'POST',
-      headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null, clientId: clientId || null, seedHint: seedHint || null }),
-    });
-    const data = await res.json() as { imageUrl?: string; error?: string };
+    const { response: res, data } = await fetchJsonWithTimeout<{ imageUrl?: string; error?: string }>(
+      `${AI_WORKER}/api/fal-proxy?action=generate-image`,
+      {
+        method: 'POST',
+        headers: await aiAuthHeaders(),
+        body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null, clientId: clientId || null, seedHint: seedHint || null }),
+      },
+      REVIEWED_IMAGE_REQUEST_TIMEOUT_MS,
+      'Reviewed image generation',
+    );
     if (res.ok && data.imageUrl) {
       console.log('Reviewed image approved →', data.imageUrl.substring(0, 60));
       return data.imageUrl;
@@ -1599,12 +1606,16 @@ export const generateMarketingImageUrl = async (prompt: string, businessType: st
   if (!safe) return null;
 
   try {
-    const res = await fetch(`${AI_WORKER}/api/fal-proxy?action=generate-image`, {
-      method: 'POST',
-      headers: await aiAuthHeaders(),
-      body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null, clientId: clientId || null, seedHint: seedHint || null }),
-    });
-    const data = await res.json() as { imageUrl?: string; error?: string };
+    const { response: res, data } = await fetchJsonWithTimeout<{ imageUrl?: string; error?: string }>(
+      `${AI_WORKER}/api/fal-proxy?action=generate-image`,
+      {
+        method: 'POST',
+        headers: await aiAuthHeaders(),
+        body: JSON.stringify({ prompt: safe.prompt, negativePrompt: safe.negativePrompt, caption: caption || null, clientId: clientId || null, seedHint: seedHint || null }),
+      },
+      REVIEWED_IMAGE_REQUEST_TIMEOUT_MS,
+      'Reviewed image generation',
+    );
     if (res.ok && data.imageUrl) return data.imageUrl;
   } catch { /* fall through */ }
 
@@ -2095,6 +2106,7 @@ export interface SmartScheduledPost {
   videoScript?: string;
   videoShots?: string;
   videoMood?: string;
+  videoUrl?: string;
   /** Set by the fabrication detector when a post contains content that survived
    * scrubbing (invented testimonials, fake stats, etc.). UI should highlight. */
   _needsReview?: boolean;
@@ -2103,7 +2115,7 @@ export interface SmartScheduledPost {
 
 export const isSmartPostSafetyCleared = (
   post: Pick<SmartScheduledPost, '_needsReview'>,
-): boolean => post._needsReview !== true;
+): boolean => !post._needsReview;
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`AI response timed out after ${ms / 1000}s — try again or check your API key.`)), ms))]);

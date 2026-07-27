@@ -423,6 +423,7 @@ describe('Facebook evidence provenance', () => {
     expect(isSmartPostSafetyCleared({})).toBe(true);
     expect(isSmartPostSafetyCleared({ _needsReview: false })).toBe(true);
     expect(isSmartPostSafetyCleared({ _needsReview: true })).toBe(false);
+    expect(isSmartPostSafetyCleared({ _needsReview: 'true' as any })).toBe(false);
   });
 
   it('keeps historical captions as voice signals instead of factual proof', () => {
