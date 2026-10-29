@@ -303,6 +303,16 @@ npx --yes wrangler@4.110.0 deploy --config wrangler.toml --env=""
 ```
 > `--config` avoids the repo-root Pages detection bug, and `--env=""` explicitly targets the top-level production config. The pinned Wrangler 3.114.17 currently rejects the refreshed OAuth token with error 9109; Wrangler 4.110.0 authentication, dry-run bundling, and production deployment were verified on 2026-07-15.
 
+The equivalent GitHub deployment path is the manual **Deploy SocialAI API
+Worker** workflow in `.github/workflows/deploy-worker.yml`. It runs the Worker
+tests, typecheck, and Wrangler dry run before the production command. Trigger it
+from `main` when the HeadSnap Cloudflare wrapper is unavailable for this
+repository:
+
+```bash
+gh workflow run deploy-worker.yml --ref main
+```
+
 ### Frontend (auto via GitHub → Cloudflare Pages)
 Push to `main` → Pages auto-deploys. Check status at Cloudflare Dashboard → Pages → `socialai-studio`.
 
