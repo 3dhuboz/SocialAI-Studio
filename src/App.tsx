@@ -16,6 +16,7 @@ import { useDb } from './hooks/useDb';
 import { mapDbPostToSocialPost, isNotConnectedError } from './services/db';
 import { getPaypalManageUrl } from './utils/paypal';
 import { REVIEWED_IMAGE_CONCURRENCY, runWithConcurrency } from './utils/asyncPool';
+import { smartBatchReviewStatus } from './utils/publishingSafety';
 import { ClientSwitcher } from './components/ClientSwitcher';
 import { AccountPanel } from './components/AccountPanel';
 // PricingTable is modal-gated (only mounted when showPricing is true).
@@ -2544,19 +2545,8 @@ const Dashboard: React.FC = () => {
     // second click bounces here. Reset in the finally below.
     if (acceptInFlight.current) return;
     acceptInFlight.current = true;
-    // Pre-flight: scheduling without a connected Facebook page is a guaranteed
-    // miss for every post in the batch. The cron will mark them all "Missed" and
-    // (now) send a failure email — but we'd rather catch it BEFORE the user
-    // commits than after. Block accept and route to Settings.
-    if (!socialTokens.facebookPageId || !socialTokens.facebookPageAccessToken) {
-      toast(
-        'Connect Facebook first — scheduled posts can\'t publish without a connected page. Opening Settings…',
-        'warning',
-      );
-      setActiveTab('settings');
-      acceptInFlight.current = false;
-      return;
-    }
+    // Generation is review-only. A social connection is required only when an
+    // operator later changes a reviewed Draft to Scheduled.
     const publishableEntries = smartPosts
       .map((post, index) => ({ post, index }))
       .filter(({ post }) => isSmartPostSafetyCleared(post));
@@ -2617,7 +2607,7 @@ const Dashboard: React.FC = () => {
             content: sp.content,
             hashtags: sp.hashtags,
             scheduledFor: sp.scheduledFor,
-            status: 'Scheduled' as const,
+            status: smartBatchReviewStatus(),
             image: postImage,
             imagePrompt: guardedImagePrompt || undefined,
             reasoning: sp.reasoning || undefined,
@@ -2647,13 +2637,9 @@ const Dashboard: React.FC = () => {
       );
       setPosts(prev => [...results, ...prev]);
       clearDraft(activeClientId);
-      if (!fbPublishable) {
-        toast(`${results.length} posts saved to calendar. Connect Facebook in Settings to enable auto-publishing.`, 'success');
-      } else {
-        toast(`${results.length} posts saved — the cron will auto-publish them at the scheduled times.`, 'success');
-      }
+      toast(`${results.length} drafts saved for review. Nothing will publish until a post is explicitly scheduled.`, 'success');
       if (heldCount > 0) {
-        toast(`${heldCount} unresolved draft${heldCount === 1 ? ' was' : 's were'} held automatically and not scheduled.`, 'warning');
+        toast(`${heldCount} unresolved draft${heldCount === 1 ? ' was' : 's were'} held automatically.`, 'warning');
       }
 
       // v5 — debit reel credits for any video posts in this batch. Single
@@ -4887,7 +4873,7 @@ const Dashboard: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-white/25 mt-0.5">One batch safety pass repairs issues automatically — no per-post approval required</p>
+                      <p className="text-xs text-white/25 mt-0.5">One batch safety pass repairs issues automatically, then saves Drafts for your review</p>
                     </div>
                   </div>
                   <button
@@ -4946,7 +4932,7 @@ const Dashboard: React.FC = () => {
                         {isAccepting ? (
                           <><Loader2 size={14} className="animate-spin" /> Saving…</>
                         ) : (
-                          <><CalendarPlus size={14} /> Add {safeSmartPostCount} reviewed post{safeSmartPostCount === 1 ? '' : 's'}</>
+                          <><CalendarPlus size={14} /> Save {safeSmartPostCount} draft{safeSmartPostCount === 1 ? '' : 's'} for review</>
                         )}
                       </button>
                       <button
@@ -4985,7 +4971,7 @@ const Dashboard: React.FC = () => {
                       ) : autoGenSet.size > 0 ? (
                         <><Loader2 size={16} className="animate-spin" /> Waiting for images ({imgGenDone}/{safeSmartPostCount})</>
                       ) : (
-                        <><CheckCircle size={16} /> Add {safeSmartPostCount} Reviewed Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
+                        <><CheckCircle size={16} /> Save {safeSmartPostCount} Draft{safeSmartPostCount === 1 ? '' : 's'} for Review</>
                       )}
                     </button>
                     {isAccepting && (
@@ -5196,7 +5182,7 @@ const Dashboard: React.FC = () => {
                         <div className="text-xs text-purple-200/85">
                           <span className="font-bold text-purple-300">{reelsInBatch} reel{reelsInBatch === 1 ? '' : 's'}</span>
                           {' '}in this batch ·{' '}
-                          <span className="text-white/55">{reelsInBatch} credit{reelsInBatch === 1 ? '' : 's'} debited on accept</span>
+                          <span className="text-white/55">{reelsInBatch} credit{reelsInBatch === 1 ? '' : 's'} debited when drafts are saved</span>
                           {effectiveReelCredits !== Infinity && (
                             <> · You'll have <span className="font-bold text-white">{creditsAfter}</span> credit{creditsAfter === 1 ? '' : 's'} left</>
                           )}
@@ -5220,7 +5206,7 @@ const Dashboard: React.FC = () => {
                     {isAccepting ? (
                       <><Loader2 size={18} className="animate-spin" /> Saving {acceptSaved} of {safeSmartPostCount}…</>
                     ) : (
-                      <><CheckCircle size={18} /> Add {safeSmartPostCount} Reviewed Post{safeSmartPostCount === 1 ? '' : 's'} to Calendar</>
+                      <><CheckCircle size={18} /> Save {safeSmartPostCount} Draft{safeSmartPostCount === 1 ? '' : 's'} for Review</>
                     )}
                   </button>
                   {isAccepting && (
@@ -5233,7 +5219,7 @@ const Dashboard: React.FC = () => {
                   )}
                   {!isAccepting && socialTokens.facebookPageName && (
                     <p className="text-[10px] text-white/25 text-center">
-                      📘 Scheduled posts will publish to {socialTokens.facebookPageName}{socialTokens.instagramBusinessAccountId ? ' + Instagram' : ''}
+                      Drafts stay unpublished until you approve and schedule them
                     </p>
                   )}
                 </div>

@@ -116,7 +116,11 @@ async function verifyDist(distDir, clientId) {
     printResult(false, [`FAIL could not find module bundle in ${htmlPath}`]);
   }
 
-  const normalizedBundlePath = bundlePath.replace(/^\//, '').replaceAll('/', '\\');
+  // Keep the HTML asset path platform-neutral. `join` applies the host's
+  // separator; converting `/` to `\\` first creates a literal backslash in a
+  // Linux filename and makes the HeadSnap deployment gate fail before it can
+  // inspect the bundle.
+  const normalizedBundlePath = bundlePath.replace(/^[/\\]+/, '').replaceAll('\\', '/');
   const jsPath = join(resolvedDist, normalizedBundlePath);
   const js = await readFile(jsPath, 'utf8').catch(() => null);
   if (!js) {

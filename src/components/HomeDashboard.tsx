@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { SocialPost, ContentCalendarStats } from '../types';
 import { ProtectedAutopilotPanel } from './ProtectedAutopilotPanel';
+import { AutomationControlPanel } from './AutomationControlPanel';
 import { WhatsWorkingPanel } from './WhatsWorkingPanel';
 
 interface LiveFbStats {
@@ -243,6 +244,7 @@ export const HomeDashboard: React.FC<Props> = ({
       </div>
 
       <div className="space-y-5">
+        <AutomationControlPanel clientId={clientId} />
         <ProtectedAutopilotPanel clientId={clientId} />
         <WhatsWorkingPanel clientId={clientId} />
       </div>

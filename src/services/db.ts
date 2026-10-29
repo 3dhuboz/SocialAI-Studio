@@ -515,7 +515,22 @@ export interface DbClient {
   client_slug?: string | null;
   /** v5 — per-client reel credits (Agency workspaces). Same semantics as users.reel_credits. */
   reel_credits?: number;
+  status?: 'active' | 'on_hold' | string | null;
 }
+
+export interface ClientAutomationState {
+  status: 'active' | 'on_hold';
+  paused: boolean;
+  draftCount: number;
+  scheduledCount: number;
+  postedCount: number;
+  overdueScheduledCount: number;
+  undatedScheduledCount: number;
+  staleScheduledCount: number;
+  canResume: boolean;
+}
+
+export type ClientAutomationAction = 'pause' | 'resume' | 'return-stale-to-draft';
 
 /** API shape for a campaign row — matches the worker's rowToApi output
  *  exactly, so callers can drop the result straight into `Campaign` state.
@@ -839,6 +854,20 @@ export function createDb(getToken: GetToken, authMode: AuthMode = 'clerk') {
 
     async updateClient(id: string, fields: Record<string, unknown>): Promise<void> {
       await f(`/api/db/clients/${id}`, put(fields));
+    },
+
+    async getClientAutomationState(id: string): Promise<ClientAutomationState> {
+      const res = await f(`/api/db/clients/${encodeURIComponent(id)}/automation`);
+      const data = await res.json() as { automation: ClientAutomationState };
+      return data.automation;
+    },
+
+    async updateClientAutomation(
+      id: string,
+      action: ClientAutomationAction,
+    ): Promise<{ automation: ClientAutomationState; changed?: number }> {
+      const res = await f(`/api/db/clients/${encodeURIComponent(id)}/automation`, put({ action }));
+      return res.json() as Promise<{ automation: ClientAutomationState; changed?: number }>;
     },
 
     async deleteClient(id: string): Promise<void> {

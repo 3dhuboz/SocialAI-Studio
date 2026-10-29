@@ -19,14 +19,37 @@
 //
 // Extracted from src/index.ts as Phase B step 18 of the route-module split.
 
-import type { Hono } from 'hono';
+import type { Context, Hono } from 'hono';
 import type { Env } from '../env';
 import { deleteLearningWorkspaceData } from '../lib/learning/deletion';
 import { deleteReachWorkspaceData } from '../lib/reach/deletion';
 import { ensureWorkspaceLearningSettings } from '../lib/provisioning';
+import {
+  AutomationMustBePausedError,
+  ClientAutomationNotFoundError,
+  getClientAutomationState,
+  pauseClientAutomation,
+  resumeClientAutomation,
+  returnStaleScheduledPostsToDraft,
+  StaleScheduledPostsError,
+} from '../lib/client-automation';
 import { requireAuth } from '../middleware/auth';
 
 const uuid = () => crypto.randomUUID();
+
+async function portalTokenMatchesClient(
+  c: Context<{ Bindings: Env }>,
+  uid: string,
+  clientId: string,
+): Promise<boolean> {
+  const authorization = c.req.raw.headers.get('Authorization') || '';
+  if (!authorization.startsWith('Portal ')) return true;
+  const token = authorization.slice(7);
+  const portal = await c.env.DB.prepare(
+    'SELECT client_id FROM portal WHERE portal_token = ? AND user_id = ?',
+  ).bind(token, uid).first<{ client_id: string | null }>();
+  return portal?.client_id === clientId;
+}
 
 export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
   // Gate every /api/db/clients endpoint behind requireAuth — the previous
@@ -64,6 +87,64 @@ export function registerClientsRoutes(app: Hono<{ Bindings: Env }>): void {
         lateAccountIds: row.late_account_ids ? JSON.parse(row.late_account_ids as string) : {},
       }
     });
+  });
+
+  app.get('/api/db/clients/:id/automation', async (c) => {
+    const uid = c.get('uid');
+    const clientId = c.req.param('id');
+    if (!await portalTokenMatchesClient(c, uid, clientId)) {
+      return c.json({ error: 'Portal token is not scoped to this client', code: 'CLIENT_SCOPE_MISMATCH' }, 403);
+    }
+    try {
+      const automation = await getClientAutomationState(c.env.DB, uid, clientId);
+      return c.json({ automation });
+    } catch (error) {
+      if (error instanceof ClientAutomationNotFoundError) {
+        return c.json({ error: error.message, code: 'CLIENT_NOT_FOUND' }, 404);
+      }
+      throw error;
+    }
+  });
+
+  app.put('/api/db/clients/:id/automation', async (c) => {
+    const uid = c.get('uid');
+    const clientId = c.req.param('id');
+    if (!await portalTokenMatchesClient(c, uid, clientId)) {
+      return c.json({ error: 'Portal token is not scoped to this client', code: 'CLIENT_SCOPE_MISMATCH' }, 403);
+    }
+    const body = await c.req.json<{ action?: string }>().catch(() => null);
+    const action = body?.action;
+    if (!action || !['pause', 'resume', 'return-stale-to-draft'].includes(action)) {
+      return c.json({ error: 'action must be pause, resume, or return-stale-to-draft', code: 'INVALID_AUTOMATION_ACTION' }, 400);
+    }
+
+    try {
+      if (action === 'pause') {
+        const automation = await pauseClientAutomation(c.env.DB, uid, clientId);
+        return c.json({ ok: true, automation });
+      }
+      if (action === 'resume') {
+        const automation = await resumeClientAutomation(c.env.DB, uid, clientId);
+        return c.json({ ok: true, automation });
+      }
+      const result = await returnStaleScheduledPostsToDraft(c.env.DB, uid, clientId);
+      return c.json({ ok: true, automation: result.state, changed: result.changed });
+    } catch (error) {
+      if (error instanceof ClientAutomationNotFoundError) {
+        return c.json({ error: error.message, code: 'CLIENT_NOT_FOUND' }, 404);
+      }
+      if (error instanceof StaleScheduledPostsError) {
+        return c.json({
+          error: error.message,
+          code: 'STALE_SCHEDULED_POSTS',
+          automation: error.state,
+        }, 409);
+      }
+      if (error instanceof AutomationMustBePausedError) {
+        return c.json({ error: error.message, code: 'AUTOMATION_MUST_BE_PAUSED' }, 409);
+      }
+      throw error;
+    }
   });
 
   app.post('/api/db/clients', async (c) => {
