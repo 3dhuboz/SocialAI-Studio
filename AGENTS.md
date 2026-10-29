@@ -307,7 +307,8 @@ The equivalent GitHub deployment path is the manual **Deploy SocialAI API
 Worker** workflow in `.github/workflows/deploy-worker.yml`. It runs the Worker
 tests, typecheck, and Wrangler dry run before the production command. Trigger it
 from `main` when the HeadSnap Cloudflare wrapper is unavailable for this
-repository:
+repository. The workflow uses Node 24 because Wrangler 4.110 requires Node 22
+or newer.
 
 ```bash
 gh workflow run deploy-worker.yml --ref main
